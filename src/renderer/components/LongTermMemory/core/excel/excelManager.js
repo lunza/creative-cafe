@@ -5,7 +5,7 @@ import path from 'path';
 class ExcelManager {
   constructor() {
     // 使用用户数据目录下的 chatlog 文件夹，而不是硬编码路径
-    const userDataPath = process.env.TRAVEN_USER_DATA || '';
+    const userDataPath = process.env.CREATIVE_CAFE_USER_DATA || '';
     this.baseDir = userDataPath ? path.join(userDataPath, 'data', 'chatlog') : '';
     this.init();
   }

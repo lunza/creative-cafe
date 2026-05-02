@@ -2,8 +2,8 @@ import { AppSetting } from '../types/setting';
 import { useLogStore } from '../stores/logStore';
 
 // 存储键名
-const STORAGE_KEY = 'travenManagerSetting';
-const VERSION_KEY = 'travenManagerVersion';
+const STORAGE_KEY = 'creativeCafeSetting';
+const VERSION_KEY = 'creativeCafeVersion';
 
 // 添加日志的函数
 const addLog = (message: string, type: 'error' | 'warn' | 'info' | 'debug' = 'info') => {
@@ -18,7 +18,7 @@ const addLog = (message: string, type: 'error' | 'warn' | 'info' | 'debug' = 'in
  */
 const isLocalStorageAvailable = (): boolean => {
   try {
-    const testKey = '__travenManagerTest__';
+    const testKey = '__creativeCafeTest__';
     localStorage.setItem(testKey, testKey);
     localStorage.removeItem(testKey);
     return true;

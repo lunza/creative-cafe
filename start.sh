@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# TravenManager project starter for macOS
+# Creative-Cafe project starter for macOS
 
 # Change to script directory
 cd "$(dirname "$0")"
 
 echo "************************************"
-echo "TravenManager project starter"
+echo "Creative-Cafe project starter"
 echo "************************************"
 echo ""
 

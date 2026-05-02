@@ -1,4 +1,4 @@
-# TravenManager 项目文档
+# Creative-Cafe 项目文档
 
 > 本文档基于代码实际状态生成（2024-07），所有路径、文件名、版本号、组件列表均与源代码一致。
 
@@ -19,7 +19,7 @@
 
 ## 1. 项目概述
 
-**TravenManager** 是一个基于 Electron + React + TypeScript 的桌面应用，作为 SillyTavern 的配置管理工具，提供 GUI 界面管理配置、角色卡、世界书，并通过 AI 辅助优化数据。
+**Creative-Cafe** 是一个基于 Electron + React + TypeScript 的桌面应用，作为 SillyTavern 的配置管理工具，提供 GUI 界面管理配置、角色卡、世界书，并通过 AI 辅助优化数据。
 
 ### 主要功能
 
@@ -79,7 +79,7 @@
 ## 3. 项目结构
 
 ```
-TravenManager/
+Creative-Cafe/
 ├── package.json
 ├── tsconfig.json
 ├── vite.config.ts
@@ -282,12 +282,12 @@ TravenManager/
 
 | 存储模块 | 枚举值 | 文件名 | 内容 |
 |---------|--------|--------|------|
-| CONFIG | `config` | `travenmanager-config.json` | 系统设置、AI 配置、向量配置 |
-| CREATIVE | `creative` | `travenmanager-creative.json` | 创意工坊数据 |
-| CHARACTER | `character` | `travenmanager-character.json` | 角色卡数据 |
-| WORLD_BOOK | `worldbook` | `travenmanager-worldbook.json` | 世界书数据 |
-| MEMORY | `memory` | `travenmanager-memory.json` | 记忆插件数据 |
-| EDITOR | `editor` | `travenmanager-editor.json` | 编辑器内容 |
+| CONFIG | `config` | `creative-cafe-config.json` | 系统设置、AI 配置、向量配置 |
+| CREATIVE | `creative` | `creative-cafe-creative.json` | 创意工坊数据 |
+| CHARACTER | `character` | `creative-cafe-character.json` | 角色卡数据 |
+| WORLD_BOOK | `worldbook` | `creative-cafe-worldbook.json` | 世界书数据 |
+| MEMORY | `memory` | `creative-cafe-memory.json` | 记忆插件数据 |
+| EDITOR | `editor` | `creative-cafe-editor.json` | 编辑器内容 |
 | VECTOR | (在 CONFIG 内) | (同 CONFIG) | 向量数据、向量缓存、知识库数据 |
 
 > 文件位置：`app.getPath('userData')` 或 `app.getPath('appData')`
@@ -542,6 +542,6 @@ npm run test:coverage
 
 ---
 
-**维护者**：TravenManager 开发团队  
+**维护者**：Creative-Cafe 开发团队  
 **最后更新**：2024-07-10  
 **文档版本**：1.0.0（基于代码实际状态）

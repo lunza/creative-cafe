@@ -74,7 +74,7 @@ const WorldBookManager: React.FC = () => {
     useRegex: false,
     vectorized: false,
     caseSensitive: false,
-    // TravenManager 独有字段
+    // Creative-Cafe 独有字段
     automationId: '',
     scanDepth: 0,
     displayIndex: 0,
@@ -350,7 +350,7 @@ const WorldBookManager: React.FC = () => {
       useRegex: entry.useRegex !== undefined ? entry.useRegex : (entry.use_regex || false),
       vectorized: entry.vectorized || false,
       caseSensitive: entry.caseSensitive !== undefined ? entry.caseSensitive : (entry.case_sensitive || false),
-      // TravenManager 独有字段
+      // Creative-Cafe 独有字段
       automationId: entry.automationId || '',
       scanDepth: entry.scanDepth || 0,
       displayIndex: entry.displayIndex || 0,
@@ -384,7 +384,7 @@ const WorldBookManager: React.FC = () => {
               // 确保数组字段存在
               key: formValues.key.length > 0 ? formValues.key : [''],
               keysecondary: formValues.keysecondary.length > 0 ? formValues.keysecondary : [],
-              // 保留 TravenManager 独有字段
+              // 保留 Creative-Cafe 独有字段
               automationId: formValues.automationId,
               scanDepth: formValues.scanDepth,
               displayIndex: formValues.displayIndex,
@@ -4921,8 +4921,8 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
             </div>
           </div>
 
-          {/* TravenManager 高级配置 */}
-          <div style={{ marginBottom: 12, fontWeight: 500, color: '#52c41a' }}>TravenManager 高级配置</div>
+          {/* Creative-Cafe 高级配置 */}
+          <div style={{ marginBottom: 12, fontWeight: 500, color: '#52c41a' }}>Creative-Cafe 高级配置</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
             <div>
               <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>自动化ID</label>

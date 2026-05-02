@@ -417,9 +417,9 @@ try {
 
 数据存储在 Electron 应用的用户数据目录中，具体路径为：
 
-- **Windows**：`%APPDATA%/sillytaven-manager/config/travenmanager.json`
-- **macOS**：`~/Library/Application Support/sillytaven-manager/config/travenmanager.json`
-- **Linux**：`~/.config/sillytaven-manager/config/travenmanager.json`
+- **Windows**：`%APPDATA%/creative-cafe/config/creative-cafe.json`
+- **macOS**：`~/Library/Application Support/creative-cafe/config/creative-cafe.json`
+- **Linux**：`~/.config/creative-cafe/config/creative-cafe.json`
 
 ## 版本历史
 

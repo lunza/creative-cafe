@@ -205,7 +205,7 @@ const Dashboard: React.FC = () => {
       } catch (error) {
         console.error('Failed to load tips:', error);
         const defaultTips: Tip[] = [
-          { id: 1, title: "使用提示", content: "欢迎使用 TravenManager！这是一个强大的角色卡和世界书管理工具。" }
+          { id: 1, title: "使用提示", content: "欢迎使用 Creative-Cafe！这是一个强大的角色卡和世界书管理工具。" }
         ];
         setTips(defaultTips);
       } finally {

@@ -79,7 +79,7 @@ const GlobalLogPanel: React.FC = () => {
     const link = document.createElement('a');
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     link.href = url;
-    link.download = `travenmanager-logs-${timestamp}.txt`;
+    link.download = `creative-cafe-logs-${timestamp}.txt`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -104,7 +104,7 @@ const GlobalLogPanel: React.FC = () => {
     const link = document.createElement('a');
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     link.href = url;
-    link.download = `travenmanager-logs-${timestamp}.json`;
+    link.download = `creative-cafe-logs-${timestamp}.json`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

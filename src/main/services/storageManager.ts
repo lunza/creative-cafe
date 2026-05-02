@@ -84,7 +84,7 @@ export class StorageManager {
    */
   private initializeBaseDirectories(): void {
     const appDataPath = getAppPath('appData');
-    this.appDirPath = path.join(appDataPath, 'traven-manager');
+    this.appDirPath = path.join(appDataPath, 'creative-cafe');
     this.baseDataPath = path.join(this.appDirPath, STORAGE_DIRECTORIES.BASE);
 
     try {
@@ -483,7 +483,7 @@ export class StorageManager {
    */
   getBackupPath(timestamp: string): string {
     // 实际不需要这个了，但保留接口
-    return `travenmanager.backup.${timestamp}.json`;
+    return `creative-cafe.backup.${timestamp}.json`;
   }
 
   /**

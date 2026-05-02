@@ -29,7 +29,7 @@ export interface WorldBookEntry {
   useRegex?: boolean;                 // 使用正则匹配 (导出时转为 use_regex)
   vectorized?: boolean;               // 使用向量检索
   caseSensitive?: boolean;            // 区分大小写 (导出时转为 case_sensitive)
-  // TravenManager 独有字段
+  // Creative-Cafe 独有字段
   automationId?: string;
   scanDepth?: number;
   displayIndex?: number;

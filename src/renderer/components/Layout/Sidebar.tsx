@@ -171,7 +171,7 @@ const Sidebar: React.FC = () => {
         <Tooltip 
           title={
             <div>
-              <p>TravenManager: v{AppSetting.version}</p>
+              <p>Creative-Cafe: v{AppSetting.version}</p>
             </div>
           } 
           placement="right"
@@ -179,7 +179,7 @@ const Sidebar: React.FC = () => {
           <div className="sidebar-logo" style={{ cursor: 'pointer' }}>
             {!sidebarCollapsed && (
               <>
-                <h2 style={{ color: isDark ? '#40a9ff' : '#1890ff' }}>TravenManager</h2>
+                <h2 style={{ color: isDark ? '#40a9ff' : '#1890ff' }}>Creative-Cafe</h2>
               </>
             )}
           </div>

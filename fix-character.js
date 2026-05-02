@@ -3,8 +3,8 @@ const { CharacterCard } = require('@lenml/char-card-reader');
 
 async function fixCharacterCard() {
   try {
-    const damagedFilePath = 'g:\\AI\\travenManager\\main_ceroba-ketsukane-deltarune-yellow-27191f94b087_spec_v2.png';
-    const fixedFilePath = 'g:\\AI\\travenManager\\main_ceroba-ketsukane-deltarune-yellow-27191f94b087_spec_v2_fixed.json';
+    const damagedFilePath = 'g:\\AI\\creative-cafe\\main_ceroba-ketsukane-deltarune-yellow-27191f94b087_spec_v2.png';
+    const fixedFilePath = 'g:\\AI\\creative-cafe\\main_ceroba-ketsukane-deltarune-yellow-27191f94b087_spec_v2_fixed.json';
     
     console.log('Reading damaged character card:', damagedFilePath);
     

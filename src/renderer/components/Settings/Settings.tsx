@@ -282,7 +282,7 @@ const Settings: React.FC = () => {
         // 检查 localStorage 是否可用
         let storageAvailable = false;
         try {
-          const testKey = '__travenManagerTest__';
+          const testKey = '__creativeCafeTest__';
           localStorage.setItem(testKey, testKey);
           localStorage.removeItem(testKey);
           storageAvailable = true;

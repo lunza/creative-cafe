@@ -1,4 +1,4 @@
-# TravenManager 项目升级方案
+# Creative-Cafe 项目升级方案
 
 **版本**: 1.0  
 **创建日期**: 2026-04-30  
@@ -12,7 +12,7 @@
 
 ### 1.1 架构设计对比
 
-| 维度 | SillyTavern (ST) | TravenManager (TM) | 差异分析 |
+| 维度 | SillyTavern (ST) | Creative-Cafe (CC) | 差异分析 |
 |------|------------------|-------------------|---------|
 | **运行模式** | Web 应用 (浏览器访问) | Electron 桌面应用 | TM 提供离线/本地运行优势 |
 | **前后端关系** | 前后端同构 (同一进程) | 双进程隔离 (Main + Renderer) | TM 更安全但 IPC 开销大 |
@@ -23,7 +23,7 @@
 
 ### 1.2 技术栈选型对比
 
-| 技术领域 | SillyTavern | TravenManager | 优劣评估 |
+| 技术领域 | SillyTavern | Creative-Cafe | 优劣评估 |
 |---------|-------------|---------------|---------|
 | **前端框架** | jQuery 3.x (传统) | React 18 + TS (现代) | TM 领先 1-2 代 |
 | **UI 组件库** | Bootstrap 5 + 自定义 CSS | Ant Design 6.x | TM 组件更丰富 |
@@ -36,7 +36,7 @@
 
 ### 1.3 功能模块覆盖度对比
 
-| 功能模块 | SillyTavern | TravenManager | 状态 |
+| 功能模块 | SillyTavern | Creative-Cafe | 状态 |
 |---------|-------------|---------------|------|
 | **角色管理** | ✅ 完整 (PNG/V3/CHARX/导入导出) | ✅ 完整 (PNG/JSON/AI增强) | 平手 |
 | **对话系统** | ✅ 完整 (SSE流式/多后端/群聊) | ⚠️ 基础 (测试对话/单角色) | TM 需加强 |
@@ -59,7 +59,7 @@
 
 ### 1.4 API 设计规范对比
 
-| 维度 | SillyTavern | TravenManager |
+| 维度 | SillyTavern | Creative-Cafe |
 |------|-------------|---------------|
 | **API 风格** | RESTful (200+ 端点) | IPC 通道 (50+ 通道) |
 | **认证机制** | Session + CSRF + IP白名单 + BasicAuth | Electron 安全模型 (contextBridge) |
@@ -70,7 +70,7 @@
 
 ### 1.5 性能优化策略对比
 
-| 优化策略 | SillyTavern | TravenManager |
+| 优化策略 | SillyTavern | Creative-Cafe |
 |---------|-------------|---------------|
 | **数据缓存** | node-persist (内存+磁盘) | electron-store (磁盘) + ChatStorageService (内存缓存) |
 | **向量索引** | ✅ LanceDB (ANN搜索) | ❌ 缺失 |
@@ -81,7 +81,7 @@
 
 ### 1.6 扩展性设计对比
 
-| 维度 | SillyTavern | TravenManager |
+| 维度 | SillyTavern | Creative-Cafe |
 |------|-------------|---------------|
 | **插件架构** | 服务端 (Express Router注册) + 客户端 (jQuery事件) | 基础安装/卸载 (无API) |
 | **插件生命周期** | init/exit 完整生命周期 | ❌ 缺失 |
@@ -95,7 +95,7 @@
 
 ## 二、核心优势评估
 
-### 2.1 TravenManager 的核心优势
+### 2.1 Creative-Cafe 的核心优势
 
 1. **现代化技术栈**: React 18 + TypeScript + Vite + Zustand，开发体验和可维护性远超 ST
 2. **桌面应用优势**: Electron 提供本地文件访问、进程管理、离线运行能力
@@ -328,7 +328,7 @@ db.exec(`
 // 方案2: 引入 IndexedDB (渲染进程)
 import { openDB } from 'idb';
 
-const db = await openDB('traven-manager', 1, {
+const db = await openDB('creative-cafe', 1, {
   upgrade(db) {
     db.createObjectStore('characters', { keyPath: 'id' });
   },
@@ -918,4 +918,4 @@ export function createAIProvider(config: AIConfig): AIProvider {
 
 ---
 
-*本文档基于 SillyTavern v1.17.0 与 TravenManager 当前代码库对比分析生成，作为项目升级的技术指导文件。*
+*本文档基于 SillyTavern v1.17.0 与 Creative-Cafe 当前代码库对比分析生成，作为项目升级的技术指导文件。*

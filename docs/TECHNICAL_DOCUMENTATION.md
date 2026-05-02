@@ -1,4 +1,4 @@
-# TravenManager 技术文档
+# Creative-Cafe 技术文档
 
 **版本**: 1.0
 
@@ -22,7 +22,7 @@
 
 ### 1.1 项目定位
 
-**TravenManager** 是一个基于 Electron 的桌面应用，为 SillyTavern 提供 GUI 配置管理和 AI 辅助数据优化功能。
+**Creative-Cafe** 是一个基于 Electron 的桌面应用，为 SillyTavern 提供 GUI 配置管理和 AI 辅助数据优化功能。
 
 ### 1.2 核心功能
 
@@ -72,7 +72,7 @@
 ## 2. 项目结构
 
 ```
-TravenManager/
+Creative-Cafe/
 ├── package.json                  # 项目元信息和依赖
 ├── tsconfig.json                 # TS 配置（strict）
 ├── vite.config.ts                # Vite 构建配置
@@ -236,7 +236,7 @@ TravenManager/
 
 ### 2.1 整体架构
 
-TravenManager 采用 **Electron 双进程架构**，即：
+Creative-Cafe 采用 **Electron 双进程架构**，即：
 - **主进程 (Main Process)**: Node.js 运行时，负责文件系统操作、子进程管理、IPC 通信枢纽
 - **渲染进程 (Renderer Process)**: React 单页应用，负责 UI 渲染和用户交互
 
@@ -370,7 +370,7 @@ async importCharacter(sourcePath: string, fileName: string) {
 #### 存储结构演进
 
 **旧架构** (已废弃):
-- **位置**: `%APPDATA%\traven-manager\data\character-chats.json`
+- **位置**: `%APPDATA%\creative-cafe\data\character-chats.json`
 - **格式**: 单一 JSON 文件包含所有聊天记录
 - **问题**: 
   - 单文件过大时性能下降
@@ -379,7 +379,7 @@ async importCharacter(sourcePath: string, fileName: string) {
   - 无数据迁移机制
 
 **新架构** (当前):
-- **位置**: `%APPDATA%\traven-manager\data\character-chats\`
+- **位置**: `%APPDATA%\creative-cafe\data\character-chats\`
 - **结构**:
 ```
 character-chats/
@@ -1547,8 +1547,8 @@ CharacterTestChat/
 
 ```json
 {
-  "appId": "com.travenmanager.app",
-  "productName": "TravenManager",
+  "appId": "com.creative-cafe.app",
+  "productName": "Creative-Cafe",
   "directories": { "output": "release" },
   "win": {
     "target": "nsis",
@@ -1608,7 +1608,7 @@ interface SettingState {
 | 模板 | `<dataDir>/user/templates/` |
 | 日志 | `<dataDir>/logs/` |
 | 备份 | `<dataDir>/backups/` |
-   | 临时文件 | `<tempDir>/traven/` |
+   | 临时文件 | `<tempDir>/creative-cafe/` |
 
 > `dataDir` 默认为应用安装目录下的 `data/` 子目录，可在设置中修改。
 
@@ -1640,7 +1640,7 @@ interface SettingState {
 | 0.9.5 | **[REFACTOR]** 角色测试对话功能增强：添加对话模式/续写模式双提示词模板、用户人设选择与AI参数配置面板 |
 | 0.9.6 | **[FEATURE]** 角色测试对话 Markdown/HTML 渲染系统：基于 react-markdown + remark-gfm + rehype-sanitize 技术栈，支持双引号高亮、消息编辑、全屏模式 |
 | 0.9.7 | **[REFACTOR]** 世界书模块架构重构：创建独立 worldBookStore.ts、完整 TypeScript 类型定义、移除硬编码路径、补充 import 方法、统一数据流 |
-| 0.9.8 | **[REFACTOR]** 系统解耦与ST启动功能移除：移除 SillyTavern 启动服务/IPC/WebSocket，重写 main/index.ts 和 preload.ts，清理 Settings 中 ST 根目录配置，修复 Dashboard worldBooks 引用，TravenManager 现在作为独立工具运行不再依赖 ST 进程 |
+| 0.9.8 | **[REFACTOR]** 系统解耦与ST启动功能移除：移除 SillyTavern 启动服务/IPC/WebSocket，重写 main/index.ts 和 preload.ts，清理 Settings 中 ST 根目录配置，修复 Dashboard worldBooks 引用，Creative-Cafe 现在作为独立工具运行不再依赖 ST 进程 |
 | 0.9.9 | **[REFACTOR]** 路径配置优化：创建 pathService 统一路径管理，所有模块路径统一存储在 userData/data/ 下，支持自定义路径配置和实时验证，Dashboard 动态读取设置路径 |
 | 1.0.0 | **[BUGFIX]** 路径验证失败修复：添加 validatePath 到 preload.ts，修复 __USER_DATA__ 占位符未暴露给渲染进程的问题，改进 characterHandlers 和 worldBookHandlers 中的占位符解析逻辑，修复 handleOpenFolder 中缺少的 await |
 | 1.0.1 | **[FEATURE]** 存储路径显示统一化：为创意管理和记忆管理模块添加存储路径显示功能，与角色卡、世界书、用户人设、插件管理保持一致的UX设计，支持路径复制功能 |
@@ -1655,6 +1655,7 @@ interface SettingState {
  | 1.4.0 | **[FEATURE]** 远程向量模型配置标准化：参考AI引擎标准配置方式，将远程向量模型配置调整为四个核心参数：远程模型名称（自由文本输入）、远程API地址、远程API密钥、API密钥传输方式（Header/Body）；EmbeddingService主进程服务支持根据传输方式动态构建请求头或请求体 |
  | 1.5.0 | **[FEATURE]** 向量化与存储能力测试模块：在测试菜单下创建二级菜单（向量化测试、Markdown测试），通过调试模式开关控制显隐；实现7项向量化测试（基础/中文/空文本/长文本/特殊字符/批量/多语言）和7项存储测试（添加/查询/更新/删除/统计/空向量/相似度搜索）；提供实时日志面板、测试结果表格、JSON/CSV导出功能；测试数据隔离，使用独立测试数据集 |
  | 1.5.1 | **[BUGFIX]** ⭐⭐ 配置读取不一致修复：修复设置页面测试成功但向量化测试报"未配置远程Embedding API地址"的问题。根因：testConnection通过IPC传入表单配置并设置configOverridden=true后，initialize()跳过storage加载，导致向量化测试读取到storage中的旧配置。修复方案：testConnection成功后自动将配置持久化到storage，确保所有功能使用同一份最新配置。无需手动保存即可同步配置 |
+ | 1.6.0 | **[REFACTOR]** ⭐ 项目全面重命名：将原项目名称 "TravenManager/traven-manager/travenManager" 统一替换为新名称 "Creative-Cafe/creative-cafe"。替换范围包括：源代码文件（persistence.tsx, Settings.tsx, GlobalLogPanel.tsx, storageManager.ts, settingHandlers.ts, fix-character.js）、文档文件（TECHNICAL_DOCUMENTATION.md, PROJECT_DOCUMENTATION_NEW.md, DataPersistence.md, 升级方案文档）、数据存储路径（AppData 目录从 traven-manager 改为 creative-cafe）、localStorage 键名（从 travenManagerSetting 改为 creativeCafeSetting）、日志下载文件名（从 travenmanager-logs 改为 creative-cafe-logs）、备份文件名（从 travenmanager.backup 改为 creative-cafe.backup）、升级方案文档文件名（从 TravenManager_Project_Upgrade_Plan.md 改为 CreativeCafe_Project_Upgrade_Plan.md） |
 
 ---
 
@@ -1665,7 +1666,7 @@ interface SettingState {
 
 ### 3.11.1 系统概述
 
-向量系统为 TravenManager 提供了基于语义的长期记忆和上下文管理能力。主要包括：
+向量系统为 Creative-Cafe 提供了基于语义的长期记忆和上下文管理能力。主要包括：
 
 - **向量嵌入生成**: 支持远程 OpenAI API 和本地 Transformers.js 两种模式
 - **向量存储**: FAISS.js（高性能）和 JSON 文件（兼容性好）双后端

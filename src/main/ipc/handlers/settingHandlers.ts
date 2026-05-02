@@ -18,7 +18,7 @@ const LOG_LEVELS = {
 
 // 获取日志目录的路径（使用 AppData）
 const getLogDir = (): string => {
-  return path.join(getAppDataPath(), 'traven-manager', 'logs');
+  return path.join(getAppDataPath(), 'creative-cafe', 'logs');
 };
 
 // 获取日志文件路径
@@ -109,7 +109,7 @@ const getOldSettingPath = (): string => {
 
 // 迁移状态标记路径（AppData）
 const getMigrationFlagPath = (): string => {
-  return path.join(getAppDataPath(), 'traven-manager', 'data', 'migration_completed');
+  return path.join(getAppDataPath(), 'creative-cafe', 'data', 'migration_completed');
 };
 
 // 检查是否已完成迁移
@@ -152,7 +152,7 @@ const migrateOldSettings = (): boolean => {
   try {
     logInfo('开始迁移旧设置文件', { 
       source: oldPath,
-      target: 'AppData/traven-manager/data (electron-store)'
+      target: 'AppData/creative-cafe/data (electron-store)'
     });
 
     // 读取旧设置文件
@@ -330,7 +330,7 @@ export function settingHandlers(): void {
   // 获取设置路径（返回 AppData 路径）
   ipcMain.handle('setting:getPath', async () => {
     logDebug('收到 setting:getPath 请求');
-    const dataPath = path.join(getAppDataPath(), 'traven-manager', 'data');
+    const dataPath = path.join(getAppDataPath(), 'creative-cafe', 'data');
     logInfo('返回设置路径', { path: dataPath });
     return dataPath;
   });

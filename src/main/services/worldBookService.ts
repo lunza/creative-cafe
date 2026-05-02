@@ -258,7 +258,7 @@ class WorldBookService {
   }
 
   /**
-   * 将 TravenManager 内部格式导出为 SillyTavern 兼容格式
+   * 将 Creative-Cafe 内部格式导出为 SillyTavern 兼容格式
    */
   private exportToSillyTavernFormat(data: any): any {
     if (!data || !data.entries) return data;
