@@ -1,0 +1,145 @@
+/**
+ * 记忆插件管理组件样式
+ */
+
+.memory-chat-manager-container {
+  padding: 24px;
+  height: 100%;
+  overflow: auto;
+  box-sizing: border-box;
+}
+
+.memory-template-manager,
+.memory-chat-manager {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.template-manager-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.sheet-config {
+  margin-top: 16px;
+}
+
+.sheet-headers {
+  padding: 16px;
+  background: #fafafa;
+  border-radius: 4px;
+  margin-top: 8px;
+}
+
+.session-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+/* 表格容器样式 */
+.table-container {
+  overflow: auto;
+}
+
+/* 卡片样式优化 */
+.ant-card {
+  margin-bottom: 16px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.ant-card-body {
+  flex: 1;
+  overflow: auto;
+}
+
+/* 表格样式优化 */
+.ant-table {
+  margin: 0;
+}
+
+/* 响应式设计 */
+@media (max-width: 1200px) {
+  .memory-chat-manager-container {
+    padding: 16px;
+  }
+}
+
+@media (max-width: 992px) {
+  .ant-row {
+    flex-direction: column;
+  }
+  
+  .ant-col {
+    flex: 1;
+    max-width: 100%;
+    margin-bottom: 16px;
+  }
+  
+  .template-manager-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .session-list-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+@media (max-width: 768px) {
+  .memory-chat-manager-container {
+    padding: 12px;
+  }
+  
+  .ant-card {
+    margin-bottom: 12px;
+  }
+}
+
+/* 暗色模式适配 */
+.dark .sheet-headers {
+  background: #2c2c2c;
+}
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 4px;
+}
+
+.dark ::-webkit-scrollbar-track {
+  background: #2c2c2c;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #555;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a1a1a1;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #777;
+}

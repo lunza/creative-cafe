@@ -1,0 +1,110 @@
+/* 通用列表容器样式 - 以角色卡模块为标准 */
+.list-container {
+  padding: 20px;
+}
+
+/* 通用头部样式 */
+.list-header {
+  margin-bottom: 20px;
+}
+
+.list-header h2 {
+  margin-bottom: 8px;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.list-header .ant-space {
+  margin-top: 16px;
+}
+
+/* 通用卡片样式 */
+.list-container .ant-card {
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* 通用表格样式 */
+.list-container .ant-table {
+  border-radius: 8px;
+}
+
+.list-container .ant-table th {
+  background-color: #f5f5f5;
+  font-weight: 600;
+}
+
+/* 通用模态框样式 */
+.list-container .ant-modal-content {
+  border-radius: 8px;
+}
+
+.list-container .ant-modal-header {
+  border-bottom: 1px solid #f0f0f0;
+  border-radius: 8px 8px 0 0;
+}
+
+.list-container .ant-modal-footer {
+  border-top: 1px solid #f0f0f0;
+  border-radius: 0 0 8px 8px;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .list-container {
+    padding: 10px;
+  }
+
+  .list-header h2 {
+    font-size: 18px;
+  }
+
+  .list-header .ant-space {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .list-header .ant-space > * {
+    margin-bottom: 8px;
+  }
+}
+
+/* 深色模式 */
+.list-container.dark {
+  background-color: #1f1f1f;
+  color: #ffffff;
+}
+
+.list-container.dark .ant-card {
+  background-color: #2f2f2f;
+  color: #ffffff;
+  border: 1px solid #4f4f4f;
+}
+
+.list-container.dark .ant-table th {
+  background-color: #3f3f3f;
+  color: #ffffff;
+}
+
+.list-container.dark .ant-table td {
+  background-color: #2f2f2f;
+  color: #ffffff;
+  border-bottom: 1px solid #4f4f4f;
+}
+
+.list-container.dark .ant-modal-content {
+  background-color: #2f2f2f;
+  color: #ffffff;
+  border: 1px solid #4f4f4f;
+}
+
+.list-container.dark .ant-modal-header {
+  background-color: #3f3f3f;
+  color: #ffffff;
+  border-bottom: 1px solid #4f4f4f;
+}
+
+.list-container.dark .ant-modal-footer {
+  background-color: #2f2f2f;
+  border-top: 1px solid #4f4f4f;
+}

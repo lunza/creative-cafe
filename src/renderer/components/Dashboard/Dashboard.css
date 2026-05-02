@@ -1,0 +1,190 @@
+.dashboard {
+  padding: 24px;
+  position: relative;
+  height: calc(100vh - 64px);
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.dashboard .ant-row {
+  width: 100%;
+}
+
+.dashboard .ant-col {
+  box-sizing: border-box;
+}
+
+.dashboard .ant-card {
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.dashboard .ant-card-body {
+  width: 100%;
+  box-sizing: border-box;
+  text-align: center;
+}
+
+.dashboard h2 {
+  margin-bottom: 24px;
+  font-size: 24px;
+  font-weight: 600;
+  color: #262626;
+}
+
+.dashboard .ant-statistic {
+  text-align: center;
+}
+
+.dashboard .ant-statistic-title {
+  font-size: 14px;
+  color: #8c8c8c;
+}
+
+.dashboard .ant-statistic-content {
+  font-size: 24px;
+  font-weight: 600;
+}
+
+/* 背景图片区域 */
+.dashboard-background {
+  width: 100%;
+  min-height: 100px;
+  background: transparent;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  box-shadow: none;
+}
+
+.dashboard-background img {
+  border-radius: 16px;
+}
+
+.background-placeholder {
+  text-align: center;
+  color: #8c8c8c;
+}
+
+.background-placeholder p {
+  margin: 0;
+  font-size: 16px;
+}
+
+/* 右下角按钮 */
+.dashboard-buttons {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 100;
+}
+
+.start-button, .update-button {
+  font-weight: 600;
+  padding: 0 24px;
+  height: 48px;
+  font-size: 16px;
+  transition: all 0.3s ease;
+}
+
+.start-button {
+  box-shadow: 0 4px 12px rgba(24, 144, 255, 0.3);
+}
+
+.start-button:hover {
+  box-shadow: 0 6px 16px rgba(24, 144, 255, 0.4);
+  transform: translateY(-2px);
+}
+
+.update-button {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.update-button:hover {
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+  transform: translateY(-2px);
+}
+
+/* 只在Windows上使用，不需要响应式设计 */
+
+/* 日志容器样式 */
+.dashboard .log-container {
+  height: calc(100% - 48px);
+  overflow-y: auto;
+  font-family: 'monospace';
+  font-size: 12px;
+  line-height: 1.4;
+  background-color: #f5f5f5;
+  padding: 12px;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  width: 100%;
+  box-sizing: border-box;
+  color: #333;
+}
+
+/* 暗色模式样式 */
+.app-content.dark .dashboard h2 {
+  color: #f0f0f0;
+}
+
+.app-content.dark .dashboard .ant-card {
+  background-color: #1f1f1f;
+  border-color: #333;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.app-content.dark .dashboard .ant-statistic-title {
+  color: #a0a0a0;
+}
+
+.app-content.dark .dashboard .ant-statistic-content {
+  color: #f0f0f0;
+}
+
+.app-content.dark .dashboard .dashboard-background {
+  background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.app-content.dark .dashboard .background-placeholder {
+  color: #a0a0a0;
+}
+
+.app-content.dark .dashboard .ant-card-head-title {
+  color: #f0f0f0;
+}
+
+.app-content.dark .dashboard .ant-card-body {
+  background-color: #1f1f1f;
+}
+
+.app-content.dark .dashboard .ant-btn {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.app-content.dark .dashboard .update-button {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.app-content.dark .dashboard .update-button:hover {
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+/* 日志容器暗色模式样式 */
+.app-content.dark .dashboard .log-container {
+  background-color: #0d0d0d;
+  color: #ffffff;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+
+.app-content.dark .dashboard .log-container .ant-text-secondary {
+  color: #a0a0a0;
+}

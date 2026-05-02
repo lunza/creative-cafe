@@ -1,0 +1,136 @@
+.sidebar {
+  height: 100vh;
+  border-right: 1px solid #f0f0f0;
+  overflow-y: auto;
+  position: relative;
+  background-color: #ffffff;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border-bottom: 1px solid #f0f0f0;
+  min-height: 64px;
+  background-color: #ffffff;
+}
+
+.sidebar-logo {
+  flex: 1;
+  text-align: center;
+}
+
+.sidebar-logo h2 {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1890ff;
+  margin-bottom: 4px;
+  margin: 0;
+}
+
+.sidebar-logo p {
+  font-size: 12px;
+  color: #8c8c8c;
+  margin: 0;
+}
+
+.sidebar-toggle-btn {
+  padding: 4px 8px;
+  font-size: 16px;
+  color: #666;
+  transition: all 0.3s ease;
+}
+
+.sidebar-toggle-btn:hover {
+  color: #1890ff;
+  background-color: #e6f7ff;
+}
+
+.sidebar-menu {
+  border-right: none;
+  background-color: #ffffff;
+}
+
+/* 折叠状态下的样式 */
+.sidebar.ant-layout-sider-collapsed .sidebar-header {
+  justify-content: center;
+  padding: 16px 0;
+}
+
+.sidebar.ant-layout-sider-collapsed .sidebar-toggle-btn {
+  margin: 0;
+}
+
+/* 深色模式适配 */
+@media (prefers-color-scheme: dark) {
+  .sidebar {
+    border-right-color: #333;
+    background-color: #141414;
+  }
+
+  .sidebar-header {
+    border-bottom-color: #333;
+    background-color: #141414;
+  }
+
+  .sidebar-logo h2 {
+    color: #40a9ff;
+  }
+
+  .sidebar-logo p {
+    color: #888;
+  }
+
+  .sidebar-toggle-btn {
+    color: #aaa;
+  }
+
+  .sidebar-toggle-btn:hover {
+    color: #40a9ff;
+    background-color: #1f1f1f;
+  }
+
+  .sidebar-menu {
+    background-color: #141414;
+  }
+}
+
+/* 开发中菜单徽章样式 */
+.dev-menu-badge {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 4px;
+  background: #faad14;
+  color: #fff;
+  border-radius: 2px;
+  font-weight: 500;
+  line-height: 1.4;
+  vertical-align: middle;
+  transition: all 0.2s ease;
+}
+
+.sidebar-menu .ant-menu-item:hover .dev-menu-badge {
+  background: #ffc53d;
+}
+
+.sidebar-menu .ant-menu-item-selected .dev-menu-badge {
+  background: #fff;
+  color: #faad14;
+}
+
+/* 深色模式下的徽章样式 */
+@media (prefers-color-scheme: dark) {
+  .dev-menu-badge {
+    background: #fa8c16;
+  }
+  
+  .sidebar-menu .ant-menu-item:hover .dev-menu-badge {
+    background: #ffa940;
+  }
+  
+  .sidebar-menu .ant-menu-item-selected .dev-menu-badge {
+    background: #faad14;
+    color: #141414;
+  }
+}

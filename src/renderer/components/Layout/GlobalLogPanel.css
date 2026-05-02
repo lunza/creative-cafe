@@ -1,0 +1,108 @@
+.global-log-panel {
+  position: fixed;
+  bottom: 80px;
+  left: 20px;
+  width: 600px;
+  max-width: calc(100vw - 40px);
+  z-index: 999;
+  animation: slideUp 0.3s ease;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.log-panel-card {
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  border-radius: 8px;
+}
+
+.log-panel-content {
+  height: 300px;
+  overflow-y: auto;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  background-color: #ffffff;
+  color: #1890ff;
+  padding: 12px;
+  border-radius: 4px;
+}
+
+.log-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #999;
+}
+
+.log-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.log-entry:last-child {
+  border-bottom: none;
+}
+
+.log-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.log-timestamp {
+  flex-shrink: 0;
+  color: #666;
+  font-weight: 500;
+}
+
+.log-message {
+  flex: 1;
+  word-break: break-all;
+  color: #1890ff;
+}
+
+/* 深色模式适配 */
+@media (prefers-color-scheme: dark) {
+  .log-panel-content {
+    background-color: #1f1f1f;
+    color: #40a9ff;
+  }
+
+  .log-entry {
+    border-bottom-color: #333;
+  }
+
+  .log-timestamp {
+    color: #888;
+  }
+
+  .log-message {
+    color: #40a9ff;
+  }
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .global-log-panel {
+    left: 10px;
+    right: 10px;
+    width: auto;
+    max-width: none;
+  }
+
+  .log-panel-content {
+    height: 250px;
+  }
+}

@@ -1,0 +1,48 @@
+.dark .ant-modal-content {
+  background-color: var(--bg-color, #141414) !important;
+  color: var(--text-color, #ffffff) !important;
+  border: 1px solid var(--border-color, #333333) !important;
+}
+
+.dark .ant-modal-header {
+  background-color: var(--bg-color, #141414) !important;
+  color: var(--text-color, #ffffff) !important;
+  border-bottom: 1px solid var(--border-color, #333333) !important;
+}
+
+.dark .ant-modal-title {
+  color: var(--text-color, #ffffff) !important;
+}
+
+.dark .ant-modal-footer {
+  background-color: var(--bg-color, #141414) !important;
+  color: var(--text-color, #ffffff) !important;
+  border-top: 1px solid var(--border-color, #333333) !important;
+}
+
+.dark .ant-card {
+  background-color: var(--card-bg-color, #1f1f1f) !important;
+  color: var(--text-color, #ffffff) !important;
+  border: 1px solid var(--border-color, #333333) !important;
+}
+
+.dark .ant-card-meta-title {
+  color: var(--text-color, #ffffff) !important;
+}
+
+.dark .ant-card-meta-description {
+  color: var(--text-color, #ffffff) !important;
+}
+
+.dark .ant-btn {
+  color: var(--text-color, #ffffff) !important;
+}
+
+.dark .ant-btn-primary {
+  background-color: var(--primary-color, #1890ff) !important;
+  border-color: var(--primary-color, #1890ff) !important;
+}
+
+.dark .ant-tag {
+  color: var(--text-color, #ffffff) !important;
+}

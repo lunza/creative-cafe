@@ -1,0 +1,48 @@
+/* Milkdown 编辑器光标和空状态修复 */
+
+/* 确保 contenteditable 区域总是可聚焦 */
+.milkdown .ProseMirror {
+  min-height: 150px;
+  padding: 8px 0;
+}
+
+/* 空状态时的光标可见性 */
+.milkdown .ProseMirror:empty::before,
+.milkdown .ProseMirror p:empty::before {
+  content: attr(data-placeholder);
+  color: var(--crepe-color-outline, #8d9199);
+  pointer-events: none;
+}
+
+/* 确保光标始终可见 */
+.milkdown .ProseMirror-focused {
+  outline: none;
+}
+
+.milkdown .ProseMirror .ProseMirror-gapcursor {
+  display: block;
+}
+
+.milkdown .ProseMirror .ProseMirror-gapcursor::after {
+  display: block;
+  content: '';
+  border-top: 1px solid var(--crepe-color-on-surface, #191c20);
+  width: 20px;
+  margin: 0 auto;
+  animation: ProseMirror-cursor-blink 1s steps(1) infinite;
+}
+
+@keyframes ProseMirror-cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* 确保编辑器容器可点击 */
+.milkdown {
+  cursor: text;
+}
+
+/* 空段落确保可见且可点击 */
+.milkdown .ProseMirror p.is-empty:first-child {
+  min-height: 1.5em;
+}

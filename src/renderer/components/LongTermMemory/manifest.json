@@ -1,0 +1,14 @@
+{
+  "name": "Long Term Memory",
+  "version": "1.0.0",
+  "description": "长期记忆插件，用于在对话过程中自动记录和参考Excel表格数据",
+  "author": "TravenManager Team",
+  "license": "MIT",
+  "main": "index.js",
+  "dependencies": {
+    "xlsx": "latest"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  }
+}

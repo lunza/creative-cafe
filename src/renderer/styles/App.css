@@ -1,0 +1,57 @@
+:root {
+  --bg-color: #f0f2f5;
+  --text-color: #000000;
+  --card-bg-color: #ffffff;
+  --border-color: #e8e8e8;
+  --primary-color: #1890ff;
+}
+
+.dark {
+  --bg-color: #141414;
+  --text-color: #ffffff;
+  --card-bg-color: #1f1f1f;
+  --border-color: #333333;
+  --primary-color: #1890ff;
+}
+
+.app-layout {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  box-sizing: border-box;
+}
+
+.app-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  background: var(--bg-color);
+  color: var(--text-color);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 确保所有内容区域都能正确响应窗口大小变化 */
+.app-content > * {
+  flex: 1;
+  min-height: 0;
+}
+
+/* 响应式布局 */
+@media (max-width: 1200px) {
+  .app-content {
+    padding: 16px;
+  }
+}
+
+@media (max-width: 768px) {
+  .app-content {
+    padding: 12px;
+  }
+}
+
+.app-content.dark {
+  background: var(--bg-color);
+  color: var(--text-color);
+}

@@ -1,0 +1,32 @@
+.floating-log-button {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  z-index: 1000;
+}
+
+.log-toggle-btn {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transition: all 0.3s ease;
+}
+
+.log-toggle-btn:hover {
+  transform: scale(1.1);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+}
+
+.log-toggle-btn.active {
+  background-color: #52c41a;
+  border-color: #52c41a;
+}
+
+/* 深色模式适配 */
+@media (prefers-color-scheme: dark) {
+  .log-toggle-btn {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  }
+  
+  .log-toggle-btn:hover {
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+  }
+}

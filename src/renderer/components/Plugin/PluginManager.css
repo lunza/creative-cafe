@@ -1,0 +1,166 @@
+.plugin-manager {
+  padding: 20px;
+}
+
+.plugin-header {
+  margin-bottom: 20px;
+}
+
+.plugin-header h2 {
+  margin-bottom: 8px;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.plugin-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.plugin-tabs-card {
+  border-radius: 8px;
+}
+
+.plugin-card {
+  height: 100%;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.plugin-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.plugin-card-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.plugin-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.plugin-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 20px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.plugin-detail-avatar {
+  width: 80px;
+  height: 80px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 32px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.plugin-card-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.plugin-name {
+  font-size: 14px;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.plugin-version {
+  font-size: 12px;
+}
+
+.plugin-card-body {
+  flex: 1;
+}
+
+.plugin-description {
+  font-size: 13px;
+  color: #666;
+  line-height: 1.5;
+}
+
+.plugin-card-footer {
+  padding-top: 8px;
+  border-top: 1px solid #f0f0f0;
+}
+
+.plugin-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 0;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .plugin-manager {
+    padding: 10px;
+  }
+
+  .plugin-header h2 {
+    font-size: 18px;
+  }
+
+  .plugin-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .plugin-toolbar .ant-space {
+    width: 100%;
+  }
+
+  .plugin-toolbar .ant-space > * {
+    width: 100%;
+  }
+}
+
+/* 深色模式 */
+.plugin-manager.dark {
+  background-color: #1f1f1f;
+  color: #ffffff;
+}
+
+.plugin-manager.dark .plugin-tabs-card {
+  background-color: #2f2f2f;
+  color: #ffffff;
+  border: 1px solid #4f4f4f;
+}
+
+.plugin-manager.dark .plugin-card {
+  background-color: #2f2f2f;
+  color: #ffffff;
+  border: 1px solid #4f4f4f;
+}
+
+.plugin-manager.dark .plugin-description {
+  color: #aaa;
+}
+
+.plugin-manager.dark .plugin-card-footer {
+  border-top-color: #4f4f4f;
+}
