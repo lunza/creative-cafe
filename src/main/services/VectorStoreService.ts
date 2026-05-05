@@ -76,6 +76,16 @@ export class VectorStoreService {
     return this.storeBySource.get(key)!;
   }
 
+  removeStoreFromCache(source: string, sourceId: string): boolean {
+    const key = `${source}:${sourceId}`;
+    const existed = this.storeBySource.has(key);
+    if (existed) {
+      this.storeBySource.delete(key);
+      console.log(`[VectorStoreService] Removed store from cache: ${key}`);
+    }
+    return existed;
+  }
+
   private log(level: VectorTestLog['level'], message: string) {
     this.testLogs.push({ level, message, timestamp: Date.now() });
     console.log(`[VectorTest] [${level.toUpperCase()}] ${message}`);
@@ -378,7 +388,12 @@ export class VectorStoreService {
       
       for (const scope of scopes) {
         const key = `${scope.sourceType}:${scope.sourceId}`;
-        if (!this.storeBySource.has(key)) {
+        const existingStore = this.storeBySource.get(key);
+        if (existingStore && !existingStore.initialized) {
+          // 关键修复：store 存在于 Map 中但已销毁，需要重新初始化
+          console.log(`[VectorStoreService] loadExistingStoresFromRegistry: re-initializing destroyed store for ${key}`);
+          await existingStore.initialize({ source: scope.sourceType, sourceId: scope.sourceId });
+        } else if (!existingStore) {
           const sourceStore = this.getVecstoreStoreForSource(scope.sourceType, scope.sourceId);
           if (!sourceStore.initialized) {
             await sourceStore.initialize({ source: scope.sourceType, sourceId: scope.sourceId });
@@ -574,9 +589,11 @@ export class VectorStoreService {
       } else if (options?.sourceType) {
         // Search only specified source type
         const sourceStore = this.getVecstoreStoreForSource(options.sourceType, options.sourceType);
-        if (sourceStore.initialized) {
-          results = await sourceStore.search(query, topK, filter);
+        if (!sourceStore.initialized) {
+          console.log(`[VectorStoreService] search(): initializing uninitialized store for sourceType ${options.sourceType}`);
+          await sourceStore.initialize({ source: options.sourceType, sourceId: options.sourceType });
         }
+        results = await sourceStore.search(query, topK, filter);
       } else {
         // Default behavior: search ALL sources and merge results (aggregate mode)
         const allResults: SearchResult[] = [];
@@ -588,11 +605,17 @@ export class VectorStoreService {
         }
         
         // Search all source stores
-        for (const [, store] of this.storeBySource) {
-          if (store.initialized) {
-            const sourceResults = await store.search(query, topK * 2, filter);
-            allResults.push(...sourceResults);
+        for (const [key, store] of this.storeBySource) {
+          if (!store.initialized) {
+            // 关键修复：与 scopeIds 路径一致，先初始化再搜索
+            const parts = key.split(':');
+            const source = parts[0];
+            const sourceId = parts.slice(1).join(':');
+            console.log(`[VectorStoreService] search(): initializing uninitialized store for ${key} in aggregate mode`);
+            await store.initialize({ source, sourceId });
           }
+          const sourceResults = await store.search(query, topK * 2, filter);
+          allResults.push(...sourceResults);
         }
         
         // Merge and sort by similarity

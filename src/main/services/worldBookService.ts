@@ -351,7 +351,8 @@ class WorldBookService {
               const store = vectorStoreService.getVecstoreStoreForSource(entry.sourceType, entry.sourceId);
               if (store) {
                 await store.destroyAndDeleteFiles();
-                console.log(`[WorldBookService] deleteWorldBook: vecstore files deleted for ${entry.sourceType}:${entry.sourceId}`);
+                vectorStoreService.removeStoreFromCache(entry.sourceType, entry.sourceId);
+                console.log(`[WorldBookService] deleteWorldBook: vecstore files deleted and cache cleaned for ${entry.sourceType}:${entry.sourceId}`);
               }
             } catch (err) {
               console.warn(`[WorldBookService] deleteWorldBook: failed to delete vecstore files`, err);

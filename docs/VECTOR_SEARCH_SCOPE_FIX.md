@@ -569,6 +569,9 @@ totalDeleted = deleted1 + deleted2;
 | v1.9.6 | 2026-05-04 | Bug 12 | `deleteWorldBook` 未删除向量化数据（世界书删除时只删除 JSON 文件，vecstore 数据残留） |
 | v1.9.6 | 2026-05-04 | Bug 13 | 删除世界书未更新 vector_registry.json 注册表（注册表计数与实际不符） |
 | v1.9.7 | 2026-05-04 | Bug 14 | `deleteDocument` 使用注册表 ID 时无法找到条目（传入 `reg_xxx` 但注册表按 `sourceId` 查找，且 worldbook 类型使用 `wb_{name}_` 前缀而非 `doc:` 前缀） |
+| v1.9.8 | 2026-05-05 | Bug 15 | **⚠️ 重点标记：Bug 1 的再现 — 聚合搜索路径（无 scopeIds）跳过未初始化的 store**（`VectorStoreService.search()` 第 580-599 行的 `storeBySource` 遍历中，`if (store.initialized)` 条件跳过已销毁但未清理 Map 的 store，与 Bug 1 的 scopeIds 路径缺陷完全同源）。同步修复 sourceType-only 路径的相同缺陷 |
+| v1.9.8 | 2026-05-05 | Bug 16 | **⚠️ 重点标记：`destroyAndDeleteFiles()` 后 `storeBySource` Map 残留**（删除世界书/文档后 store 实例留在 Map 中但 `initialized = false`，导致 `loadExistingStoresFromRegistry()` 和聚合搜索双重跳过）。新增 `removeStoreFromCache()` 方法解决 |
+| v1.9.8 | 2026-05-05 | Bug 17 | `loadMetadataFromFile()` 路径回退缺陷（`metadataFilePath` 为空时回退到根级默认路径 `userData/METADATA_FILE`，应为 source-specific 路径 `userData/vectors/{source}/{safeSourceId}/METADATA_FILE`） |
 
 **注意**: Bug 4 修复后首次重启应用仍然失败，是因为 Bug 5-7 尚未修复。需要同时修复 Bug 4-7 才能彻底解决问题。
 
@@ -588,3 +591,100 @@ totalDeleted = deleted1 + deleted2;
 10. **文件头元数据优先**: vecstore.json 的文件头包含 `dimension` 字段，应优先从文件头读取维度值，而不是依赖第一条向量的长度推断。这既提高了性能，也避免了向量维度不一致时的错误
 11. **多层级 Bug 的隐蔽性**: Bug 4 修复后问题仍然存在，说明存在多层级的问题。数据层面正确不代表运行时正确，必须通过编写完整的调试脚本模拟实际运行流程来逐层验证
 12. **编译与源码一致性**: 修改 TypeScript 源码后必须重新编译，否则 Electron 应用仍在使用旧的 `dist/` 目录中的代码。编译失败或缓存可能导致修复未生效
+13. **⚠️ 重点标记：修复 bug 时应全面审查所有搜索路径**：Bug 1 修复了 scopeIds 路径但遗漏了聚合路径和 sourceType-only 路径，导致 Bug 15。修复流程必须对所有代码路径进行一致性审查，确保同类问题不会在不同模式间重复出现
+14. **⚠️ 重点标记：生命周期管理的完整性**：`destroyAndDeleteFiles()` 清理了物理文件和内部状态但未通知容器（`storeBySource` Map），导致 Bug 16。资源的创建和销毁必须对称，销毁时必须通知所有持有引用的容器
+15. **⚠️ 重点标记：回退路径的风险**：`loadMetadataFromFile()` 的回退路径指向全局默认文件而非 source-specific 文件，可能导致读取到错误的元数据。回退代码应该只在确实无法构造正确路径时才使用，且应记录警告
+
+---
+
+## Bug 15: 聚合搜索路径 Store 未初始化 (v1.9.8) ⚠️ 重点标记
+
+**严重程度**: 🔴 高 — 导致无 scope 选择的搜索返回不完整或空结果
+
+**发现日期**: 2026-05-05
+
+### 现象
+- 用户未选择任何 scope 时，搜索"疯狂动物城"返回空结果或不包含预期条目
+- 磁盘数据文件（vecstore.json、metadata、registry）全部正确
+- 只有选中特定 scope 时搜索才正常
+
+### 原因
+`VectorStoreService.search()` 第 580-599 行的聚合搜索路径：
+```typescript
+for (const [, store] of this.storeBySource) {
+  if (store.initialized) {  // ← 跳过未初始化的 store！
+    const sourceResults = await store.search(query, topK * 2, filter);
+    allResults.push(...sourceResults);
+  }
+}
+```
+
+Bug 1 的 scopeIds 路径已修复（先初始化再搜索），但聚合路径和 sourceType-only 路径未同步修复。
+
+### 修复
+在三个搜索路径（scopeIds、sourceType-only、aggregate）中统一处理未初始化 store：
+```typescript
+if (!store.initialized) {
+  await store.initialize({ source, sourceId });
+}
+await store.search(...)
+```
+
+### 修复文件
+- [VectorStoreService.ts](file:///g:/AI/creative-cafe/src/main/services/VectorStoreService.ts#L580-L599)
+
+---
+
+## Bug 16: destroyAndDeleteFiles() 后 Map 残留 (v1.9.8) ⚠️ 重点标记
+
+**严重程度**: 🔴 高 — 导致删除后重新向量化的搜索功能不可用
+
+**发现日期**: 2026-05-05
+
+### 现象
+- 删除世界书后重新向量化，搜索时仍跳过该世界书的向量数据
+- `loadExistingStoresFromRegistry()` 找不到新向量化数据
+
+### 原因
+`VecstoreVectorStore.destroyAndDeleteFiles()` 将 `this.initialized = false` 但并不从 `storeBySource` Map 中移除自身。之后：
+1. `loadExistingStoresFromRegistry()` 检查 `storeBySource.has(key)` → true → 跳过初始化
+2. 聚合搜索检查 `store.initialized` → false → 跳过搜索
+
+### 修复
+1. 在 `VectorStoreService` 添加 `removeStoreFromCache(source, sourceId)` 公开方法
+2. 在 `worldBookService.deleteWorldBook()` 的 `destroyAndDeleteFiles()` 后调用 `removeStoreFromCache()`
+3. 在 `loadExistingStoresFromRegistry()` 中增加对已存在但未初始化 store 的重新初始化逻辑
+
+### 修复文件
+- [VectorStoreService.ts](file:///g:/AI/creative-cafe/src/main/services/VectorStoreService.ts#L77-L85)
+- [worldBookService.ts](file:///g:/AI/creative-cafe/src/main/services/worldBookService.ts#L351-L356)
+
+---
+
+## Bug 17: Metadata 路径回退缺陷 (v1.9.8)
+
+**严重程度**: 🟡 中 — 极端情况下可能加载错误的元数据文件
+
+**发现日期**: 2026-05-05
+
+### 现象
+- 当 `metadataFilePath` 未提前设置时，回退路径指向全局默认文件而非 source-specific 文件
+
+### 原因
+```typescript
+if (!this.metadataFilePath) {
+  this.metadataFilePath = path.join(app.getPath('userData'), METADATA_FILE);
+  // 错误：使用了根级 vecstore_metadata.json，而非 vectors/worldbook/{name}/vecstore_metadata.json
+}
+```
+
+### 修复
+将回退路径改为 source-specific 路径：
+```typescript
+if (!this.metadataFilePath) {
+  this.metadataFilePath = path.join(app.getPath('userData'), 'vectors', this.source, this.getSafeSourceId(), METADATA_FILE);
+}
+```
+
+### 修复文件
+- [VecstoreVectorStore.ts](file:///g:/AI/creative-cafe/src/main/services/VecstoreVectorStore.ts#L840-L843)

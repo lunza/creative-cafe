@@ -215,7 +215,22 @@ export class VecstoreVectorStore {
       // 从持久化文件加载元数据（解决 WASM query 不返回 metadata 的问题）
       await this.loadMetadataFromFile();
       
-      console.log(`[VecstoreVectorStore] Metadata cache loaded ${this.metadataCache.size} entries from file`);
+      // 数据完整性验证
+      const storeLen = this.store?.len() || 0;
+      const metadataLen = this.metadataCache.size;
+      console.log(`[VecstoreVectorStore] Metadata cache loaded ${metadataLen} entries from file`);
+      
+      if (storeLen > 0 && metadataLen === 0) {
+        console.error(`[VecstoreVectorStore] ⚠️ DATA INTEGRITY WARNING: Store has ${storeLen} vectors but metadata cache is empty!`);
+        console.error(`[VecstoreVectorStore] Metadata file path: ${this.metadataFilePath}`);
+        console.error(`[VecstoreVectorStore] Metadata file exists: ${fs.existsSync(this.metadataFilePath)}`);
+      } else if (storeLen > 0 && metadataLen !== storeLen) {
+        console.warn(`[VecstoreVectorStore] ⚠️ DATA MISMATCH: Store has ${storeLen} vectors but metadata cache has ${metadataLen} entries`);
+      } else if (storeLen === 0 && metadataLen > 0) {
+        console.warn(`[VecstoreVectorStore] ⚠️ ORPHAN METADATA: Store is empty but metadata has ${metadataLen} entries`);
+      } else {
+        console.log(`[VecstoreVectorStore] ✅ Data integrity check passed: ${storeLen} vectors, ${metadataLen} metadata entries`);
+      }
     } catch (error) {
       if (error instanceof Error && error.message === '操作超时') {
         console.error('[VecstoreVectorStore] WASM initialization timeout after', WASM_INIT_TIMEOUT, 'ms');
@@ -839,7 +854,7 @@ export class VecstoreVectorStore {
 
   private async loadMetadataFromFile(): Promise<void> {
     if (!this.metadataFilePath) {
-      this.metadataFilePath = path.join(app.getPath('userData'), METADATA_FILE);
+      this.metadataFilePath = path.join(app.getPath('userData'), 'vectors', this.source, this.getSafeSourceId(), METADATA_FILE);
     }
 
     try {

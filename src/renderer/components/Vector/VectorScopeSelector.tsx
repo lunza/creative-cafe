@@ -50,10 +50,17 @@ export const VectorScopeSelector: React.FC<VectorScopeSelectorProps> = ({
     }
   }, [getAvailableScopes, initialized]);
 
-  // 当下拉框打开时，自动刷新可用范围列表
+  // 当下拉框打开时，异步刷新可用范围列表（不阻塞下拉框显示）
   const handleDropdownVisibleChange = async (open: boolean) => {
     if (open) {
-      await fetchLatestScopes();
+      // 使用 setTimeout 避免阻塞下拉框渲染
+      setTimeout(async () => {
+        try {
+          await getAvailableScopes();
+        } catch (err) {
+          console.error('[VectorScopeSelector] Failed to refresh scopes:', err);
+        }
+      }, 0);
     }
   };
 
@@ -150,42 +157,34 @@ export const VectorScopeSelector: React.FC<VectorScopeSelectorProps> = ({
         </Space>
       </div>
 
-      {loading || scopesLoading ? (
-        <div style={{ textAlign: 'center', padding: '16px 0' }}>
-          <Spin size="small" />
-          <span style={{ marginLeft: 8, color: '#999' }}>加载查询范围...</span>
-        </div>
-      ) : availableScopes.length === 0 ? (
-        <Empty 
-          image={Empty.PRESENTED_IMAGE_SIMPLE} 
-          description="暂无可用的查询范围，请先完成向量化"
-          style={{ padding: '16px 0' }}
-        />
-      ) : (
-        <>
-          <Select
-            mode="multiple"
-            allowClear
-            placeholder={placeholder}
-            value={value ?? selectedScopes}
-            onChange={handleScopeChange}
-            options={options}
-            disabled={disabled}
-            tagRender={tagRender}
-            maxTagCount="responsive"
-            optionFilterProp="label"
-            style={{ width: '100%' }}
-            size="middle"
-            onDropdownVisibleChange={handleDropdownVisibleChange}
-          />
-          
-          {selectedScopesData.length > 0 && (
-            <div style={{ marginTop: 8, fontSize: 12, color: '#666' }}>
-              总计 {selectedScopesData.reduce((sum, s) => sum + s.vectorCount, 0)} 条向量数据
+      <>
+        <Select
+          mode="multiple"
+          allowClear
+          placeholder={placeholder}
+          value={value ?? selectedScopes}
+          onChange={handleScopeChange}
+          options={options}
+          disabled={disabled || (availableScopes.length === 0 && !loading && !scopesLoading)}
+          tagRender={tagRender}
+          maxTagCount="responsive"
+          optionFilterProp="label"
+          style={{ width: '100%' }}
+          size="middle"
+          onDropdownVisibleChange={handleDropdownVisibleChange}
+          dropdownRender={availableScopes.length === 0 ? (menu) => (
+            <div style={{ padding: '16px', textAlign: 'center', color: '#999' }}>
+              暂无可用的查询范围，请先完成向量化
             </div>
-          )}
-        </>
-      )}
+          ) : undefined}
+        />
+        
+        {selectedScopesData.length > 0 && (
+          <div style={{ marginTop: 8, fontSize: 12, color: '#666' }}>
+            总计 {selectedScopesData.reduce((sum, s) => sum + s.vectorCount, 0)} 条向量数据
+          </div>
+        )}
+      </>
     </div>
   );
 };
