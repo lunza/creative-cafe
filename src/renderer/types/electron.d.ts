@@ -22,6 +22,15 @@ interface ElectronAPI {
     readTags: (path: string) => Promise<any>;
     writeTags: (path: string, data: any) => Promise<any>;
     deleteTags: (path: string) => Promise<any>;
+    vectorize: (path: string) => Promise<{ 
+      success: boolean; 
+      descriptionVectorized: boolean; 
+      entriesVectorized: number; 
+      entriesFailed: number; 
+      error?: string;
+      descriptionVectorId?: string;
+      entryVectorIds: string[];
+    }>;
   };
   character: {
     list: () => Promise<any[]>;
@@ -177,7 +186,7 @@ interface ElectronAPI {
     count: () => Promise<{ success: boolean; count?: number; error?: string }>;
     rebuildIndex: () => Promise<{ success: boolean; error?: string }>;
     setMode: (mode: string) => Promise<{ success: boolean; error?: string }>;
-    testStorage: () => Promise<{ success: boolean; mode: string; vectorCount: number; error?: string; details?: string }>;
+    testStorage: () => Promise<{ success: boolean; mode: string; vectorCount: number; storagePath?: string; error?: string; details?: string }>;
   };
   // 向量嵌入 API
   embedding: {
@@ -188,20 +197,37 @@ interface ElectronAPI {
   };
   // 知识库 API
   knowledge: {
-    list: () => Promise<any[]>;
+    list: (filter?: Record<string, any>, page?: number, pageSize?: number) => Promise<{ success: boolean; items?: any[]; total?: number; error?: string }>;
     get: (id: string) => Promise<any>;
     create: (data: any) => Promise<{ success: boolean; id?: string; error?: string }>;
+    createBatch: (items: any[]) => Promise<{ success: boolean; count?: number; error?: string }>;
     update: (id: string, data: any) => Promise<{ success: boolean; error?: string }>;
     delete: (id: string) => Promise<{ success: boolean; error?: string }>;
+    deleteBatch: (ids: string[]) => Promise<{ success: boolean; count?: number; error?: string }>;
+    search: (query: string, options?: any) => Promise<{ success: boolean; results?: any[]; error?: string }>;
     vectorize: (id: string) => Promise<{ success: boolean; error?: string }>;
     vectorizeAll: () => Promise<{ success: boolean; count?: number; error?: string }>;
-    getVersionHistory: (id: string) => Promise<number[]>;
-    restoreVersion: (id: string, version: number) => Promise<{ success: boolean; error?: string }>;
+    uploadDocument: (filePath: string, options?: { category?: string[]; tags?: string[]; source?: string }) => Promise<{ success: boolean; documentId?: string; knowledgeItemsCreated?: number; chunkCount?: number; error?: string; isDuplicate?: boolean }>;
+    selectDocumentFile: () => Promise<string | null>;
   };
   // 上下文管理 API
   context: {
     retrieve: (conversation: Array<{ role: string; content: string }>, options: { topK?: number; minScore?: number; sources?: string[]; filter?: Record<string, any> }) => Promise<{ success: boolean; items?: Array<{ id: string; source: string; content: string; score: number; metadata: Record<string, any> }>; error?: string }>;
     compress: (items: Array<{ id: string; source: string; content: string; score: number }>, maxTokens: number) => Promise<{ success: boolean; compressed?: string; error?: string }>;
+  };
+
+  // 文档向量化 API
+  document: {
+    process: (filePath: string) => Promise<any>;
+    list: () => Promise<any[]>;
+    delete: (docId: string) => Promise<boolean>;
+    deleteBatch: (docIds: string[]) => Promise<number>;
+    getInfo: (docId: string) => Promise<any | null>;
+    getChunks: (docId: string) => Promise<Array<{ index: number; text: string }>>;
+    searchVectors: (queryText: string, topK: number, docId?: string) => Promise<{ success: boolean; results?: Array<{ id: string; score: number; metadata: Record<string, any> }>; error?: string }>;
+    getVectorStats: () => Promise<{ totalVectors: number; documentCount: number; documents: Array<{ docId: string; fileName: string; vectorCount: number }> }>;
+    generateEmbedding: (text: string) => Promise<{ success: boolean; vector?: number[]; error?: string; dimension?: number }>;
+    selectFile: () => Promise<string | null>;
   };
 }
 

@@ -5,7 +5,9 @@ import { optimizerService } from './optimizerService';
 import { getUserDataPath } from '../utils/appPath';
 import { embeddingService } from './EmbeddingService';
 import { vectorStoreService } from './VectorStoreService';
+import { vectorRegistryService } from './VectorRegistryService';
 import { getStorageService } from './storageService';
+import { VectorSourceType, VectorSourceTypeStorageConfig } from '../types/vectorConfig';
 
 class WorldBookService {
   private worldBookDir: string;
@@ -317,11 +319,67 @@ class WorldBookService {
 
   async deleteWorldBook(filePath: string) {
     try {
+      console.log(`[WorldBookService] deleteWorldBook: starting deletion for ${filePath}`);
+      
+      // Extract worldbook name from file path (e.g., "狼人杀1.0_修复版" from path)
+      const worldBookName = path.basename(filePath).replace(/\.(json|json5)$/, '');
+      console.log(`[WorldBookService] deleteWorldBook: worldBookName=${worldBookName}`);
+      
+      // Step 1: Delete vectorized data from vecstore
+      const registryEntries = await vectorRegistryService.getVectorFilesBySourceId(worldBookName);
+      console.log(`[WorldBookService] deleteWorldBook: found ${registryEntries.length} registry entries`);
+      
+      let totalDeleted = 0;
+      if (registryEntries.length > 0) {
+        for (const entry of registryEntries) {
+          console.log(`[WorldBookService] deleteWorldBook: deleting vectors from ${entry.sourceType}:${entry.sourceId}`);
+          const deleted = await vectorStoreService.deleteByPrefix(`wb_${worldBookName}_`, {
+            sourceType: entry.sourceType,
+            sourceId: entry.sourceId,
+          });
+          totalDeleted += deleted;
+          console.log(`[WorldBookService] deleteWorldBook: deleted ${deleted} vectors`);
+          
+          // Update or remove registry entry and delete vecstore files
+          const remainingCount = await vectorStoreService.countByPrefix(`wb_${worldBookName}_`);
+          if (remainingCount === 0) {
+            console.log(`[WorldBookService] deleteWorldBook: removing registry entry ${entry.id} and deleting vecstore files`);
+            await vectorRegistryService.deleteVectorFile(entry.id);
+            
+            // Delete vecstore files
+            try {
+              const store = vectorStoreService.getVecstoreStoreForSource(entry.sourceType, entry.sourceId);
+              if (store) {
+                await store.destroyAndDeleteFiles();
+                console.log(`[WorldBookService] deleteWorldBook: vecstore files deleted for ${entry.sourceType}:${entry.sourceId}`);
+              }
+            } catch (err) {
+              console.warn(`[WorldBookService] deleteWorldBook: failed to delete vecstore files`, err);
+            }
+          } else {
+            console.log(`[WorldBookService] deleteWorldBook: updating vectorCount to ${remainingCount}`);
+            await vectorRegistryService.updateVectorFile(entry.id, { vectorCount: remainingCount });
+          }
+        }
+      } else {
+        // Fallback: global delete without specific store targeting
+        console.log(`[WorldBookService] deleteWorldBook: no registry entries, falling back to global delete`);
+        totalDeleted = await vectorStoreService.deleteByPrefix(`wb_${worldBookName}_`);
+        console.log(`[WorldBookService] deleteWorldBook: deleted ${totalDeleted} vectors from all stores`);
+      }
+      
+      // Step 2: Delete the worldbook JSON file
       await fs.unlink(filePath);
+      console.log(`[WorldBookService] deleteWorldBook: deleted worldbook file`);
+      
+      // Step 3: Delete tags
       await this.deleteTags(filePath);
-      return { success: true };
+      console.log(`[WorldBookService] deleteWorldBook: deleted tags`);
+      
+      console.log(`[WorldBookService] deleteWorldBook: completed, totalDeleted=${totalDeleted}`);
+      return { success: true, deletedVectors: totalDeleted };
     } catch (error) {
-      console.error('Failed to delete world book:', error);
+      console.error(`[WorldBookService] deleteWorldBook failed for ${filePath}:`, error);
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
@@ -448,7 +506,7 @@ class WorldBookService {
       const vectorId = `wb_${path.basename(worldBookPath, path.extname(worldBookPath))}_${entryUid}`;
       await vectorStoreService.add(vectorId, embedResult.vector, {
         text: entryContent,
-        source: 'worldbook',
+        source: VectorSourceType.WORLDBOOK,
         sourceId: worldBookPath,
         entryUid: String(entryUid),
         key: entryKey || [],
@@ -456,6 +514,10 @@ class WorldBookService {
         createdAt: Date.now(),
         updatedAt: Date.now()
       });
+
+      // 关键修复：向量化完成后立即执行持久化，确保数据不丢失
+      await vectorStoreService.persist();
+      console.log(`[WorldBookService] vectorizeEntry: persisted ${vectorId} after vectorization`);
 
       return { success: true };
     } catch (error) {
@@ -491,7 +553,7 @@ class WorldBookService {
       }
 
       const results = await vectorStoreService.search(embedResult.vector, topK, {
-        source: 'worldbook',
+        source: VectorSourceType.WORLDBOOK,
         worldBookPath: worldBookPath
       });
 
@@ -499,6 +561,202 @@ class WorldBookService {
     } catch (error) {
       console.error('Failed to search world book entries:', error);
       return [];
+    }
+  }
+
+  /**
+   * 世界书完整向量化处理 - 新的分片规则
+   * 分片0: 世界书的 name + description
+   * 分片1,2,3...: entries 按顺序编号，内容为 key+keysecondary+keys+secondary_keys+comment+content
+   * @param worldBookPath 世界书文件路径
+   * @returns 向量化处理结果
+   */
+  async vectorizeWorldBook(worldBookPath: string): Promise<{ 
+    success: boolean; 
+    entriesVectorized: number;
+    entriesFailed: number;
+    error?: string;
+    entryVectorIds: string[];
+  }> {
+    try {
+      console.log(`[WorldBookService] vectorizeWorldBook: starting for ${worldBookPath}`);
+      
+      // 读取世界书内容
+      const worldBookData = await this.readWorldBook(worldBookPath);
+      if (!worldBookData) {
+        return { success: false, entriesVectorized: 0, entriesFailed: 0, error: '读取世界书失败', entryVectorIds: [] };
+      }
+
+      const worldBookName = path.basename(worldBookPath, path.extname(worldBookPath));
+      const result = {
+        success: true,
+        entriesVectorized: 0,
+        entriesFailed: 0,
+        entryVectorIds: [] as string[]
+      };
+
+      // 分片0: 世界书的 name + description
+      if (worldBookData.description || worldBookName) {
+        console.log(`[WorldBookService] vectorizeWorldBook: creating chunk 0 (name + description)`);
+        const chunk0Text = `世界书名称: ${worldBookName}\n描述: ${worldBookData.description || ''}`;
+        const chunk0Id = `wb_${worldBookName}_0`;
+        
+        try {
+          const chunk0EmbedResult = await embeddingService.generateEmbedding(chunk0Text);
+          if (chunk0EmbedResult.success && chunk0EmbedResult.vector) {
+            const chunk0Metadata: Record<string, any> = {
+              text: chunk0Text,
+              source: VectorSourceType.WORLDBOOK,
+              sourceId: worldBookName,
+              sourceType: 'description',
+              worldBookPath: worldBookPath,
+              worldBookName: worldBookName,
+              chunkIndex: 0,
+              entryUid: '0',
+              entryName: '世界书描述',
+              isDescriptionChunk: true,
+              createdAt: Date.now(),
+              updatedAt: Date.now()
+            };
+            await vectorStoreService.add(chunk0Id, chunk0EmbedResult.vector, chunk0Metadata);
+            result.entriesVectorized++;
+            result.entryVectorIds.push(chunk0Id);
+            console.log(`[WorldBookService] vectorizeWorldBook: chunk 0 (description) vectorized successfully`);
+          } else {
+            result.entriesFailed++;
+            console.warn(`[WorldBookService] vectorizeWorldBook: chunk 0 vectorization failed: ${chunk0EmbedResult.error}`);
+          }
+        } catch (error) {
+          result.entriesFailed++;
+          console.error(`[WorldBookService] vectorizeWorldBook: chunk 0 vectorization error:`, error);
+        }
+      }
+
+      // 分片1,2,3...: entries 按顺序编号
+      if (worldBookData.entries && Object.keys(worldBookData.entries).length > 0) {
+        console.log(`[WorldBookService] vectorizeWorldBook: vectorizing ${Object.keys(worldBookData.entries).length} entries as chunks 1,2,3...`);
+        
+        let chunkIndex = 1;
+        for (const [key, entry] of Object.entries(worldBookData.entries)) {
+          const e = entry as any;
+          const entryUid = e.uid || key;
+          
+          // 跳过被禁用的条目
+          if (e.disable || e.enabled === false) {
+            console.log(`[WorldBookService] vectorizeWorldBook: skipping disabled entry ${entryUid}`);
+            continue;
+          }
+
+          // 构建向量化文本：key+keysecondary+keys+secondary_keys+comment+content
+          const vectorizeText = [
+            ...(e.key || []),
+            ...(e.keysecondary || []),
+            ...(e.secondary_keys || []),
+            e.comment || '',
+            e.content || ''
+          ].filter(Boolean).join('\n');
+          
+          if (!vectorizeText.trim()) {
+            console.log(`[WorldBookService] vectorizeWorldBook: skipping empty entry ${entryUid}`);
+            continue;
+          }
+
+          const entryVectorId = `wb_${worldBookName}_${chunkIndex}`;
+          
+          try {
+            console.log(`[WorldBookService] vectorizeWorldBook: vectorizing chunk ${chunkIndex} (uid: ${entryUid})`);
+            
+            const entryEmbedResult = await embeddingService.generateEmbedding(vectorizeText);
+            
+            if (entryEmbedResult.success && entryEmbedResult.vector) {
+              const entryMetadata: Record<string, any> = {
+                text: vectorizeText,
+                source: VectorSourceType.WORLDBOOK,
+                sourceId: worldBookName,
+                sourceType: 'entry',
+                worldBookPath: worldBookPath,
+                worldBookName: worldBookName,
+                chunkIndex: chunkIndex,
+                entryUid: String(entryUid),
+                entryName: e.name || e.comment || `Entry ${entryUid}`,
+                entryKey: e.key || [],
+                entryKeySecondary: e.keysecondary || [],
+                entryKeys: [...(e.key || []), ...(e.keysecondary || [])],
+                entrySecondaryKeys: e.secondary_keys || e.keysecondary || [],
+                entryComment: e.comment || '',
+                entryContent: e.content || '',
+                isEntry: true,
+                isDescriptionChunk: false,
+                entryOrder: e.order !== undefined ? e.order : 100,
+                entryPosition: e.position !== undefined ? e.position : 1,
+                entryProbability: e.probability !== undefined ? e.probability : 100,
+                entryGroup: e.group || '',
+                entryConstant: e.constant !== undefined ? e.constant : false,
+                entrySelective: e.selective !== undefined ? e.selective : true,
+                entryDepth: e.depth !== undefined ? e.depth : 4,
+                entryDisplayIndex: e.displayIndex !== undefined ? e.displayIndex : 0,
+                entryAddMemo: e.addMemo !== undefined ? e.addMemo : true,
+                entryUseProbability: e.useProbability !== undefined ? e.useProbability : true,
+                createdAt: Date.now(),
+                updatedAt: Date.now()
+              };
+
+              await vectorStoreService.add(entryVectorId, entryEmbedResult.vector, entryMetadata);
+              result.entriesVectorized++;
+              result.entryVectorIds.push(entryVectorId);
+              console.log(`[WorldBookService] vectorizeWorldBook: chunk ${chunkIndex} (uid: ${entryUid}) vectorized successfully`);
+            } else {
+              result.entriesFailed++;
+              console.warn(`[WorldBookService] vectorizeWorldBook: chunk ${chunkIndex} (uid: ${entryUid}) vectorization failed: ${entryEmbedResult.error}`);
+            }
+          } catch (error) {
+            result.entriesFailed++;
+            console.error(`[WorldBookService] vectorizeWorldBook: chunk ${chunkIndex} (uid: ${entryUid}) vectorization error:`, error);
+          }
+          
+          chunkIndex++;
+        }
+      } else {
+        console.log(`[WorldBookService] vectorizeWorldBook: no entries to vectorize`);
+      }
+
+      console.log(`[WorldBookService] vectorizeWorldBook: completed - entriesVectorized=${result.entriesVectorized}, entriesFailed=${result.entriesFailed}`);
+      
+      // 注册到向量注册表
+      if (result.entriesVectorized > 0) {
+        try {
+          await vectorRegistryService.registerVectorFile({
+            vectorFileId: worldBookName,
+            sourceType: VectorSourceType.WORLDBOOK,
+            sourceId: worldBookName,
+            sourceName: worldBookName,
+            vectorCount: result.entriesVectorized,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            status: 'active',
+            additionalMetadata: {
+              entriesVectorized: result.entriesVectorized,
+              entriesFailed: result.entriesFailed,
+              entryVectorIds: result.entryVectorIds,
+            }
+          });
+          console.log(`[WorldBookService] vectorizeWorldBook: registered to vector registry with sourceType=${VectorSourceType.WORLDBOOK}, sourceId=${worldBookName}`);
+        } catch (error) {
+          console.error('[WorldBookService] vectorizeWorldBook: failed to register to registry:', error);
+        }
+      }
+      
+      return result;
+
+    } catch (error) {
+      console.error('[WorldBookService] vectorizeWorldBook: fatal error:', error);
+      return { 
+        success: false, 
+        entriesVectorized: 0, 
+        entriesFailed: 0, 
+        error: error instanceof Error ? error.message : 'Unknown error',
+        entryVectorIds: []
+      };
     }
   }
 }

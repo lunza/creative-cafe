@@ -35,16 +35,8 @@ export interface KnowledgeItem {
   relatedCharacterIds: string[];
   relatedWorldBookPaths: string[];
   vector?: number[];
-  version: number;
-  history: KnowledgeVersion[];
+  vectorStoreMode: VectorStoreMode;
   metadata: KnowledgeMetadata;
-}
-
-export interface KnowledgeVersion {
-  version: number;
-  content: string;
-  timestamp: number;
-  note: string;
 }
 
 export interface KnowledgeMetadata {

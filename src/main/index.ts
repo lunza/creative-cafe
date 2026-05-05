@@ -90,6 +90,18 @@ app.whenReady().then(async () => {
   registerCreativeHandlers();
   registerCharacterChatHandlers();
 
+  // 初始化向量注册表服务
+  (async () => {
+    try {
+      const { vectorRegistryService } = await import('./services/VectorRegistryService');
+      await vectorRegistryService.initialize();
+      console.log('[App] VectorRegistryService initialized successfully');
+    } catch (error) {
+      console.error('[App] Failed to initialize VectorRegistryService:', error);
+    }
+  })();
+
+  // 迁移聊天记录
   (async () => {
     try {
       const { chatStorageService } = await import('./services/ChatStorageService');
@@ -120,4 +132,45 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+// 关键修复：使用事件阻止机制确保异步持久化完成后再退出
+let isQuitting = false;
+let hasPersisted = false;
+
+app.on('before-quit', (event) => {
+  // 如果已经持久化完成，允许退出
+  if (hasPersisted || isQuitting) {
+    return;
+  }
+  
+  // 阻止退出，先执行异步持久化
+  event.preventDefault();
+  console.log('[App] before-quit: blocking quit to persist vector data...');
+  
+  // 标记正在退出，防止死循环
+  isQuitting = true;
+  
+  // 异步执行持久化，完成后再次调用 app.quit()
+  (async () => {
+    try {
+      const { vectorStoreService } = await import('./services/VectorStoreService');
+      const { vectorRegistryService } = await import('./services/VectorRegistryService');
+      const mode = vectorStoreService.getMode();
+      
+      if (mode === 'vecstore') {
+        console.log('[App] Persisting vecstore data...');
+        await vectorStoreService.persist();
+        console.log('[App] Persisting vector registry...');
+        await vectorRegistryService.persist();
+        console.log('[App] Vecstore data and registry persisted successfully');
+      }
+    } catch (error) {
+      console.error('[App] Failed to persist vector data before quit:', error);
+    } finally {
+      hasPersisted = true;
+      console.log('[App] Persist complete, quitting...');
+      app.quit();
+    }
+  })();
 });

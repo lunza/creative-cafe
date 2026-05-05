@@ -12,7 +12,7 @@ export const runEmbeddingTests = async (
       onLog({ timestamp: Date.now(), level: log.level as any, message: log.message });
     }
     
-    onLog({ timestamp: Date.now(), level: 'success', message: `向量化测试完成: ${result.results.length} 个用例` });
+    onLog({ timestamp: Date.now(), level: 'success', message: `向量化测试完成: ${result.report.results.length} 个用例` });
     
     return result.report;
   } catch (error) {

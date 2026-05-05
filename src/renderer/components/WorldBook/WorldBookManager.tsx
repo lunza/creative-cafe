@@ -10,6 +10,7 @@ import {
   TranslationOutlined,
   LoadingOutlined,
   UploadOutlined,
+  CloudUploadOutlined,
   SaveOutlined,
   SortAscendingOutlined,
   UpOutlined,
@@ -18,6 +19,22 @@ import {
 } from '@ant-design/icons';
 import TagManager from './TagManager';
 import { WorldBookVectorPanel } from './WorldBookVectorPanel';
+import WorldBookList from './WorldBookList';
+import WorldBookEntryList from './WorldBookEntryList';
+import WorldBookCreateModal from './WorldBookCreateModal';
+import WorldBookAddEntryModal from './WorldBookAddEntryModal';
+import { 
+  sanitizeFileName, 
+  formatWorldBookToDocument, 
+  formatEntryForEdit,
+  createDefaultEntry,
+  cleanAIThoughts,
+  parseAIJsonResponse,
+  sortEntriesByTitle,
+  sortEntriesByOrder,
+  moveEntry
+} from '../../utils/worldBookUtils';
+import { useModal } from '../../hooks/useModal';
 import { useWorldBookStore } from '../../stores/worldBookStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingStore } from '../../stores/settingStore';
@@ -175,6 +192,89 @@ const WorldBookManager: React.FC = () => {
     } catch (error) {
       addLog(`[WorldBook] 删除失败: ${path}`, 'error');
       message.error('删除失败');
+    }
+  };
+
+  const formatWorldBookToDocument = (content: any, worldBookName: string): string => {
+    let document = `# 世界书：${worldBookName}\n\n`;
+    
+    const entriesObj = content?.entries;
+    if (entriesObj && typeof entriesObj === 'object') {
+      const entryKeys = Object.keys(entriesObj).sort((a, b) => parseInt(a) - parseInt(b));
+      
+      for (const key of entryKeys) {
+        const entry = entriesObj[key];
+        if (!entry) continue;
+        
+        const entryName = entry.comment || entry.name || `条目 ${key}`;
+        document += `## ${entryName}\n\n`;
+        
+        if (entry.key && Array.isArray(entry.key) && entry.key.length > 0) {
+          document += `关键词：${entry.key.join(', ')}\n\n`;
+        }
+        
+        if (entry.keysecondary && Array.isArray(entry.keysecondary) && entry.keysecondary.length > 0) {
+          document += `次要关键词：${entry.keysecondary.join(', ')}\n\n`;
+        }
+        
+        const entryContent = entry.content || '';
+        if (entryContent) {
+          document += `${entryContent}\n\n`;
+        } else {
+          document += `（无内容）\n\n`;
+        }
+        
+        document += `---\n\n`;
+      }
+    }
+    
+    return document;
+  };
+
+  const sanitizeFileName = (name: string): string => {
+    return name
+      .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+      .replace(/\(/g, '_')
+      .replace(/\)/g, '_')
+      .replace(/\s+/g, '_')
+      .replace(/\.+/g, '_')
+      .replace(/-+/g, '_')
+      .replace(/__+/g, '_')
+      .trim()
+      .substring(0, 100);
+  };
+
+  const handleVectorizeToWorldBook = async (worldBook: WorldBook) => {
+    addLog(`[WorldBook] 开始向量化世界书: ${worldBook.name}`);
+    message.loading({ content: '正在处理世界书向量化...', key: 'vectorize', duration: 0 });
+
+    try {
+      const result = await window.electronAPI.worldBook.vectorize(worldBook.path);
+
+      addLog(`[WorldBook] 向量化结果: ${result.success ? '成功' : '失败'}, 向量化条目: ${result.entriesVectorized || 0}, 失败条目: ${result.entriesFailed || 0}`, 'info');
+
+      if (result.success) {
+        addLog(`[WorldBook] 世界书向量化成功: ${worldBook.name}, 向量化条目: ${result.entriesVectorized}, 失败条目: ${result.entriesFailed}`, 'info');
+        message.success({
+          content: `世界书向量化成功：${result.entriesVectorized} 个条目已处理`,
+          key: 'vectorize',
+          duration: 3,
+        });
+      } else {
+        addLog(`[WorldBook] 世界书向量化失败: ${worldBook.name}, 错误: ${result.error}`, 'error');
+        message.error({
+          content: `向量化失败：${result.error || '未知错误'}`,
+          key: 'vectorize',
+          duration: 3,
+        });
+      }
+    } catch (error) {
+      addLog(`[WorldBook] 世界书向量化异常: ${worldBook.name}, 错误: ${error instanceof Error ? error.message : '未知错误'}`, 'error');
+      message.error({
+        content: `向量化异常：${error instanceof Error ? error.message : '未知错误'}`,
+        key: 'vectorize',
+        duration: 3,
+      });
     }
   };
 
@@ -3837,6 +3937,14 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
       key: 'action',
       render: (_, record) => (
         <Space size="middle">
+          <Button
+            type="link"
+            icon={<CloudUploadOutlined />}
+            title="将世界书内容向量化并集成到知识库"
+            onClick={() => handleVectorizeToWorldBook(record)}
+          >
+            向量化
+          </Button>
           <Button
             type="link"
             icon={<ThunderboltOutlined />}

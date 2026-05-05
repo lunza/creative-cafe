@@ -46,7 +46,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setDirectory: (dir: string) => ipcRenderer.invoke('worldBook:setDirectory', dir),
     readTags: (path: string) => ipcRenderer.invoke('worldBook:readTags', path),
     writeTags: (path: string, data: any) => ipcRenderer.invoke('worldBook:writeTags', path, data),
-    deleteTags: (path: string) => ipcRenderer.invoke('worldBook:deleteTags', path)
+    deleteTags: (path: string) => ipcRenderer.invoke('worldBook:deleteTags', path),
+    vectorize: (path: string) => ipcRenderer.invoke('worldBook:vectorize', path)
   },
   character: {
     list: () => ipcRenderer.invoke('character:list'),
@@ -203,8 +204,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('vector:add', { id, vector, metadata }),
     addBatch: (items: Array<{ id: string; vector: number[]; metadata: Record<string, any> }>) =>
       ipcRenderer.invoke('vector:addBatch', { items }),
-    search: (query: number[], topK: number, filter?: Record<string, any>) =>
-      ipcRenderer.invoke('vector:search', { query, topK, filter }),
+    search: (query: number[], topK: number, filter?: Record<string, any>, scopeIds?: string[]) =>
+      ipcRenderer.invoke('vector:search', { query, topK, filter, scopeIds }),
     update: (id: string, vector: number[], metadata?: Record<string, any>) =>
       ipcRenderer.invoke('vector:update', { id, vector, metadata }),
     delete: (id: string) => ipcRenderer.invoke('vector:delete', { id }),
@@ -212,28 +213,37 @@ contextBridge.exposeInMainWorld('electronAPI', {
     rebuildIndex: () => ipcRenderer.invoke('vector:rebuildIndex'),
     setMode: (mode: string) => ipcRenderer.invoke('vector:setMode', { mode }),
     setStoreMode: (mode: string) => ipcRenderer.invoke('vector:setStoreMode', { mode }),
-    testStorage: () => ipcRenderer.invoke('vector:testStorage'),
+    testStorage: (scopeIds?: string[]) => ipcRenderer.invoke('vector:testStorage', { scopeIds }),
     testEmbedding: () => ipcRenderer.invoke('vector:testEmbedding'),
-    testAll: () => ipcRenderer.invoke('vector:testAll')
+    testAll: () => ipcRenderer.invoke('vector:testAll'),
+    getAvailableScopes: () => ipcRenderer.invoke('vector:getAvailableScopes')
   },
   document: {
     process: (filePath: string) => ipcRenderer.invoke('document:process', { filePath }),
     list: () => ipcRenderer.invoke('document:list'),
     delete: (docId: string) => ipcRenderer.invoke('document:delete', { docId }),
+    deleteBatch: (docIds: string[]) => ipcRenderer.invoke('document:deleteBatch', { docIds }),
     getInfo: (docId: string) => ipcRenderer.invoke('document:getInfo', { docId }),
+    getChunks: (docId: string) => ipcRenderer.invoke('document:getChunks', { docId }),
+    searchVectors: (queryText: string, topK: number, docId?: string) => ipcRenderer.invoke('document:searchVectors', { queryText, topK, docId }),
+    getVectorStats: () => ipcRenderer.invoke('document:getVectorStats'),
+    generateEmbedding: (text: string) => ipcRenderer.invoke('document:generateEmbedding', { text }),
     selectFile: () => ipcRenderer.invoke('document:selectFile')
   },
   knowledge: {
     list: (filter?: Record<string, any>, page?: number, pageSize?: number) =>
       ipcRenderer.invoke('knowledge:list', { filter, page, pageSize }),
-    create: (item: any) => ipcRenderer.invoke('knowledge:create', { item }),
+    create: (data: any) => ipcRenderer.invoke('knowledge:create', { data }),
+    createBatch: (items: any[]) => ipcRenderer.invoke('knowledge:createBatch', { items }),
     update: (id: string, updates: any) => ipcRenderer.invoke('knowledge:update', { id, updates }),
     delete: (id: string) => ipcRenderer.invoke('knowledge:delete', { id }),
+    deleteBatch: (ids: string[]) => ipcRenderer.invoke('knowledge:deleteBatch', { ids }),
     search: (query: string, options?: any) => ipcRenderer.invoke('knowledge:search', { query, options }),
     vectorize: (id: string) => ipcRenderer.invoke('knowledge:vectorize', { id }),
     vectorizeAll: () => ipcRenderer.invoke('knowledge:vectorizeAll'),
-    getVersion: (id: string) => ipcRenderer.invoke('knowledge:getVersion', { id }),
-    restoreVersion: (id: string, version: number) => ipcRenderer.invoke('knowledge:restoreVersion', { id, version })
+    uploadDocument: (filePath: string, options?: { category?: string[]; tags?: string[]; source?: string }) =>
+      ipcRenderer.invoke('knowledge:uploadDocument', { filePath, options }),
+    selectDocumentFile: () => ipcRenderer.invoke('knowledge:selectDocumentFile')
   },
   context: {
     retrieve: (conversation: any[], options: any) =>

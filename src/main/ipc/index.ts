@@ -13,6 +13,7 @@ import { embeddingService } from '../services/EmbeddingService';
 import { embeddingWorkerService } from '../services/EmbeddingWorkerService';
 import { vectorStoreService } from '../services/VectorStoreService';
 import { knowledgeBaseService } from '../services/KnowledgeBaseService';
+import { knowledgeBaseDocumentService } from '../services/KnowledgeBaseDocumentService';
 import { contextManager } from '../services/ContextManager';
 import { modelDownloadService } from '../services/ModelDownloadService';
 
@@ -36,6 +37,7 @@ export function setupIpcHandlers() {
 
   knowledgeBaseService.initialize();
   knowledgeBaseService.registerIpcHandlers();
+  knowledgeBaseDocumentService.registerIpcHandlers();
 
   contextManager.registerIpcHandlers();
 

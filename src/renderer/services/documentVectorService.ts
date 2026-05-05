@@ -1,4 +1,4 @@
-import type { DocumentInfo, DocumentProcessingResult, ProcessingProgress } from '../types/documentVector';
+import type { DocumentInfo, DocumentProcessingResult, ProcessingProgress, DocumentChunk } from '../types/documentVector';
 
 export const processDocument = async (
   filePath: string,
@@ -17,4 +17,24 @@ export const deleteDocument = async (docId: string): Promise<boolean> => {
 
 export const getDocumentInfo = async (docId: string) => {
   return window.electronAPI.document.getInfo(docId);
+};
+
+export const getDocumentChunks = async (docId: string): Promise<DocumentChunk[]> => {
+  return window.electronAPI.document.getChunks(docId);
+};
+
+export const searchDocumentVectors = async (
+  queryText: string,
+  topK: number = 5,
+  docId?: string,
+): Promise<{ success: boolean; results?: Array<{ id: string; score: number; metadata: Record<string, any> }>; error?: string }> => {
+  return window.electronAPI.document.searchVectors(queryText, topK, docId);
+};
+
+export const getVectorStats = async () => {
+  return window.electronAPI.document.getVectorStats();
+};
+
+export const generateEmbedding = async (text: string) => {
+  return window.electronAPI.document.generateEmbedding(text);
 };

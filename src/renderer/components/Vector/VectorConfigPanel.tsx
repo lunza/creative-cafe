@@ -5,6 +5,7 @@ import { useVectorStore } from '../../stores/vectorStore';
 import { useSettingStore } from '../../stores/settingStore';
 import { rendererEmbeddingService } from '../../services/rendererEmbeddingService';
 import type { EmbeddingMode, VectorConfigGroup, VectorDefaults } from '../../types/vectorConfig';
+import { VectorScopeSelector } from './VectorScopeSelector';
 
 const { Option } = Select;
 const { Panel } = Collapse;
@@ -78,7 +79,7 @@ const MODE_FIELD_MAP: Record<EmbeddingMode, string[]> = {
 };
 
 const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
-  const { mode, isConnected, dimension, loading, testConnection, testStorage } = useVectorStore();
+  const { mode, isConnected, dimension, loading, testConnection, testStorage, selectedScopes } = useVectorStore();
   const { setting } = useSettingStore();
   const [form] = Form.useForm();
   const [activeEmbeddingMode, setActiveEmbeddingMode] = useState<EmbeddingMode>('remote');
@@ -223,7 +224,8 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
   const handleTestStorage = async () => {
     setStorageTestResult(null);
     setTestStorageLoading(true);
-    const result = await testStorage();
+    const selectedScopeIds = selectedScopes.length > 0 ? selectedScopes : undefined;
+    const result = await testStorage(selectedScopeIds);
     setTestStorageLoading(false);
 
     if (result.success) {
@@ -464,6 +466,10 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
 
         <Divider />
 
+        <VectorScopeSelector />
+
+        <Divider />
+
         <Form.Item>
           <Space wrap>
             <Button icon={<SyncOutlined />} onClick={handleTestConnection} loading={testConnectionLoading}>
@@ -536,6 +542,7 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
               <div>
                 <p><strong>存储模式:</strong> {storageTestResult.mode === 'vecstore' ? 'VecStore (vecstore-wasm)' : 'JSON'}</p>
                 <p><strong>向量数量:</strong> {storageTestResult.vectorCount || 0}</p>
+                {storageTestResult.storagePath && <p><strong>存储路径:</strong> {storageTestResult.storagePath}</p>}
                 <p><strong>详细信息:</strong> {storageTestResult.details || '无'}</p>
                 {storageTestResult.error && <p style={{ color: 'red' }}><strong>错误:</strong> {storageTestResult.error}</p>}
               </div>

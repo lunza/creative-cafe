@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import { getStorageService } from './storageService';
 import { VectorConfig, EmbeddingResult, BatchEmbeddingResult, ConnectionTestResult, ModeInfo, ModeSetResult } from '../types/vectorConfig';
+import { normalizeVector } from '../utils/vectorMath';
 
 export class EmbeddingService {
   private vectorConfig: VectorConfig | null = null;
@@ -8,8 +9,8 @@ export class EmbeddingService {
   async initialize(): Promise<void> {
     try {
       const storageService = getStorageService();
-      const result = storageService.get<any>('settings');
-      console.log('[EmbeddingService] Loaded settings from storage:', JSON.stringify(result?.vector || {}, null, 2).slice(0, 300));
+      const result = storageService.getSettings();
+      console.log('[EmbeddingService] Loaded settings:', JSON.stringify(result?.vector || {}, null, 2).slice(0, 300));
       if (result && result.vector) {
         this.vectorConfig = result.vector;
       }
@@ -76,11 +77,19 @@ export class EmbeddingService {
       const data = await response.json();
 
       if (data.data && data.data[0] && data.data[0].embedding) {
+        const vector = data.data[0].embedding;
+        
+        // 注意：旧数据（vecstore.json 中已有向量）未归一化（magnitude ≈ 15）
+        // 为保持兼容性，查询向量也不做归一化
+        // WASM 的余弦相似度计算会自动处理向量幅度差异
+        console.log(`[EmbeddingService] Vector magnitude (not normalized): ${Math.sqrt(vector.reduce((sum: number, v: number) => sum + v * v, 0)).toFixed(6)}`);
+        
         return {
           success: true,
-          vector: data.data[0].embedding,
-          dimension: data.data[0].embedding.length,
-          model: data.model || this.vectorConfig.remoteModel
+          vector,
+          dimension: vector.length,
+          model: data.model || this.vectorConfig.remoteModel,
+          mode: 'remote'
         };
       }
 
@@ -138,7 +147,19 @@ export class EmbeddingService {
       const data = await response.json();
 
       if (data.data && Array.isArray(data.data)) {
-        const vectors = data.data.map((item: any) => item.embedding).filter((v: number[]) => v && Array.isArray(v));
+        // 注意：旧数据（vecstore.json 中已有向量）未归一化（magnitude ≈ 15）
+        // 为保持兼容性，查询向量也不做归一化
+        const vectors = data.data.map((item: any) => {
+          const vector = item.embedding;
+          if (vector && Array.isArray(vector)) {
+            // 诊断：记录向量幅度
+            const magnitude = Math.sqrt(vector.reduce((sum: number, v: number) => sum + v * v, 0));
+            console.log(`[EmbeddingService] Batch vector magnitude: ${magnitude.toFixed(6)} (not normalized)`);
+            return vector;
+          }
+          return null;
+        }).filter((v: number[] | null) => v !== null);
+        
         return { success: true, vectors };
       }
 
@@ -271,11 +292,11 @@ export class EmbeddingService {
   async setMode(mode: string): Promise<ModeSetResult> {
     try {
       const storageService = getStorageService();
-      const result = storageService.get<any>('settings');
+      const result = storageService.getSettings();
       const config = (result?.vector || {}) as Partial<VectorConfig>;
       config.embeddingMode = mode as 'remote' | 'local';
       const newSettings = { ...result, vector: config };
-      storageService.set('settings', newSettings);
+      storageService.setSettings(newSettings);
       this.vectorConfig = config as VectorConfig;
       return { success: true, mode: config.embeddingMode };
     } catch (error) {

@@ -238,3 +238,123 @@ tail -f logs/ai-handler.log
 ## 8. 总结
 
 本错误处理文档提供了常见错误的解决方案和故障排除步骤，帮助您快速定位和解决AI生成功能中的问题。通过详细的错误信息、完善的日志系统和系统的故障排除流程，您可以更有效地解决遇到的问题，确保创意管理智能生成功能的正常运行。
+
+## 9. 向量测试模块常见问题
+
+### 9.1 【重点标记】WASM查询不返回metadata导致向量测试显示空结果
+
+**问题描述:** 向量测试模块中，相似性查询和向量查看功能返回空结果或metadata为空对象
+
+**根本原因:** vecstore-wasm模块的`query()`方法只返回`id`和`score`字段，不返回`metadata`字段，导致搜索结果中metadata始终为`null/undefined`
+
+**解决方案:**
+1. 实现元数据缓存机制（`metadataCache: Map<string, Record<string, any>>`）
+2. 修改`search()`方法，从metadataCache中补全搜索结果的metadata
+3. 修改`getById()`方法，从metadataCache中获取metadata
+4. 在`add()`、`addBatchNoPersist()`中同步更新metadataCache
+5. 在`delete()`、`deleteByPrefix()`、`clear()`中同步删除metadataCache条目
+6. 实现双文件持久化机制（vecstore.json + vecstore_metadata.json）
+7. 在`initialize()`时从文件加载metadata到cache
+
+**修复文件:** `src/main/services/VecstoreVectorStore.ts`
+
+### 9.2 向量维度不匹配错误
+
+**问题描述:** `Vector dimension mismatch: expected 384, got 4096`
+
+**根本原因:** 不同嵌入模型输出不同维度的向量（如OpenAI text-embedding-3-small输出1536维，Qwen模型可能输出4096维）
+
+**解决方案:**
+1. 实现动态维度支持，从配置文件读取维度
+2. 自动检测：通过调用embedding API生成测试向量，获取实际维度
+3. 模型推断：根据模型名称推断维度（维护模型-维度映射表）
+4. 维度不匹配时清空旧数据，使用新维度重新初始化
+
+### 9.3 元数据重启后丢失
+
+**问题描述:** 应用重启后，向量数据仍然存在但metadata丢失，导致无法查看分片内容
+
+**根本原因:** WASM模块的metadata可能不随向量数据一起持久化，或持久化格式不正确
+
+**解决方案:**
+1. 实现双文件持久化：vecstore.json（向量数据）+ vecstore_metadata.json（元数据）
+2. 启动时从vecstore_metadata.json加载元数据到cache
+3. 每次add/update操作同步更新metadataCache
+4. 删除操作同步清理metadataCache
+
+### 9.4 向量化后分片内容为空
+
+**问题描述:** 文档向量化成功，但查看分片时内容显示为空
+
+**根本原因:** `addBatchNoPersist()`方法未同步更新metadataCache，导致缓存中无元数据
+
+**解决方案:**
+1. 在`addBatchNoPersist()`中添加metadataCache更新逻辑
+2. 确保metadata中的text字段正确传递和存储
+3. 添加详细日志输出，便于调试
+
+## 10. 世界书向量化常见问题
+
+### 10.1 description字段不应向量化
+
+**问题描述:** 世界书向量化时，description字段被错误地向量化为独立向量
+
+**根本原因:** 原有实现将description作为独立向量处理，不符合世界书结构设计规范
+
+**解决方案:**
+1. 移除description字段的向量化逻辑
+2. 将description作为元数据引用存储在条目元数据中（`worldBookDescription`字段）
+3. 每个条目向量包含完整的条目字段信息（name、key、keysecondary、keys、secondary_keys、comment、content）
+
+**修复文件:** `src/main/services/worldBookService.ts`
+
+### 10.2 条目向量缺少完整字段信息
+
+**问题描述:** 世界书条目向量化时，元数据中缺少关键字段（keysecondary、secondary_keys等）
+
+**根本原因:** 原有实现只提取了部分字段（key、comment），未包含所有条目字段
+
+**解决方案:**
+1. 提取完整的条目字段：name、key、keysecondary、keys、secondary_keys、comment、content
+2. 构建完整的元数据对象，包含所有关键字段
+3. 合并key和keysecondary到entryKeys字段用于检索
+
+### 10.3 JSON存储与VecStore存储差异
+
+**问题描述:** 不清楚JSON存储和VecStore存储在数据结构上的差异
+
+**说明:**
+- **JSON存储**（JSONVectorStore）：数据存储为JSON文件，适合小型数据集（< 5000向量），支持批量操作
+- **VecStore存储**（VecstoreVectorStore）：基于WASM实现，数据存储为二进制格式+元数据JSON，适合大型数据集（> 5000向量），需要元数据缓存机制
+
+**最佳实践:**
+1. 无论使用哪种存储模式，都遵循相同的向量添加接口
+2. 元数据格式保持一致
+3. 向量ID命名规范统一（`wb_entry_{worldBookName}_{uid}`）
+
+### 10.4 【重点标记】世界书条目分片串行问题
+
+**问题描述:** 世界书JSON文件上传后被错误地按500字符分割成多个分片，导致条目内容被截断，出现多个分片具有相同的comment但不同关键词的问题
+
+**根本原因:** `DocumentProcessorService.chunkText()`方法对所有文件统一使用500字符分块逻辑，没有针对世界书JSON文件的特殊处理
+
+**解决方案:**
+1. 添加`json`文件类型支持到`DocumentFileType`和`SUPPORTED_EXTENSIONS`
+2. 添加`extractJson()`方法用于JSON文件文本提取
+3. 添加`isWorldBookFormat()`方法检测世界书JSON结构（检查`entries`字段）
+4. 添加`chunkWorldBookEntries()`方法实现条目级别分块（每个条目一个完整分块，不分割）
+5. 重命名原有逻辑为`chunkStandardText()`用于标准500字符分块
+6. 重构`chunkText()`方法根据文件类型自动选择分块策略
+7. 更新`processDocument()`传递文件类型给`chunkText()`
+
+**分块策略:**
+- **世界书JSON文件**：按条目分块，每个条目包含`## {comment/name}\n关键词：{keys}\n{content}`格式，保持完整性
+- **其他文档**（PDF、DOCX、TXT等）：保持500字符分块标准，无变化
+
+**修复文件:** `src/main/services/DocumentProcessorService.ts`
+
+**验证要点:**
+1. 世界书JSON上传后每个条目对应一个分片
+2. 分片内容包含完整的条目字段（name、key、keysecondary、comment、content）
+3. 其他文档上传后仍然按500字符正常分块
+4. 通过知识库和测试页面两种路径上传都正确

@@ -34,7 +34,9 @@ export class ContextManager {
         filter.source = options.sources;
       }
 
-      const results = await vectorStoreService.search(queryVector, options.topK, filter);
+      const results = await vectorStoreService.search(queryVector, options.topK, filter, {
+        scopeIds: options.scopeIds
+      });
 
       const contextItems: ContextItem[] = results
         .filter(r => r.score >= options.minScore)

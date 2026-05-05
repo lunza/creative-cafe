@@ -1,15 +1,20 @@
-import { ipcMain } from 'electron';
-import { getStorageService } from './storageService';
-import { VectorConfig, VectorItem, SearchResult, VectorStoreMode } from '../types/vectorConfig';
+import { ipcMain, app } from 'electron';
+import * as fsPromises from 'fs/promises';
+import path from 'path';
 import { JSONVectorStore } from './JSONVectorStore';
 import { VecstoreVectorStore } from './VecstoreVectorStore';
 import { VectorCache } from './VectorCache';
-import { EmbeddingService, getEmbeddingService } from './EmbeddingService';
+import { VectorStoreMode, VectorSourceType, VectorSourceTypeStorageConfig } from '../types/vectorConfig';
+import { getStorageService } from './storageService';
+import { getEmbeddingService } from './EmbeddingService';
+import type { VectorConfig } from '../types/vectorConfig';
+import { vectorRegistryService } from './VectorRegistryService';
 
 export interface StorageTestResult {
   success: boolean;
   mode: VectorStoreMode;
   vectorCount: number;
+  storagePath?: string;
   error?: string;
   details?: string;
 }
@@ -47,6 +52,7 @@ export interface VectorTestResponse {
 export class VectorStoreService {
   private jsonStore: JSONVectorStore;
   private vecstoreStore: VecstoreVectorStore;
+  private storeBySource: Map<string, VecstoreVectorStore> = new Map();
   private cache: VectorCache;
   private currentMode: VectorStoreMode = 'json';
   private initialized = false;
@@ -59,6 +65,15 @@ export class VectorStoreService {
     this.jsonStore = new JSONVectorStore();
     this.vecstoreStore = new VecstoreVectorStore();
     this.cache = new VectorCache();
+  }
+
+  private getVecstoreStoreForSource(source: string, sourceId: string): VecstoreVectorStore {
+    const key = `${source}:${sourceId}`;
+    if (!this.storeBySource.has(key)) {
+      const store = new VecstoreVectorStore();
+      this.storeBySource.set(key, store);
+    }
+    return this.storeBySource.get(key)!;
   }
 
   private log(level: VectorTestLog['level'], message: string) {
@@ -98,7 +113,7 @@ export class VectorStoreService {
       const result = await embeddingService.generateEmbedding('Hello world, this is a test.');
       if (!result.success) throw new Error(result.error || '向量化失败');
       if (result.dimension === 0) throw new Error('向量维度为 0');
-      if (result.embedding.length === 0) throw new Error('向量为空');
+      if (!result.vector || result.vector.length === 0) throw new Error('向量为空');
       this.log('info', `  向量维度: ${result.dimension}, 模式: ${result.mode}`);
       return { status: 'pass', detail: `维度: ${result.dimension}, 模式: ${result.mode}`, duration: 0 };
     });
@@ -142,7 +157,7 @@ export class VectorStoreService {
       const texts = ['Test 1', 'Test 2', 'Test 3'];
       const results = await embeddingService.generateBatchEmbeddings(texts);
       if (!results.success) throw new Error(results.error || '批量向量化失败');
-      if (results.embeddings.length !== texts.length) throw new Error(`批量结果数量不匹配: ${results.embeddings.length} !== ${texts.length}`);
+      if (!results.vectors || results.vectors.length !== texts.length) throw new Error(`批量结果数量不匹配`);
       this.log('info', `  批量向量化成功: ${texts.length} 个文本`);
       return { status: 'pass', detail: `批量成功: ${texts.length} 个文本`, duration: 0 };
     });
@@ -322,11 +337,13 @@ export class VectorStoreService {
     if (this.initialized) return;
 
     try {
+      console.log('[VectorStoreService] Starting initialization...');
       const storageService = getStorageService();
-      const result = storageService.get<any>('settings');
+      const result = storageService.getSettings();
       if (result?.vector) {
         const config = result.vector as VectorConfig;
         this.currentMode = config.vectorStoreMode || 'json';
+        console.log(`[VectorStoreService] Vector store mode: ${this.currentMode}`);
         this.cache = new VectorCache({
           enabled: config.cacheEnabled,
           maxSize: config.cacheL1Size,
@@ -335,11 +352,45 @@ export class VectorStoreService {
         });
       }
 
+      console.log('[VectorStoreService] Initializing JSON store...');
       await this.jsonStore.initialize();
-      await this.vecstoreStore.initialize();
+      console.log('[VectorStoreService] Initializing Vecstore store (default)...');
+      await this.vecstoreStore.initialize({ source: 'default' });
+      
+      // Load existing source-specific stores from vector registry
+      if (this.currentMode === 'vecstore') {
+        await this.loadExistingStoresFromRegistry();
+      }
+      
       this.initialized = true;
+      console.log(`[VectorStoreService] Initialization complete (${this.storeBySource.size} source stores loaded)`);
     } catch (error) {
       console.error('[VectorStoreService] 初始化失败:', error);
+      // 重新抛出错误，让调用方知道初始化失败了
+      throw error;
+    }
+  }
+
+  private async loadExistingStoresFromRegistry(): Promise<void> {
+    try {
+      const { vectorRegistryService } = await import('./VectorRegistryService');
+      const scopes = await vectorRegistryService.getAvailableScopes();
+      
+      for (const scope of scopes) {
+        const key = `${scope.sourceType}:${scope.sourceId}`;
+        if (!this.storeBySource.has(key)) {
+          const sourceStore = this.getVecstoreStoreForSource(scope.sourceType, scope.sourceId);
+          if (!sourceStore.initialized) {
+            await sourceStore.initialize({ source: scope.sourceType, sourceId: scope.sourceId });
+          }
+        }
+      }
+      
+      if (scopes.length > 0) {
+        console.log(`[VectorStoreService] Loaded ${scopes.length} existing stores from registry`);
+      }
+    } catch (error) {
+      console.warn('[VectorStoreService] Failed to load existing stores from registry:', error);
     }
   }
 
@@ -352,15 +403,135 @@ export class VectorStoreService {
 
   async add(id: string, vector: number[], metadata: Record<string, any>): Promise<void> {
     await this.ensureInitialized();
-    await this.getActiveStore().add(id, vector, metadata);
+    
+    if (this.currentMode === 'vecstore') {
+      const source = metadata.source || 'default';
+      const sourceId = metadata.sourceId || metadata.docId || source || 'default';
+      const sourceStore = this.getVecstoreStoreForSource(source, sourceId);
+      if (!sourceStore.initialized) {
+        await sourceStore.initialize({ source, sourceId });
+      }
+      await sourceStore.add(id, vector, metadata);
+    } else {
+      await this.getActiveStore().add(id, vector, metadata);
+    }
   }
 
   async addBatch(items: VectorItem[]): Promise<void> {
     await this.ensureInitialized();
-    await this.getActiveStore().addBatch(items);
+    
+    if (this.currentMode === 'vecstore') {
+      // Group by source and sourceId
+      const grouped = new Map<string, { items: VectorItem[], source: string, sourceId: string }>();
+      for (const item of items) {
+        const source = item.metadata.source || 'default';
+        const sourceId = item.metadata.sourceId || item.metadata.docId || source || 'default';
+        const key = `${source}:${sourceId}`;
+        if (!grouped.has(key)) {
+          grouped.set(key, { items: [], source, sourceId });
+        }
+        grouped.get(key)!.items.push(item);
+      }
+      
+      for (const [, group] of grouped) {
+        const sourceStore = this.getVecstoreStoreForSource(group.source, group.sourceId);
+        if (!sourceStore.initialized) {
+          await sourceStore.initialize({ source: group.source, sourceId: group.sourceId });
+        }
+        if ((sourceStore as any).addBatch) {
+          await (sourceStore as any).addBatch(group.items);
+        } else {
+          for (const item of group.items) {
+            await sourceStore.add(item.id, item.vector, item.metadata);
+          }
+        }
+      }
+    } else {
+      await this.getActiveStore().addBatch(items);
+    }
   }
 
-  async search(query: number[], topK: number, filter?: Record<string, any>): Promise<SearchResult[]> {
+  async addBatchDeferred(items: VectorItem[]): Promise<void> {
+    await this.ensureInitialized();
+    
+    if (this.currentMode === 'vecstore') {
+      // Group by source and sourceId
+      const grouped = new Map<string, { items: VectorItem[], source: string, sourceId: string }>();
+      for (const item of items) {
+        const source = item.metadata.source || 'default';
+        const sourceId = item.metadata.sourceId || item.metadata.docId || source || 'default';
+        const key = `${source}:${sourceId}`;
+        if (!grouped.has(key)) {
+          grouped.set(key, { items: [], source, sourceId });
+        }
+        grouped.get(key)!.items.push(item);
+      }
+      
+      for (const [, group] of grouped) {
+        const sourceStore = this.getVecstoreStoreForSource(group.source, group.sourceId);
+        if (!sourceStore.initialized) {
+          await sourceStore.initialize({ source: group.source, sourceId: group.sourceId });
+        }
+        for (const item of group.items) {
+          await sourceStore.add(item.id, item.vector, item.metadata);
+        }
+        await sourceStore.persist();
+      }
+    } else {
+      const store = this.getActiveStore();
+      for (const item of items) {
+        await store.add(item.id, item.vector, item.metadata);
+      }
+      await store.persist();
+    }
+  }
+
+  async addBatchNoPersist(items: VectorItem[]): Promise<void> {
+    await this.ensureInitialized();
+    
+    if (this.currentMode === 'vecstore') {
+      // Group by source and sourceId
+      const grouped = new Map<string, { items: VectorItem[], source: string, sourceId: string }>();
+      for (const item of items) {
+        const source = item.metadata.source || 'default';
+        const sourceId = item.metadata.sourceId || item.metadata.docId || source || 'default';
+        const key = `${source}:${sourceId}`;
+        if (!grouped.has(key)) {
+          grouped.set(key, { items: [], source, sourceId });
+        }
+        grouped.get(key)!.items.push(item);
+      }
+      
+      for (const [, group] of grouped) {
+        const sourceStore = this.getVecstoreStoreForSource(group.source, group.sourceId);
+        if (!sourceStore.initialized) {
+          await sourceStore.initialize({ source: group.source, sourceId: group.sourceId });
+        }
+        if ((sourceStore as any).addBatchNoPersist) {
+          await (sourceStore as any).addBatchNoPersist(group.items);
+        } else {
+          for (const item of group.items) {
+            await sourceStore.add(item.id, item.vector, item.metadata);
+          }
+        }
+      }
+    } else {
+      const store = this.getActiveStore();
+      if ((store as any).addBatchNoPersist) {
+        await (store as any).addBatchNoPersist(items);
+      } else {
+        for (const item of items) {
+          await store.add(item.id, item.vector, item.metadata);
+        }
+      }
+    }
+  }
+
+  async search(query: number[], topK: number, filter?: Record<string, any>, options?: { 
+    sourceType?: string; 
+    aggregate?: boolean;
+    scopeIds?: string[];  // 新增: 按 scope ID (registry entry ID) 搜索
+  }): Promise<SearchResult[]> {
     await this.ensureInitialized();
 
     const queryHash = this.hashVector(query);
@@ -369,7 +540,67 @@ export class VectorStoreService {
       return cachedResult;
     }
 
-    const results = await this.getActiveStore().search(query, topK, filter);
+    let results: SearchResult[] = [];
+
+    if (this.currentMode === 'vecstore') {
+      if (options?.scopeIds && options.scopeIds.length > 0) {
+        console.log(`[VectorStoreService] search(): scopeIds search mode, scopeIds: ${JSON.stringify(options.scopeIds)}`);
+        // 按 scope IDs 搜索 - 搜索指定的 scope
+        const { vectorRegistryService } = await import('./VectorRegistryService');
+        const allResults: SearchResult[] = [];
+        
+        for (const scopeId of options.scopeIds) {
+          console.log(`[VectorStoreService] search(): looking up scopeId: ${scopeId}`);
+          const entry = await vectorRegistryService.getVectorFileById(scopeId);
+          if (entry) {
+            console.log(`[VectorStoreService] search(): found entry - sourceType: ${entry.sourceType}, sourceId: ${entry.sourceId}, sourceName: ${entry.sourceName}`);
+            const sourceStore = this.getVecstoreStoreForSource(entry.sourceType, entry.sourceId);
+            if (!sourceStore.initialized) {
+              console.log(`[VectorStoreService] search(): initializing store for ${entry.sourceType}:${entry.sourceId}`);
+              await sourceStore.initialize({ source: entry.sourceType, sourceId: entry.sourceId });
+            }
+            console.log(`[VectorStoreService] search(): searching store at ${sourceStore.getStoreFilePath()}`);
+            const scopeResults = await sourceStore.search(query, topK * 2, filter);
+            console.log(`[VectorStoreService] search(): got ${scopeResults.length} results from ${sourceStore.getStoreFilePath()}`);
+            allResults.push(...scopeResults);
+          } else {
+            console.log(`[VectorStoreService] search(): no entry found for scopeId: ${scopeId}`);
+          }
+        }
+        
+        // Merge and sort by similarity
+        results = allResults.sort((a, b) => b.similarity - a.similarity).slice(0, topK);
+        console.log(`[VectorStoreService] search(): final results after scopeIds search: ${results.length} items`);
+      } else if (options?.sourceType) {
+        // Search only specified source type
+        const sourceStore = this.getVecstoreStoreForSource(options.sourceType, options.sourceType);
+        if (sourceStore.initialized) {
+          results = await sourceStore.search(query, topK, filter);
+        }
+      } else {
+        // Default behavior: search ALL sources and merge results (aggregate mode)
+        const allResults: SearchResult[] = [];
+        
+        // Search default store
+        if (this.vecstoreStore.initialized) {
+          const defaultResults = await this.vecstoreStore.search(query, topK, filter);
+          allResults.push(...defaultResults);
+        }
+        
+        // Search all source stores
+        for (const [, store] of this.storeBySource) {
+          if (store.initialized) {
+            const sourceResults = await store.search(query, topK * 2, filter);
+            allResults.push(...sourceResults);
+          }
+        }
+        
+        // Merge and sort by similarity
+        results = allResults.sort((a, b) => b.similarity - a.similarity).slice(0, topK);
+      }
+    } else {
+      results = await this.getActiveStore().search(query, topK, filter);
+    }
 
     if (results.length > 0) {
       await this.cache.setSearchResult(queryHash, results);
@@ -384,15 +615,84 @@ export class VectorStoreService {
     this.cache.clearBySource(id);
   }
 
-  async delete(id: string): Promise<void> {
+  async delete(id: string, options?: { sourceType?: string }): Promise<void> {
     await this.ensureInitialized();
-    await this.getActiveStore().delete(id);
+    
+    if (this.currentMode === 'vecstore') {
+      if (options?.sourceType) {
+        // Delete from specified source only
+        const sourceStore = this.getVecstoreStoreForSource(options.sourceType, options.sourceType);
+        if (sourceStore.initialized) {
+          await sourceStore.delete(id);
+        }
+      } else {
+        // Search all stores to find and delete the ID
+        let found = false;
+        
+        // Try default store first
+        if (this.vecstoreStore.initialized) {
+          try {
+            const item = await this.vecstoreStore.getById(id);
+            if (item) {
+              await this.vecstoreStore.delete(id);
+              found = true;
+            }
+          } catch {
+            // ID not in default store
+          }
+        }
+        
+        if (!found) {
+          // Search all source stores
+          for (const [, store] of this.storeBySource) {
+            if (store.initialized) {
+              try {
+                const item = await store.getById(id);
+                if (item) {
+                  await store.delete(id);
+                  found = true;
+                  break;
+                }
+              } catch {
+                // ID not in this store
+              }
+            }
+          }
+        }
+        
+        if (!found) {
+          console.warn(`[VectorStoreService] delete: ID "${id}" not found in any store`);
+        }
+      }
+    } else {
+      await this.getActiveStore().delete(id);
+    }
+    
     this.cache.clearBySource(id);
   }
 
   async count(): Promise<number> {
     await this.ensureInitialized();
-    return this.getActiveStore().count();
+    
+    if (this.currentMode === 'vecstore') {
+      let totalCount = 0;
+      
+      // Count default store
+      if (this.vecstoreStore.initialized) {
+        totalCount += await this.vecstoreStore.count();
+      }
+      
+      // Count all source stores
+      for (const [, store] of this.storeBySource) {
+        if (store.initialized) {
+          totalCount += await store.count();
+        }
+      }
+      
+      return totalCount;
+    } else {
+      return this.getActiveStore().count();
+    }
   }
 
   getMode(): VectorStoreMode {
@@ -406,12 +706,12 @@ export class VectorStoreService {
     // Persist mode to settings
     try {
       const storageService = getStorageService();
-      const result = storageService.get<any>('settings');
+      const result = storageService.getSettings();
       const settings = result || {};
       const vectorConfig = (settings.vector || {}) as Partial<VectorConfig>;
       vectorConfig.vectorStoreMode = mode;
       const newSettings = { ...settings, vector: vectorConfig };
-      storageService.set('settings', newSettings);
+      storageService.setSettings(newSettings);
     } catch (error) {
       console.warn('[VectorStoreService] Failed to persist store mode:', error);
     }
@@ -425,7 +725,17 @@ export class VectorStoreService {
 
   async persist(): Promise<void> {
     await this.ensureInitialized();
-    await this.getActiveStore().persist();
+    
+    if (this.currentMode === 'vecstore') {
+      await this.vecstoreStore.persist();
+      for (const [, store] of this.storeBySource) {
+        if (store.initialized) {
+          await store.persist();
+        }
+      }
+    } else {
+      await this.getActiveStore().persist();
+    }
   }
 
   async load(): Promise<void> {
@@ -442,9 +752,47 @@ export class VectorStoreService {
     return this.getActiveStore().countByPrefix(prefix);
   }
 
-  async deleteByPrefix(prefix: string): Promise<number> {
+  async deleteByPrefix(prefix: string, options?: { sourceType?: string; sourceId?: string }): Promise<number> {
     await this.ensureInitialized();
-    return this.getActiveStore().deleteByPrefix(prefix);
+    
+    if (this.currentMode === 'vecstore') {
+      let totalDeleted = 0;
+      
+      if (options?.sourceType) {
+        // Delete from specified source only
+        const sourceStore = this.getVecstoreStoreForSource(options.sourceType, options.sourceId || options.sourceType);
+        // 关键修复：如果 store 未初始化，先初始化再删除
+        if (!sourceStore.initialized) {
+          await sourceStore.initialize({ source: options.sourceType, sourceId: options.sourceId || options.sourceType });
+        }
+        totalDeleted = await sourceStore.deleteByPrefix(prefix);
+      } else {
+        // Delete from all stores
+        if (this.vecstoreStore.initialized) {
+          totalDeleted += await this.vecstoreStore.deleteByPrefix(prefix);
+        }
+        
+        for (const [, store] of this.storeBySource) {
+          // 关键修复：不再跳过未初始化的 store，而是先初始化再删除
+          if (!store.initialized) {
+            try {
+              const parts = store.key.split(':');
+              const source = parts[0];
+              const sourceId = parts.slice(1).join(':');
+              await store.initialize({ source, sourceId });
+            } catch (err) {
+              console.warn(`[VectorStoreService] Failed to initialize store for deleteByPrefix:`, err);
+              continue;
+            }
+          }
+          totalDeleted += await store.deleteByPrefix(prefix);
+        }
+      }
+      
+      return totalDeleted;
+    } else {
+      return this.getActiveStore().deleteByPrefix(prefix);
+    }
   }
 
   async getEmbedding(text: string): Promise<number[] | null> {
@@ -461,24 +809,64 @@ export class VectorStoreService {
     this.cache.clear();
   }
 
-  async testStorageConnection(): Promise<StorageTestResult> {
+  async testStorageConnection(scopeIds?: string[]): Promise<StorageTestResult> {
     const startTime = Date.now();
     
     try {
-      console.log(`[VectorStoreService] Testing storage connection, mode: ${this.currentMode}`);
+      console.log(`[VectorStoreService] Testing storage connection, mode: ${this.currentMode}, scopeIds: ${scopeIds?.join(', ') || 'none'}`);
       
       await this.ensureInitialized();
       
-      const count = await this.count();
-      const duration = Date.now() - startTime;
-      
       const modeLabel = this.currentMode === 'vecstore' ? 'VecStore (vecstore-wasm)' : 'JSON';
+      
+      let totalCount = 0;
+      const pathDetails: string[] = [];
+      
+      if (this.currentMode === 'vecstore') {
+        if (scopeIds && scopeIds.length > 0) {
+          // Test only selected scopes
+          const { vectorRegistryService } = await import('./VectorRegistryService');
+          
+          for (const scopeId of scopeIds) {
+            const entry = await vectorRegistryService.getVectorFileById(scopeId);
+            if (entry) {
+              const sourceStore = this.getVecstoreStoreForSource(entry.sourceType, entry.sourceId);
+              if (!sourceStore.initialized) {
+                await sourceStore.initialize({ source: entry.sourceType, sourceId: entry.sourceId });
+              }
+              const count = await sourceStore.count();
+              totalCount += count;
+              const pathLabel = `${entry.sourceName || entry.sourceId}`;
+              pathDetails.push(`${pathLabel}: ${sourceStore.getStoreFilePath()} (${count}条)`);
+            }
+          }
+        } else {
+          // Test all stores
+          const defaultCount = await this.vecstoreStore.count();
+          totalCount += defaultCount;
+          pathDetails.push(`默认: ${this.vecstoreStore.getStoreFilePath()} (${defaultCount}条)`);
+          
+          for (const [source, store] of this.storeBySource) {
+            if (store.initialized) {
+              const count = await store.count();
+              totalCount += count;
+              pathDetails.push(`${source}: ${store.getStoreFilePath()} (${count}条)`);
+            }
+          }
+        }
+      } else {
+        totalCount = await this.count();
+        pathDetails.push(`${this.jsonStore.getStoreFilePath()} (${totalCount}条)`);
+      }
+      
+      const storagePath = pathDetails.join(', ');
       
       const testResult: StorageTestResult = {
         success: true,
         mode: this.currentMode,
-        vectorCount: count,
-        details: `存储测试成功 (耗时 ${duration}ms, ${count} 条向量, 模式: ${modeLabel})`
+        vectorCount: totalCount,
+        storagePath,
+        details: `存储测试成功 (耗时 ${Date.now() - startTime}ms, ${totalCount} 条向量, 模式: ${modeLabel}, 存储路径: ${pathDetails.join(', ')})`
       };
       
       console.log(`[VectorStoreService] Storage test passed:`, testResult.details);
@@ -498,8 +886,12 @@ export class VectorStoreService {
   }
 
   private async ensureInitialized(): Promise<void> {
+    console.log('[VectorStoreService] ensureInitialized() called, currently initialized =', this.initialized);
     if (!this.initialized) {
+      console.log('[VectorStoreService] Not initialized, calling initialize()...');
       await this.initialize();
+    } else {
+      console.log('[VectorStoreService] Already initialized, skipping');
     }
   }
 
@@ -533,13 +925,24 @@ export class VectorStoreService {
       }
     });
 
-    ipcMain.handle('vector:search', async (_event, { query, topK, filter }: { query: number[]; topK: number; filter?: Record<string, any> }) => {
+    ipcMain.handle('vector:search', async (_event, { query, topK, filter, scopeIds }: { query: number[]; topK: number; filter?: Record<string, any>; scopeIds?: string[] }) => {
       try {
         await this.initialize();
-        const results = await this.search(query, topK, filter);
+        const results = await this.search(query, topK, filter, { scopeIds });
         return { success: true, results };
       } catch (error) {
         return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+      }
+    });
+
+    ipcMain.handle('vector:getAvailableScopes', async () => {
+      try {
+        const { vectorRegistryService } = await import('./VectorRegistryService');
+        const scopes = await vectorRegistryService.getAvailableScopes();
+        return { success: true, scopes };
+      } catch (error) {
+        console.error('[VectorStoreService] Failed to get available scopes:', error);
+        return { success: false, scopes: [], error: error instanceof Error ? error.message : 'Unknown error' };
       }
     });
 
@@ -601,8 +1004,8 @@ export class VectorStoreService {
       }
     });
 
-    ipcMain.handle('vector:testStorage', async () => {
-      return this.testStorageConnection();
+    ipcMain.handle('vector:testStorage', async (_event, { scopeIds }: { scopeIds?: string[] } = {}) => {
+      return this.testStorageConnection(scopeIds);
     });
 
     ipcMain.handle('vector:testEmbedding', async () => {

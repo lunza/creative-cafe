@@ -61,4 +61,20 @@ export function worldBookHandlers() {
   ipcMain.handle('worldBook:deleteTags', async (_event, worldBookPath: string) => {
     return await worldBookService.deleteTags(worldBookPath);
   });
+
+  // 世界书向量化处理
+  ipcMain.handle('worldBook:vectorize', async (_event, worldBookPath: string) => {
+    try {
+      return await worldBookService.vectorizeWorldBook(worldBookPath);
+    } catch (error) {
+      return { 
+        success: false, 
+        descriptionVectorized: false, 
+        entriesVectorized: 0, 
+        entriesFailed: 0, 
+        error: error instanceof Error ? error.message : 'Unknown error',
+        entryVectorIds: []
+      };
+    }
+  });
 }

@@ -143,13 +143,22 @@ class FileService {
 
   async writeFile(filePath: string, content: string): Promise<void> {
     try {
+      const dir = path.dirname(filePath);
+      
+      if (!fsSync.existsSync(dir)) {
+        logInfo(`Creating directory: ${dir}`);
+        await fs.mkdir(dir, { recursive: true });
+      }
+      
       await fs.writeFile(filePath, content, 'utf-8');
+      logInfo(`File written successfully: ${filePath}`, { contentLength: content.length });
     } catch (error) {
       logError(`Failed to write file ${filePath}`, error, {
         errorType: error instanceof Error ? error.name : 'UnknownError',
         errorLocation: 'fileService.ts:24:writeFile',
         filePath: filePath,
-        contentLength: content.length
+        contentLength: content.length,
+        errorCode: (error as any).code
       });
       throw error;
     }

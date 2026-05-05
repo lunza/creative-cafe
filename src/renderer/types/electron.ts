@@ -73,22 +73,27 @@ export interface ElectronAPI {
   vector: {
     add: (id: string, vector: number[], metadata: Record<string, any>) => Promise<{ success: boolean; error?: string }>;
     addBatch: (items: Array<{ id: string; vector: number[]; metadata: Record<string, any> }>) => Promise<{ success: boolean; error?: string }>;
-    search: (query: number[], topK: number, filter?: Record<string, any>) => Promise<{ success: boolean; results?: Array<{ id: string; score: number; metadata: Record<string, any> }>; error?: string }>;
+    search: (query: number[], topK: number, filter?: Record<string, any>, scopeIds?: string[]) => Promise<{ success: boolean; results?: Array<{ id: string; score: number; metadata: Record<string, any> }>; error?: string }>;
     update: (id: string, vector: number[], metadata?: Record<string, any>) => Promise<{ success: boolean; error?: string }>;
     delete: (id: string) => Promise<{ success: boolean; error?: string }>;
     count: () => Promise<{ success: boolean; count?: number; error?: string }>;
     rebuildIndex: () => Promise<{ success: boolean; error?: string }>;
     setMode: (mode: string) => Promise<{ success: boolean; error?: string }>;
     setStoreMode: (mode: string) => Promise<{ success: boolean; error?: string }>;
-    testStorage: () => Promise<{ success: boolean; mode: string; vectorCount: number; details?: string; error?: string }>;
+    testStorage: (scopeIds?: string[]) => Promise<{ success: boolean; mode: string; vectorCount: number; details?: string; error?: string }>;
     testEmbedding: () => Promise<any>;
     testAll: () => Promise<any>;
+    getAvailableScopes: () => Promise<{ success: boolean; scopes?: Array<{ id: string; label: string; sourceType: string; sourceId: string; sourceName: string; vectorCount: number; description?: string }>; error?: string }>;
   };
   document: {
     process: (filePath: string) => Promise<any>;
     list: () => Promise<any[]>;
     delete: (docId: string) => Promise<boolean>;
     getInfo: (docId: string) => Promise<any | null>;
+    getChunks: (docId: string) => Promise<Array<{ index: number; text: string }>>;
+    searchVectors: (queryText: string, topK: number, docId?: string) => Promise<{ success: boolean; results?: Array<{ id: string; score: number; metadata: Record<string, any> }>; error?: string }>;
+    getVectorStats: () => Promise<{ totalVectors: number; documentCount: number; documents: Array<{ docId: string; fileName: string; vectorCount: number }> }>;
+    generateEmbedding: (text: string) => Promise<{ success: boolean; vector?: number[]; error?: string; dimension?: number }>;
     selectFile: () => Promise<string | null>;
   };
   embedding: {
@@ -102,18 +107,21 @@ export interface ElectronAPI {
     checkModelStatus: (modelName: string) => Promise<{ downloaded: boolean; path: string }>;
   };
   knowledge: {
-    list: () => Promise<any[]>;
+    list: (filter?: Record<string, any>, page?: number, pageSize?: number) => Promise<{ success: boolean; items?: any[]; total?: number; error?: string }>;
     get: (id: string) => Promise<any>;
     create: (data: any) => Promise<{ success: boolean; id?: string; error?: string }>;
     update: (id: string, data: any) => Promise<{ success: boolean; error?: string }>;
     delete: (id: string) => Promise<{ success: boolean; error?: string }>;
+    search: (query: string, options?: any) => Promise<{ success: boolean; results?: any[]; error?: string }>;
     vectorize: (id: string) => Promise<{ success: boolean; error?: string }>;
     vectorizeAll: () => Promise<{ success: boolean; count?: number; error?: string }>;
     getVersionHistory: (id: string) => Promise<number[]>;
     restoreVersion: (id: string, version: number) => Promise<{ success: boolean; error?: string }>;
+    uploadDocument: (filePath: string, options?: { category?: string[]; tags?: string[]; source?: string }) => Promise<{ success: boolean; documentId?: string; knowledgeItemsCreated?: number; chunkCount?: number; error?: string; isDuplicate?: boolean }>;
+    selectDocumentFile: () => Promise<string | null>;
   };
   context: {
-    retrieve: (conversation: Array<{ role: string; content: string }>, options: { topK?: number; minScore?: number; sources?: string[]; filter?: Record<string, any> }) => Promise<{ success: boolean; items?: Array<{ id: string; source: string; content: string; score: number; metadata: Record<string, any> }>; error?: string }>;
+    retrieve: (conversation: Array<{ role: string; content: string }>, options: { topK?: number; minScore?: number; sources?: string[]; filter?: Record<string, any>; scopeIds?: string[] }) => Promise<{ success: boolean; items?: Array<{ id: string; source: string; content: string; score: number; metadata: Record<string, any> }>; error?: string }>;
     compress: (items: Array<{ id: string; source: string; content: string; score: number }>, maxTokens: number) => Promise<{ success: boolean; compressed?: string; error?: string }>;
   };
   model: {
