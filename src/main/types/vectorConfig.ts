@@ -1,5 +1,5 @@
 export type EmbeddingMode = 'remote' | 'local';
-export type VectorStoreMode = 'vecstore' | 'json';
+export type VectorStoreMode = 'vecstore';
 
 /**
  * 向量源类型枚举 — 严格对应 vector_registry.json 的 sourceType 字段
@@ -98,7 +98,6 @@ export interface VectorConfig {
   remoteApiUrl: string;
   remoteApiKey: string;
   localModel: string;
-  vectorStoreMode: VectorStoreMode;
   cacheEnabled: boolean;
   cacheL1Size: number;
   cacheL1TTL: number;
@@ -182,7 +181,6 @@ export interface KnowledgeItem {
   relatedCharacterIds: string[];
   relatedWorldBookPaths: string[];
   vector?: number[];
-  vectorStoreMode: VectorStoreMode;
   metadata: KnowledgeMetadata;
 }
 

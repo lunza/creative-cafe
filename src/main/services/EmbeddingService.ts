@@ -304,6 +304,49 @@ export class EmbeddingService {
     }
   }
 
+  async listModels(config?: Partial<VectorConfig>): Promise<{ success: boolean; models: string[]; error?: string }> {
+    try {
+      const apiUrl = config?.remoteApiUrl || this.vectorConfig?.remoteApiUrl;
+      if (!apiUrl) {
+        return { success: false, models: [], error: '未配置远程 Embedding API 地址' };
+      }
+
+      const baseUrl = apiUrl.replace(/\/embeddings$/, '').replace(/\/v1\/embeddings$/, '');
+      const modelsUrl = `${baseUrl}/v1/models`;
+
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const apiKey = config?.remoteApiKey || this.vectorConfig?.remoteApiKey;
+      if (apiKey) {
+        headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+      }
+
+      console.log(`[EmbeddingService] Fetching models from: ${modelsUrl}`);
+      const response = await fetch(modelsUrl, {
+        method: 'GET',
+        headers,
+        signal: AbortSignal.timeout(15000)
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        return { success: false, models: [], error: `获取模型列表失败 (${response.status}): ${errorText}` };
+      }
+
+      const data = await response.json();
+      if (data.data && Array.isArray(data.data)) {
+        const modelIds = data.data
+          .map((item: any) => item.id || item.model || item.name)
+          .filter(Boolean);
+        console.log(`[EmbeddingService] Found ${modelIds.length} models`);
+        return { success: true, models: modelIds };
+      }
+
+      return { success: false, models: [], error: 'API 响应格式不正确' };
+    } catch (error) {
+      return { success: false, models: [], error: error instanceof Error ? error.message : '未知错误' };
+    }
+  }
+
   private async ensureConfigLoaded(): Promise<void> {
     // Always reload config from storage to get latest settings
     // This ensures that UI changes (like API URL updates) are reflected immediately
@@ -340,6 +383,10 @@ export class EmbeddingService {
 
     ipcMain.handle('embedding:getMode', async () => {
       return this.getModeInfo();
+    });
+
+    ipcMain.handle('embedding:listModels', async (_event, config?: Partial<VectorConfig>) => {
+      return this.listModels(config);
     });
   }
 }

@@ -185,7 +185,6 @@ interface ElectronAPI {
     delete: (id: string) => Promise<{ success: boolean; error?: string }>;
     count: () => Promise<{ success: boolean; count?: number; error?: string }>;
     rebuildIndex: () => Promise<{ success: boolean; error?: string }>;
-    setMode: (mode: string) => Promise<{ success: boolean; error?: string }>;
     testStorage: () => Promise<{ success: boolean; mode: string; vectorCount: number; storagePath?: string; error?: string; details?: string }>;
   };
   // 向量嵌入 API

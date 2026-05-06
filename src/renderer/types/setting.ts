@@ -196,7 +196,7 @@ export interface AppSetting {
     remoteApiKey?: string;
     remoteApiUrl?: string;
     localModel?: string;
-    vectorStoreMode?: 'vecstore' | 'json';
+    vectorStoreMode?: 'vecstore';
     autoVectorizeWorldBook?: boolean;
     autoRetrieveContext?: boolean;
     contextTopK?: number;

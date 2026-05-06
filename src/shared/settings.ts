@@ -1,7 +1,7 @@
 /**
  * 全局设置文件 - 主进程和渲染进程共享
  */
-import { EmbeddingMode, VectorStoreMode } from './types/vector';
+import { EmbeddingMode } from './types/vector';
 
 export const AppSetting = {
   version: '1.0.0',
@@ -166,7 +166,6 @@ export const AppSetting = {
       remoteModel: 'text-embedding-3-small',
       remoteApiUrl: '',
       remoteApiKey: '',
-      vectorStoreMode: 'json' as VectorStoreMode,
       cacheEnabled: true,
       cacheL1Size: 1000,
       cacheL1TTL: 300,

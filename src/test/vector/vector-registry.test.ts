@@ -164,21 +164,10 @@ describe('VectorStoreService Multi-Source Routing', () => {
 
   beforeEach(async () => {
     vectorStoreService = new VectorStoreService();
-    // Set to vecstore mode for testing
-    const storageService = getStorageService();
-    const settings = storageService.getSettings();
-    const vectorConfig = (settings?.vector || {}) as any;
-    vectorConfig.vectorStoreMode = 'vecstore';
-    storageService.setSettings({ ...settings, vector: vectorConfig });
   });
 
   afterEach(async () => {
-    // Reset to json mode
-    const storageService = getStorageService();
-    const settings = storageService.getSettings();
-    const vectorConfig = (settings?.vector || {}) as any;
-    vectorConfig.vectorStoreMode = 'json';
-    storageService.setSettings({ ...settings, vector: vectorConfig });
+    await vectorStoreService.clear();
   });
 
   it('should route add() to correct source store', async () => {

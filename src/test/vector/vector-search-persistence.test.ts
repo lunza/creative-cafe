@@ -182,7 +182,7 @@ async function testWorldBookVectorization(runner: TestRunner): Promise<void> {
     console.log(`  向量化模式: ${vectorConfig?.embeddingMode}`);
     console.log(`  远程模型: ${vectorConfig?.remoteModel}`);
     console.log(`  远程API地址: ${vectorConfig?.remoteApiUrl}`);
-    console.log(`  向量存储模式: ${vectorConfig?.vectorStoreMode}`);
+    console.log(`  向量存储模式: vecstore (唯一模式)`);
     
     const hasValidConfig = vectorConfig?.remoteModel === 'text-embedding-qwen3-embedding-8b' &&
                           vectorConfig?.embeddingMode === 'remote';

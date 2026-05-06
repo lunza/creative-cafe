@@ -22,7 +22,6 @@ interface KnowledgeItem {
   tags: string[];
   relatedCharacterIds: string[];
   relatedWorldBookPaths: string[];
-  vectorStoreMode: 'json' | 'vecstore';
   metadata: Record<string, any>;
   documentId?: string;
 }
@@ -112,6 +111,7 @@ export const KnowledgeBaseManager: React.FC = () => {
 
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingItem, setEditingItem] = useState<KnowledgeItem | null>(null);
+  const [viewingItem, setViewingItem] = useState<KnowledgeItem | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [form] = Form.useForm();
 
@@ -173,9 +173,27 @@ export const KnowledgeBaseManager: React.FC = () => {
     setIsModalVisible(true);
   };
 
-  const handleEdit = (record: KnowledgeItem) => {
-    setEditingItem(record);
-    form.setFieldsValue(record);
+  const handleViewItem = async (record: KnowledgeItem) => {
+    if (record.metadata?.isWorldBook || record.source === 'worldbook') {
+      try {
+        const result = await window.electronAPI.vector.getById(record.id);
+        if (result.success && result.item) {
+          setViewingItem(result.item as KnowledgeItem);
+        } else {
+          setViewingItem(record);
+          message.warning('未能加载完整元数据，仅显示基本信息');
+        }
+      } catch {
+        setViewingItem(record);
+      }
+    } else {
+      setViewingItem(record);
+    }
+  };
+
+  const handleEdit = (item: KnowledgeItem) => {
+    setEditingItem(item);
+    form.setFieldsValue(item);
     setIsModalVisible(true);
   };
 
@@ -257,7 +275,6 @@ export const KnowledgeBaseManager: React.FC = () => {
         ...values,
         id: '',
         source: values.source || 'manual',
-        vectorStoreMode: 'vecstore',
         metadata: {
           createdAt: now,
           updatedAt: now,
@@ -467,7 +484,6 @@ export const KnowledgeBaseManager: React.FC = () => {
           tags: [],
           relatedCharacterIds: [],
           relatedWorldBookPaths: [],
-          vectorStoreMode: 'vecstore',
           metadata: {
             fileSize: docInfo.fileSize,
             chunkCount: docInfo.chunkCount,
@@ -502,7 +518,6 @@ export const KnowledgeBaseManager: React.FC = () => {
                 tags: ['worldbook'],
                 relatedCharacterIds: [],
                 relatedWorldBookPaths: [scope.sourceId],
-                vectorStoreMode: 'vecstore',
                 metadata: {
                   fileSize: 0,
                   chunkCount: scope.vectorCount,
@@ -536,12 +551,10 @@ export const KnowledgeBaseManager: React.FC = () => {
   const loadDocumentChildren = async (docId: string, isWorldbook = false): Promise<TreeKnowledgeItem[]> => {
     try {
       if (isWorldbook) {
-        // 世界书：从向量注册表获取条目信息
         const scopesResult = await window.electronAPI.vector.getAvailableScopes();
         if (scopesResult.success && scopesResult.scopes) {
           const scope = scopesResult.scopes.find(s => s.id === docId || s.sourceId === docId);
           if (scope && scope.metadata?.entryVectorIds) {
-            // 将 entryVectorIds 转换为子节点
             return scope.metadata.entryVectorIds.map((vectorId: string) => ({
               key: `item_${vectorId}`,
               id: vectorId,
@@ -552,7 +565,6 @@ export const KnowledgeBaseManager: React.FC = () => {
               tags: ['worldbook'],
               relatedCharacterIds: [],
               relatedWorldBookPaths: [],
-              vectorStoreMode: 'vecstore',
               metadata: {
                 isWorldBook: true,
                 entryVectorId: vectorId,
@@ -563,13 +575,16 @@ export const KnowledgeBaseManager: React.FC = () => {
         }
         return [];
       } else {
-        // 普通文档：从知识库加载
         const result = await window.electronAPI.knowledge.list({ documentId: docId }, 1, 1000);
         if (result.success && result.items) {
           return result.items.map(item => ({
             ...item,
             key: `item_${item.id}`,
             isLeaf: true,
+            metadata: {
+              ...item.metadata,
+              isWorldBook: item.source === 'worldbook' || false,
+            },
           }));
         }
         return [];
@@ -657,17 +672,26 @@ export const KnowledgeBaseManager: React.FC = () => {
       dataIndex: 'source',
       key: 'source',
       width: 100,
-      render: (source, record) => (
-        record.isLeaf ? (
-          <Tag color={record.vectorStoreMode === 'vecstore' ? 'green' : 'orange'}>
-            {record.vectorStoreMode === 'vecstore' ? 'VecStore' : 'JSON'}
-          </Tag>
-        ) : (
-          <Tag color={record.metadata?.isWorldBook ? 'cyan' : 'purple'}>
-            {record.metadata?.isWorldBook ? '世界书' : (record.metadata?.fileType?.toUpperCase() || '文档')}
-          </Tag>
-        )
-      ),
+      render: (source, record) => {
+        if (!record.isLeaf) {
+          return (
+            <Tag color={record.metadata?.isWorldBook ? 'cyan' : 'purple'}>
+              {record.metadata?.isWorldBook ? '世界书' : (record.metadata?.fileType?.toUpperCase() || '文档')}
+            </Tag>
+          );
+        }
+
+        let label = '知识条目';
+        let color = 'default';
+        if (record.metadata?.isWorldBook || record.source === 'worldbook') {
+          label = '世界书';
+          color = 'cyan';
+        } else if (record.metadata?.documentId) {
+          label = '文件上传';
+          color = 'purple';
+        }
+        return <Tag color={color}>{label}</Tag>;
+      },
     },
     {
       title: '分类/标签',
@@ -685,11 +709,29 @@ export const KnowledgeBaseManager: React.FC = () => {
               ))}
             </>
           ) : (
-            <Space>
-              <Text type="secondary">{formatFileSize(record.metadata?.fileSize || 0)}</Text>
-              <Text type="secondary">·</Text>
-              <Text type="secondary">{record.metadata?.totalChars?.toLocaleString() || 0} 字符</Text>
-            </Space>
+            <>
+              {record.category?.map(cat => (
+                <Tag key={cat} color="blue">{cat}</Tag>
+              ))}
+              {record.tags?.map(tag => (
+                <Tag key={tag}>{tag}</Tag>
+              ))}
+              <Tag color="default">
+                {record.metadata?.chunkCount || 0} 条
+              </Tag>
+              {record.metadata?.totalChars > 0 && (
+                <>
+                  <Text type="secondary">·</Text>
+                  <Text type="secondary">{record.metadata.totalChars.toLocaleString()} 字符</Text>
+                </>
+              )}
+              {record.metadata?.fileSize > 0 && (
+                <>
+                  <Text type="secondary">·</Text>
+                  <Text type="secondary">{formatFileSize(record.metadata.fileSize)}</Text>
+                </>
+              )}
+            </>
           )}
         </Space>
       ),
@@ -698,39 +740,9 @@ export const KnowledgeBaseManager: React.FC = () => {
       title: '操作',
       key: 'action',
       width: 200,
-      render: (_, record) => (
-        <Space size="small">
-          {record.isLeaf ? (
-            <>
-              <Button
-                type="link"
-                size="small"
-                icon={<EditOutlined />}
-                onClick={() => handleEdit(record as KnowledgeItem)}
-              >
-                编辑
-              </Button>
-              <Button
-                type="link"
-                size="small"
-                icon={<CloudUploadOutlined />}
-                onClick={() => handleVectorize(record.id)}
-              >
-                向量化
-              </Button>
-              <Popconfirm
-                title="确认删除"
-                description="确定要删除这个知识条目吗？"
-                onConfirm={() => handleDeleteItem(record.id)}
-                okText="确定"
-                cancelText="取消"
-              >
-                <Button type="link" size="small" danger icon={<DeleteOutlined />}>
-                  删除
-                </Button>
-              </Popconfirm>
-            </>
-          ) : (
+      render: (_, record) => {
+        if (!record.isLeaf) {
+          return (
             <Popconfirm
               title="确认删除整个文档"
               description="删除后该文档的所有向量数据和知识条目都将被删除，无法恢复"
@@ -743,9 +755,71 @@ export const KnowledgeBaseManager: React.FC = () => {
                 删除整个文档
               </Button>
             </Popconfirm>
-          )}
-        </Space>
-      ),
+          );
+        }
+
+        const isWorldBookItem = record.metadata?.isWorldBook === true || record.source === 'worldbook';
+        const isDocumentItem = !!record.metadata?.documentId;
+        const isReadOnly = isWorldBookItem || isDocumentItem;
+
+        if (isReadOnly) {
+          return (
+            <Space size="small">
+              <Button
+                type="link"
+                size="small"
+                icon={<EyeOutlined />}
+              onClick={() => handleViewItem(record as KnowledgeItem)}
+            >
+              查看
+              </Button>
+              <Popconfirm
+                title="确认删除"
+                description="确定要删除这个知识条目吗？"
+                onConfirm={() => handleDeleteItem(record.id)}
+                okText="确定"
+                cancelText="取消"
+              >
+                <Button type="link" size="small" danger icon={<DeleteOutlined />}>
+                  删除
+                </Button>
+              </Popconfirm>
+            </Space>
+          );
+        }
+
+        return (
+          <Space size="small">
+            <Button
+              type="link"
+              size="small"
+              icon={<EditOutlined />}
+              onClick={() => handleEdit(record as KnowledgeItem)}
+            >
+              编辑
+            </Button>
+            <Button
+              type="link"
+              size="small"
+              icon={<CloudUploadOutlined />}
+              onClick={() => handleVectorize(record.id)}
+            >
+              向量化
+            </Button>
+            <Popconfirm
+              title="确认删除"
+              description="确定要删除这个知识条目吗？"
+              onConfirm={() => handleDeleteItem(record.id)}
+              okText="确定"
+              cancelText="取消"
+            >
+              <Button type="link" size="small" danger icon={<DeleteOutlined />}>
+                删除
+              </Button>
+            </Popconfirm>
+          </Space>
+        );
+      },
     },
   ];
 
@@ -1158,6 +1232,93 @@ export const KnowledgeBaseManager: React.FC = () => {
             </Space>
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title="查看知识条目"
+        open={!!viewingItem}
+        onCancel={() => setViewingItem(null)}
+        footer={null}
+        width={800}
+        bodyStyle={{ maxHeight: '70vh', overflow: 'auto' }}
+      >
+        {viewingItem && (
+          <Descriptions column={1} bordered size="small">
+            <Descriptions.Item label="条目名称">
+              {viewingItem.metadata?.entryName || viewingItem.title || '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="条目内容">
+              <div style={{ whiteSpace: 'pre-wrap', maxHeight: 300, overflow: 'auto', lineHeight: '1.6' }}>
+                {viewingItem.metadata?.entryContent || viewingItem.metadata?.text || viewingItem.content || '-'}
+              </div>
+            </Descriptions.Item>
+            <Descriptions.Item label="条目备注">
+              {viewingItem.metadata?.entryComment || '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="关键字">
+              {viewingItem.metadata?.entryKey && viewingItem.metadata.entryKey.length > 0
+                ? viewingItem.metadata.entryKey.join('、')
+                : viewingItem.metadata?.entryKeys && viewingItem.metadata.entryKeys.length > 0
+                  ? viewingItem.metadata.entryKeys.join('、')
+                  : '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="来源类型">
+              {viewingItem.metadata?.sourceType || viewingItem.source || '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="来源ID">
+              {viewingItem.metadata?.sourceId || '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="世界书路径">
+              {viewingItem.metadata?.worldBookPath || '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="世界书名称">
+              {viewingItem.metadata?.worldBookName || '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="块索引">
+              {viewingItem.metadata?.chunkIndex ?? '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="条目UID">
+              {viewingItem.metadata?.entryUid || '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="显示顺序">
+              {viewingItem.metadata?.entryOrder ?? '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="触发概率">
+              {viewingItem.metadata?.entryProbability != null ? `${viewingItem.metadata.entryProbability}%` : '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="搜索深度">
+              {viewingItem.metadata?.entryDepth ?? '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="位置">
+              {viewingItem.metadata?.entryPosition ?? '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="显示索引">
+              {viewingItem.metadata?.entryDisplayIndex ?? '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="分组">
+              {viewingItem.metadata?.entryGroup || '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="条目属性">
+              <Space direction="vertical" size={2}>
+                {viewingItem.metadata?.isEntry && <Tag color="blue">核心条目</Tag>}
+                {viewingItem.metadata?.entryConstant && <Tag color="orange">恒定</Tag>}
+                {viewingItem.metadata?.entrySelective && <Tag color="green">选择性</Tag>}
+                {viewingItem.metadata?.entryUseProbability && <Tag color="purple">使用概率</Tag>}
+                {viewingItem.metadata?.entryAddMemo && <Tag color="cyan">添加备注</Tag>}
+                {!viewingItem.metadata?.isEntry && !viewingItem.metadata?.entryConstant && 
+                 !viewingItem.metadata?.entrySelective && !viewingItem.metadata?.entryUseProbability && 
+                 !viewingItem.metadata?.entryAddMemo && <Text type="secondary">无</Text>}
+              </Space>
+            </Descriptions.Item>
+            <Descriptions.Item label="创建时间">
+              {viewingItem.metadata?.createdAt ? formatTime(viewingItem.metadata.createdAt) : '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="更新时间">
+              {viewingItem.metadata?.updatedAt ? formatTime(viewingItem.metadata.updatedAt) : '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="向量ID">{viewingItem.id}</Descriptions.Item>
+          </Descriptions>
+        )}
       </Modal>
 
       <Modal

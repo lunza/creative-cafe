@@ -13,7 +13,8 @@ import {
   UploadOutlined,
   UserOutlined,
   RobotOutlined,
-  ExperimentOutlined
+  ExperimentOutlined,
+  MessageOutlined
 } from '@ant-design/icons';
 import { useDataStore } from '../../stores/dataStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -1085,10 +1086,10 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
           </Button>
           <Button
             type="link"
-            icon={<ExperimentOutlined />}
+            icon={<MessageOutlined />}
             onClick={() => handleTestCharacter(record)}
           >
-            测试
+            对话
           </Button>
           <Popconfirm
             title="确定要删除这个角色卡吗？"
@@ -1127,20 +1128,6 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
           </Button>
           <Button type="primary" icon={<PlusOutlined />}>
             新建角色卡
-          </Button>
-          <Button icon={<ThunderboltOutlined />} onClick={async () => {
-            try {
-              // 测试 v2 角色卡
-              // 测试角色卡读取功能
-              await window.electronAPI.character.testRead('./test-character.png');
-              // 测试 v3 角色卡
-              await window.electronAPI.character.testRead('./test-character.png');
-              message.success('测试完成，查看控制台日志');
-            } catch (error) {
-              message.error('测试失败');
-            }
-          }}>
-            测试角色卡
           </Button>
         </Space>
       </div>

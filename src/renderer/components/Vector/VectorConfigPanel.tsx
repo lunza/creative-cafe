@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
-import { Card, Form, Input, Select, Switch, InputNumber, Button, Space, message, Divider, Tag, Collapse, Tooltip, Alert } from 'antd';
-import { CheckCircleOutlined, CloseCircleOutlined, SyncOutlined, SettingOutlined, CloudServerOutlined, DesktopOutlined, DatabaseOutlined } from '@ant-design/icons';
+import { Card, Form, Input, Select, Switch, InputNumber, Button, Space, message, Divider, Tag, Collapse, Tooltip, Alert, AutoComplete } from 'antd';
+import { CheckCircleOutlined, CloseCircleOutlined, SyncOutlined, SettingOutlined, CloudServerOutlined, DesktopOutlined, DatabaseOutlined, QuestionCircleOutlined, SearchOutlined } from '@ant-design/icons';
 import { useVectorStore } from '../../stores/vectorStore';
 import { useSettingStore } from '../../stores/settingStore';
 import { rendererEmbeddingService } from '../../services/rendererEmbeddingService';
@@ -20,7 +20,7 @@ const DEFAULT_CONFIGS: Record<EmbeddingMode, VectorDefaults> = {
     remoteModel: 'text-embedding-3-small',
     remoteApiUrl: 'https://api.openai.com/v1/embeddings',
     remoteApiKey: '',
-    vectorStoreMode: 'json',
+    vectorStoreMode: 'vecstore',
     cacheEnabled: true,
     cacheL1Size: 1000,
     cacheL1TTL: 300,
@@ -50,7 +50,7 @@ const DEFAULT_CONFIGS: Record<EmbeddingMode, VectorDefaults> = {
 const CONFIG_GROUPS: VectorConfigGroup = {
   common: {
     title: '通用配置',
-    fields: ['vectorStoreMode', 'cacheEnabled', 'cacheL1Size', 'cacheL1TTL', 'cacheL2TTL'],
+    fields: ['cacheEnabled', 'cacheL1Size', 'cacheL1TTL', 'cacheL2TTL'],
   },
   remote: {
     title: '远程 API 配置',
@@ -91,6 +91,8 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
   const [downloadFailed, setDownloadFailed] = useState(false);
   const [modelDownloadStatus, setModelDownloadStatus] = useState<{ [key: string]: boolean }>({});
   const [modelDownloading, setModelDownloading] = useState<{ [key: string]: boolean }>({});
+  const [modelOptions, setModelOptions] = useState<{ label: string; value: string }[]>([]);
+  const [modelLoading, setModelLoading] = useState(false);
 
   useImperativeHandle(ref, () => ({
     getFormValues: () => form.getFieldsValue(),
@@ -237,14 +239,33 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
     }
   };
 
-  const handleStorageModeChange = useCallback(async (newMode: 'vecstore' | 'json') => {
-    try {
-      await window.electronAPI.vector.setStoreMode(newMode);
-      message.success(`存储模式已切换为: ${newMode === 'vecstore' ? 'VecStore' : 'JSON'}`);
-    } catch (error) {
-      message.error('存储模式切换失败');
+  const handleFetchModels = async () => {
+    const formValues = form.getFieldsValue();
+    if (!formValues.remoteApiUrl) {
+      message.warning('请先填写远程 API 地址');
+      return;
     }
-  }, []);
+
+    setModelLoading(true);
+    try {
+      const result = await window.electronAPI.embedding.listModels({
+        remoteApiUrl: formValues.remoteApiUrl,
+        remoteApiKey: formValues.remoteApiKey,
+      });
+
+      if (result.success && result.models.length > 0) {
+        const options = result.models.map((m: string) => ({ label: m, value: m }));
+        setModelOptions(options);
+        message.success(`成功获取 ${result.models.length} 个模型`);
+      } else {
+        message.warning(result.error || '未获取到模型列表');
+      }
+    } catch (error) {
+      message.error('获取模型列表失败');
+    } finally {
+      setModelLoading(false);
+    }
+  };
 
   const renderField = useCallback((fieldName: string) => {
     switch (fieldName) {
@@ -262,10 +283,34 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
         return (
           <Form.Item
             name="remoteModel"
-            label="远程模型名称"
-            tooltip="模型 ID，如: text-embedding-ada-002"
+            label={
+              <Space>
+                远程模型名称
+                <Tooltip title="可手动输入，或点击右侧按钮获取 API 支持的模型列表">
+                  <QuestionCircleOutlined style={{ color: '#999', cursor: 'pointer' }} />
+                </Tooltip>
+              </Space>
+            }
           >
-            <Input placeholder="text-embedding-ada-002" />
+            <AutoComplete
+              options={modelOptions}
+              placeholder="text-embedding-ada-002"
+              filterOption={(inputValue, option) =>
+                option!.value.toUpperCase().indexOf(inputValue.toUpperCase()) !== -1
+              }
+            >
+              <Input.Search
+                placeholder="text-embedding-ada-002"
+                enterButton={
+                  <Space>
+                    <SearchOutlined />
+                    获取模型列表
+                  </Space>
+                }
+                loading={modelLoading}
+                onSearch={handleFetchModels}
+              />
+            </AutoComplete>
           </Form.Item>
         );
       case 'remoteApiKey':
@@ -293,18 +338,16 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
         );
       case 'localModel':
         return null;
-      case 'vectorStoreMode':
-        return (
-          <Form.Item name="vectorStoreMode" label="向量存储模式">
-            <Select onChange={handleStorageModeChange}>
-              <Option value="json">JSON 存储（轻量级，适合小规模数据）</Option>
-              <Option value="vecstore">VecStore 存储（高性能，适合大规模数据）</Option>
-            </Select>
-          </Form.Item>
-        );
       case 'cacheEnabled':
         return (
-          <Form.Item name="cacheEnabled" label="启用缓存" valuePropName="checked">
+          <Form.Item name="cacheEnabled" label={
+            <span>
+              启用缓存
+              <Tooltip title="当前使用 VecStore 向量存储引擎。缓存用于加速向量检索，L1 为内存缓存，L2 为磁盘缓存。">
+                <QuestionCircleOutlined style={{ marginLeft: 6, color: '#999', cursor: 'pointer' }} />
+              </Tooltip>
+            </span>
+          } valuePropName="checked">
             <Switch />
           </Form.Item>
         );

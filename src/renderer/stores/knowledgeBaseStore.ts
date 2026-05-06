@@ -9,7 +9,6 @@ interface KnowledgeItem {
   tags: string[];
   relatedCharacterIds: string[];
   relatedWorldBookPaths: string[];
-  vectorStoreMode: 'json' | 'vecstore';
   metadata: Record<string, any>;
   documentId?: string;
   documentName?: string;

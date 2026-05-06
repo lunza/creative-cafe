@@ -192,6 +192,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     generate: (text: string) => ipcRenderer.invoke('embedding:generate', { text }),
     generateBatch: (texts: string[]) => ipcRenderer.invoke('embedding:generateBatch', { texts }),
     testConnection: (config?: any) => ipcRenderer.invoke('embedding:testConnection', config),
+    listModels: (config?: any) => ipcRenderer.invoke('embedding:listModels', config),
     setMode: (mode: string) => ipcRenderer.invoke('embedding:setMode', { mode }),
     getMode: () => ipcRenderer.invoke('embedding:getMode'),
     localTest: (params?: { modelName?: string }) => ipcRenderer.invoke('embedding:localTest', params || {}),
@@ -206,13 +207,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('vector:addBatch', { items }),
     search: (query: number[], topK: number, filter?: Record<string, any>, scopeIds?: string[]) =>
       ipcRenderer.invoke('vector:search', { query, topK, filter, scopeIds }),
+    getById: (id: string) => ipcRenderer.invoke('vector:getById', { id }),
     update: (id: string, vector: number[], metadata?: Record<string, any>) =>
       ipcRenderer.invoke('vector:update', { id, vector, metadata }),
     delete: (id: string) => ipcRenderer.invoke('vector:delete', { id }),
     count: () => ipcRenderer.invoke('vector:count'),
     rebuildIndex: () => ipcRenderer.invoke('vector:rebuildIndex'),
-    setMode: (mode: string) => ipcRenderer.invoke('vector:setMode', { mode }),
-    setStoreMode: (mode: string) => ipcRenderer.invoke('vector:setStoreMode', { mode }),
     testStorage: (scopeIds?: string[]) => ipcRenderer.invoke('vector:testStorage', { scopeIds }),
     testEmbedding: () => ipcRenderer.invoke('vector:testEmbedding'),
     testAll: () => ipcRenderer.invoke('vector:testAll'),

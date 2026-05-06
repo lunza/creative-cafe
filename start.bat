@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 set "SCRIPT_DIR=%~dp0"
 cd /d "%SCRIPT_DIR%"
 
@@ -32,7 +33,7 @@ rem Check dependencies
 if not exist "node_modules" (
     echo.
     echo Installing dependencies...
-    call npm install
+    call npm install --no-audit --no-fund
     if %errorlevel% neq 0 (
         echo [ERROR] Installation failed
         pause
@@ -52,12 +53,36 @@ if not exist "node_modules\vite" (
 echo [OK] Vite: installed
 
 rem Check Electron
-if not exist "node_modules\electron" (
-    echo [ERROR] Electron not installed
-    pause
-    exit /b 1
+set "ELECTRON_OK=false"
+if exist "node_modules\electron\dist\electron.exe" set "ELECTRON_OK=true"
+if exist "node_modules\electron\dist\Electron.app" set "ELECTRON_OK=true"
+if exist "node_modules\electron\dist\electron" set "ELECTRON_OK=true"
+
+if "%ELECTRON_OK%"=="false" (
+    echo.
+    echo [ERROR] Electron not installed correctly
+    echo Reinstalling Electron...
+    echo.
+    if exist "node_modules\electron" rmdir /s /q "node_modules\electron"
+    call npm install electron --save-dev --no-audit --no-fund
+    if %errorlevel% neq 0 (
+        echo [ERROR] Electron installation failed
+        echo Try running: npm install electron --force
+        pause
+        exit /b 1
+    )
+    rem Verify again
+    if exist "node_modules\electron\dist\electron.exe" (
+        echo [OK] Electron: installed
+    ) else (
+        echo [ERROR] Electron installation still failed
+        echo Try: Delete node_modules and run npm install
+        pause
+        exit /b 1
+    )
+) else (
+    echo [OK] Electron: installed
 )
-echo [OK] Electron: installed
 
 rem Check vector deps
 if exist "node_modules\@xenova\transformers" (

@@ -1,5 +1,5 @@
 export type EmbeddingMode = 'remote' | 'local';
-export type VectorStoreMode = 'vecstore' | 'json';
+export type VectorStoreMode = 'vecstore';
 
 export interface VectorItem {
   id: string;
@@ -35,7 +35,6 @@ export interface KnowledgeItem {
   relatedCharacterIds: string[];
   relatedWorldBookPaths: string[];
   vector?: number[];
-  vectorStoreMode: VectorStoreMode;
   metadata: KnowledgeMetadata;
 }
 

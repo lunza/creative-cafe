@@ -74,12 +74,11 @@ export interface ElectronAPI {
     add: (id: string, vector: number[], metadata: Record<string, any>) => Promise<{ success: boolean; error?: string }>;
     addBatch: (items: Array<{ id: string; vector: number[]; metadata: Record<string, any> }>) => Promise<{ success: boolean; error?: string }>;
     search: (query: number[], topK: number, filter?: Record<string, any>, scopeIds?: string[]) => Promise<{ success: boolean; results?: Array<{ id: string; score: number; metadata: Record<string, any> }>; error?: string }>;
+    getById: (id: string) => Promise<{ success: boolean; item?: any; error?: string }>;
     update: (id: string, vector: number[], metadata?: Record<string, any>) => Promise<{ success: boolean; error?: string }>;
     delete: (id: string) => Promise<{ success: boolean; error?: string }>;
     count: () => Promise<{ success: boolean; count?: number; error?: string }>;
     rebuildIndex: () => Promise<{ success: boolean; error?: string }>;
-    setMode: (mode: string) => Promise<{ success: boolean; error?: string }>;
-    setStoreMode: (mode: string) => Promise<{ success: boolean; error?: string }>;
     testStorage: (scopeIds?: string[]) => Promise<{ success: boolean; mode: string; vectorCount: number; details?: string; error?: string }>;
     testEmbedding: () => Promise<any>;
     testAll: () => Promise<any>;
@@ -99,6 +98,7 @@ export interface ElectronAPI {
   embedding: {
     generate: (text: string) => Promise<{ success: boolean; vector?: number[]; error?: string; dimension?: number; model?: string }>;
     testConnection: (config?: any) => Promise<{ success: boolean; mode: string; dimension: number; error?: string; details?: string }>;
+    listModels: (config?: any) => Promise<{ success: boolean; models: string[]; error?: string }>;
     setMode: (mode: string) => Promise<{ success: boolean; mode?: string; error?: string }>;
     getMode: () => Promise<{ success: boolean; mode: string; dimension: number }>;
     localTest: (params?: { modelName?: string }) => Promise<{ success: boolean; mode: string; dimension: number; details?: string; model?: string; error?: string }>;

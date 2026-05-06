@@ -51,7 +51,6 @@ export class KnowledgeBaseService {
         tags: ['文档向量化', '功能概述', '核心特性'],
         relatedCharacterIds: [],
         relatedWorldBookPaths: [],
-        vectorStoreMode: 'vecstore',
         metadata: { createdAt: Date.now(), updatedAt: Date.now(), createdBy: 'system' }
       },
       {
@@ -69,7 +68,6 @@ export class KnowledgeBaseService {
         tags: ['算法', '架构', '代码实现', '性能优化'],
         relatedCharacterIds: [],
         relatedWorldBookPaths: [],
-        vectorStoreMode: 'vecstore',
         metadata: { createdAt: Date.now(), updatedAt: Date.now(), createdBy: 'system' }
       },
       {
@@ -87,7 +85,6 @@ export class KnowledgeBaseService {
         tags: ['测试用例', '测试流程', '评估指标'],
         relatedCharacterIds: [],
         relatedWorldBookPaths: [],
-        vectorStoreMode: 'vecstore',
         metadata: { createdAt: Date.now(), updatedAt: Date.now(), createdBy: 'system' }
       },
       {
@@ -115,7 +112,6 @@ export class KnowledgeBaseService {
         tags: ['故障排查', '解决方案', '最佳实践', '性能优化'],
         relatedCharacterIds: [],
         relatedWorldBookPaths: [],
-        vectorStoreMode: 'vecstore',
         metadata: { createdAt: Date.now(), updatedAt: Date.now(), createdBy: 'system' }
       }
     ];
@@ -160,8 +156,6 @@ export class KnowledgeBaseService {
 
     const id = item.id || `kb_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const now = Date.now();
-    const settings = getStorageService().getSettings();
-    const currentStoreMode = settings?.vector?.vectorStoreMode || 'vecstore';
 
     // 判断是手动创建的知识条目还是文档上传的知识条目
     const isNewManualKnowledge = !item.documentId && item.source !== 'document-vectorization' && item.source !== 'worldbook';
@@ -171,7 +165,6 @@ export class KnowledgeBaseService {
     const newItem: KnowledgeItem = {
       ...item,
       id,
-      vectorStoreMode: item.vectorStoreMode || currentStoreMode,
       metadata: {
         ...item.metadata,
         createdAt: now,
@@ -185,7 +178,6 @@ export class KnowledgeBaseService {
     await this.persist();
 
     if (newItem.content) {
-      // 向量化时使用正确的 sourceType
       await this.vectorizeItem(id, false, { sourceType });
     }
 
@@ -195,8 +187,6 @@ export class KnowledgeBaseService {
   async createBatch(items: KnowledgeItem[]): Promise<number> {
     await this.ensureInitialized();
     const now = Date.now();
-    const settings = getStorageService().getSettings();
-    const currentStoreMode = settings?.vector?.vectorStoreMode || 'vecstore';
     let count = 0;
     let vectorizedCount = 0;
     
@@ -205,7 +195,6 @@ export class KnowledgeBaseService {
       const newItem: KnowledgeItem = {
         ...item,
         id,
-        vectorStoreMode: item.vectorStoreMode || currentStoreMode,
         metadata: {
           ...item.metadata,
           createdAt: now,
@@ -238,8 +227,6 @@ export class KnowledgeBaseService {
   async createBatchDeferred(items: KnowledgeItem[], batchSize: number = 50): Promise<number> {
     await this.ensureInitialized();
     const now = Date.now();
-    const settings = getStorageService().getSettings();
-    const currentStoreMode = settings?.vector?.vectorStoreMode || 'vecstore';
     let count = 0;
     let vectorizedCount = 0;
     
@@ -248,7 +235,6 @@ export class KnowledgeBaseService {
       const newItem: KnowledgeItem = {
         ...item,
         id,
-        vectorStoreMode: item.vectorStoreMode || currentStoreMode,
         metadata: {
           ...item.metadata,
           createdAt: now,
@@ -291,8 +277,6 @@ export class KnowledgeBaseService {
   async createBatchWithVectors(items: KnowledgeItem[]): Promise<number> {
     await this.ensureInitialized();
     const now = Date.now();
-    const settings = getStorageService().getSettings();
-    const currentStoreMode = settings?.vector?.vectorStoreMode || 'vecstore';
     let count = 0;
     let vectorizedCount = 0;
     
@@ -301,7 +285,6 @@ export class KnowledgeBaseService {
       const newItem: KnowledgeItem = {
         ...item,
         id,
-        vectorStoreMode: item.vectorStoreMode || currentStoreMode,
         metadata: {
           ...item.metadata,
           createdAt: now,
@@ -388,7 +371,6 @@ export class KnowledgeBaseService {
     if (updates.tags) item.tags = updates.tags;
     if (updates.relatedCharacterIds) item.relatedCharacterIds = updates.relatedCharacterIds;
     if (updates.relatedWorldBookPaths) item.relatedWorldBookPaths = updates.relatedWorldBookPaths;
-    if (updates.vectorStoreMode) item.vectorStoreMode = updates.vectorStoreMode;
 
     item.metadata = {
       ...item.metadata,

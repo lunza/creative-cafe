@@ -188,9 +188,8 @@ ${e.content}`;
           category: options?.category || ['世界书知识'],
           tags: options?.tags || [fileName.split('.')[0] || 'worldbook', ...(e.key || [])].filter(Boolean),
           relatedCharacterIds: [],
-          relatedWorldBookPaths: [fileName],
-          vectorStoreMode: 'vecstore' as const,
-          metadata: {
+        relatedWorldBookPaths: [fileName],
+        metadata: {
             documentId: `wb_${fileName}`,
             fileName: fileName,
             worldBookEntryUid: String(entryUid),
@@ -297,7 +296,6 @@ ${e.content}`;
         tags: options?.tags || [fileName.split('.')[0] || 'document'],
         relatedCharacterIds: [],
         relatedWorldBookPaths: [],
-        vectorStoreMode: 'vecstore' as const,
         vector: embeddings[i], // Use pre-computed embedding
         metadata: {
           documentId: docId,
