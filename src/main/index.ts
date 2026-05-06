@@ -101,26 +101,6 @@ app.whenReady().then(async () => {
     }
   })();
 
-  // 迁移聊天记录
-  (async () => {
-    try {
-      const { chatStorageService } = await import('./services/ChatStorageService');
-      const result = await chatStorageService.migrateFromLegacyFile();
-      if (result.migrated > 0) {
-        console.log(`[Migration] Successfully migrated ${result.migrated} chats`);
-        if (result.errors.length > 0) {
-          console.warn('[Migration] Errors during migration:', result.errors);
-        }
-      } else if (result.success) {
-        console.log('[Migration] No migration needed (no legacy file found)');
-      } else {
-        console.error('[Migration] Migration failed:', result.errors);
-      }
-    } catch (error) {
-      console.error('[Migration] Migration failed:', error);
-    }
-  })();
-
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();

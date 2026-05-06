@@ -1,6 +1,6 @@
 import React from 'react';
 import { Button, Space, Tooltip } from 'antd';
-import { ClearOutlined, ExportOutlined, CloseOutlined, RobotOutlined, FullscreenOutlined, FullscreenExitOutlined } from '@ant-design/icons';
+import { ClearOutlined, ExportOutlined, CloseOutlined, RobotOutlined, FullscreenOutlined, FullscreenExitOutlined, UserOutlined } from '@ant-design/icons';
 
 interface ChatHeaderProps {
   characterName: string;
@@ -12,6 +12,7 @@ interface ChatHeaderProps {
   avatarPath?: string;
   isFullscreen?: boolean;
   onToggleFullscreen?: () => void;
+  selectedPersona?: { name: string; avatarPath?: string } | null;
 }
 
 const ChatHeader: React.FC<ChatHeaderProps> = ({
@@ -24,6 +25,7 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
   avatarPath,
   isFullscreen = false,
   onToggleFullscreen,
+  selectedPersona,
 }) => {
   return (
     <div style={{
@@ -74,6 +76,37 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
       </div>
 
       <Space size="small">
+        {selectedPersona && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '4px 12px',
+            background: 'rgba(99, 102, 241, 0.1)',
+            borderRadius: '16px',
+            border: '1px solid rgba(99, 102, 241, 0.3)',
+          }}>
+            <div style={{
+              width: '24px',
+              height: '24px',
+              borderRadius: '50%',
+              overflow: 'hidden',
+              background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+              {selectedPersona.avatarPath ? (
+                <img src={selectedPersona.avatarPath} alt={selectedPersona.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              ) : (
+                <UserOutlined style={{ fontSize: '12px', color: '#fff' }} />
+              )}
+            </div>
+            <span style={{ fontSize: '13px', color: 'var(--text-primary, #e2e8f0)' }}>
+              {selectedPersona.name}
+            </span>
+          </div>
+        )}
         {onExport && (
           <Tooltip title="Export conversation">
             <Button

@@ -74,11 +74,21 @@ export interface AIParameterConfig {
   presence_penalty?: number;
 }
 
+// 知识库绑定信息
+export interface KnowledgeBaseBinding {
+  documentId: string;
+  documentName: string;
+  enabled: boolean;
+  priority: number;
+}
+
 // 角色会话配置（存储每个角色的自定义参数）
 export interface CharacterSessionConfig {
   characterCardId: string;
   selectedPersonaId?: string;
   customParameters?: AIParameterConfig;
+  boundKnowledgeBaseIds?: string[];
+  knowledgeBaseBindings?: KnowledgeBaseBinding[];
   lastUpdated: number;
 }
 

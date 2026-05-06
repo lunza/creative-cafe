@@ -1,14 +1,14 @@
-// 角色测试聊天业务逻辑Hooks
+// 角色对话业务逻辑Hooks
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { message } from 'antd';
 import { useSettingStore } from '../../../stores/settingStore';
 import { useCharacterChatStore } from '../../../stores/characterChatStore';
 import { useLogStore } from '../../../stores/logStore';
-import { ChatMessage, CharacterInfo, ChatState, UserPersona, EffectiveAIParams } from './CharacterTestChat.types';
+import { ChatMessage, CharacterInfo, ChatState, UserPersona, EffectiveAIParams } from './CharacterDialogueChat.types';
 import { ChatEngineFactory } from '../../Common/ChatEngine/ChatEngine.factory';
 import { AIEngineConfig, AIResponse } from '../../Common/ChatEngine/ChatEngine.types';
-import { replaceTemplates, buildCharacterContext, buildPersonaSection } from './CharacterTestChat.utils';
+import { replaceTemplates, buildCharacterContext, buildPersonaSection } from './CharacterDialogueChat.utils';
 
 const DEFAULT_USER_NAME = 'User';
 
@@ -64,7 +64,7 @@ export function useCharacterConfig(characterCardId: string) {
 
   const resetParameters = useCallback(() => {
     setConfig(prev => {
-      const next = prev ? { ...prev, customParameters: undefined, lastUpdated: Date.now() } : null;
+      const next = prev ? { ...prev, customParameters: undefined, lastUpdated: Date.now() } : null; 
       saveStoredConfig(characterCardId, next);
       return next;
     });
@@ -73,7 +73,7 @@ export function useCharacterConfig(characterCardId: string) {
   const getEffectiveParams = useCallback((): EffectiveAIParams => {
     const customParams = config?.customParameters || {};
     const source = Object.keys(customParams).length > 0 ? 'custom' : 'global';
-    
+
     return {
       temperature: customParams.temperature ?? 0.7,
       top_p: customParams.top_p !== undefined ? customParams.top_p : undefined,
@@ -91,18 +91,21 @@ export function useCharacterConfig(characterCardId: string) {
 
 export function usePersonas() {
   const [personas, setPersonas] = useState<UserPersona[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let mounted = true;
     const loadPersonas = async () => {
-      setLoading(true);
       try {
-        const avatars = await window.electronAPI.avatar.list();
+        console.log('[CharacterDialogueChat] Loading personas from file system...');
+        const avatarList = await window.electronAPI.avatar.list();
+        console.log('[CharacterDialogueChat] Avatar list:', avatarList);
+        
         if (mounted) {
           const loadedPersonas: UserPersona[] = [];
-          for (const avatar of avatars) {
-            if (avatar.path?.endsWith('.json') && !avatar.path.includes('user-profile.json')) {
+          
+          for (const avatar of avatarList) {
+            if (avatar.path.endsWith('.json') && !avatar.path.includes('user-profile.json')) {
               try {
                 const content = await window.electronAPI.avatar.read(avatar.path);
                 if (content) {
@@ -111,18 +114,27 @@ export function usePersonas() {
                     name: content.name || '未命名',
                     description: content.description || '',
                     avatarPath: content.avatarPath || '',
-                    createdAt: content.createdAt || Date.now(),
-                    updatedAt: content.updatedAt || Date.now(),
                   });
                 }
-              } catch { /* skip failed items */ }
+              } catch (error) {
+                console.error(`[CharacterDialogueChat] Failed to read persona ${avatar.name}:`, error);
+              }
             }
           }
-          loadedPersonas.sort((a, b) => b.updatedAt - a.updatedAt);
+          
+          console.log('[CharacterDialogueChat] Loaded personas:', loadedPersonas);
           setPersonas(loadedPersonas);
         }
-      } catch { /* ignore */ }
-      finally { if (mounted) setLoading(false); }
+      } catch (error) {
+        console.error('[CharacterDialogueChat] Failed to load personas:', error);
+        if (mounted) {
+          setPersonas([]);
+        }
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
+      }
     };
     loadPersonas();
     return () => { mounted = false; };
@@ -131,7 +143,13 @@ export function usePersonas() {
   return { personas, loading };
 }
 
-export function useCharacterTestChat(characterInfo: CharacterInfo) {
+// ==================== 主对话 Hook ====================
+
+export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
+  const setting = useSettingStore(state => state.setting);
+  const { saveTestChat } = useCharacterChatStore();
+  const addLog = useLogStore(state => state.addLog);
+
   const [state, setState] = useState<ChatState>({
     messages: [],
     isLoading: false,
@@ -139,76 +157,138 @@ export function useCharacterTestChat(characterInfo: CharacterInfo) {
     error: null,
   });
 
-  // 新增：角色配置和人设状态
   const { config: characterConfig, updateConfig, resetParameters, getEffectiveParams } = useCharacterConfig(characterInfo.characterCardId);
   const { personas } = usePersonas();
-  
-  const selectedPersona = useMemo(() => {
-    if (!characterConfig?.selectedPersonaId) return undefined;
-    return personas.find(p => p.id === characterConfig.selectedPersonaId);
-  }, [personas, characterConfig?.selectedPersonaId]);
 
-  const { setting, fetchSetting } = useSettingStore();
-  const { saveTestChat } = useCharacterChatStore();
-  const { addLog } = useLogStore();
-  const streamContentRef = useRef<string>('');
-  const initialContentRef = useRef<string>('');
   const messagesRef = useRef<ChatMessage[]>([]);
-  const targetMessageIdRef = useRef<string>('');
-  const firstMessageSentRef = useRef<boolean>(false);
+  const firstMessageSentRef = useRef(false);
+  const initialContentRef = useRef('');
+  const streamContentRef = useRef('');
+  const targetMessageIdRef = useRef('');
+
+  const selectedPersonaId = characterConfig?.selectedPersonaId;
+  const selectedPersona = useMemo(() => {
+    if (!selectedPersonaId || personas.length === 0) return null;
+    return personas.find(p => p.id === selectedPersonaId) || null;
+  }, [selectedPersonaId, personas]);
+
+  const saveChatToStore = useCallback(async (messages: ChatMessage[]) => {
+    try {
+      await saveTestChat(
+        characterInfo.creativeId,
+        characterInfo.characterCardId,
+        characterInfo.characterCardName,
+        messages
+      );
+    } catch (error) {
+      addLog(`[CharacterDialogueChat] Failed to save chat: ${error}`, 'error');
+    }
+  }, [characterInfo, saveTestChat, addLog]);
+
+  const saveConfig = useCallback(async () => {
+    try {
+      const configToSave = {
+        ...characterConfig,
+        characterCardId: characterInfo.characterCardId,
+        characterCardName: characterInfo.characterCardName,
+        lastUpdated: Date.now(),
+      };
+
+      saveStoredConfig(characterInfo.characterCardId, configToSave);
+
+      const result = await window.electronAPI.characterConfig.save(characterInfo.characterCardId, configToSave);
+      if (result.success) {
+        const timestamp = new Date().toLocaleString('zh-CN');
+        const summary = JSON.stringify({
+          selectedPersonaId: configToSave.selectedPersonaId,
+          boundKnowledgeBaseIds: configToSave.boundKnowledgeBaseIds,
+          customParameters: configToSave.customParameters,
+          lastUpdated: timestamp,
+        }, null, 2);
+
+        console.log(`[CharacterDialogueChat] === Config Saved ===`);
+        console.log(`[CharacterDialogueChat] Time: ${timestamp}`);
+        console.log(`[CharacterDialogueChat] Character: ${characterInfo.characterCardName} (${characterInfo.characterCardId})`);
+        console.log(`[CharacterDialogueChat] Config Summary:\n${summary}`);
+        console.log(`[CharacterDialogueChat] ======================`);
+
+        addLog(`[CharacterDialogueChat] Config saved for ${characterInfo.characterCardName}`, 'info');
+        message.success('设置已保存');
+      } else {
+        message.error(`保存失败: ${result.error}`);
+        addLog(`[CharacterDialogueChat] Failed to save config: ${result.error}`, 'error');
+      }
+    } catch (error) {
+      message.error('保存设置失败');
+      addLog(`[CharacterDialogueChat] Failed to save config: ${error}`, 'error');
+    }
+  }, [characterConfig, characterInfo, addLog]);
+
+  const bindKnowledgeBase = useCallback((documentId: string) => {
+    const currentBoundIds = characterConfig?.boundKnowledgeBaseIds || [];
+    if (currentBoundIds.includes(documentId)) {
+      message.info('该知识库已绑定');
+      return;
+    }
+    updateConfig({ boundKnowledgeBaseIds: [...currentBoundIds, documentId] });
+    message.success('知识库绑定成功');
+    addLog(`[CharacterDialogueChat] Knowledge base bound: ${documentId}`, 'info');
+  }, [characterConfig, updateConfig, addLog]);
+
+  const unbindKnowledgeBase = useCallback((documentId: string) => {
+    const currentBoundIds = characterConfig?.boundKnowledgeBaseIds || [];
+    updateConfig({ boundKnowledgeBaseIds: currentBoundIds.filter(id => id !== documentId) });
+    message.success('知识库解绑成功');
+    addLog(`[CharacterDialogueChat] Knowledge base unbound: ${documentId}`, 'info');
+  }, [characterConfig, updateConfig, addLog]);
 
   useEffect(() => {
-    fetchSetting();
-  }, [fetchSetting]);
-
-  useEffect(() => {
+    let cancelled = false;
+    console.log('[CharacterDialogueChat] === useEffect triggered ===');
+    console.log('[CharacterDialogueChat] creativeId:', characterInfo.creativeId);
+    console.log('[CharacterDialogueChat] characterCardId:', characterInfo.characterCardId);
+    console.log('[CharacterDialogueChat] first_mes exists:', !!characterInfo.first_mes);
+    console.log('[CharacterDialogueChat] first_mes length:', characterInfo.first_mes?.length || 0);
     const loadChatHistory = async () => {
       try {
-        const chat = await window.electronAPI?.characterChat?.getTestChat(
-          characterInfo.creativeId,
-          characterInfo.characterCardId
-        );
-        if (chat && chat.messages && chat.messages.length > 0) {
-          const safeMessages = chat.messages.map((msg: any) => ({
-            id: msg.id || Date.now().toString() + Math.random().toString(36).substr(2, 9),
-            role: msg.role || 'user',
-            content: String(msg.content || ''),
-            timestamp: msg.timestamp || Date.now(),
-            status: msg.status || 'sent' as const,
+        const savedChat = await window.electronAPI.characterChat.getTestChat(characterInfo.creativeId, characterInfo.characterCardId);
+        if (cancelled) return;
+        console.log('[CharacterDialogueChat] savedChat:', savedChat);
+        if (savedChat && savedChat.messages && savedChat.messages.length > 0) {
+          setState(prev => ({
+            ...prev,
+            messages: savedChat.messages,
           }));
-          setState(prev => ({ ...prev, messages: safeMessages }));
-          messagesRef.current = safeMessages;
+          messagesRef.current = savedChat.messages;
           firstMessageSentRef.current = true;
-          addLog('[CharacterTestChat] Loaded chat history', 'info');
+          addLog(`[CharacterDialogueChat] Loaded ${savedChat.messages.length} messages from history`, 'info');
+        } else if (characterInfo.first_mes && characterInfo.first_mes.trim()) {
+          console.log('[CharacterDialogueChat] Setting first_mes as initial message');
+          const firstMessage: ChatMessage = {
+            id: 'first-' + Date.now(),
+            role: 'assistant',
+            content: characterInfo.first_mes,
+            timestamp: Date.now(),
+            status: 'sent',
+          };
+          setState(prev => ({
+            ...prev,
+            messages: [firstMessage],
+          }));
+          messagesRef.current = [firstMessage];
+          firstMessageSentRef.current = true;
+          await saveChatToStore([firstMessage]);
+          addLog(`[CharacterDialogueChat] First message loaded from character card (${characterInfo.first_mes.length} chars)`, 'info');
         } else {
-          const firstMes = characterInfo.first_mes;
-          if (firstMes && firstMes.trim()) {
-            const processedFirstMes = replaceTemplates(firstMes, characterInfo.characterCardName, DEFAULT_USER_NAME);
-            const firstMessage: ChatMessage = {
-              id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-              role: 'assistant',
-              content: processedFirstMes,
-              timestamp: Date.now(),
-              status: 'sent',
-            };
-            setState(prev => ({ ...prev, messages: [firstMessage] }));
-            messagesRef.current = [firstMessage];
-            firstMessageSentRef.current = true;
-            await saveTestChat(
-              characterInfo.creativeId,
-              characterInfo.characterCardId,
-              characterInfo.characterCardName,
-              [firstMessage]
-            );
-            addLog('[CharacterTestChat] Auto-sent first message from character card', 'info');
-          }
+          addLog(`[CharacterDialogueChat] No chat history and no first_mes, showing empty state`, 'info');
         }
       } catch (error) {
-        addLog(`[CharacterTestChat] Failed to load chat history: ${error}`, 'error');
+        addLog(`[CharacterDialogueChat] Failed to load chat history: ${error}`, 'error');
       }
     };
     loadChatHistory();
-  }, [characterInfo.creativeId, characterInfo.characterCardId, characterInfo.first_mes, characterInfo.characterCardName, saveTestChat, addLog]);
+    return () => { cancelled = true; };
+  }, [characterInfo.creativeId, characterInfo.characterCardId]);
 
   useEffect(() => {
     messagesRef.current = state.messages;
@@ -245,7 +325,7 @@ export function useCharacterTestChat(characterInfo: CharacterInfo) {
 ${characterContext}
 ${personaSection}
 【对话任务说明】
-你正在扮演 {{char}} 这个角色，与 ${selectedPersona?.name || DEFAULT_USER_NAME} 进行角色扮演对话。
+你正在扮演 {{char}} 这个角色，与 ${selectedPersona?.name || DEFAULT_USER_NAME} 进行角色扮演对话。   
 在提示词中，{{char}} 代表 ${charName}，${selectedPersona?.name || DEFAULT_USER_NAME} 代表当前对话用户。
 你需要完全代入角色，以角色的身份与用户进行自然的交流。
 
@@ -301,7 +381,7 @@ ${personaSection}
 ${characterContext}
 ${personaSection}
 【续写任务说明】
-你需要续写以下角色的叙述内容。请仔细阅读前文，然后自然地继续写下去，保持风格和上下文的连贯性。
+你需要续写以下角色的叙述内容。请仔细阅读前文，然后自然地继续写下去，保持风格和上下文的连贯性。      
 在提示词中，{{char}} 代表 ${charName}，${selectedPersona?.name || DEFAULT_USER_NAME} 代表当前对话用户。
 
 【续写约束规则】
@@ -336,19 +416,6 @@ ${personaSection}
     selectedPersona,
   ]);
 
-  const saveChatToStore = useCallback(async (messages: ChatMessage[]) => {
-    try {
-      await saveTestChat(
-        characterInfo.creativeId,
-        characterInfo.characterCardId,
-        characterInfo.characterCardName,
-        messages
-      );
-    } catch (error) {
-      addLog(`[CharacterTestChat] Failed to save chat: ${error}`, 'error');
-    }
-  }, [characterInfo, saveTestChat, addLog]);
-
   const requestAIResponse = useCallback(async (
     contextMessages: ChatMessage[],
     targetMessageId: string,
@@ -362,7 +429,7 @@ ${personaSection}
         ...prev,
         messages: prev.messages.map(msg =>
           msg.id === targetMessageId
-            ? { ...msg, content: msg.content || '请先配置AI引擎', status: 'error' as const }
+            ? { ...msg, content: msg.content || '请先配置AI引擎', status: 'error' as const }        
             : msg
         ),
         isLoading: false,
@@ -401,35 +468,36 @@ ${personaSection}
 
     let vectorContextSection = '';
     try {
+      const boundKnowledgeBaseIds = characterConfig?.boundKnowledgeBaseIds || [];
       const lastUserMessage = [...contextMessages].reverse().find(m => m.role === 'user');
       if (lastUserMessage && lastUserMessage.content) {
         const contextResult = await window.electronAPI.context.retrieve(
-          [...contextMessages.slice(-20), { role: 'user', content: lastUserMessage.content }],
-          { topK: 5, minScore: 0.3, sources: ['worldbook', 'knowledge', 'memory'] }
+          [...contextMessages.slice(-20), { role: 'user', content: lastUserMessage.content }],      
+          { topK: 5, minScore: 0.3, sources: ['worldbook', 'knowledge', 'memory'], scopeIds: boundKnowledgeBaseIds.length > 0 ? boundKnowledgeBaseIds : undefined }
         );
 
-        if (contextResult.success && contextResult.items && contextResult.items.length > 0) {
+        if (contextResult.success && contextResult.items && contextResult.items.length > 0) {       
           vectorContextSection = contextResult.items
             .map((item: any, index: number) => {
               return `[相关上下文 ${index + 1}] (来源: ${item.source}, 相关性: ${(item.score * 100).toFixed(1)}%)\n${item.content}`;
             })
             .join('\n\n');
-          addLog(`[CharacterTestChat] Retrieved ${contextResult.items.length} vector context items`, 'info');
+          addLog(`[CharacterDialogueChat] Retrieved ${contextResult.items.length} vector context items`, 'info');
         }
       }
     } catch (error) {
-      addLog(`[CharacterTestChat] Vector context retrieval failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'warn');
+      addLog(`[CharacterDialogueChat] Vector context retrieval failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'warn');
     }
 
-    const systemPrompt = promptType === 'continuation' 
-      ? buildContinuationPrompt() 
+    const systemPrompt = promptType === 'continuation'
+      ? buildContinuationPrompt()
       : buildDialoguePrompt();
-    
-    const finalSystemPrompt = vectorContextSection 
+
+    const finalSystemPrompt = vectorContextSection
       ? `${systemPrompt}\n\n--- 相关背景知识 ---\n\n${vectorContextSection}\n\n--- 请结合以上背景知识进行回应 ---`
       : systemPrompt;
-    
-    addLog(`[CharacterTestChat] Using ${promptType} prompt with params: temp=${effectiveParams.temperature}`, 'info');
+
+    addLog(`[CharacterDialogueChat] Using ${promptType} prompt with params: temp=${effectiveParams.temperature}`, 'info');
 
     const engine = ChatEngineFactory.getInstance().getOrCreateDefaultEngine(engineConfigWithParams);
 
@@ -443,8 +511,8 @@ ${personaSection}
           if (!targetMsg) return prev;
 
           const expectedPrefix = initialContentRef.current;
-          if (currentContent !== expectedPrefix && !currentContent.startsWith(expectedPrefix)) {
-            addLog(`[CharacterTestChat] Content validation warning: content mismatch detected`, 'warn');
+          if (currentContent !== expectedPrefix && !currentContent.startsWith(expectedPrefix)) {    
+            addLog(`[CharacterDialogueChat] Content validation warning: content mismatch detected`, 'warn');
           }
 
           return {
@@ -467,13 +535,13 @@ ${personaSection}
       if (hasInitialContent) {
         if (accumulatedContent.length > initialContentRef.current.length) {
           finalContent = accumulatedContent;
-          addLog(`[CharacterTestChat] Continue: preserved ${initialContentRef.current.length} chars, added ${accumulatedContent.length - initialContentRef.current.length} chars`, 'info');
+          addLog(`[CharacterDialogueChat] Continue: preserved ${initialContentRef.current.length} chars, added ${accumulatedContent.length - initialContentRef.current.length} chars`, 'info');
         } else if (serverContent.length > 0) {
           finalContent = initialContentRef.current + serverContent;
-          addLog(`[CharacterTestChat] Continue: used initial content + server response fallback`, 'info');
+          addLog(`[CharacterDialogueChat] Continue: used initial content + server response fallback`, 'info');
         } else {
           finalContent = initialContentRef.current;
-          addLog(`[CharacterTestChat] Continue: no new content received, keeping original`, 'warn');
+          addLog(`[CharacterDialogueChat] Continue: no new content received, keeping original`, 'warn');
         }
       } else {
         finalContent = serverContent || accumulatedContent;
@@ -497,13 +565,13 @@ ${personaSection}
       setState(prev => {
         const targetMessage = prev.messages.find(msg => msg.id === targetMessageId);
         if (!targetMessage) {
-          addLog(`[CharacterTestChat] Target message ${targetMessageId} not found in current messages`, 'error');
+          addLog(`[CharacterDialogueChat] Target message ${targetMessageId} not found in current messages`, 'error');
           return prev;
         }
 
         const existingContent = targetMessage.content;
         if (existingContent.length > 0 && finalContent.length < existingContent.length) {
-          addLog(`[CharacterTestChat] Content protection: preventing content loss (${existingContent.length} -> ${finalContent.length})`, 'error');
+          addLog(`[CharacterDialogueChat] Content protection: preventing content loss (${existingContent.length} -> ${finalContent.length})`, 'error');
           return prev;
         }
 
@@ -544,7 +612,7 @@ ${personaSection}
     try {
       await engine.sendMessage(contextMessages, finalSystemPrompt, activeEngine);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to send message';
+      const errorMessage = error instanceof Error ? error.message : 'Failed to send message';       
       setState(prev => ({
         ...prev,
         messages: prev.messages.map(msg =>
@@ -559,7 +627,7 @@ ${personaSection}
       message.error(`Failed: ${errorMessage}`);
       initialContentRef.current = '';
     }
-  }, [getActiveEngineConfig, buildDialoguePrompt, buildContinuationPrompt, saveChatToStore, addLog]);
+  }, [getActiveEngineConfig, buildDialoguePrompt, buildContinuationPrompt, saveChatToStore, addLog, characterConfig]);
 
   const sendMessage = useCallback(async (content: string) => {
     if (!content.trim() || state.isStreaming) return;
@@ -624,7 +692,7 @@ ${personaSection}
     const targetMessageId = lastMessage.id;
     const existingContent = lastMessage.content || '';
 
-    addLog(`[CharacterTestChat] Continue conversation: message has ${existingContent.length} chars`, 'info');
+    addLog(`[CharacterDialogueChat] Continue conversation: message has ${existingContent.length} chars`, 'info');
 
     setState(prev => ({
       ...prev,
@@ -636,7 +704,7 @@ ${personaSection}
       error: null,
     }));
 
-    await requestAIResponse(currentMessages, targetMessageId, existingContent, 'continuation');
+    await requestAIResponse(currentMessages, targetMessageId, existingContent, 'continuation');     
   }, [state.isStreaming, requestAIResponse, addLog]);
 
   const retryMessage = useCallback(async (messageId: string) => {
@@ -689,7 +757,7 @@ ${personaSection}
     });
     messagesRef.current = [];
     await saveChatToStore([]);
-    addLog('[CharacterTestChat] Chat cleared', 'info');
+    addLog('[CharacterDialogueChat] Chat cleared', 'info');
     message.success('对话已清空');
   }, [state.isStreaming, getActiveEngineConfig, saveChatToStore, addLog]);
 
@@ -703,7 +771,7 @@ ${personaSection}
       isLoading: false,
       isStreaming: false,
     }));
-    addLog('[CharacterTestChat] Request cancelled', 'info');
+    addLog('[CharacterDialogueChat] Request cancelled', 'info');
     initialContentRef.current = '';
   }, [getActiveEngineConfig, addLog]);
 
@@ -713,7 +781,7 @@ ${personaSection}
         msg.id === messageId ? { ...msg, content: newContent, timestamp: Date.now() } : msg
       );
       saveChatToStore(updatedMessages);
-      addLog(`[CharacterTestChat] Message ${messageId} edited`, 'info');
+      addLog(`[CharacterDialogueChat] Message ${messageId} edited`, 'info');
       return { ...prev, messages: updatedMessages };
     });
   }, [saveChatToStore, addLog]);
@@ -726,13 +794,15 @@ ${personaSection}
     editMessage,
     clearChat,
     cancelRequest,
-    // 新增返回
     selectedPersona,
     personas,
     characterConfig,
     updateConfig,
+    saveConfig,
     resetParameters,
     getEffectiveParams,
     getActiveEngineConfig,
+    bindKnowledgeBase,
+    unbindKnowledgeBase,
   };
 }

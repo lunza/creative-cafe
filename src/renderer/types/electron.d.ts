@@ -45,6 +45,10 @@ interface ElectronAPI {
     getWorldBookRelations: (path: string) => Promise<Array<{ worldBookPath: string; enabled: boolean; priority: number; filterTags?: string[] }>>;
     setWorldBookRelations: (path: string, relations: Array<{ worldBookPath: string; enabled: boolean; priority: number; filterTags?: string[] }>) => Promise<{ success: boolean; error?: string }>;
   };
+  characterConfig: {
+    save: (characterCardId: string, config: any) => Promise<{ success: boolean; error?: string }>;
+    load: (characterCardId: string) => Promise<{ success: boolean; config: any | null }>;
+  };
   avatar: {
     list: () => Promise<any[]>;
     read: (path: string) => Promise<any>;
@@ -158,12 +162,7 @@ interface ElectronAPI {
     getTestChat: (creativeId: string, characterCardId: string) => Promise<any>;
     saveTestChat: (creativeId: string, characterCardId: string, characterCardName: string, messages: any[]) => Promise<any>;
     deleteTestChat: (creativeId: string, characterCardId: string) => Promise<boolean>;
-    getGenerationChat: (creativeId: string, targetType: 'character' | 'worldbook', name: string) => Promise<any>;
-    saveGenerationChat: (creativeId: string, targetType: 'character' | 'worldbook', name: string, messages: any[]) => Promise<any>;
-    deleteGenerationChat: (creativeId: string, targetType: 'character' | 'worldbook', name: string) => Promise<boolean>;
     getAllTestChats: () => Promise<any[]>;
-    getAllGenerationChats: () => Promise<any[]>;
-    migrateFromLegacy: () => Promise<{ success: boolean; migrated: number; errors: string[] }>;
     clearCache: () => Promise<{ success: boolean }>;
   };
   // 通用存储 API
@@ -227,6 +226,27 @@ interface ElectronAPI {
     getVectorStats: () => Promise<{ totalVectors: number; documentCount: number; documents: Array<{ docId: string; fileName: string; vectorCount: number }> }>;
     generateEmbedding: (text: string) => Promise<{ success: boolean; vector?: number[]; error?: string; dimension?: number }>;
     selectFile: () => Promise<string | null>;
+  };
+
+  // 对话记录向量化 API
+  chatVector: {
+    vectorize: (characterId: string, messages: Array<{ role: string; content: string; name?: string; create_date?: number }>) => Promise<{
+      success: boolean;
+      messagesVectorized: number;
+      messagesFailed: number;
+      error?: string;
+      messageVectorIds: string[];
+    }>;
+    delete: (characterId: string) => Promise<{
+      success: boolean;
+      deletedCount: number;
+      error?: string;
+    }>;
+    search: (characterId: string, query: string, topK?: number) => Promise<{
+      id: string;
+      score: number;
+      metadata: Record<string, any>;
+    }[]>;
   };
 }
 

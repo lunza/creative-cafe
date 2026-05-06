@@ -98,11 +98,13 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
   const remarkPlugins = useMemo(() => {
     const plugins: any[] = [];
 
-    plugins.push(remarkTableCellRawHtml);
-
+    // GFM MUST run first to parse tables, strikethrough, etc.
+    // remarkTableCellRawHtml runs after to handle inline HTML in table cells
     if (mergedConfig.markdown.enableGFM) {
       plugins.push(remarkGfm);
     }
+
+    plugins.push(remarkTableCellRawHtml);
 
     if (mergedConfig.markdown.enableEmoji) {
       plugins.push(remarkEmoji);

@@ -29,7 +29,7 @@ export const VectorSourceTypeDescription: Record<VectorSourceType, string> = {
   [VectorSourceType.WORLDBOOK]: '世界书文件向量化生成的向量数据',
   [VectorSourceType.KNOWLEDGE]: '通过文档上传功能处理的 PDF/Word/Excel/TXT/MD 文件向量化数据',
   [VectorSourceType.MANUAL_KNOWLEDGE]: '用户手动创建的知识条目向量化数据，存储于 default 目录',
-  [VectorSourceType.CHARACTER_CHAT]: '角色卡聊天记录向量化数据（功能开发中）',
+  [VectorSourceType.CHARACTER_CHAT]: '角色卡聊天记录向量化数据',
 };
 
 /**
@@ -49,9 +49,8 @@ export function getAvailableVectorSourceTypes(includeUnimplemented = false): Vec
   if (includeUnimplemented) {
     return Object.values(VectorSourceType);
   }
-  // 当前未实现的类型
-  const unimplemented = [VectorSourceType.CHARACTER_CHAT];
-  return Object.values(VectorSourceType).filter(t => !unimplemented.includes(t));
+  // 当前已实现所有类型
+  return Object.values(VectorSourceType);
 }
 
 /** 获取源类型的默认存储路径配置 */
@@ -86,7 +85,7 @@ export const VectorSourceTypeStorageConfig: Record<VectorSourceType, SourceTypeS
     filePrefix: 'manual',
   },
   [VectorSourceType.CHARACTER_CHAT]: {
-    storageDir: 'characters',
+    storageDir: 'character_chat',
     perEntrySubdir: true,
     filePrefix: 'chat',
   },

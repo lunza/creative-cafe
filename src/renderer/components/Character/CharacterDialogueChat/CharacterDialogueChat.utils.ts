@@ -1,6 +1,6 @@
 // 角色测试聊天工具函数
 
-import { ChatMessage, UserPersona } from './CharacterTestChat.types';
+import { ChatMessage, UserPersona } from './CharacterDialogueChat.types';
 
 export { MessageRenderer, DEFAULT_RENDER_CONFIG, mergeConfig } from './MessageRenderer';
 export type { RenderConfig, MessageRendererProps } from './MessageRenderer';
@@ -83,9 +83,21 @@ export function replaceTemplates(text: string, charName: string, userName: strin
 
 export function parseMesExample(mesExample: string): Array<{ user: string; char: string }> {
   if (!mesExample) return [];
-
+  
+  // Handle non-string values (array, object, etc.)
+  let mesString: string;
+  if (typeof mesExample === 'string') {
+    mesString = mesExample;
+  } else if (Array.isArray(mesExample)) {
+    mesString = mesExample.join('\n');
+  } else {
+    mesString = String(mesExample);
+  }
+  
+  if (!mesString.trim()) return [];
+  
   const examples: Array<{ user: string; char: string }> = [];
-  const parts = mesExample.split(/<START>/i);
+  const parts = mesString.split(/<START>/i);
 
   parts.forEach(part => {
     const trimmed = part.trim();

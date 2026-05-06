@@ -2,6 +2,15 @@ import { ipcMain, app } from 'electron';
 import { characterService } from '../../services/characterService';
 import { getUserDataPath } from '../../utils/appPath';
 import { getStorageService } from '../../services/storageService';
+import fs from 'fs/promises';
+import path from 'path';
+
+// 配置文件路径：与角色卡同目录、同名，扩展名改为 .json
+// 例如：角色卡路径为 "data/characters/克拉拉.png" → 配置文件为 "data/characters/克拉拉.json"
+function getConfigFilePath(characterCardPath: string): string {
+  const ext = path.extname(characterCardPath);
+  return characterCardPath.replace(new RegExp(`${ext.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`), '.json');
+}
 
 function resolveUserDataPlaceholder(dir: string): string {
   console.log('[resolveUserDataPlaceholder] 输入路径:', dir);
@@ -85,5 +94,42 @@ export function characterHandlers() {
 
   ipcMain.handle('character:setWorldBookRelations', async (_event, filePath: string, relations: any[]) => {
     return await characterService.setWorldBookRelations(filePath, relations);
+  });
+
+  // Character config save/load handlers
+  ipcMain.handle('characterConfig:save', async (_event, characterCardId: string, config: any) => {
+    try {
+      console.log('[characterConfig:save] Saving config for characterCardId:', characterCardId);
+      console.log('[characterConfig:save] Config data:', config ? JSON.stringify(config, null, 2).substring(0, 200) : 'null');
+      
+      if (!characterCardId) {
+        console.error('[characterConfig:save] characterCardId is empty!');
+        return { success: false, error: '角色卡ID无效' };
+      }
+      
+      const filePath = getConfigFilePath(characterCardId);
+      console.log('[characterConfig:save] File path:', filePath);
+      
+      await fs.writeFile(filePath, JSON.stringify(config, null, 2), 'utf-8');
+      console.log('[characterConfig:save] Successfully saved config to:', filePath);
+      return { success: true };
+    } catch (error) {
+      console.error('[characterConfig:save] Failed to save config:', error);
+      console.error('[characterConfig:save] Error stack:', error instanceof Error ? error.stack : 'N/A');
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  });
+
+  ipcMain.handle('characterConfig:load', async (_event, characterCardId: string) => {
+    try {
+      const filePath = getConfigFilePath(characterCardId);
+      console.log('[characterConfig:load] Trying to load config from:', filePath);
+      const content = await fs.readFile(filePath, 'utf-8');
+      console.log('[characterConfig:load] Successfully loaded config from:', filePath);
+      return { success: true, config: JSON.parse(content) };
+    } catch (error) {
+      console.log('[characterConfig:load] No saved config for:', characterCardId, error instanceof Error ? error.message : 'Unknown error');
+      return { success: false, config: null };
+    }
   });
 }

@@ -6,19 +6,18 @@ import ChatMessageBubble from './ChatMessageBubble';
 import ChatInputBar from './ChatInputBar';
 import ChatTypingIndicator from './ChatTypingIndicator';
 import ConfigPanel from './ConfigPanel';
-import { useCharacterTestChat } from './CharacterTestChat.hooks';
-import { exportConversation } from './CharacterTestChat.utils';
-import { CharacterInfo, AIParameterConfig } from './CharacterTestChat.types';
-import './ConfigPanel.css';
+import { useCharacterDialogueChat } from './CharacterDialogueChat.hooks';
+import { exportConversation } from './CharacterDialogueChat.utils';
+import { CharacterInfo, AIParameterConfig } from './CharacterDialogueChat.types';
 
-interface CharacterTestChatProps {
+interface CharacterDialogueChatProps {
   characterInfo: CharacterInfo;
   open: boolean;
   onClose: () => void;
   avatarPath?: string;
 }
 
-const CharacterTestChat: React.FC<CharacterTestChatProps> = ({
+const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
   characterInfo,
   open,
   onClose,
@@ -36,9 +35,12 @@ const CharacterTestChat: React.FC<CharacterTestChatProps> = ({
     personas,
     characterConfig,
     updateConfig,
+    saveConfig,
     resetParameters,
     getEffectiveParams,
-  } = useCharacterTestChat(characterInfo);
+    bindKnowledgeBase,
+    unbindKnowledgeBase,
+  } = useCharacterDialogueChat(characterInfo);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -297,6 +299,7 @@ const CharacterTestChat: React.FC<CharacterTestChatProps> = ({
           avatarPath={avatarPath}
           isFullscreen={isFullscreen}
           onToggleFullscreen={handleToggleFullscreen}
+          selectedPersona={selectedPersona}
         />
 
         <div
@@ -427,12 +430,16 @@ const CharacterTestChat: React.FC<CharacterTestChatProps> = ({
         customParameters={characterConfig?.customParameters}
         personas={personas}
         personasLoading={personasLoading}
+        boundKnowledgeBaseIds={characterConfig?.boundKnowledgeBaseIds || []}
         onPersonaChange={handlePersonaChange}
         onParameterChange={handleParameterChange}
         onResetParameters={handleResetParameters}
+        onBindKnowledgeBase={bindKnowledgeBase}
+        onUnbindKnowledgeBase={unbindKnowledgeBase}
+        onSaveConfig={saveConfig}
       />
     </Modal>
   );
 };
 
-export default CharacterTestChat;
+export default CharacterDialogueChat;

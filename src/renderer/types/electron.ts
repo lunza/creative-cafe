@@ -62,12 +62,7 @@ export interface ElectronAPI {
     getTestChat: (creativeId: string, characterCardId: string) => Promise<any>;
     saveTestChat: (creativeId: string, characterCardId: string, characterCardName: string, messages: any[]) => Promise<any>;
     deleteTestChat: (creativeId: string, characterCardId: string) => Promise<boolean>;
-    getGenerationChat: (creativeId: string, targetType: 'character' | 'worldbook', name: string) => Promise<any>;
-    saveGenerationChat: (creativeId: string, targetType: 'character' | 'worldbook', name: string, messages: any[]) => Promise<any>;
-    deleteGenerationChat: (creativeId: string, targetType: 'character' | 'worldbook', name: string) => Promise<boolean>;
     getAllTestChats: () => Promise<any[]>;
-    getAllGenerationChats: () => Promise<any[]>;
-    migrateFromLegacy: () => Promise<{ success: boolean; migrated: number; errors: string[] }>;
     clearCache: () => Promise<{ success: boolean }>;
   };
   vector: {
@@ -207,6 +202,27 @@ export interface ElectronAPI {
       author?: string;
     }>;
     uninstallById: (pluginId: string) => Promise<{ success: boolean; error?: string }>;
+  };
+  chatVector: {
+    vectorize: (characterId: string, messages: Array<{ role: string; content: string; name?: string; create_date?: number }>) => Promise<{
+      success: boolean;
+      messagesVectorized: number;
+      messagesFailed: number;
+      error?: string;
+      messageVectorIds: string[];
+    }>;
+    delete: (characterId: string) => Promise<{
+      success: boolean;
+      deletedCount: number;
+      error?: string;
+    }>;
+    search: (characterId: string, query: string, topK?: number) => Promise<
+      Array<{
+        id: string;
+        score: number;
+        metadata: Record<string, any>;
+      }>
+    >;
   };
 }
 

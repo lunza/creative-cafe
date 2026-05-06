@@ -111,8 +111,6 @@ export interface StorageResult<T = any> {
 export interface Metadata {
   version: string;
   lastUpdated: string;
-  migrationStatus?: 'none' | 'in_progress' | 'completed' | 'failed';
-  migrationTimestamp?: string;
 }
 
 // 版本号

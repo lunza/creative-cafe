@@ -1,4 +1,4 @@
-export { default as CharacterTestChat } from './CharacterTestChat';
+export { default as CharacterDialogueChat } from './CharacterDialogueChat';
 export { default as ChatMessageBubble } from './ChatMessageBubble';
 export { default as ChatInputBar } from './ChatInputBar';
 export { default as ChatTypingIndicator } from './ChatTypingIndicator';
@@ -6,6 +6,6 @@ export { default as ChatHeader } from './ChatHeader';
 export { default as ConfigPanel } from './ConfigPanel';
 export { default as PersonaPanel } from './PersonaPanel';
 export { default as ParameterPanel } from './ParameterPanel';
-export { useCharacterTestChat } from './CharacterTestChat.hooks';
-export * from './CharacterTestChat.types';
-export * from './CharacterTestChat.utils';
+export { useCharacterDialogueChat } from './CharacterDialogueChat.hooks';
+export * from './CharacterDialogueChat.types';
+export * from './CharacterDialogueChat.utils';

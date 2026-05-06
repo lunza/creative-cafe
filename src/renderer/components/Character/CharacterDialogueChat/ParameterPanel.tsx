@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { Tooltip, Button, Slider } from 'antd';
 import { QuestionCircleOutlined, ReloadOutlined } from '@ant-design/icons';
-import { AIParameterConfig, EffectiveAIParams } from './CharacterTestChat.types';
+import { AIParameterConfig, EffectiveAIParams } from './CharacterDialogueChat.types';
 import './ConfigPanel.css';
 
 interface ParameterConfig {

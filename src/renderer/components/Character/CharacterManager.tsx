@@ -25,8 +25,8 @@ import { ensurePositiveInteger } from '../../utils/requestParamUtils';
 import { sendCharacterAIRequest } from '../../utils/characterAIUtils';
 import type { ColumnsType } from 'antd/es/table';
 import ReactMarkdown from 'react-markdown';
-import { CharacterTestChat } from './CharacterTestChat';
-import type { CharacterInfo } from './CharacterTestChat';
+import { CharacterDialogueChat } from './CharacterDialogueChat';
+import type { CharacterInfo } from './CharacterDialogueChat';
 import { WorldBookRelationPanel } from './WorldBookRelationPanel';
 import { useWorldBookStore } from '../../stores/worldBookStore';
 import './CharacterManager.css';
@@ -2319,7 +2319,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
 
       {/* 角色测试对话模态框 */}
       {testChatCharacter && (
-        <CharacterTestChat
+        <CharacterDialogueChat
           characterInfo={testChatCharacter}
           open={isTestChatOpen}
           onClose={() => {

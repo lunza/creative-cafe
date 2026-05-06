@@ -35,9 +35,7 @@ const CharacterChat: React.FC<CharacterChatProps> = ({
   const { setting, fetchSetting } = useSettingStore();
   const { setActiveTab } = useUIStore();
   const currentTestChat = useCharacterChatStore(state => state.currentTestChat);
-  const currentGenerationChat = useCharacterChatStore(state => state.currentGenerationChat);
   const saveTestChat = useCharacterChatStore(state => state.saveTestChat);
-  const saveGenerationChat = useCharacterChatStore(state => state.saveGenerationChat);
   const { addLog } = useLogStore();
 
   // 初始化加载配置
@@ -49,9 +47,7 @@ const CharacterChat: React.FC<CharacterChatProps> = ({
   useEffect(() => {
     if (isStreaming || isLoading) return;
     
-    const storeMessages = chatType === 'test'
-      ? currentTestChat?.messages || []
-      : currentGenerationChat?.messages || [];
+    const storeMessages = currentTestChat?.messages || [];
     
     // 只在消息为空且store有消息时加载，避免无限循环
     if (storeMessages.length > 0 && messages.length === 0) {
@@ -70,7 +66,7 @@ const CharacterChat: React.FC<CharacterChatProps> = ({
       });
       addLog('[CharacterChat] 从store加载历史消息', 'info');
     }
-  }, [currentTestChat?.id, currentGenerationChat?.id, chatType]);
+  }, [currentTestChat?.id, chatType]);
 
   // 自动滚动到底部
   useEffect(() => {
@@ -282,11 +278,7 @@ const CharacterChat: React.FC<CharacterChatProps> = ({
           // 异步保存
           setTimeout(async () => {
             try {
-              if (chatType === 'test') {
-                await saveTestChat(creativeId, characterCardName, characterCardName, finalMessages);
-              } else {
-                await saveGenerationChat(creativeId, 'character', characterCardName, finalMessages);
-              }
+              await saveTestChat(creativeId, characterCardName, characterCardName, finalMessages);
               addLog('[CharacterChat] 保存成功', 'info');
             } catch (error) {
               addLog(`[CharacterChat] 保存失败: ${error}`, 'error');
@@ -401,11 +393,7 @@ const CharacterChat: React.FC<CharacterChatProps> = ({
     
     // 保存空对话
     try {
-      if (chatType === 'test') {
-        await saveTestChat(creativeId, characterCardName, characterCardName, []);
-      } else {
-        await saveGenerationChat(creativeId, 'character', characterCardName, []);
-      }
+      await saveTestChat(creativeId, characterCardName, characterCardName, []);
     } catch {}
   };
 

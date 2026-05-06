@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Tooltip } from 'antd';
 import { UserOutlined } from '@ant-design/icons';
-import { UserPersona } from './CharacterTestChat.types';
+import { UserPersona } from './CharacterDialogueChat.types';
 import './ConfigPanel.css';
 
 interface PersonaPanelProps {

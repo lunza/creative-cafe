@@ -455,8 +455,7 @@ export class StorageManager {
     if (configStore) {
       const metadata: Metadata = {
         version: CURRENT_VERSION,
-        lastUpdated: new Date().toISOString(),
-        migrationStatus: 'completed'
+        lastUpdated: new Date().toISOString()
       };
       configStore.set('_metadata', metadata);
     }

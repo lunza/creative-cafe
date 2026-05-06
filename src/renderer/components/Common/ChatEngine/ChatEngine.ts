@@ -1,6 +1,6 @@
 // 聊天引擎核心类 - 采用策略模式封装AI调用逻辑
 
-import { ChatMessage } from '../../Character/CharacterTestChat/CharacterTestChat.types';
+import { ChatMessage } from '../../Character/CharacterDialogueChat/CharacterDialogueChat.types';
 import { 
   IChatEngine, 
   AIEngineConfig, 

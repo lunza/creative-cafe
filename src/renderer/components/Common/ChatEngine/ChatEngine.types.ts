@@ -1,6 +1,6 @@
 // 聊天引擎类型定义
 
-import { ChatMessage } from './CharacterTestChat.types';
+import { ChatMessage } from '../Character/CharacterDialogueChat/CharacterDialogueChat.types';
 
 // AI引擎配置接口
 export interface AIEngineConfig {

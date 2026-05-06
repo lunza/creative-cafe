@@ -100,97 +100,6 @@ const logDebug = (message: string, context?: any) => {
   console.debug(`[Setting Handler] ${message}`, context);
 };
 
-// ========== 旧设置文件迁移逻辑 ==========
-
-// 旧设置文件路径（项目根目录）
-const getOldSettingPath = (): string => {
-  return path.join(process.cwd(), 'settings', 'settings.json');
-};
-
-// 迁移状态标记路径（AppData）
-const getMigrationFlagPath = (): string => {
-  return path.join(getAppDataPath(), 'creative-cafe', 'data', 'migration_completed');
-};
-
-// 检查是否已完成迁移
-const isMigrationCompleted = (): boolean => {
-  try {
-    return fs.existsSync(getMigrationFlagPath());
-  } catch {
-    return false;
-  }
-};
-
-// 标记迁移完成
-const markMigrationCompleted = (): void => {
-  try {
-    const flagPath = getMigrationFlagPath();
-    fs.writeFileSync(flagPath, new Date().toISOString(), 'utf-8');
-    logInfo('设置迁移完成标记已写入', { path: flagPath });
-  } catch (error) {
-    logWarn('写入迁移完成标记失败', { error: error instanceof Error ? error.message : String(error) });
-  }
-};
-
-// 执行迁移
-const migrateOldSettings = (): boolean => {
-  const oldPath = getOldSettingPath();
-  
-  // 检查旧文件是否存在
-  if (!fs.existsSync(oldPath)) {
-    logDebug('旧设置文件不存在，跳过迁移', { path: oldPath });
-    markMigrationCompleted();
-    return true;
-  }
-
-  // 检查是否已迁移
-  if (isMigrationCompleted()) {
-    logDebug('迁移已完成，跳过', { path: oldPath });
-    return true;
-  }
-
-  try {
-    logInfo('开始迁移旧设置文件', { 
-      source: oldPath,
-      target: 'AppData/creative-cafe/data (electron-store)'
-    });
-
-    // 读取旧设置文件
-    const oldContent = fs.readFileSync(oldPath, 'utf-8');
-    logDebug('旧设置文件内容长度', { length: oldContent.length });
-    
-    // 解析 JSON
-    const oldSetting = JSON.parse(oldContent);
-    logDebug('旧设置文件解析成功');
-
-    // 写入新存储（通过 StorageService）
-    const storageService = getStorageService();
-    storageService.setSettings(oldSetting);
-    logInfo('旧设置数据已写入新存储');
-
-    // 标记迁移完成
-    markMigrationCompleted();
-
-    // 可选：删除旧文件（备份一份以防万一）
-    const backupPath = oldPath + '.backup';
-    fs.copyFileSync(oldPath, backupPath);
-    fs.unlinkSync(oldPath);
-    logInfo('旧设置文件已迁移并备份', { 
-      source: oldPath, 
-      backup: backupPath 
-    });
-
-    return true;
-  } catch (error) {
-    logError('设置文件迁移失败', error, {
-      source: oldPath,
-      errorType: error instanceof Error ? error.name : 'UnknownError',
-      errorMessage: error instanceof Error ? error.message : String(error)
-    });
-    return false;
-  }
-};
-
 // ========== 设置读写函数（使用 StorageManager） ==========
 
 function loadSetting(): AppSettingType | null {
@@ -268,11 +177,6 @@ function saveSetting(setting: AppSettingType): boolean {
 
 export function settingHandlers(): void {
   logInfo('Setting handlers 初始化');
-
-  // 执行迁移检查（异步）
-  setImmediate(() => {
-    migrateOldSettings();
-  });
 
   // 加载设置
   ipcMain.handle('setting:load', async () => {

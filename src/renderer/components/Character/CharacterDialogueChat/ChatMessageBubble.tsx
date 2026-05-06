@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Tooltip } from 'antd';
 import { CopyOutlined, CheckOutlined, ReloadOutlined, DoubleRightOutlined, RetweetOutlined, LoadingOutlined, EditOutlined } from '@ant-design/icons';
 import { MessageRenderer } from './MessageRenderer';
-import { ChatMessage } from './CharacterTestChat.types';
+import { ChatMessage } from './CharacterDialogueChat.types';
 
 interface ChatMessageBubbleProps {
   message: ChatMessage;

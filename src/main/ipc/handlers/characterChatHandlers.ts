@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron';
-import { chatStorageService, ChatMessage, TestChatData, GenerationChatData } from '../../services/ChatStorageService';
+import { chatStorageService, ChatMessage, TestChatData } from '../../services/ChatStorageService';
+import { chatVectorizationService } from '../../services/ChatVectorizationService';
 
 function getCharacterTestChat(creativeId: string, characterCardId: string): TestChatData | null {
   return chatStorageService.getTestChat(creativeId, characterCardId);
@@ -35,54 +36,8 @@ async function deleteCharacterTestChat(creativeId: string, characterCardId: stri
   return await chatStorageService.deleteTestChat(creativeId, characterCardId);
 }
 
-function getCharacterGenerationChat(
-  creativeId: string, 
-  targetType: 'character' | 'worldbook', 
-  name: string
-): Promise<GenerationChatData | null> {
-  return chatStorageService.getGenerationChat(creativeId, targetType, name);
-}
-
-async function saveCharacterGenerationChat(
-  creativeId: string, 
-  targetType: 'character' | 'worldbook', 
-  name: string, 
-  messages: ChatMessage[]
-): Promise<GenerationChatData> {
-  const existingChat = await chatStorageService.getGenerationChat(creativeId, targetType, name);
-  
-  if (existingChat) {
-    existingChat.messages = messages;
-    existingChat.updatedAt = Date.now();
-    return await chatStorageService.saveGenerationChat(existingChat);
-  } else {
-    const newChat: GenerationChatData = {
-      id: `gen-chat-${Date.now()}`,
-      creativeId,
-      targetType,
-      name,
-      messages,
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    };
-    return await chatStorageService.saveGenerationChat(newChat);
-  }
-}
-
-async function deleteCharacterGenerationChat(
-  creativeId: string, 
-  targetType: 'character' | 'worldbook', 
-  name: string
-): Promise<boolean> {
-  return await chatStorageService.deleteGenerationChat(creativeId, targetType, name);
-}
-
 function getAllCharacterTestChats(): Promise<TestChatData[]> {
   return chatStorageService.getAllTestChats();
-}
-
-function getAllCharacterGenerationChats(): Promise<GenerationChatData[]> {
-  return chatStorageService.getAllGenerationChats();
 }
 
 export function registerCharacterChatHandlers(): void {
@@ -107,53 +62,28 @@ export function registerCharacterChatHandlers(): void {
     return await deleteCharacterTestChat(creativeId, characterCardId);
   });
   
-  ipcMain.handle('characterChat:getGenerationChat', async (
-    _event, 
-    creativeId: string, 
-    targetType: 'character' | 'worldbook', 
-    name: string
-  ) => {
-    console.log('[Chat] Getting generation chat for:', creativeId, targetType, name);
-    return await getCharacterGenerationChat(creativeId, targetType, name);
-  });
-  
-  ipcMain.handle('characterChat:saveGenerationChat', async (
-    _event, 
-    creativeId: string, 
-    targetType: 'character' | 'worldbook', 
-    name: string, 
-    messages: ChatMessage[]
-  ) => {
-    console.log('[Chat] Saving generation chat for:', creativeId, targetType, name);
-    return await saveCharacterGenerationChat(creativeId, targetType, name, messages);
-  });
-  
-  ipcMain.handle('characterChat:deleteGenerationChat', async (
-    _event, 
-    creativeId: string, 
-    targetType: 'character' | 'worldbook', 
-    name: string
-  ) => {
-    console.log('[Chat] Deleting generation chat for:', creativeId, targetType, name);
-    return await deleteCharacterGenerationChat(creativeId, targetType, name);
-  });
-  
   ipcMain.handle('characterChat:getAllTestChats', async () => {
     return await getAllCharacterTestChats();
-  });
-  
-  ipcMain.handle('characterChat:getAllGenerationChats', async () => {
-    return await getAllCharacterGenerationChats();
-  });
-  
-  ipcMain.handle('characterChat:migrateFromLegacy', async () => {
-    console.log('[Chat] Starting migration from legacy file');
-    return await chatStorageService.migrateFromLegacyFile();
   });
   
   ipcMain.handle('characterChat:clearCache', async () => {
     chatStorageService.clearCache();
     return { success: true };
+  });
+  
+  ipcMain.handle('chatVector:vectorize', async (_event, characterId: string, messages: ChatMessage[]) => {
+    console.log('[ChatVector] Vectorizing chat for character:', characterId);
+    return await chatVectorizationService.vectorizeChat(characterId, messages);
+  });
+  
+  ipcMain.handle('chatVector:delete', async (_event, characterId: string) => {
+    console.log('[ChatVector] Deleting vectors for character:', characterId);
+    return await chatVectorizationService.deleteVectorization(characterId);
+  });
+  
+  ipcMain.handle('chatVector:search', async (_event, characterId: string, query: string, topK?: number) => {
+    console.log('[ChatVector] Searching chat vectors for character:', characterId);
+    return await chatVectorizationService.searchChatMessages(characterId, query, topK);
   });
   
   console.log('[Chat] Character chat handlers registered');

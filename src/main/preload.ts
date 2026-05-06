@@ -61,6 +61,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getWorldBookRelations: (path: string) => ipcRenderer.invoke('character:getWorldBookRelations', path),
     setWorldBookRelations: (path: string, relations: any[]) => ipcRenderer.invoke('character:setWorldBookRelations', path, relations)
   },
+  characterConfig: {
+    save: (characterCardId: string, config: any) => ipcRenderer.invoke('characterConfig:save', characterCardId, config),
+    load: (characterCardId: string) => ipcRenderer.invoke('characterConfig:load', characterCardId)
+  },
   avatar: {
     list: () => ipcRenderer.invoke('avatar:list'),
     read: (path: string) => ipcRenderer.invoke('avatar:read', path),
@@ -162,7 +166,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     save: (data: any) => ipcRenderer.invoke('creative:save', data),
     export: () => ipcRenderer.invoke('creative:export'),
     import: (jsonData: string) => ipcRenderer.invoke('creative:import', jsonData),
-    migrate: () => ipcRenderer.invoke('creative:migrate'),
     getDirectory: () => ipcRenderer.invoke('creative:getDirectory')
   },
   // 角色卡对话数据 API
@@ -170,12 +173,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getTestChat: (creativeId: string, characterCardId: string) => ipcRenderer.invoke('characterChat:getTestChat', creativeId, characterCardId),
     saveTestChat: (creativeId: string, characterCardId: string, characterCardName: string, messages: any[]) => ipcRenderer.invoke('characterChat:saveTestChat', creativeId, characterCardId, characterCardName, messages),
     deleteTestChat: (creativeId: string, characterCardId: string) => ipcRenderer.invoke('characterChat:deleteTestChat', creativeId, characterCardId),
-    getGenerationChat: (creativeId: string, targetType: 'character' | 'worldbook', name: string) => ipcRenderer.invoke('characterChat:getGenerationChat', creativeId, targetType, name),
-    saveGenerationChat: (creativeId: string, targetType: 'character' | 'worldbook', name: string, messages: any[]) => ipcRenderer.invoke('characterChat:saveGenerationChat', creativeId, targetType, name, messages),
-    deleteGenerationChat: (creativeId: string, targetType: 'character' | 'worldbook', name: string) => ipcRenderer.invoke('characterChat:deleteGenerationChat', creativeId, targetType, name),
     getAllTestChats: () => ipcRenderer.invoke('characterChat:getAllTestChats'),
-    getAllGenerationChats: () => ipcRenderer.invoke('characterChat:getAllGenerationChats'),
-    migrateFromLegacy: () => ipcRenderer.invoke('characterChat:migrateFromLegacy'),
     clearCache: () => ipcRenderer.invoke('characterChat:clearCache')
   },
   // 通用存储 API
@@ -255,5 +253,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     download: (modelName: string) => ipcRenderer.invoke('model:download', { modelName }),
     isDownloaded: (modelName: string) => ipcRenderer.invoke('model:isDownloaded', { modelName }),
     getCacheDir: () => ipcRenderer.invoke('model:getCacheDir')
+  },
+  chatVector: {
+    vectorize: (characterId: string, messages: any[]) => ipcRenderer.invoke('chatVector:vectorize', characterId, messages),
+    delete: (characterId: string) => ipcRenderer.invoke('chatVector:delete', characterId),
+    search: (characterId: string, query: string, topK?: number) => ipcRenderer.invoke('chatVector:search', characterId, query, topK)
   }
 });
