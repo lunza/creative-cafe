@@ -61,7 +61,11 @@ export class ChatEngine implements IChatEngine {
       if (config.api_key) {
         const trimmedApiKey = config.api_key.trim();
         if (config.api_key_transmission === 'header') {
-          requestHeaders['Authorization'] = `Bearer ${trimmedApiKey}`;
+          if (trimmedApiKey.startsWith('Bearer ')) {
+            requestHeaders['Authorization'] = trimmedApiKey;
+          } else {
+            requestHeaders['Authorization'] = `Bearer ${trimmedApiKey}`;
+          }
         } else {
           requestBody.api_key = config.api_key;
         }
@@ -192,11 +196,36 @@ export class ChatEngine implements IChatEngine {
 
   private setupEventListeners(): void {
     let tempContent = '';
+    let lastProcessedLineCount = 0;
+    let lastAccumulatedData = '';
 
     const handleStream = (data: any) => {
       if (this.isCancelled) return;
 
-      if (data.chunk) {
+      if (data.accumulatedData) {
+        lastAccumulatedData = data.accumulatedData;
+        // 从完整累积数据中只解析新增的 SSE 行
+        const lines = data.accumulatedData.split('\n');
+        const dataLines = lines.filter(line => line.trim().startsWith('data: ') && line.trim().substring(6).trim() !== '[DONE]');
+        
+        // 只处理新增的行
+        const newLines = dataLines.slice(lastProcessedLineCount);
+        lastProcessedLineCount = dataLines.length;
+        
+        let extractedFromBatch = '';
+        for (const line of newLines) {
+          const content = this.parseSSEChunk(line);
+          if (content) {
+            extractedFromBatch += content;
+          }
+        }
+        
+        if (extractedFromBatch) {
+          tempContent += extractedFromBatch;
+          this.streamCallback?.(extractedFromBatch, false);
+        }
+      } else if (data.chunk) {
+        // 兼容旧格式：直接处理 chunk
         const extractedContent = this.parseSSEChunk(data.chunk);
         if (extractedContent) {
           tempContent += extractedContent;
@@ -210,10 +239,19 @@ export class ChatEngine implements IChatEngine {
 
       let finalContent = tempContent;
 
-      if (!finalContent && data.data) {
-        if (data.data.choices?.[0]?.message?.content) {
+      // 如果流式累积内容不足，尝试从累积的原始 SSE 数据中重新提取全部内容
+      if ((!finalContent || finalContent.length < 100) && lastAccumulatedData) {
+        const mergedContent = this.parseSSEChunk(lastAccumulatedData);
+        if (mergedContent && mergedContent.length > finalContent.length) {
+          finalContent = mergedContent;
+        }
+      }
+
+      // 如果仍不足，尝试从最终响应的 message.content 获取
+      if ((!finalContent || finalContent.length < 100) && data.data) {
+        if (data.data.choices?.[0]?.message?.content && data.data.choices[0].message.content.length > finalContent.length) {
           finalContent = data.data.choices[0].message.content;
-        } else if (data.data.choices?.[0]?.text) {
+        } else if (data.data.choices?.[0]?.text && data.data.choices[0].text.length > finalContent.length) {
           finalContent = data.data.choices[0].text;
         }
       }

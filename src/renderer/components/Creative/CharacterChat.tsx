@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Button, Input, Space, Typography, message, Card } from 'antd';
-import { SendOutlined, UserOutlined, RobotOutlined } from '@ant-design/icons';
+import { Button, Input, Space, Typography, message, Card, Modal } from 'antd';
+import { SendOutlined, UserOutlined, RobotOutlined, SettingOutlined } from '@ant-design/icons';
 import RichTextRenderer from '../Common/RichTextRenderer';
 import { useSettingStore } from '../../stores/settingStore';
 import { useCharacterChatStore } from '../../stores/characterChatStore';
 import { useCreativeStore } from '../../stores/creativeStore';
 import { useLogStore } from '../../stores/logStore';
+import { useUIStore } from '../../stores/uiStore';
 import { buildEngineApiUrl } from '../../utils/apiUtils';
 
 const { Title, Text } = Typography;
@@ -17,9 +18,8 @@ interface CharacterChatProps {
   chatType: 'test' | 'generate';
 }
 
-/**
- * 角色卡聊天组件 - 使用成熟的简化实现
- */
+const MAX_AUTH_RETRIES = 1;
+
 const CharacterChat: React.FC<CharacterChatProps> = ({
   creativeId,
   characterCardName,
@@ -33,6 +33,7 @@ const CharacterChat: React.FC<CharacterChatProps> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const { setting, fetchSetting } = useSettingStore();
+  const { setActiveTab } = useUIStore();
   const currentTestChat = useCharacterChatStore(state => state.currentTestChat);
   const currentGenerationChat = useCharacterChatStore(state => state.currentGenerationChat);
   const saveTestChat = useCharacterChatStore(state => state.saveTestChat);
@@ -91,35 +92,68 @@ const CharacterChat: React.FC<CharacterChatProps> = ({
   };
 
   // 发送消息
-  const handleSendMessage = async () => {
-    if (!input.trim() || isStreaming || isLoading) return;
+  const handleSendMessage = async (authRetryCount: number = 0) => {
+    if (!input.trim() && authRetryCount === 0) return;
+    if (isStreaming || isLoading) return;
+
+    addLog(`[CharacterChat] 开始发送消息 (鉴权重试: ${authRetryCount}/${MAX_AUTH_RETRIES})`, 'info');
     
-    const activeEngine = getActiveEngine();
-    if (!activeEngine) {
+    // 每次发送前刷新setting，确保使用最新的引擎配置
+    await fetchSetting();
+    const freshSetting = useSettingStore.getState().setting;
+    
+    // 使用最新setting获取引擎
+    if (!freshSetting || !freshSetting.aiEngines || freshSetting.aiEngines.length === 0) {
       message.warning('请先在设置中配置AI引擎');
+      setIsLoading(false);
+      setIsStreaming(false);
       return;
     }
-
-    addLog('[CharacterChat] 开始发送消息', 'info');
     
-    // 添加用户消息
-    const userMessageId = Date.now().toString();
-    const userMessage = {
-      id: userMessageId,
-      role: 'user' as const,
-      content: input,
-    };
+    let currentEngine: any = null;
+    if (freshSetting.activeEngineId) {
+      currentEngine = freshSetting.aiEngines.find((e: any) => e.id === freshSetting.activeEngineId);
+    }
+    if (!currentEngine) {
+      currentEngine = freshSetting.aiEngines[0];
+    }
     
-    const newMessages = [...messages, userMessage];
-    setMessages(newMessages);
-    setInput('');
+    if (!currentEngine || !currentEngine.api_url) {
+      message.warning('AI引擎配置不完整，请检查API地址');
+      setIsLoading(false);
+      setIsStreaming(false);
+      return;
+    }
+    
+    // 添加用户消息（仅首次发送时）
+    let currentMessages = messages;
+    let userMessageId: string;
+    let aiMessageId: string;
+    
+    if (authRetryCount === 0) {
+      userMessageId = Date.now().toString();
+      const userMessage = {
+        id: userMessageId,
+        role: 'user' as const,
+        content: input,
+      };
+      
+      currentMessages = [...messages, userMessage];
+      setMessages(currentMessages);
+      setInput('');
+    } else {
+      userMessageId = currentMessages.length > 0 ? currentMessages[currentMessages.length - 1].id : '';
+      currentMessages = messages.length > 0 ? messages : currentMessages;
+    }
+    
+    aiMessageId = (Date.now() + authRetryCount).toString();
+    
     setIsLoading(true);
     setIsStreaming(true);
 
     // 添加临时AI消息
-    const aiMessageId = (Date.now() + 1).toString();
     let tempContent = '';
-    setMessages([...newMessages, { id: aiMessageId, role: 'assistant', content: '' }]);
+    setMessages([...currentMessages, { id: aiMessageId, role: 'assistant', content: '' }]);
 
     let removeStreamListener: (() => void) | null = null;
     let removeStreamCompleteListener: (() => void) | null = null;
@@ -131,16 +165,16 @@ const CharacterChat: React.FC<CharacterChatProps> = ({
 请严格按照这个角色的设定、性格、说话方式来回复，保持角色的一致性。
 记住：你就是这个角色，不是在扮演，你就是他/她/它本人！`;
 
-      const chatHistory = newMessages.map(msg => ({
+      const chatHistory = currentMessages.map(msg => ({
         role: msg.role,
         content: String(msg.content),
       }));
 
-      const apiUrl = buildEngineApiUrl(activeEngine);
-      const apiKey = activeEngine.api_key;
-      const modelName = activeEngine.model_name || 'gpt-3.5-turbo';
-      const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
-      const apiMode = activeEngine.api_mode || 'chat_completion';
+      const apiUrl = buildEngineApiUrl(currentEngine);
+      const apiKey = currentEngine.api_key;
+      const modelName = currentEngine.model_name || 'gpt-3.5-turbo';
+      const apiKeyTransmission = currentEngine.api_key_transmission || 'body';
+      const apiMode = currentEngine.api_mode || 'chat_completion';
 
       const requestHeaders: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -154,8 +188,8 @@ const CharacterChat: React.FC<CharacterChatProps> = ({
             { role: 'system', content: String(systemPrompt) },
             ...chatHistory,
           ],
-          max_tokens: Number(activeEngine.max_tokens) || 4096,
-          temperature: Number(activeEngine.temperature) || 0.8,
+          max_tokens: Number(currentEngine.max_tokens) || 4096,
+          temperature: Number(currentEngine.temperature) || 0.8,
         };
       } else {
         let prompt = String(systemPrompt) + '\n\n';
@@ -165,18 +199,30 @@ const CharacterChat: React.FC<CharacterChatProps> = ({
         requestBody = {
           model: modelName,
           prompt,
-          max_tokens: Number(activeEngine.max_tokens) || 4096,
-          temperature: Number(activeEngine.temperature) || 0.8,
+          max_tokens: Number(currentEngine.max_tokens) || 4096,
+          temperature: Number(currentEngine.temperature) || 0.8,
         };
       }
 
       if (apiKey) {
         const trimmedApiKey = apiKey.trim();
-        if (apiKeyTransmission === 'header') {
-          requestHeaders['Authorization'] = `Bearer ${trimmedApiKey}`;
-        } else {
-          requestBody.api_key = apiKey;
+        addLog(`[CharacterChat] 鉴权处理: 传输方式=${apiKeyTransmission}, 密钥前10位=${trimmedApiKey.substring(0, 10)}..., 密钥后10位=${trimmedApiKey.length > 20 ? '...' + trimmedApiKey.substring(trimmedApiKey.length - 10) : '(太短)'}`, 'debug');
+        if (trimmedApiKey) {
+          if (apiKeyTransmission === 'header') {
+            if (trimmedApiKey.startsWith('Bearer ')) {
+              requestHeaders['Authorization'] = trimmedApiKey;
+              addLog(`[CharacterChat] 已添加鉴权头(原有Bearer前缀): ${requestHeaders['Authorization'].substring(0, 20)}...`, 'debug');
+            } else {
+              requestHeaders['Authorization'] = `Bearer ${trimmedApiKey}`;
+              addLog(`[CharacterChat] 已添加鉴权头(自动添加Bearer): ${requestHeaders['Authorization'].substring(0, 20)}...`, 'debug');
+            }
+          } else {
+            requestBody.api_key = apiKey;
+            addLog('[CharacterChat] API密钥已添加到请求体', 'debug');
+          }
         }
+      } else {
+        addLog('[CharacterChat] 警告: 当前引擎未配置API密钥', 'warn');
       }
 
       // 流式响应处理
@@ -189,6 +235,13 @@ const CharacterChat: React.FC<CharacterChatProps> = ({
               if (content === '[DONE]') continue;
               try {
                 const json = JSON.parse(content);
+                // 检查是否有错误信息
+                if (json.error) {
+                  addLog(`[CharacterChat] 流式响应错误: ${json.error.message || JSON.stringify(json.error)}`, 'error');
+                  if (json.error.code === 401 || (json.error.message && json.error.message.toLowerCase().includes('unauthorized'))) {
+                    throw new Error('鉴权失败(401 Unauthorized)');
+                  }
+                }
                 if (json.choices && json.choices[0]) {
                   const delta = json.choices[0].delta;
                   if (delta && delta.content) {
@@ -198,7 +251,10 @@ const CharacterChat: React.FC<CharacterChatProps> = ({
                     ));
                   }
                 }
-              } catch {
+              } catch (parseError) {
+                if (parseError instanceof Error && parseError.message.includes('鉴权失败')) {
+                  throw parseError;
+                }
                 // 忽略解析错误
               }
             }
@@ -220,7 +276,7 @@ const CharacterChat: React.FC<CharacterChatProps> = ({
         }
 
         if (finalContent) {
-          const finalMessages = [...newMessages, { id: aiMessageId, role: 'assistant', content: finalContent }];
+          const finalMessages = [...currentMessages, { id: aiMessageId, role: 'assistant', content: finalContent }];
           setMessages(finalMessages);
           
           // 异步保存
@@ -274,10 +330,65 @@ const CharacterChat: React.FC<CharacterChatProps> = ({
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '生成失败';
       addLog(`[CharacterChat] 错误: ${errorMessage}`, 'error');
-      message.error(`生成失败: ${errorMessage}`);
+      
+      // 检查是否为鉴权错误
+      const isAuthError = errorMessage.includes('401') || 
+                          errorMessage.includes('Unauthorized') || 
+                          errorMessage.includes('authentication');
+      
+      if (isAuthError) {
+        // 如果还有重试次数，自动重试
+        if (authRetryCount < MAX_AUTH_RETRIES) {
+          addLog(`[CharacterChat] 鉴权失败，尝试第 ${authRetryCount + 1} 次重试...`, 'warn');
+          message.info('鉴权失败，正在刷新配置并重试...');
+          cleanup();
+          setIsStreaming(false);
+          setIsLoading(false);
+          // 延迟后重试
+          setTimeout(() => {
+            handleSendMessage(authRetryCount + 1);
+          }, 500);
+          return;
+        }
+        
+        // 重试次数用尽，显示详细错误信息并提供跳转到设置的选项
+        cleanup();
+        setIsStreaming(false);
+        setIsLoading(false);
+        
+        Modal.error({
+          title: 'AI引擎鉴权失败',
+          content: (
+            <div>
+              <p>无法连接到AI引擎，请检查以下配置：</p>
+              <ul>
+                <li>API密钥是否正确</li>
+                <li>API地址是否正确</li>
+                <li>API密钥传输方式是否匹配</li>
+              </ul>
+              <p style={{ color: '#999', fontSize: '12px' }}>
+                错误详情: {errorMessage}
+              </p>
+            </div>
+          ),
+          okText: '打开AI设置',
+          cancelText: '关闭',
+          onOk: () => {
+            setActiveTab('settings');
+          },
+          icon: <SettingOutlined />,
+        });
+        
+        addLog('[CharacterChat] 鉴权失败，已达到最大重试次数', 'error');
+      } else if (errorMessage.includes('403') || errorMessage.includes('Forbidden')) {
+        message.error('权限不足，请确认API密钥是否有访问权限');
+        addLog('[CharacterChat] 权限不足', 'error');
+      } else {
+        message.error(`生成失败: ${errorMessage}`);
+      }
       
       // 移除临时AI消息
-      setMessages(newMessages);
+      setMessages(currentMessages);
       setIsStreaming(false);
       setIsLoading(false);
     }

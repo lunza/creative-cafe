@@ -69,6 +69,7 @@ export interface UserPersona {
 export interface AIParameterConfig {
   temperature?: number;
   top_p?: number;
+  max_tokens?: number;
   frequency_penalty?: number;
   presence_penalty?: number;
 }

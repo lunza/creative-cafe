@@ -77,6 +77,7 @@ export function useCharacterConfig(characterCardId: string) {
     return {
       temperature: customParams.temperature ?? 0.7,
       top_p: customParams.top_p !== undefined ? customParams.top_p : undefined,
+      max_tokens: customParams.max_tokens !== undefined ? customParams.max_tokens : 8192,
       frequency_penalty: customParams.frequency_penalty !== undefined ? customParams.frequency_penalty : undefined,
       presence_penalty: customParams.presence_penalty !== undefined ? customParams.presence_penalty : undefined,
       source,
@@ -379,7 +380,7 @@ ${personaSection}
       model_name: activeEngine.model_name,
       api_mode: activeEngine.api_mode,
       api_key_transmission: activeEngine.api_key_transmission,
-      max_tokens: activeEngine.max_tokens,
+      max_tokens: effectiveParams.max_tokens ?? activeEngine.max_tokens ?? 8192,
       system_prompt: activeEngine.system_prompt,
       temperature: effectiveParams.temperature ?? activeEngine.temperature,
     };

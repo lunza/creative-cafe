@@ -16,6 +16,15 @@ interface ParameterConfig {
 
 const PARAMETER_CONFIGS: ParameterConfig[] = [
   {
+    key: 'max_tokens',
+    label: 'Max Tokens',
+    min: 256,
+    max: 32768,
+    step: 256,
+    defaultValue: 8192,
+    tooltip: '模型生成的最大 token 数量。值越大，模型能输出的内容越长。默认值：8192',
+  },
+  {
     key: 'temperature',
     label: 'Temperature',
     min: 0.1,
@@ -128,7 +137,7 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
                   </Tooltip>
                 </div>
                 <span className={`parameter-value ${isModified ? 'modified' : ''}`}>
-                  {currentValue.toFixed(2)}
+                  {config.key === 'max_tokens' ? Math.round(currentValue).toString() : currentValue.toFixed(2)}
                 </span>
               </div>
               <Slider
