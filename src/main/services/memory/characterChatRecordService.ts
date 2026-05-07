@@ -19,7 +19,7 @@ interface CharacterChatRecord {
 
 class CharacterChatRecordService {
   private getCharacterChatsDir(): string {
-    return path.join(getUserDataPath(), 'data', 'character-chats');
+    return path.join(getUserDataPath(), 'data', 'memories', 'chats');
   }
 
   getCharacterChatRecords(): CharacterChatRecord[] {
@@ -36,8 +36,11 @@ class CharacterChatRecordService {
       const files = fs.readdirSync(dirPath);
       const records: CharacterChatRecord[] = [];
 
+      const excludedFiles = ['associations.json'];
+
       for (const file of files) {
         if (!file.endsWith('.json')) continue;
+        if (excludedFiles.includes(file)) continue;
 
         const filePath = path.join(dirPath, file);
         try {

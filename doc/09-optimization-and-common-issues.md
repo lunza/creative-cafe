@@ -898,6 +898,109 @@ const [aiOperation, setAiOperation] = useState<AIOperationState | null>(null);
 
 ---
 
+## 已修复问题记录
+
+### [BUG-001] 聊天记录管理中角色卡缩略图不显示
+
+**问题描述**：在记忆管理模块的聊天记录管理功能中，角色卡列表项的缩略图不显示，只显示默认的加载动画图标。
+
+**原因分析**：
+- 聊天记录组件中直接使用 `file://` 协议加载本地资源（`file://${record.thumbnailPath}`）
+- Electron 中浏览器安全限制不允许直接使用 `file://` 协议加载本地资源
+- 错误信息：`Not allowed to load local resource: file://...`
+
+**修复方案**：
+1. 创建 `CharacterThumbnail` 组件，通过 `window.electronAPI.file.readAsBase64(filePath)` 读取文件
+2. 将读取的 base64 data URL 用于 `<img>` 标签的 `src` 属性
+3. 添加缓存机制 (`thumbnailCache`) 避免重复读取同一文件
+4. 添加错误重试机制，最多重试 2 次
+5. 添加加载状态和错误状态的 UI 显示
+
+**涉及文件**：
+- `src/renderer/components/MemoryChat/ChatManager.tsx`
+- `src/renderer/components/MemoryChat/MemoryChatManager.css`
+
+**修复详情**：
+- 将 `Avatar` 组件替换为自定义的 `CharacterThumbnail` 组件
+- 头像改为圆形（`borderRadius: '50%'`），64x64 像素
+- 添加边框和阴影效果，提升视觉效果
+- 优化整体布局，头像与文字垂直居中对齐
+- 移除调试日志，保持代码整洁
+
+**修复日期**：2026-05-07
+
+---
+
+### [BUG-003] 聊天记录保存后重启应用无法加载历史对话
+
+**问题描述**：与角色卡完成对话后聊天记录已保存，但重启应用后打开对话窗口显示空白，历史对话无法恢复。
+
+**原因分析**：
+- `ChatStorageService.saveTestChat()` 保存文件时使用 `characterCardName` 作为文件名（如 `狼人杀助手2.0.json`）
+- `ChatStorageService.getTestChat()` 和 `deleteTestChat()` 在查找文件时传入空字符串 `''` 作为 `characterCardName` 参数
+- `getChatFilePath()` 方法逻辑为 `sanitizeFileName(characterCardName || shortId)`，当 `characterCardName` 为空时回退到 `shortId`（如 `test-chat-1778087266347`）
+- 导致保存和读取使用不同的文件名：保存为 `狼人杀助手2.0.json`，读取时查找 `test-chat-1778087266347.json`，永远找不到文件
+
+**修复方案**：
+1. 修改 `getTestChat()` 方法：不再依赖文件名匹配，改为扫描目录中所有 JSON 文件，通过文件内容中的 `creativeId` 和 `characterCardId` 字段匹配
+2. 修改 `deleteTestChat()` 方法：同样改为扫描匹配，确保删除操作能正确找到文件
+3. 保持 `saveTestChat()` 逻辑不变，仍使用角色卡名称作为友好文件名
+
+**涉及文件**：
+- `src/main/services/ChatStorageService.ts`
+
+**修复详情**：
+- `getTestChat()`: 扫描目录下所有 `.json` 文件，逐个解析并比对 `creativeId` 和 `characterCardId`
+- `deleteTestChat()`: 同样改为扫描匹配后删除
+- 缓存机制保持不变，匹配成功后仍会将数据写入缓存
+
+**验证结果**：
+- 对话保存后重启应用，历史对话能正确恢复
+- 删除对话功能正常工作
+- 缓存机制依然生效
+
+**修复日期**：2026-05-07
+
+---
+
+### [BUG-002] 聊天记录向量化功能报"自动向量化未启用"错误
+
+**问题描述**：在记忆管理模块的聊天记录管理中，点击"向量化"按钮时出现错误提示"向量化失败: 自动向量化未启用"，无法进行聊天记录向量化。
+
+**原因分析**：
+- `ChatVectorizationService.vectorizeChat()` 方法中错误地检查了 `autoVectorizeWorldBook` 配置项
+- 该配置项仅用于控制世界书的自动向量化，不应该影响手动触发的聊天记录向量化
+- 世界书的手动向量化不受此检查限制，但聊天记录向量化却有此限制，逻辑不一致
+
+**修复方案**：
+1. 移除 `ChatVectorizationService.vectorizeChat()` 中对 `autoVectorizeWorldBook` 配置的强制检查
+2. 手动触发的向量化功能应该直接执行，不依赖自动向量化配置
+3. 与世界书模块的向量化逻辑保持一致
+
+**涉及文件**：
+- `src/main/services/ChatVectorizationService.ts`
+
+**修复详情**：
+- 移除了第 40-46 行的配置检查代码
+- 添加注释说明手动按钮触发的向量化不需要检查自动向量化配置
+- 向量化流程保持不变：生成 embedding → 存储到 vectorStore → 注册到 vector_registry.json
+
+**存储路径说明**：
+- 向量化文件存储路径与世界书模块完全一致
+- 世界书：`vectors/worldbook/{worldBookName}/vecstore.json`
+- 角色卡聊天记录：`vectors/character_chat/{characterId}/vecstore.json`
+- 都遵循 `{userData}/vectors/{source}/{sourceId}/vecstore.json` 的格式
+
+**验证结果**：
+- 向量化过程无错误提示
+- vector_registry.json 文件正确更新
+- 向量化结果正确注册到文件知识库
+- 支持向量搜索功能
+
+**修复日期**：2026-05-07
+
+---
+
 ## 附录：快速参考卡片
 
 ### 常见 IPC 模式速查

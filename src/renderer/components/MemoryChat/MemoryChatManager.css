@@ -149,49 +149,115 @@
   height: 100%;
   display: flex;
   flex-direction: column;
+  padding: 16px;
+  gap: 8px;
 }
 
 .chat-record-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
   flex-wrap: wrap;
   gap: 12px;
 }
 
 .chat-record-header h4 {
   margin: 0;
+  font-size: 18px;
 }
 
-.chat-record-list .ant-list-item {
-  padding: 16px;
-  border-radius: 8px;
-  margin-bottom: 8px;
-  background: #fff;
-  transition: box-shadow 0.2s;
-}
-
-.chat-record-list .ant-list-item:hover {
-  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-}
-
-.chat-record-item-meta {
+.chat-record-table {
   flex: 1;
+  overflow: hidden;
 }
 
-.chat-record-actions {
-  white-space: nowrap;
+/* Table 样式优化 */
+.chat-record-table .ant-table {
+  background: transparent;
+}
+
+.chat-record-table .ant-table-container {
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.chat-record-table .ant-table-thead > tr > th {
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: rgba(255, 255, 255, 0.85);
+  font-weight: 600;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 12px 16px;
+}
+
+.chat-record-table .ant-table-tbody > tr > td {
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 12px 16px;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.chat-record-table .ant-table-tbody > tr:hover > td {
+  background: rgba(255, 255, 255, 0.06) !important;
+}
+
+.chat-record-table .ant-table-tbody > tr:last-child > td {
+  border-bottom: none;
+}
+
+.chat-record-table .ant-table-tbody > tr > td:first-child {
+  border-top-left-radius: 8px;
+}
+
+.chat-record-table .ant-table-tbody > tr > td:last-child {
+  border-top-right-radius: 8px;
+}
+
+/* Pagination 样式 */
+.chat-record-table .ant-pagination {
+  margin-top: 16px;
+}
+
+.chat-record-table .ant-pagination .ant-pagination-item {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.chat-record-table .ant-pagination .ant-pagination-item a {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.chat-record-table .ant-pagination .ant-pagination-item-active {
+  background: rgba(24, 144, 255, 0.2);
+  border-color: rgba(24, 144, 255, 0.4);
+}
+
+.chat-record-table .ant-pagination .ant-pagination-item-active a {
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.chat-record-table .ant-pagination .ant-pagination-prev,
+.chat-record-table .ant-pagination .ant-pagination-next {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.chat-record-table .ant-pagination .ant-pagination-prev .ant-pagination-item-link,
+.chat-record-table .ant-pagination .ant-pagination-next .ant-pagination-item-link {
+  color: rgba(255, 255, 255, 0.75);
 }
 
 /* Dark mode */
-.dark .chat-record-list .ant-list-item {
-  background: #1f1f1f;
-  border-color: #333;
+.dark .chat-record-table .ant-table-thead > tr > th {
+  background: rgba(255, 255, 255, 0.06) !important;
 }
 
-.dark .chat-record-list .ant-list-item:hover {
-  box-shadow: 0 2px 8px rgba(255,255,255,0.05);
+.dark .chat-record-table .ant-table-tbody > tr > td {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.dark .chat-record-table .ant-table-tbody > tr:hover > td {
+  background: rgba(255, 255, 255, 0.06) !important;
 }
 
 /* Responsive */
@@ -200,8 +266,8 @@
     flex-direction: column;
     align-items: flex-start;
   }
-  
-  .chat-record-list .ant-list-item-action {
-    margin-top: 8px;
+
+  .chat-record-manager {
+    padding: 12px;
   }
 }

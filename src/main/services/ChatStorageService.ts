@@ -37,7 +37,7 @@ class ChatStorageService {
   private readonly CACHE_TTL = 60000;
 
   constructor() {
-    const dataDir = path.join(getUserDataPath(), 'data', 'character-chats');
+    const dataDir = path.join(getUserDataPath(), 'data', 'memories', 'chats');
     this.baseDir = dataDir;
     this.cache = new Map();
     this.initialized = false;
@@ -144,17 +144,31 @@ class ChatStorageService {
       return cached;
     }
 
-    const filePath = this.getChatFilePath(creativeId, characterCardId, '');
+    const shortId = this.generateShortId(creativeId);
     
     try {
-      if (!fsSync.existsSync(filePath)) {
-        return null;
+      // First try to find by scanning directory for matching file
+      const files = await fs.readdir(this.baseDir);
+      let filePath: string | null = null;
+      
+      for (const file of files) {
+        if (!file.endsWith('.json')) continue;
+        const filePathFull = path.join(this.baseDir, file);
+        try {
+          const data = await fs.readFile(filePathFull, 'utf8');
+          const chatData = JSON.parse(data);
+          if (chatData.creativeId === creativeId && chatData.characterCardId === characterCardId) {
+            filePath = filePathFull;
+            const chatDataWithCache: TestChatData = chatData;
+            this.setCache(cacheKey, chatDataWithCache);
+            return chatDataWithCache;
+          }
+        } catch {
+          continue;
+        }
       }
-
-      const data = await fs.readFile(filePath, 'utf8');
-      const chatData: TestChatData = JSON.parse(data);
-      this.setCache(cacheKey, chatData);
-      return chatData;
+      
+      return null;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return null;
@@ -187,18 +201,27 @@ class ChatStorageService {
     await this.initDirectories();
     await this.migrateOldTestDirectory();
     
-    const filePath = this.getChatFilePath(creativeId, characterCardId, '');
     const cacheKey = this.getCacheKey('chat', creativeId, characterCardId);
 
     try {
-      if (!fsSync.existsSync(filePath)) {
-        return false;
+      const files = await fs.readdir(this.baseDir);
+      for (const file of files) {
+        if (!file.endsWith('.json')) continue;
+        const filePath = path.join(this.baseDir, file);
+        try {
+          const data = await fs.readFile(filePath, 'utf8');
+          const chatData = JSON.parse(data);
+          if (chatData.creativeId === creativeId && chatData.characterCardId === characterCardId) {
+            await fs.unlink(filePath);
+            this.invalidateCache(cacheKey);
+            console.log('[ChatStorage] Chat deleted:', { creativeId, characterCardId, fileName: file });
+            return true;
+          }
+        } catch {
+          continue;
+        }
       }
-
-      await fs.unlink(filePath);
-      this.invalidateCache(cacheKey);
-      console.log('[ChatStorage] Chat deleted:', { creativeId, characterCardId });
-      return true;
+      return false;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return false;

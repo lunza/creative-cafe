@@ -462,7 +462,7 @@ requestAIResponse(contextMessages, targetId, initialContent, 'dialogue')
 
 | 数据项 | 存储格式 | 存储位置 |
 |--------|---------|---------|
-| 对话历史 | JSON 文件 | `{userData}/data/character-chats/{角色名}.json` |
+| 对话历史 | JSON 文件 | `{userData}/data/memories/chats/{角色名}.json` |
 | 对话配置 | localStorage + JSON 文件 | `localStorage[character-session-{cardId}]` + `characterConfig:save` |
 | 对话向量 | VecStore WASM | ChatVectorizationService 管理 |
 | 模板缓存 | 内存 Map (CACHE_TTL=60s) | ChatStorageService 内部缓存 |

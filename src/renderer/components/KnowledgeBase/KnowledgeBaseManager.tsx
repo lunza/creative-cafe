@@ -498,10 +498,11 @@ export const KnowledgeBaseManager: React.FC = () => {
         treeNodes.push(treeNode);
       }
       
-      // 从向量注册表加载世界书条目
+      // 从向量注册表加载世界书和角色卡聊天记录条目
       try {
         const scopesResult = await window.electronAPI.vector.getAvailableScopes();
         if (scopesResult.success && scopesResult.scopes) {
+          // 加载世界书条目
           const worldbookScopes = scopesResult.scopes.filter(s => s.sourceType === 'worldbook');
           
           for (const scope of worldbookScopes) {
@@ -533,9 +534,43 @@ export const KnowledgeBaseManager: React.FC = () => {
               treeNodes.push(worldbookNode);
             }
           }
+
+          // 加载角色卡聊天记录条目
+          const chatScopes = scopesResult.scopes.filter(s => s.sourceType === 'character_chat');
+          
+          for (const scope of chatScopes) {
+            // 检查是否已存在（避免重复）
+            const existingIndex = treeNodes.findIndex(n => n.documentId === scope.sourceId || n.title === scope.sourceName);
+            if (existingIndex === -1) {
+              const chatNode: TreeKnowledgeItem = {
+                key: `chat_${scope.id}`,
+                id: scope.id,
+                title: scope.sourceName,
+                content: '',
+                source: 'character_chat',
+                category: [],
+                tags: ['character_chat'],
+                relatedCharacterIds: [],
+                relatedWorldBookPaths: [],
+                metadata: {
+                  fileSize: 0,
+                  chunkCount: scope.vectorCount,
+                  totalChars: 0,
+                  processedAt: Date.now(),
+                  isWorldBook: false,
+                  isCharacterChat: true,
+                  scopeId: scope.id,
+                },
+                isLeaf: false,
+                documentId: scope.sourceId,
+                children: [],
+              };
+              treeNodes.push(chatNode);
+            }
+          }
         }
       } catch (error) {
-        console.warn('[KnowledgeBaseManager] Failed to load worldbook from registry:', error);
+        console.warn('[KnowledgeBaseManager] Failed to load scopes from registry:', error);
       }
       
       setTreeData(treeNodes);
@@ -548,7 +583,7 @@ export const KnowledgeBaseManager: React.FC = () => {
   }, []);
 
   // 展开文档时加载子节点
-  const loadDocumentChildren = async (docId: string, isWorldbook = false): Promise<TreeKnowledgeItem[]> => {
+  const loadDocumentChildren = async (docId: string, isWorldbook = false, isCharacterChat = false): Promise<TreeKnowledgeItem[]> => {
     try {
       if (isWorldbook) {
         const scopesResult = await window.electronAPI.vector.getAvailableScopes();
@@ -571,6 +606,52 @@ export const KnowledgeBaseManager: React.FC = () => {
               },
               isLeaf: true,
             }));
+          }
+        }
+        return [];
+      } else if (isCharacterChat) {
+        const scopesResult = await window.electronAPI.vector.getAvailableScopes();
+        if (scopesResult.success && scopesResult.scopes) {
+          const scope = scopesResult.scopes.find(s => s.id === docId || s.sourceId === docId);
+          if (scope) {
+            // Use getById to retrieve each vector by its ID from messageVectorIds
+            const messageVectorIds = scope.metadata?.messageVectorIds || [];
+            if (messageVectorIds.length > 0) {
+              const vectorItems = await Promise.all(
+                messageVectorIds.map(async (vectorId: string) => {
+                  try {
+                    const result = await window.electronAPI.vector.getById(vectorId);
+                    if (result.success && result.item) {
+                      const item = result.item as any;
+                      return {
+                        key: `item_${vectorId}`,
+                        id: vectorId,
+                        title: item.metadata?.messageRole === 'user' ? `用户` : '助手',
+                        content: item.metadata?.text || '',
+                        source: 'character_chat',
+                        category: [],
+                        tags: ['character_chat'],
+                        relatedCharacterIds: [],
+                        relatedWorldBookPaths: [],
+                        metadata: {
+                          isCharacterChat: true,
+                          messageRole: item.metadata?.messageRole,
+                          messageContent: item.metadata?.text,
+                          sourceType: 'character_chat',
+                          chunkIndex: item.metadata?.chunkIndex,
+                          characterId: item.metadata?.characterId,
+                        },
+                        isLeaf: true,
+                      };
+                    }
+                    return null;
+                  } catch {
+                    return null;
+                  }
+                })
+              );
+              return vectorItems.filter(Boolean) as TreeKnowledgeItem[];
+            }
           }
         }
         return [];
@@ -599,7 +680,8 @@ export const KnowledgeBaseManager: React.FC = () => {
     if (expanded && !record.isLeaf && (!record.children || record.children.length === 0)) {
       // 懒加载子节点
       const isWorldbook = record.metadata?.isWorldBook === true;
-      const children = await loadDocumentChildren(record.id || record.documentId || '', isWorldbook);
+      const isCharacterChat = record.metadata?.isCharacterChat === true;
+      const children = await loadDocumentChildren(record.id || record.documentId || '', isWorldbook, isCharacterChat);
       setTreeData(prev =>
         prev.map(node =>
           node.id === record.id || node.documentId === record.documentId

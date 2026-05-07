@@ -141,6 +141,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     deleteChatSession: (chatId: string) => ipcRenderer.invoke('memory:deleteChatSession', chatId),
     associateTemplate: (chatId: string, templateId: string) => ipcRenderer.invoke('memory:associateTemplate', chatId, templateId),
     processChat: (chatId: string, templateId: string, selectedMessageIds: string[], config: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }) => ipcRenderer.invoke('memory:processChat', chatId, templateId, selectedMessageIds, config),
+    processChatProgressive: (chatId: string, templateId: string, config: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }, restart: boolean) => ipcRenderer.invoke('memory:processChatProgressive', chatId, templateId, config, restart),
+    getOrganizingProgress: (chatId: string) => ipcRenderer.invoke('memory:getOrganizingProgress', chatId),
+    clearOrganizingProgress: (chatId: string) => ipcRenderer.invoke('memory:clearOrganizingProgress', chatId),
+    clearTableData: (chatId: string) => ipcRenderer.invoke('memory:clearTableData', chatId),
+    copyTemplate: (sourceTemplateId: string, newTemplateName: string) => ipcRenderer.invoke('memory:copyTemplate', sourceTemplateId, newTemplateName),
     getTableData: (chatId: string) => ipcRenderer.invoke('memory:getTableData', chatId),
     saveTableData: (chatId: string, sheetName: string, sheetData: any[]) => ipcRenderer.invoke('memory:saveTableData', chatId, sheetName, sheetData),
     onLog: (callback: (message: string, type: string) => void) => {

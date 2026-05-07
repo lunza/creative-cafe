@@ -75,7 +75,11 @@ const MemoryTemplateManager: React.FC = () => {
   const [sheetHeaders, setSheetHeaders] = useState<Record<string, string[]>>({});
   const [sheetDescriptions, setSheetDescriptions] = useState<Record<string, string>>({});
   const [bindingStatus, setBindingStatus] = useState<Record<string, boolean>>({});
-  const [filterStatus, setFilterStatus] = useState<string>('all');
+   const [filterStatus, setFilterStatus] = useState<string>('all');
+   const [copyModalVisible, setCopyModalVisible] = useState(false);
+   const [selectedSourceId, setSelectedSourceId] = useState<string>('st-memory-enhancement-default');
+   const [newTemplateName, setNewTemplateName] = useState<string>('');
+   const [copyingTemplate, setCopyingTemplate] = useState(false);
 
   // 加载所有模板
   const loadTemplates = async () => {
@@ -405,10 +409,70 @@ const MemoryTemplateManager: React.FC = () => {
             <Button
               type="primary"
               icon={<PlusOutlined />}
-              onClick={() => handleOpenModal()}
+              onClick={() => setCopyModalVisible(true)}
             >
               新建模板
             </Button>
+            <Modal
+              title="新建模板"
+              open={copyModalVisible}
+              onCancel={() => setCopyModalVisible(false)}
+              confirmLoading={copyingTemplate}
+              onOk={async () => {
+                if (!newTemplateName.trim()) {
+                  message.warning('请输入模板名称');
+                  return;
+                }
+                if (!selectedSourceId) {
+                  message.warning('请选择一个源模板');
+                  return;
+                }
+                setCopyingTemplate(true);
+                try {
+                  const copied = await window.electronAPI.memory.copyTemplate(selectedSourceId, newTemplateName.trim());
+                  message.success('模板复制成功');
+                  setCopyModalVisible(false);
+                  setNewTemplateName('');
+                  setSelectedSourceId('st-memory-enhancement-default');
+                  if (copied) {
+                    handleOpenModal(copied);
+                  }
+                  loadTemplates();
+                } catch (error) {
+                  message.error('复制模板失败');
+                  console.error(error);
+                } finally {
+                  setCopyingTemplate(false);
+                }
+              }}
+            >
+              <Form layout="vertical">
+                <Form.Item
+                  label="模板名称"
+                  required
+                >
+                  <Input
+                    value={newTemplateName}
+                    onChange={(e) => setNewTemplateName(e.target.value)}
+                    placeholder="请输入新模板名称"
+                  />
+                </Form.Item>
+                <Form.Item
+                  label="源模板"
+                  required
+                >
+                  <Select
+                    value={selectedSourceId}
+                    onChange={setSelectedSourceId}
+                    placeholder="请选择源模板"
+                  >
+                    {templates.map(t => (
+                      <Select.Option key={t.id} value={t.id}>{t.name}</Select.Option>
+                    ))}
+                  </Select>
+                </Form.Item>
+              </Form>
+            </Modal>
           </Space>
         </div>
 

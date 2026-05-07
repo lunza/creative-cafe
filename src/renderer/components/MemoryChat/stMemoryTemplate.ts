@@ -31,8 +31,8 @@ export const DEFAULT_MEMORY_TEMPLATE: ExcelTemplate = {
     },
     {
       name: '物品表格',
-      description: '对某人很贵重或有特殊纪念意义的物品。记录物品的拥有人、描述、名称和重要性等信息。',
-      headers: ['物品名', '类型', '描述', '状态', '备注'],
+      description: '某人携带的物品；或无明确所属人，但在剧情内较为重要公用物品。记录物品的拥有人、描述、名称和重要性等信息。',
+      headers: ['物品名', '类型', '描述', '状态', '备注/持有人'],
       order: 4
     },
     {
@@ -97,7 +97,7 @@ export const TABLE_STRUCTURE_CONFIG = [
   {
     tableIndex: 3,
     tableName: '物品表格',
-    columns: ['物品名', '类型', '描述', '状态', '备注'],
+    columns: ['物品名', '类型', '描述', '状态', '备注/持有人'],
     note: '记录物品信息和状态变化',
     initNode: '以下是物品表格的初始数据：',
     insertNode: '在物品表格中添加新记录：',

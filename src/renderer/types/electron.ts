@@ -155,6 +155,8 @@ export interface ElectronAPI {
     deleteChatSession: (chatId: string) => Promise<boolean>;
     associateTemplate: (chatId: string, templateId: string) => Promise<void>;
     processChat: (chatId: string, templateId: string, selectedMessageIds?: string[], config?: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }) => Promise<void>;
+    processChatProgressive: (chatId: string, templateId: string, config?: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }) => Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[] }>;
+    copyTemplate: (sourceTemplateId: string, newTemplateName: string) => Promise<any>;
     getTableData: (chatId: string) => Promise<any>;
     saveTableData: (chatId: string, sheetName: string, sheetData: any[]) => Promise<void>;
   };

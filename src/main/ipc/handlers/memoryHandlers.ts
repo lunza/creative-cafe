@@ -302,6 +302,102 @@ export function registerMemoryHandlers() {
   });
 
   /**
+   * 处理聊天记录（逐条处理模式）
+   */
+  ipcMain.handle('memory:processChatProgressive', async (
+    event: IpcMainInvokeEvent,
+    chatId: string,
+    templateId: string,
+    config?: { apiKey: string; apiUrl: string; modelName: string; apiMode: string },
+    restart: boolean = false
+  ): Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[]; resumed: boolean }> => {
+    try {
+      console.log('逐条处理聊天记录:', { chatId, templateId, config, restart });
+
+      // 进度回调函数，通过事件发送到渲染进程
+      const onProgress = (current: number, total: number, message: string) => {
+        event.sender.send('memory:processChatProgress', { current, total, message });
+      };
+
+      const result = await chatLogService.processChatProgressive(chatId, templateId, config, onProgress, restart);
+      console.log('逐条处理完成:', result);
+      return result;
+    } catch (error) {
+      console.error('逐条处理聊天记录失败:', error);
+      throw error;
+    }
+  });
+
+  /**
+   * 获取整理进度
+   */
+  ipcMain.handle('memory:getOrganizingProgress', async (
+    event: IpcMainInvokeEvent,
+    chatId: string
+  ): Promise<{ processedCount: number; totalMessages: number; lastProcessedAt?: string } | null> => {
+    try {
+      const progress = chatLogService.getOrganizingProgress(chatId);
+      return progress;
+    } catch (error) {
+      console.error('获取整理进度失败:', error);
+      return null;
+    }
+  });
+
+  /**
+   * 清除整理进度
+   */
+  ipcMain.handle('memory:clearOrganizingProgress', async (
+    event: IpcMainInvokeEvent,
+    chatId: string
+  ): Promise<boolean> => {
+    try {
+      console.log('清除整理进度:', chatId);
+      chatLogService.clearOrganizingProgress(chatId);
+      return true;
+    } catch (error) {
+      console.error('清除整理进度失败:', error);
+      return false;
+    }
+  });
+
+  /**
+   * 复制模板
+   */
+  ipcMain.handle('memory:copyTemplate', async (
+    event: IpcMainInvokeEvent,
+    sourceTemplateId: string,
+    newTemplateName: string
+  ): Promise<TableTemplate> => {
+    try {
+      console.log('复制模板:', { sourceTemplateId, newTemplateName });
+      const copiedTemplate = tableTemplateService.copyTemplate(sourceTemplateId, newTemplateName);
+      console.log('模板复制成功:', copiedTemplate.id);
+      return copiedTemplate;
+    } catch (error) {
+      console.error('复制模板失败:', error);
+      throw error;
+    }
+  });
+
+  /**
+   * 清理表格数据（删除表格JSON文件并重置进度）
+   */
+  ipcMain.handle('memory:clearTableData', async (
+    event: IpcMainInvokeEvent,
+    chatId: string
+  ): Promise<{ success: boolean }> => {
+    try {
+      console.log('清理表格数据:', chatId);
+      chatLogService.clearTableData(chatId);
+      return { success: true };
+    } catch (error) {
+      console.error('清理表格数据失败:', error);
+      throw error;
+    }
+  });
+
+  /**
    * 处理聊天记录
    */
   ipcMain.handle('memory:processChat', async (event: IpcMainInvokeEvent, chatId: string, templateId: string, selectedMessageIds?: string[], config?: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }): Promise<void> => {
@@ -347,7 +443,7 @@ export function registerMemoryHandlers() {
    * 获取记忆目录路径
    */
   ipcMain.handle('memory:getMemoryDirectory', async (): Promise<string> => {
-    return path.join(getUserDataPath(), 'data', 'memory');
+    return path.join(getUserDataPath(), 'data', 'memories');
   });
 
   // ========== 角色卡聊天记录管理 ==========

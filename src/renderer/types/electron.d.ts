@@ -126,6 +126,11 @@ interface ElectronAPI {
     deleteChatSession: (chatId: string) => Promise<boolean>;
     associateTemplate: (chatId: string, templateId: string) => Promise<void>;
     processChat: (chatId: string, templateId: string, selectedMessageIds?: string[], config?: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }) => Promise<void>;
+    processChatProgressive: (chatId: string, templateId: string, config?: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }, restart?: boolean) => Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[]; resumed: boolean }>;
+    getOrganizingProgress: (chatId: string) => Promise<{ processedCount: number; totalMessages: number; lastProcessedAt?: string } | null>;
+    clearOrganizingProgress: (chatId: string) => Promise<boolean>;
+    clearTableData: (chatId: string) => Promise<{ success: boolean }>;
+    copyTemplate: (sourceTemplateId: string, newTemplateName: string) => Promise<any>;
     
     // 表格数据管理
     getTableData: (chatId: string) => Promise<any>;

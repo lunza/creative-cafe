@@ -6,6 +6,7 @@
 import fs from 'fs';
 import path from 'path';
 import { tableTemplateService } from './tableTemplateService';
+import { tableEditParser, TableEditCommand } from './tableEditParser';
 import { pathService } from '../pathService';
 import { getUserDataPath } from '../../utils/appPath';
 
@@ -37,6 +38,14 @@ export interface ChatSession {
   templateId?: string;
   isTemplateAssociated?: boolean;
   isProcessed?: boolean; // 是否已完成整理
+  organizingProgress?: { processedCount: number; totalMessages: number; lastProcessedAt?: string };
+}
+
+export interface AssociationRecord {
+  templateId: string;
+  processedCount: number;
+  totalMessages: number;
+  lastProcessedAt?: string;
 }
 
 export interface AIProcessingResult {
@@ -150,14 +159,16 @@ class ChatLogService {
                 console.log(`处理聊天文件: ${chatId}`);
                 const session = this.getChatSession(chatId);
                 if (session) {
-                  // 获取关联的模板
                   const templateId = this.getAssociatedTemplate(chatId);
                   session.templateId = templateId;
                   session.isTemplateAssociated = !!templateId;
-                  // 获取是否已处理的状态
                   session.isProcessed = this.getSessionProcessedStatus(chatId);
+                  const progress = this.getOrganizingProgress(chatId);
+                  if (progress) {
+                    session.organizingProgress = progress;
+                  }
                   sessions.push(session);
-                  console.log(`添加聊天会话: ${session.name} (${session.characterName})${templateId ? ` - 已关联模板` : ''}${session.isProcessed ? ' - 已整理' : ''}`);
+                  console.log(`添加聊天会话: ${session.name} (${session.characterName})${templateId ? ` - 已关联模板` : ''}${session.isProcessed ? ' - 已整理' : ''}${progress ? ` - 整理进度 ${progress.processedCount}/${progress.totalMessages}` : ''}`);
                 }
               } else {
                 console.log(`跳过非 JSONL 文件: ${chatFile}`);
@@ -310,6 +321,46 @@ class ChatLogService {
     } catch (error) {
       console.error('读取聊天记录失败:', error);
       return { messages: [], total: 0, totalPages: 0 };
+    }
+  }
+
+  /**
+   * 读取角色卡聊天记录（.json 格式）
+   * 角色卡聊天记录存储在 data/memories/chats/ 目录下，格式为 { messages: [...] }
+   */
+  private readCharacterChatMessages(chatId: string): ChatMessage[] {
+    try {
+      const jsonFilePath = path.join(this.chatsDir, `${chatId}.json`);
+
+      if (!fs.existsSync(jsonFilePath)) {
+        addLog(`角色卡聊天记录文件不存在: ${jsonFilePath}`, 'debug');
+        return [];
+      }
+
+      const content = fs.readFileSync(jsonFilePath, 'utf-8');
+      const parsed = JSON.parse(content);
+
+      if (!Array.isArray(parsed.messages)) {
+        return [];
+      }
+
+      const messages: ChatMessage[] = [];
+      parsed.messages.forEach((msg: any, index: number) => {
+        const role = msg.role || (msg.is_user ? 'user' : (msg.is_system ? 'system' : 'assistant'));
+        messages.push({
+          id: `${chatId}-json-${index}`,
+          role,
+          content: msg.content || msg.mes || '',
+          timestamp: msg.timestamp || msg.send_date || new Date().toISOString(),
+          chatId
+        });
+      });
+
+      addLog(`从角色卡聊天记录读取到 ${messages.length} 条消息`, 'debug');
+      return messages;
+    } catch (error) {
+      addLog(`读取角色卡聊天记录失败: ${error}`, 'warn');
+      return [];
     }
   }
 
@@ -721,6 +772,295 @@ ${chatContent}
 
 【现在开始处理】
 请分析上述聊天记录，参考现有表格数据，重点关注变体称呼识别和唯一 ID 一致性，提取关键信息并生成JSON格式的操作指令。`;
+  }
+
+  /**
+   * 构建逐条处理模式的AI提示词(支持tableEdit命令格式)
+   * @param message 当前要处理的消息
+   * @param template 模板信息
+   * @param chatId 聊天ID
+   * @param tableContext 当前表格数据上下文
+   * @returns 格式化的提示词
+   */
+  private buildAIPromptForProgressive(
+    message: ChatMessage,
+    template: any,
+    chatId: string,
+    tableContext: string
+  ): string {
+    // 构建模板结构描述
+    const templateDescription = template.sheets.map((sheet: any, index: number) => {
+      return `- [索引${index}] ${sheet.name}：字段包括 [${sheet.headers.join(', ')}]
+  表格用途：${sheet.description || '暂无描述'}`;
+    }).join('\n');
+
+    return `【角色设定】
+你是一个专业的信息提取和表格整理专家，擅长从单条消息中提取关键信息并生成精确的tableEdit命令。你特别擅长识别不同称呼（appellations）的同一元素，并通过唯一ID策略确保实体识别的一致性。
+
+【当前消息】
+${message.role}: ${message.content}
+
+${tableContext}
+
+【表格模板结构】
+${templateDescription}
+
+【tableEdit命令格式】
+你需要将操作指令放在<tableEdit>标签内,使用HTML注释格式:
+
+<tableEdit>
+<!-- 
+insertRow(表格索引, {"字段索引":"值", ...})
+updateRow(表格索引, 行索引, {"字段索引":"值", ...})
+deleteRow(表格索引, 行索引)
+-->
+</tableEdit>
+
+参数说明:
+- 表格索引: 从0开始,对应模板中页签的顺序
+- 行索引: 从0开始,对应该表格中的数据行索引
+- 字段索引: 从0开始,对应该表格表头的字段索引
+- 每个表格的字段结构固定为: [0:流水号, 1:唯一id, 2+:自定义字段]
+- 流水号(字段0)由系统自动递增,通常不需要手动填写
+- 唯一id(字段1)由AI根据实体名称生成,需具有语义且保持一致性
+
+示例(以时空表格为例,字段为[流水号,唯一id,时间,地点,描述,备注]):
+- insertRow(0, {"1":"oct_school_001","2":"十月","3":"学校","4":"下雪天","5":""}) 
+  → 在第1个表格新增一行:唯一id=oct_school_001,时间=十月,地点=学校,描述=下雪天
+- updateRow(4, 1, {"1":"xiaohua_001","2":"小花","3":"破坏表白失败"})
+  → 修改第5个表格的第2条数据,更新唯一id、角色名等字段
+- deleteRow(1, 2)
+  → 删除第2个表格的第3条数据
+
+【核心任务：唯一ID策略与变体称呼识别】
+这是你的首要任务！请认真遵循以下准则：
+
+1. **唯一ID的重要性**：
+   - 唯一ID是识别同一实体的关键标识，必须在整个对话中保持一致
+   - 即使同一实体在对话中被不同称呼指代，也必须使用相同的唯一ID
+   - 唯一ID应该具有语义化，但又足够唯一，避免与其他实体混淆
+
+2. **变体称呼识别与链接**（重点！）：
+   - **同一实体的不同称呼必须共用同一个唯一ID**。请根据上下文和语义情景判断：
+     * 全名 vs 缩写 vs 昵称："朱迪·霍普斯" = "朱迪" = "Judy" = "兔子" → 同一个唯一ID
+     * 全名 vs 敬称："张三" = "张先生" → 同一个唯一ID
+     * 姓名 vs 代号/职业："007" = "詹姆斯·邦德" → 同一个唯一ID
+     * 代词回指："她" / "他" / "那个女孩" → 根据上下文指向判断对应的实体
+   - **关键判断原则**：
+     * 如果上下文表明这些称呼指向同一个具体人物/物品/事件，则共用一个唯一ID
+     * 例："朱迪"、"朱迪·霍普斯"、"Judy"、"兔子"都出现在同一个场景且行为连贯 → 同一个角色
+     * 例：对话中出现"白兔子"和"灰兔子"两个不同实体，各自有独立描述和行为 → 两个不同的唯一ID
+     * 例："学校"和"第一中学"如果上下文明确指同一所学校 → 同一个地点
+
+3. **实体识别与一致性维护**：
+   - 在整个对话过程中，建立和维护一致的实体识别
+   - 跨越对话轮次和会话，保持同一实体的唯一ID一致性
+   - 考虑上下文变化、语义关系和对话流程，进行系统的唯一元素识别
+   - 当不确定时，优先假设是同一实体（基于已有记录中的唯一ID判断）
+
+4. **唯一ID命名规范**：
+   - 使用有意义的语义前缀 + 序号，如 "zhudi_001"、"zhangsan_001"
+   - 对于英文名，可以使用拼音或英文缩写，如 "judy_001"、"jbond_001"
+   - 确保ID简洁、可读、全局唯一
+
+【表格提取规则】
+当前模板包含以下表格，请根据表格名称和描述提取对应信息，同一实体的不同称呼共用唯一ID：
+${template.sheets.map((sheet: any, index: number) => {
+  const fields = sheet.headers.filter((h: string) => h !== '流水号' && h !== '唯一id').join('、');
+  return `${index + 1}. **${sheet.name}**：${sheet.description || '暂无描述'} | 提取字段：${fields}`;
+}).join('；')}
+
+【唯一ID生成指南】
+${template.sheets.map((sheet: any) => {
+  const keyFields = sheet.headers.filter((h: string) => h !== '流水号' && h !== '唯一id' && h !== '备注').slice(0, 3);
+  return `- ${sheet.name}：使用关键字段"${keyFields.join('、')}"的语义组合 + 序号，确保唯一且有语义`;
+}).join('\n')}
+
+【输出要求】
+1. 只分析当前这条消息，不要分析其他消息
+2. 从当前消息中提取关键信息，生成对应的tableEdit命令
+3. 将命令放在<tableEdit>标签内
+4. 如果没有需要提取的信息，返回空的<tableEdit></tableEdit>
+5. 确保使用正确的表格索引、行索引和字段索引
+6. 参考现有表格数据，避免重复添加相同信息
+7. 识别变体称呼，使用唯一ID保持一致性
+8. 只提取当前消息中明确提到的信息，不要臆造
+
+【示例输出】
+分析消息："朱迪说她在中央公园捡到了100元钱"
+
+<tableEdit>
+<!-- 
+insertRow(0, {"2":"今天","3":"中央公园","4":"朱迪在中央公园","5":""})
+insertRow(4, {"2":"money_001","3":"100元钱","4":"现金","5":"朱迪在中央公园捡到的100元钱","6":"已拾取","7":""})
+updateRow(1, 0, {"3":"朱迪","6":"兔子警官"})
+-->
+</tableEdit>
+
+【现在开始处理】
+请分析上述消息，参考现有表格数据，提取关键信息并生成tableEdit命令。`;
+  }
+
+  /**
+   * 执行tableEdit命令
+   * @param chatId 聊天ID
+   * @param commands tableEdit命令列表
+   * @returns 执行结果
+   */
+  private executeTableEditCommands(chatId: string, commands: any[]): { success: boolean; executed: number; errors: string[] } {
+    const result = { success: true, executed: 0, errors: [] as string[] };
+
+    if (!commands || commands.length === 0) {
+      addLog('没有需要执行的tableEdit命令', 'debug');
+      return result;
+    }
+
+    addLog(`开始执行 ${commands.length} 个tableEdit命令`, 'info');
+
+    commands.forEach((command, index) => {
+      try {
+        const { type, tableIndex, rowIndex, data } = command;
+
+        addLog(`执行命令 ${index + 1}/${commands.length}: ${type}(表格${tableIndex}${rowIndex !== undefined ? `,行${rowIndex}` : ''})`, 'debug');
+
+        let success = false;
+
+        switch (type) {
+          case 'insertRow':
+            success = tableTemplateService.insertRowToTable(chatId, tableIndex, data || {});
+            if (success) {
+              addLog(`insertRow 执行成功: 表格${tableIndex}`, 'info');
+            } else {
+              result.errors.push(`insertRow 失败: 表格${tableIndex}`);
+            }
+            break;
+
+          case 'updateRow':
+            if (rowIndex === undefined) {
+              result.errors.push(`updateRow 失败: 缺少行索引参数`);
+              addLog('updateRow 失败: 缺少行索引参数', 'error');
+            } else {
+              success = tableTemplateService.updateRowInTable(chatId, tableIndex, rowIndex, data || {});
+              if (success) {
+                addLog(`updateRow 执行成功: 表格${tableIndex},行${rowIndex}`, 'info');
+              } else {
+                result.errors.push(`updateRow 失败: 表格${tableIndex},行${rowIndex}`);
+              }
+            }
+            break;
+
+          case 'deleteRow':
+            if (rowIndex === undefined) {
+              result.errors.push(`deleteRow 失败: 缺少行索引参数`);
+              addLog('deleteRow 失败: 缺少行索引参数', 'error');
+            } else {
+              success = tableTemplateService.deleteRowFromTable(chatId, tableIndex, rowIndex);
+              if (success) {
+                addLog(`deleteRow 执行成功: 表格${tableIndex},行${rowIndex}`, 'info');
+              } else {
+                result.errors.push(`deleteRow 失败: 表格${tableIndex},行${rowIndex}`);
+              }
+            }
+            break;
+
+          default:
+            result.errors.push(`未知命令类型: ${type}`);
+            addLog(`未知命令类型: ${type}`, 'error');
+            break;
+        }
+
+        if (success) {
+          result.executed++;
+        }
+      } catch (error) {
+        const errorMsg = `命令 ${index + 1} 执行异常: ${error instanceof Error ? error.message : String(error)}`;
+        result.errors.push(errorMsg);
+        addLog(errorMsg, 'error');
+        if (error instanceof Error && error.stack) {
+          addLog(`错误堆栈: ${error.stack}`, 'debug');
+        }
+      }
+    });
+
+    if (result.errors.length > 0) {
+      addLog(`命令执行完成，但有 ${result.errors.length} 个错误`, 'warn');
+      result.errors.forEach(err => addLog(`  错误: ${err}`, 'warn'));
+    } else {
+      addLog(`所有 ${result.executed} 个命令执行成功`, 'info');
+    }
+
+    return result;
+  }
+
+  /**
+   * 构建表格数据上下文,格式化为AI可读格式
+   * @param chatId 聊天ID
+   * @param templateId 模板ID
+   * @returns 格式化的表格上下文字符串
+   */
+  private buildTableContext(chatId: string, templateId: string): string {
+    // 获取模板
+    const template = tableTemplateService.getTemplate(templateId);
+    if (!template) {
+      addLog(`模板 ${templateId} 不存在，无法构建表格上下文`, 'error');
+      return '【当前表格数据状态】\n模板不存在\n';
+    }
+
+    // 尝试读取现有表格数据
+    const safeChatId = chatId
+      .replace(/\//g, '_')
+      .replace(/\\/g, '_')
+      .replace(/\s+/g, '_')
+      .replace(/@/g, '_')
+      .replace(/-/g, '_')
+      .replace(/:/g, '_')
+      .replace(/\*/g, '_')
+      .replace(/\?/g, '_')
+      .replace(/"/g, '_')
+      .replace(/</g, '_')
+      .replace(/>/g, '_')
+      .replace(/\|/g, '_');
+
+    const jsonPath = path.join(this.chatlogDir, `${safeChatId}.json`);
+    
+    let jsonData: any = null;
+    try {
+      if (fs.existsSync(jsonPath)) {
+        const jsonContent = fs.readFileSync(jsonPath, 'utf-8');
+        jsonData = JSON.parse(jsonContent);
+        addLog(`成功读取表格数据文件: ${jsonPath}`, 'debug');
+      } else {
+        addLog(`表格数据文件不存在: ${jsonPath}`, 'debug');
+      }
+    } catch (error) {
+      addLog(`读取表格数据文件失败: ${error}`, 'error');
+    }
+
+    // 构建表格上下文
+    let context = '【当前表格数据状态】\n';
+
+    template.sheets.forEach((sheet: any, sheetIndex: number) => {
+      context += `\n=== ${sheet.name} ===\n`;
+      context += `表格用途：${sheet.description || '暂无描述'}\n`;
+      context += `表头：[${sheet.headers.join(', ')}]\n`;
+
+      // 检查是否有数据
+      if (jsonData && jsonData.data && jsonData.data[sheet.name]) {
+        const sheetData = jsonData.data[sheet.name];
+        if (Array.isArray(sheetData) && sheetData.length > 0) {
+          context += `当前数据（共${sheetData.length}条）：\n`;
+          sheetData.forEach((row: any) => {
+            context += `  - ${JSON.stringify(row)}\n`;
+          });
+        } else {
+          context += '当前数据：暂无数据\n';
+        }
+      } else {
+        context += '当前数据：暂无数据\n';
+      }
+    });
+
+    return context;
   }
 
   /**
@@ -1363,29 +1703,44 @@ ${chatContent}
   private saveAssociation(chatId: string, templateId: string): void {
     const associationsPath = path.join(this.chatsDir, 'associations.json');
     
-    // 确保chats目录存在
     if (!fs.existsSync(this.chatsDir)) {
       fs.mkdirSync(this.chatsDir, { recursive: true });
     }
     
-    let associations: Record<string, string> = {};
+    let associations: Record<string, AssociationRecord> = {};
     
-    // 读取现有关联关系
     if (fs.existsSync(associationsPath)) {
       try {
         const content = fs.readFileSync(associationsPath, 'utf-8');
-        associations = JSON.parse(content);
+        const rawData = JSON.parse(content);
+        associations = this.migrateAssociations(rawData);
       } catch (error) {
         console.error('读取关联关系失败:', error);
         associations = {};
       }
     }
     
-    // 保存新的关联关系
-    associations[chatId] = templateId;
+    const existing = associations[chatId];
+    associations[chatId] = {
+      templateId,
+      processedCount: existing?.processedCount || 0,
+      totalMessages: existing?.totalMessages || 0,
+      lastProcessedAt: existing?.lastProcessedAt
+    };
     
-    // 写入文件
     fs.writeFileSync(associationsPath, JSON.stringify(associations, null, 2));
+  }
+
+  private migrateAssociations(rawData: any): Record<string, AssociationRecord> {
+    const result: Record<string, AssociationRecord> = {};
+    for (const [chatId, value] of Object.entries(rawData)) {
+      if (typeof value === 'string') {
+        result[chatId] = { templateId: value, processedCount: 0, totalMessages: 0 };
+      } else if (typeof value === 'object' && value !== null) {
+        result[chatId] = value as AssociationRecord;
+      }
+    }
+    return result;
   }
 
 
@@ -1399,14 +1754,127 @@ ${chatContent}
     if (fs.existsSync(associationsPath)) {
       try {
         const content = fs.readFileSync(associationsPath, 'utf-8');
-        const associations: Record<string, string> = JSON.parse(content);
-        return associations[chatId] || null;
+        const rawData = JSON.parse(content);
+        const associations = this.migrateAssociations(rawData);
+        return associations[chatId]?.templateId || null;
       } catch (error) {
         console.error('读取关联关系失败:', error);
       }
     }
     
     return null;
+  }
+
+  public clearOrganizingProgress(chatId: string): void {
+    const associationsPath = path.join(this.chatsDir, 'associations.json');
+    
+    if (!fs.existsSync(associationsPath)) {
+      return;
+    }
+    
+    try {
+      const content = fs.readFileSync(associationsPath, 'utf-8');
+      const rawData = JSON.parse(content);
+      const associations = this.migrateAssociations(rawData);
+      
+      if (associations[chatId]) {
+        associations[chatId].processedCount = 0;
+        associations[chatId].totalMessages = 0;
+        associations[chatId].lastProcessedAt = undefined;
+        fs.writeFileSync(associationsPath, JSON.stringify(associations, null, 2));
+        addLog(`已清除聊天记录 ${chatId} 的整理进度`, 'info');
+      }
+    } catch (error) {
+      console.error('清除整理进度失败:', error);
+    }
+  }
+
+  /**
+   * 清理已整理的表格数据（仅删除 chatlog 目录下的表格JSON文件，不影响原始聊天记录）
+   */
+  public clearTableData(chatId: string): void {
+    const safeChatId = chatId
+      .replace(/\//g, '_')
+      .replace(/\\/g, '_')
+      .replace(/\s+/g, '_')
+      .replace(/@/g, '_')
+      .replace(/-/g, '_')
+      .replace(/:/g, '_')
+      .replace(/\*/g, '_')
+      .replace(/\?/g, '_')
+      .replace(/"/g, '_')
+      .replace(/</g, '_')
+      .replace(/>/g, '_')
+      .replace(/\|/g, '_');
+    
+    // 仅删除 chatlog 目录下的表格数据文件（原始聊天记录在 chats/ 目录，不会被删除）
+    const tableFilePath = path.join(this.chatlogDir, `${safeChatId}.json`);
+    if (fs.existsSync(tableFilePath)) {
+      fs.unlinkSync(tableFilePath);
+      addLog(`已删除表格数据文件: ${tableFilePath}`, 'info');
+    } else {
+      addLog(`表格数据文件不存在: ${tableFilePath}`, 'debug');
+    }
+
+    // 重置关联进度（associations.json 在 chats/ 目录下）
+    this.clearOrganizingProgress(chatId);
+
+    // 重置处理状态
+    this.setSessionProcessedStatus(chatId, false);
+
+    addLog(`已清理聊天记录 ${chatId} 的表格数据和进度`, 'info');
+  }
+
+  public getOrganizingProgress(chatId: string): { processedCount: number; totalMessages: number; lastProcessedAt?: string } | null {
+    const associationsPath = path.join(this.chatsDir, 'associations.json');
+    
+    if (fs.existsSync(associationsPath)) {
+      try {
+        const content = fs.readFileSync(associationsPath, 'utf-8');
+        const rawData = JSON.parse(content);
+        const associations = this.migrateAssociations(rawData);
+        const record = associations[chatId];
+        if (record) {
+          return {
+            processedCount: record.processedCount,
+            totalMessages: record.totalMessages,
+            lastProcessedAt: record.lastProcessedAt
+          };
+        }
+      } catch (error) {
+        console.error('读取整理进度失败:', error);
+      }
+    }
+    
+    return null;
+  }
+
+  private saveOrganizingProgress(chatId: string, processedCount: number, totalMessages: number): void {
+    const associationsPath = path.join(this.chatsDir, 'associations.json');
+    
+    if (!fs.existsSync(this.chatsDir)) {
+      fs.mkdirSync(this.chatsDir, { recursive: true });
+    }
+    
+    let associations: Record<string, AssociationRecord> = {};
+    
+    if (fs.existsSync(associationsPath)) {
+      try {
+        const content = fs.readFileSync(associationsPath, 'utf-8');
+        const rawData = JSON.parse(content);
+        associations = this.migrateAssociations(rawData);
+      } catch (error) {
+        console.error('读取关联关系失败:', error);
+        associations = {};
+      }
+    }
+    
+    if (associations[chatId]) {
+      associations[chatId].processedCount = processedCount;
+      associations[chatId].totalMessages = totalMessages;
+      associations[chatId].lastProcessedAt = new Date().toISOString();
+      fs.writeFileSync(associationsPath, JSON.stringify(associations, null, 2));
+    }
   }
 
   /**
@@ -1562,6 +2030,264 @@ ${chatContent}
   }
 
   /**
+   * 逐条处理聊天记录，提取信息到表格（支持tableEdit命令格式）
+   * @param chatId 聊天ID
+   * @param templateId 模板ID
+   * @param config AI配置
+   * @param onProgress 进度回调函数 (current: number, total: number, message: string)
+   * @returns 处理结果
+   */
+  public async processChatProgressive(
+    chatId: string,
+    templateId: string,
+    config?: { apiKey: string; apiUrl: string; modelName: string; apiMode: string },
+    onProgress?: (current: number, total: number, message: string) => void,
+    restart: boolean = false
+  ): Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[]; resumed: boolean }> {
+    const result = { success: true, processedCount: 0, errorCount: 0, errors: [] as string[], resumed: false };
+
+    addLog(`开始逐条处理聊天记录: ${chatId}`, 'info');
+    addLog(`使用模板: ${templateId}`, 'info');
+
+    try {
+      // 1. 读取聊天记录（支持两种格式）
+      addLog('步骤 1/5: 读取聊天记录', 'debug');
+      const allMessages = this.getChatMessages(chatId).messages;
+
+      // 如果 .jsonl 格式没读到，尝试从 .json 格式（角色卡聊天记录）读取
+      let messages: ChatMessage[] = allMessages;
+      if (allMessages.length === 0) {
+        const jsonMessages = this.readCharacterChatMessages(chatId);
+        if (jsonMessages.length > 0) {
+          addLog(`从角色卡聊天记录格式读取到 ${jsonMessages.length} 条消息`, 'debug');
+          messages = jsonMessages;
+        }
+      }
+
+      addLog(`共读取 ${messages.length} 条消息`, 'debug');
+
+      if (messages.length === 0) {
+        throw new Error('没有聊天记录可处理');
+      }
+
+      // 2. 过滤消息（仅处理user和assistant消息）
+      addLog('步骤 2/5: 过滤消息', 'debug');
+      const targetMessages = messages.filter(msg => msg.role === 'user' || msg.role === 'assistant');
+      addLog(`过滤后剩余 ${targetMessages.length} 条消息（排除system消息）`, 'debug');
+
+      if (targetMessages.length === 0) {
+        throw new Error('没有可处理的消息（user或assistant）');
+      }
+
+      // 3. 按时间顺序排序
+      addLog('步骤 3/5: 按时间排序', 'debug');
+      targetMessages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+      // 检查断点续传
+      let startIndex = 0;
+      const existingProgress = this.getOrganizingProgress(chatId);
+      if (!restart && existingProgress && existingProgress.processedCount > 0 && existingProgress.totalMessages === targetMessages.length) {
+        startIndex = existingProgress.processedCount;
+        addLog(`检测到断点续传记录: 已处理 ${startIndex}/${targetMessages.length} 条消息`, 'info');
+        if (startIndex >= targetMessages.length) {
+          addLog('所有消息已处理完成', 'info');
+          result.resumed = true;
+          result.processedCount = startIndex;
+          return result;
+        }
+        result.resumed = true;
+      } else if (existingProgress && existingProgress.totalMessages !== targetMessages.length) {
+        addLog(`消息数量变化 (${existingProgress.totalMessages} -> ${targetMessages.length})，重新从头处理`, 'info');
+        startIndex = 0;
+      }
+
+      // 4. 获取模板信息
+      addLog('步骤 4/5: 获取模板信息', 'debug');
+      const template = tableTemplateService.getTemplate(templateId);
+      if (!template) {
+        throw new Error(`模板 ${templateId} 不存在`);
+      }
+      addLog(`模板名称: ${template.name}`, 'debug');
+      addLog(`模板包含 ${template.sheets?.length || 0} 个页签`, 'debug');
+
+      // 5. 确定AI配置
+      addLog('步骤 5/5: 配置AI参数', 'debug');
+      const aiConfig = {
+        apiKey: config?.apiKey || '',
+        apiUrl: config?.apiUrl || 'http://127.0.0.1:5000',
+        modelName: config?.modelName || 'qwen3.5-27b-heretic-v3',
+        apiMode: config?.apiMode || 'text_completion'
+      };
+
+      // 根据API模式设置正确的API端点
+      let apiEndpoint = aiConfig.apiUrl;
+      if (aiConfig.apiMode === 'text_completion') {
+        if (!apiEndpoint.endsWith('/v1/completions')) {
+          apiEndpoint += '/v1/completions';
+        }
+      } else {
+        if (!apiEndpoint.endsWith('/v1/chat/completions')) {
+          apiEndpoint += '/v1/chat/completions';
+        }
+      }
+      addLog(`最终API端点: ${apiEndpoint}`, 'debug');
+
+      addLog('使用AI配置:', 'debug');
+      addLog(`  API密钥: ${aiConfig.apiKey ? '已设置' : '未设置'}`, 'debug');
+      addLog(`  API地址: ${apiEndpoint}`, 'debug');
+      addLog(`  模型名称: ${aiConfig.modelName}`, 'debug');
+      addLog(`  API模式: ${aiConfig.apiMode}`, 'debug');
+
+      // 保存关联关系（如果还没有的话）
+      const currentTemplateId = this.getAssociatedTemplate(chatId);
+      if (!currentTemplateId) {
+        this.saveAssociation(chatId, templateId);
+      }
+
+      // 确保表格JSON文件存在（创建初始空文件）
+      const tableFilePath = path.join(this.chatlogDir, `${chatId.replace(/[\/\\]/g, '_').replace(/[\s@\-:*?"<>|]/g, '_')}.json`);
+      if (!fs.existsSync(tableFilePath)) {
+        addLog('创建初始表格数据文件', 'info');
+        tableTemplateService.createTableFile(chatId, templateId);
+        addLog(`表格文件已创建: ${tableFilePath}`, 'info');
+      } else {
+        addLog(`表格文件已存在: ${tableFilePath}`, 'debug');
+      }
+
+      // 开始逐条处理
+      const totalMessages = targetMessages.length;
+      addLog(`开始逐条处理 ${totalMessages} 条消息${startIndex > 0 ? ` (从第 ${startIndex + 1} 条开始)` : ''}`, 'info');
+
+      // 初始化进度
+      this.saveOrganizingProgress(chatId, startIndex, totalMessages);
+
+      for (let i = startIndex; i < totalMessages; i++) {
+        const message = targetMessages[i];
+        const currentProgress = i + 1;
+        const absoluteProgress = currentProgress;
+
+        addLog(`处理消息 ${currentProgress}/${totalMessages}: ${message.role}`, 'info');
+
+        // 进度回调
+        if (onProgress) {
+          onProgress(absoluteProgress, totalMessages, `处理消息 ${currentProgress}/${totalMessages}...`);
+        }
+
+        // 发送实时更新
+        if (global.sendLogToRenderer) {
+          global.sendLogToRenderer(`表格整理: 处理消息 ${currentProgress}/${totalMessages} (${message.role})`, 'info');
+        }
+
+        try {
+          // 构建表格数据上下文
+          addLog(`构建表格上下文 (消息 ${currentProgress}/${totalMessages})`, 'debug');
+          const tableContext = this.buildTableContext(chatId, templateId);
+
+          // 构建提示词
+          addLog(`构建AI提示词 (消息 ${currentProgress}/${totalMessages})`, 'debug');
+          const prompt = this.buildAIPromptForProgressive(message, template, chatId, tableContext);
+
+          // 调用AI API
+          addLog(`调用AI API (消息 ${currentProgress}/${totalMessages})`, 'info');
+          const aiResponse = await this.callAIAPIWithRetry(prompt, aiConfig.apiKey, apiEndpoint, aiConfig.modelName);
+
+          if (!aiResponse || aiResponse.trim() === '') {
+            addLog(`AI未返回有效响应 (消息 ${currentProgress}/${totalMessages})`, 'warn');
+            result.errors.push(`消息 ${currentProgress}: AI未返回有效响应`);
+            result.errorCount++;
+            // 保存进度（即使AI没有返回有效响应，这条消息也算处理过了）
+            this.saveOrganizingProgress(chatId, currentProgress, totalMessages);
+            continue;
+          }
+
+          addLog(`AI响应长度: ${aiResponse.length} 字符 (消息 ${currentProgress}/${totalMessages})`, 'debug');
+
+          // 解析tableEdit命令
+          addLog(`解析tableEdit命令 (消息 ${currentProgress}/${totalMessages})`, 'debug');
+          const parseResult = tableEditParser.parse(aiResponse);
+
+          if (!parseResult.success && parseResult.commands.length === 0) {
+            addLog(`未解析到tableEdit命令 (消息 ${currentProgress}/${totalMessages})`, 'warn');
+            if (parseResult.errors.length > 0) {
+              addLog(`解析错误: ${parseResult.errors.join('; ')}`, 'warn');
+            }
+            // 不视为错误，可能消息中没有可提取的信息
+            result.processedCount++;
+            this.saveOrganizingProgress(chatId, currentProgress, totalMessages);
+            continue;
+          }
+
+          if (parseResult.errors.length > 0) {
+            addLog(`解析警告: ${parseResult.errors.join('; ')} (消息 ${currentProgress}/${totalMessages})`, 'warn');
+          }
+
+          // 执行tableEdit命令
+          if (parseResult.commands.length > 0) {
+            addLog(`执行 ${parseResult.commands.length} 个tableEdit命令 (消息 ${currentProgress}/${totalMessages})`, 'info');
+            const execResult = this.executeTableEditCommands(chatId, parseResult.commands);
+
+            if (execResult.errors.length > 0) {
+              addLog(`命令执行错误: ${execResult.errors.join('; ')} (消息 ${currentProgress}/${totalMessages})`, 'warn');
+              result.errors.push(`消息 ${currentProgress}: ${execResult.errors.join('; ')}`);
+            }
+
+            addLog(`成功执行 ${execResult.executed} 个命令 (消息 ${currentProgress}/${totalMessages})`, 'info');
+          }
+
+          result.processedCount++;
+          // 每处理一条消息就保存进度
+          this.saveOrganizingProgress(chatId, currentProgress, totalMessages);
+          addLog(`消息 ${currentProgress}/${totalMessages} 处理完成`, 'info');
+
+        } catch (error) {
+          const errorMsg = `处理消息 ${currentProgress} 失败: ${error instanceof Error ? error.message : String(error)}`;
+          addLog(errorMsg, 'error');
+          if (error instanceof Error && error.stack) {
+            addLog(`错误堆栈: ${error.stack}`, 'debug');
+          }
+          result.errors.push(errorMsg);
+          result.errorCount++;
+          // 单条消息处理失败不影响后续处理
+          addLog(`跳过消息 ${currentProgress}，继续处理下一条`, 'info');
+        }
+      }
+
+      // 处理完成
+      addLog(`逐条处理完成: 成功 ${result.processedCount}, 失败 ${result.errorCount}`, 'info');
+
+      if (result.errorCount > 0) {
+        addLog(`处理过程中有 ${result.errorCount} 条消息处理失败`, 'warn');
+        result.success = result.processedCount > 0; // 只要有成功的消息就认为整体成功
+      }
+
+      // 发送完成通知
+      if (global.sendLogToRenderer) {
+        global.sendLogToRenderer(`表格整理完成: 成功 ${result.processedCount}, 失败 ${result.errorCount}`, result.success ? 'info' : 'warn');
+      }
+
+      // 标记会话为已处理
+      this.setSessionProcessedStatus(chatId, result.success);
+
+      return result;
+
+    } catch (error) {
+      addLog(`逐条处理聊天记录失败: ${error}`, 'error');
+      if (error instanceof Error) {
+        addLog(`错误堆栈: ${error.stack}`, 'error');
+      }
+
+      // 发送失败通知
+      if (global.sendLogToRenderer) {
+        global.sendLogToRenderer(`表格整理失败: ${error}`, 'error');
+      }
+
+      result.success = false;
+      result.errors.push(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
+
+  /**
    * 将聊天记录按逻辑段落分割
    */
   private splitChatIntoSegments(messages: ChatMessage[]): ChatMessage[][] {
@@ -1667,7 +2393,7 @@ ${chatContent}
    * 获取表格数据（JSON格式）
    */
   public getTableData(chatId: string): any {
-    // 替换 chatId 中的路径分隔符和特殊字符，避免文件路径错误
+    // tableTemplateService 将表格数据保存在 chatlog/ 目录下
     const safeChatId = chatId
       .replace(/\//g, '_')
       .replace(/\\/g, '_')
@@ -1682,48 +2408,40 @@ ${chatContent}
       .replace(/>/g, '_')
       .replace(/\|/g, '_');
     
-    // 构建JSON文件路径
+    // 从 chatlog 目录读取（tableTemplateService 保存的位置）
     const jsonPath = path.join(this.chatlogDir, `${safeChatId}.json`);
     
     console.log('=== 开始获取表格数据 ===');
     console.log('原始 chatId:', chatId);
     console.log('转换后的 safeChatId:', safeChatId);
-    console.log('聊天记录存储目录:', this.chatlogDir);
+    console.log('表格数据目录:', this.chatlogDir);
     console.log('使用JSON文件路径:', jsonPath);
+    console.log('文件是否存在:', fs.existsSync(jsonPath));
     
-    // 检查文件是否存在
     if (!fs.existsSync(jsonPath)) {
       console.error('文件不存在:', jsonPath);
+      // 尝试从 chats 目录查找（旧版 processChat 可能保存到这里）
+      const fallbackPath = path.join(this.chatsDir, `${safeChatId}.json`);
+      if (fs.existsSync(fallbackPath)) {
+        console.log('从 chats 目录找到备份文件:', fallbackPath);
+        try {
+          const content = fs.readFileSync(fallbackPath, 'utf8');
+          const jsonData = JSON.parse(content);
+          return { sheets: jsonData.sheets || [], headers: jsonData.headers || {}, data: jsonData.data || {} };
+        } catch (e) {
+          console.error('读取备份文件失败:', e);
+        }
+      }
       throw new Error(`文件不存在: ${jsonPath}`);
     }
     
-    // 检查文件是否可读
     try {
-      fs.accessSync(jsonPath, fs.constants.R_OK);
-      console.log('文件可读');
-    } catch (accessError) {
-      console.error('文件不可读:', accessError);
-      throw new Error(`文件不可读: ${jsonPath}`);
-    }
-    
-    // 检查文件大小
-    try {
-      const stats = fs.statSync(jsonPath);
-      console.log('文件大小:', stats.size, '字节');
-    } catch (statError) {
-      console.error('获取文件信息失败:', statError);
-    }
-    
-    // 直接尝试读取文件
-    try {
-      console.log('开始读取JSON文件...');
-      const jsonData = fs.readFileSync(jsonPath, 'utf8');
-      const parsedData = JSON.parse(jsonData);
+      const content = fs.readFileSync(jsonPath, 'utf8');
+      const jsonData = JSON.parse(content);
       
-      // 确保数据结构正确
-      const sheets = parsedData.sheets || [];
-      const headers = parsedData.headers || {};
-      const data = parsedData.data || {};
+      const sheets = jsonData.sheets || [];
+      const headers = jsonData.headers || {};
+      const data = jsonData.data || {};
       
       console.log('工作表名称:', sheets);
       console.log('表头信息:', headers);

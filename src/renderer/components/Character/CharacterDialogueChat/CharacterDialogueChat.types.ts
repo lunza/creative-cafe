@@ -7,6 +7,7 @@ export interface ChatMessage {
   content: string;
   timestamp: number;
   status?: 'sending' | 'sent' | 'error';
+  speakerName?: string;
 }
 
 // 聊天状态接口

@@ -95,7 +95,7 @@ data/
 ```
 
 ### 文件格式
-- **模板文件**：JSON 格式，存储在 `data/memory/templates/`
+- **模板文件**：JSON 格式，存储在 `data/memories/templates/`
 - **聊天记录**：Excel (.xlsx) 格式，存储在 `data/chatlog/`
 
 ## AI 处理流程

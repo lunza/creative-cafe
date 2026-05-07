@@ -336,6 +336,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
             content: characterInfo.first_mes,
             timestamp: Date.now(),
             status: 'sent',
+            speakerName: characterInfo.characterCardName,
           };
           setState(prev => ({
             ...prev,
@@ -716,6 +717,7 @@ ${personaSection}
       content: content.trim(),
       timestamp: Date.now(),
       status: 'sent',
+      speakerName: selectedPersona?.name || characterInfo.characterCardName,
     };
 
     const aiMessageId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
@@ -725,6 +727,7 @@ ${personaSection}
       content: '',
       timestamp: Date.now(),
       status: 'sending' as const,
+      speakerName: characterInfo.characterCardName,
     }];
 
     setState(prev => ({
@@ -741,7 +744,7 @@ ${personaSection}
       '',
       'dialogue'
     );
-  }, [state.messages, state.isStreaming, requestAIResponse]);
+  }, [state.messages, state.isStreaming, requestAIResponse, selectedPersona, characterInfo.characterCardName]);
 
   const continueConversation = useCallback(async () => {
     if (state.isStreaming) {

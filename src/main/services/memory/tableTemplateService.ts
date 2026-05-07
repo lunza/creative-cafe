@@ -5,6 +5,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { getUserDataPath } from '../../utils/appPath';
 
 // 定义模板接口
 export interface TableTemplate {
@@ -73,10 +74,9 @@ class TableTemplateService {
   private chatlogDir: string;
 
   constructor() {
-    // 使用 process.cwd() 获取项目根目录
-    const rootDir = process.cwd();
-    this.templateDir = path.join(rootDir, 'data', 'memory', 'templates');
-    this.chatlogDir = path.join(rootDir, 'data', 'chatlog');
+    const userDataPath = getUserDataPath();
+    this.templateDir = path.join(userDataPath, 'data', 'memories', 'templates');
+    this.chatlogDir = path.join(userDataPath, 'data', 'memories', 'chatlog');
     
     // 确保目录存在
     this.ensureDirectories();
@@ -365,6 +365,66 @@ class TableTemplateService {
   }
 
   /**
+   * 检查模板名称是否存在
+   */
+  private isTemplateNameExists(name: string, excludeId?: string): boolean {
+    const allTemplates = this.getAllTemplates();
+    return allTemplates.some(template => 
+      template.name === name && template.id !== excludeId
+    );
+  }
+
+  /**
+   * 从系统模板复制创建用户模板
+   * @param sourceTemplateId 源模板ID
+   * @param newTemplateName 新模板名称
+   * @returns 新创建的模板
+   */
+  public copyTemplate(sourceTemplateId: string, newTemplateName: string): TableTemplate {
+    // 查找源模板
+    const sourceTemplate = this.getTemplate(sourceTemplateId);
+    if (!sourceTemplate) {
+      throw new Error('源模板不存在');
+    }
+
+    // 检查名称唯一性，如存在重名则添加数字后缀
+    let finalTemplateName = newTemplateName;
+    let suffix = 1;
+    while (this.isTemplateNameExists(finalTemplateName)) {
+      finalTemplateName = `${newTemplateName}_${suffix}`;
+      suffix++;
+    }
+
+    // 深度复制源模板
+    const copiedTemplate: TableTemplate = JSON.parse(JSON.stringify(sourceTemplate));
+
+    // 确保每个sheet都有"流水号"和"唯一id"字段
+    copiedTemplate.sheets.forEach(sheet => {
+      if (!sheet.headers.includes('流水号')) {
+        sheet.headers.unshift('流水号');
+      }
+      if (!sheet.headers.includes('唯一id')) {
+        sheet.headers.unshift('唯一id');
+      }
+    });
+
+    // 生成新的ID、时间戳和版本号
+    const newTemplate: TableTemplate = {
+      ...copiedTemplate,
+      id: `template-${Date.now()}`,
+      name: finalTemplateName,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      version: '1.0.0'
+    };
+
+    // 保存新模板
+    this.saveTemplate(newTemplate);
+
+    return newTemplate;
+  }
+
+  /**
    * 创建版本备份
    */
   private createVersionBackup(template: TableTemplate) {
@@ -385,6 +445,294 @@ class TableTemplateService {
     const parts = version.split('.').map(Number);
     parts[2] = (parts[2] || 0) + 1;
     return parts.join('.');
+  }
+
+  /**
+   * 安全化 chatId，替换路径分隔符和特殊字符
+   */
+  private safeChatId(chatId: string): string {
+    return chatId
+      .replace(/\//g, '_')
+      .replace(/\\/g, '_')
+      .replace(/\s+/g, '_')
+      .replace(/@/g, '_')
+      .replace(/-/g, '_')
+      .replace(/:/g, '_')
+      .replace(/\*/g, '_')
+      .replace(/\?/g, '_')
+      .replace(/"/g, '_')
+      .replace(/</g, '_')
+      .replace(/>/g, '_')
+      .replace(/\|/g, '_');
+  }
+
+  /**
+   * 读取 JSON 文件并解析
+   */
+  private readJsonFile(chatId: string): any {
+    const safeId = this.safeChatId(chatId);
+    const jsonPath = path.join(this.chatlogDir, `${safeId}.json`);
+
+    if (!fs.existsSync(jsonPath)) {
+      return null;
+    }
+
+    return JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+  }
+
+  /**
+   * 保存 JSON 文件
+   */
+  private saveJsonFile(chatId: string, jsonData: any): void {
+    const safeId = this.safeChatId(chatId);
+    const jsonPath = path.join(this.chatlogDir, `${safeId}.json`);
+
+    if (!fs.existsSync(jsonPath)) {
+      throw new Error('表格文件不存在');
+    }
+
+    fs.writeFileSync(jsonPath, JSON.stringify(jsonData, null, 2), 'utf-8');
+  }
+
+  /**
+   * 通过索引获取特定表格
+   */
+  public getTableByIndex(chatId: string, tableIndex: number): { name: string; headers: string[]; data: any[] } | null {
+    try {
+      const jsonData = this.readJsonFile(chatId);
+
+      if (!jsonData) {
+        console.error(`[TableTemplateService] 表格文件不存在: ${chatId}`);
+        return null;
+      }
+
+      if (!jsonData.sheets || !Array.isArray(jsonData.sheets)) {
+        console.error(`[TableTemplateService] JSON 文件缺少 sheets 数组: ${chatId}`);
+        return null;
+      }
+
+      if (tableIndex < 0 || tableIndex >= jsonData.sheets.length) {
+        console.error(`[TableTemplateService] 表格索引超出范围: ${tableIndex}, 总数: ${jsonData.sheets.length}`);
+        return null;
+      }
+
+      const tableName = jsonData.sheets[tableIndex];
+      const headers = jsonData.headers?.[tableName] || [];
+      const data = jsonData.data?.[tableName] || [];
+
+      return { name: tableName, headers, data };
+    } catch (error) {
+      console.error(`[TableTemplateService] 获取表格失败 (索引: ${tableIndex}):`, error);
+      return null;
+    }
+  }
+
+  /**
+   * 通过索引更新表格数据
+   */
+  public updateTableByIndex(chatId: string, tableIndex: number, data: any[]): boolean {
+    try {
+      const jsonData = this.readJsonFile(chatId);
+
+      if (!jsonData) {
+        console.error(`[TableTemplateService] 表格文件不存在: ${chatId}`);
+        return false;
+      }
+
+      if (!jsonData.sheets || !Array.isArray(jsonData.sheets)) {
+        console.error(`[TableTemplateService] JSON 文件缺少 sheets 数组: ${chatId}`);
+        return false;
+      }
+
+      if (tableIndex < 0 || tableIndex >= jsonData.sheets.length) {
+        console.error(`[TableTemplateService] 表格索引超出范围: ${tableIndex}, 总数: ${jsonData.sheets.length}`);
+        return false;
+      }
+
+      const tableName = jsonData.sheets[tableIndex];
+
+      if (!jsonData.data) {
+        jsonData.data = {};
+      }
+
+      jsonData.data[tableName] = data;
+      this.saveJsonFile(chatId, jsonData);
+
+      console.log(`[TableTemplateService] 成功更新表格 (索引: ${tableIndex}, 名称: ${tableName}, 数据行数: ${data.length})`);
+      return true;
+    } catch (error) {
+      console.error(`[TableTemplateService] 更新表格失败 (索引: ${tableIndex}):`, error);
+      return false;
+    }
+  }
+
+  /**
+   * 向指定表格插入新行
+   */
+  public insertRowToTable(chatId: string, tableIndex: number, rowData: Record<string, string>): boolean {
+    try {
+      const jsonData = this.readJsonFile(chatId);
+
+      if (!jsonData) {
+        console.error(`[TableTemplateService] 表格文件不存在: ${chatId}`);
+        return false;
+      }
+
+      if (!jsonData.sheets || !Array.isArray(jsonData.sheets)) {
+        console.error(`[TableTemplateService] JSON 文件缺少 sheets 数组: ${chatId}`);
+        return false;
+      }
+
+      if (tableIndex < 0 || tableIndex >= jsonData.sheets.length) {
+        console.error(`[TableTemplateService] 表格索引超出范围: ${tableIndex}, 总数: ${jsonData.sheets.length}`);
+        return false;
+      }
+
+      const tableName = jsonData.sheets[tableIndex];
+
+      if (!jsonData.data) {
+        jsonData.data = {};
+      }
+
+      if (!jsonData.data[tableName]) {
+        jsonData.data[tableName] = [];
+      }
+
+      const existingData = jsonData.data[tableName];
+      const nextSerialNumber = existingData.length + 1;
+
+      // 将 rowData 的字段索引保持原样（AI返回的索引从1开始对应唯一id，2开始对应自定义字段）
+      // 系统自动生成的流水号使用 "0" 作为键
+      const newRowData: Record<string, string> = {};
+      for (const [key, value] of Object.entries(rowData)) {
+        // 如果AI返回了"0"或"流水号"（流水号），跳过它，由系统自动生成
+        if (key === '0' || key === '流水号') continue;
+        newRowData[key] = value;
+      }
+
+      const newRow = {
+        '0': String(nextSerialNumber),
+        ...newRowData
+      };
+
+      jsonData.data[tableName].push(newRow);
+      this.saveJsonFile(chatId, jsonData);
+
+      console.log(`[TableTemplateService] 成功插入行到表格 (索引: ${tableIndex}, 名称: ${tableName}, 流水号: ${nextSerialNumber})`);
+      console.log(`[TableTemplateService] 新行数据:`, JSON.stringify(newRow));
+      return true;
+    } catch (error) {
+      console.error(`[TableTemplateService] 插入行失败 (索引: ${tableIndex}):`, error);
+      return false;
+    }
+  }
+
+  /**
+   * 更新指定表格中的特定行
+   */
+  public updateRowInTable(chatId: string, tableIndex: number, rowIndex: number, rowData: Record<string, string>): boolean {
+    try {
+      const jsonData = this.readJsonFile(chatId);
+
+      if (!jsonData) {
+        console.error(`[TableTemplateService] 表格文件不存在: ${chatId}`);
+        return false;
+      }
+
+      if (!jsonData.sheets || !Array.isArray(jsonData.sheets)) {
+        console.error(`[TableTemplateService] JSON 文件缺少 sheets 数组: ${chatId}`);
+        return false;
+      }
+
+      if (tableIndex < 0 || tableIndex >= jsonData.sheets.length) {
+        console.error(`[TableTemplateService] 表格索引超出范围: ${tableIndex}, 总数: ${jsonData.sheets.length}`);
+        return false;
+      }
+
+      const tableName = jsonData.sheets[tableIndex];
+
+      if (!jsonData.data || !jsonData.data[tableName]) {
+        console.error(`[TableTemplateService] 表格数据不存在: ${tableName}`);
+        return false;
+      }
+
+      const tableData = jsonData.data[tableName];
+
+      if (rowIndex < 0 || rowIndex >= tableData.length) {
+        console.error(`[TableTemplateService] 行索引超出范围: ${rowIndex}, 总行数: ${tableData.length}`);
+        return false;
+      }
+
+      tableData[rowIndex] = {
+        ...tableData[rowIndex],
+        ...rowData
+      };
+
+      // 确保流水号不会被覆盖
+      tableData[rowIndex]['0'] = tableData[rowIndex]['0'] || String(rowIndex + 1);
+
+      this.saveJsonFile(chatId, jsonData);
+
+      console.log(`[TableTemplateService] 成功更新行 (索引: ${tableIndex}, 名称: ${tableName}, 行号: ${rowIndex})`);
+      return true;
+    } catch (error) {
+      console.error(`[TableTemplateService] 更新行失败 (索引: ${tableIndex}, 行号: ${rowIndex}):`, error);
+      return false;
+    }
+  }
+
+  /**
+   * 从指定表格删除特定行
+   */
+  public deleteRowFromTable(chatId: string, tableIndex: number, rowIndex: number): boolean {
+    try {
+      const jsonData = this.readJsonFile(chatId);
+
+      if (!jsonData) {
+        console.error(`[TableTemplateService] 表格文件不存在: ${chatId}`);
+        return false;
+      }
+
+      if (!jsonData.sheets || !Array.isArray(jsonData.sheets)) {
+        console.error(`[TableTemplateService] JSON 文件缺少 sheets 数组: ${chatId}`);
+        return false;
+      }
+
+      if (tableIndex < 0 || tableIndex >= jsonData.sheets.length) {
+        console.error(`[TableTemplateService] 表格索引超出范围: ${tableIndex}, 总数: ${jsonData.sheets.length}`);
+        return false;
+      }
+
+      const tableName = jsonData.sheets[tableIndex];
+
+      if (!jsonData.data || !jsonData.data[tableName]) {
+        console.error(`[TableTemplateService] 表格数据不存在: ${tableName}`);
+        return false;
+      }
+
+      const tableData = jsonData.data[tableName];
+
+      if (rowIndex < 0 || rowIndex >= tableData.length) {
+        console.error(`[TableTemplateService] 行索引超出范围: ${rowIndex}, 总行数: ${tableData.length}`);
+        return false;
+      }
+
+      // 删除指定行
+      tableData.splice(rowIndex, 1);
+
+      // 重新编号流水号
+      tableData.forEach((row: any, index: number) => {
+        row['0'] = String(index + 1);
+      });
+
+      this.saveJsonFile(chatId, jsonData);
+
+      console.log(`[TableTemplateService] 成功删除行 (索引: ${tableIndex}, 名称: ${tableName}, 行号: ${rowIndex}, 剩余行数: ${tableData.length})`);
+      return true;
+    } catch (error) {
+      console.error(`[TableTemplateService] 删除行失败 (索引: ${tableIndex}, 行号: ${rowIndex}):`, error);
+      return false;
+    }
   }
 
   /**

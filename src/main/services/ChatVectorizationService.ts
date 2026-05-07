@@ -37,13 +37,8 @@ export class ChatVectorizationService {
         return { success: false, messagesVectorized: 0, messagesFailed: 0, error: '消息列表为空', messageVectorIds: [] };
       }
 
-      const storageService = getStorageService();
-      const settings = storageService.get<any>('settings');
-      const vectorConfig = settings?.vector;
-
-      if (!vectorConfig?.autoVectorizeWorldBook) {
-        return { success: false, messagesVectorized: 0, messagesFailed: 0, error: '自动向量化未启用' };
-      }
+      // 注意：手动按钮触发的向量化不需要检查 autoVectorizeWorldBook 配置
+      // 该配置仅用于控制自动向量化，不影响手动触发的向量化
 
       const result: VectorizeChatResult = {
         success: true,
