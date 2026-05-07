@@ -35,24 +35,36 @@ function saveStoredConfig(characterCardId: string, config: any) {
 }
 
 export function useCharacterConfig(characterCardId: string) {
+  const setting = useSettingStore(state => state.setting);
   const [config, setConfig] = useState(() => getStoredConfig(characterCardId));
+  const configRef = useRef(config);
+
+  // 同步更新 ref，确保在状态更新的同一时刻 ref 也是最新的
+  // 不依赖 useEffect（useEffect 在渲染完成后才执行，会导致闭包陈旧问题）
 
   useEffect(() => {
     const stored = getStoredConfig(characterCardId);
     setConfig(stored);
+    configRef.current = stored; // 同步更新 ref
   }, [characterCardId]);
 
-  const updateConfig = useCallback((updates: Partial<typeof config>) => {
-    setConfig(prev => {
-      const next = {
-        ...prev,
-        ...updates,
-        characterCardId,
-        lastUpdated: Date.now(),
-      };
-      saveStoredConfig(characterCardId, next);
-      return next;
-    });
+  const updateConfig = useCallback((updates: Partial<typeof config> | ((prev: typeof config | null) => Partial<typeof config>)) => {
+    // 立即计算下一个状态，不依赖 setConfig 的异步回调
+    const currentConfig = configRef.current;
+    const resolvedUpdates = typeof updates === 'function' ? updates(currentConfig) : updates;
+    const next = {
+      ...currentConfig,
+      ...resolvedUpdates,
+      characterCardId,
+      lastUpdated: Date.now(),
+    };
+    
+    // 同步更新 ref，确保 sendMessage 能立即读取到最新配置
+    configRef.current = next;
+    
+    // 触发 React 状态更新
+    setConfig(next);
+    saveStoredConfig(characterCardId, next);
   }, [characterCardId]);
 
   const clearConfig = useCallback(() => {
@@ -71,18 +83,72 @@ export function useCharacterConfig(characterCardId: string) {
   }, [characterCardId]);
 
   const getEffectiveParams = useCallback((): EffectiveAIParams => {
-    const customParams = config?.customParameters || {};
-    const source = Object.keys(customParams).length > 0 ? 'custom' : 'global';
+    const currentConfig = configRef.current;
+    const customParams = currentConfig?.customParameters || {};
+    
+    console.log(`[CharacterDialogueChat] getEffectiveParams - raw config:`, currentConfig);
+    console.log(`[CharacterDialogueChat] getEffectiveParams - config.customParameters:`, currentConfig?.customParameters);
+    console.log(`[CharacterDialogueChat] getEffectiveParams - customParams (processed):`, customParams);
+    console.log(`[CharacterDialogueChat] getEffectiveParams - hasCustomParams:`, Object.keys(customParams).length > 0);
+    
+    // 获取全局配置的AI引擎参数
+    const globalEngine = (() => {
+      if (!setting || !setting.aiEngines || setting.aiEngines.length === 0) return null;
+      if (setting.activeEngineId) {
+        return setting.aiEngines.find((e: any) => e.id === setting.activeEngineId) || setting.aiEngines[0];
+      }
+      return setting.aiEngines[0];
+    })();
 
-    return {
-      temperature: customParams.temperature ?? 0.7,
-      top_p: customParams.top_p !== undefined ? customParams.top_p : undefined,
-      max_tokens: customParams.max_tokens !== undefined ? customParams.max_tokens : 8192,
-      frequency_penalty: customParams.frequency_penalty !== undefined ? customParams.frequency_penalty : undefined,
-      presence_penalty: customParams.presence_penalty !== undefined ? customParams.presence_penalty : undefined,
+    // 参数优先级：用户自定义参数 > 全局配置 > 默认值
+    const hasCustomParams = Object.keys(customParams).length > 0;
+    const source = hasCustomParams ? 'custom' : 'global';
+
+    const effectiveParams: EffectiveAIParams = {
+      temperature: customParams.temperature ?? globalEngine?.temperature ?? 0.7,
+      max_tokens: customParams.max_tokens !== undefined ? customParams.max_tokens : (globalEngine?.max_tokens !== undefined ? globalEngine.max_tokens : 8192),
       source,
     };
-  }, [config]);
+
+    // 可选参数：top_p
+    if (customParams.top_p !== undefined) {
+      effectiveParams.top_p = customParams.top_p;
+    } else if (globalEngine?.top_p !== undefined) {
+      effectiveParams.top_p = globalEngine.top_p;
+    }
+
+    // 可选参数：frequency_penalty
+    if (customParams.frequency_penalty !== undefined) {
+      effectiveParams.frequency_penalty = customParams.frequency_penalty;
+    } else if (globalEngine?.frequency_penalty !== undefined) {
+      effectiveParams.frequency_penalty = globalEngine.frequency_penalty;
+    }
+
+    // 可选参数：presence_penalty
+    if (customParams.presence_penalty !== undefined) {
+      effectiveParams.presence_penalty = customParams.presence_penalty;
+    } else if (globalEngine?.presence_penalty !== undefined) {
+      effectiveParams.presence_penalty = globalEngine.presence_penalty;
+    }
+
+    console.log(`[CharacterDialogueChat] === Effective Parameters ===`);
+    console.log(`[CharacterDialogueChat] Parameter source: ${source}`);
+    if (hasCustomParams) {
+      console.log(`[CharacterDialogueChat] Custom parameters:`, customParams);
+    }
+    if (globalEngine) {
+      console.log(`[CharacterDialogueChat] Global engine config:`, {
+        id: globalEngine.id,
+        name: globalEngine.name,
+        max_tokens: globalEngine.max_tokens,
+        temperature: globalEngine.temperature,
+      });
+    }
+    console.log(`[CharacterDialogueChat] Effective params:`, effectiveParams);
+    console.log(`[CharacterDialogueChat] ===========================`);
+
+    return effectiveParams;
+  }, [config, setting]);
 
   return { config, updateConfig, clearConfig, resetParameters, getEffectiveParams };
 }
@@ -439,6 +505,13 @@ ${personaSection}
     }
 
     const effectiveParams = getEffectiveParams();
+    
+    console.log(`[CharacterDialogueChat] === Request Assembly ===`);
+    console.log(`[CharacterDialogueChat] activeEngine.max_tokens:`, activeEngine.max_tokens);
+    console.log(`[CharacterDialogueChat] effectiveParams.max_tokens:`, effectiveParams.max_tokens);
+    console.log(`[CharacterDialogueChat] effectiveParams.max_tokens type:`, typeof effectiveParams.max_tokens);
+    console.log(`[CharacterDialogueChat] effectiveParams object:`, JSON.stringify(effectiveParams, null, 2));
+    
     const engineConfigWithParams: AIEngineConfig = {
       id: activeEngine.id,
       name: activeEngine.name,
@@ -447,10 +520,14 @@ ${personaSection}
       model_name: activeEngine.model_name,
       api_mode: activeEngine.api_mode,
       api_key_transmission: activeEngine.api_key_transmission,
-      max_tokens: effectiveParams.max_tokens ?? activeEngine.max_tokens ?? 8192,
+      max_tokens: effectiveParams.max_tokens,
       system_prompt: activeEngine.system_prompt,
-      temperature: effectiveParams.temperature ?? activeEngine.temperature,
+      temperature: effectiveParams.temperature,
     };
+
+    console.log(`[CharacterDialogueChat] engineConfigWithParams.max_tokens:`, engineConfigWithParams.max_tokens);
+    console.log(`[CharacterDialogueChat] engineConfigWithParams object:`, JSON.stringify(engineConfigWithParams, null, 2));
+    console.log(`[CharacterDialogueChat] ===========================`);
 
     if (effectiveParams.top_p !== undefined) {
       engineConfigWithParams.top_p = Number(effectiveParams.top_p);
@@ -610,7 +687,7 @@ ${personaSection}
     });
 
     try {
-      await engine.sendMessage(contextMessages, finalSystemPrompt, activeEngine);
+      await engine.sendMessage(contextMessages, finalSystemPrompt, engineConfigWithParams);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to send message';       
       setState(prev => ({
@@ -627,7 +704,7 @@ ${personaSection}
       message.error(`Failed: ${errorMessage}`);
       initialContentRef.current = '';
     }
-  }, [getActiveEngineConfig, buildDialoguePrompt, buildContinuationPrompt, saveChatToStore, addLog, characterConfig]);
+  }, [getActiveEngineConfig, getEffectiveParams, buildDialoguePrompt, buildContinuationPrompt, saveChatToStore, addLog, characterConfig]);
 
   const sendMessage = useCallback(async (content: string) => {
     if (!content.trim() || state.isStreaming) return;

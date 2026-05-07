@@ -111,8 +111,11 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
   }, [updateConfig]);
 
   const handleParameterChange = useCallback((params: Partial<AIParameterConfig>) => {
-    updateConfig({ customParameters: { ...characterConfig?.customParameters, ...params } });
-  }, [updateConfig, characterConfig?.customParameters]);
+    updateConfig((prev: any) => {
+      const mergedCustomParams = { ...(prev?.customParameters || {}), ...params };
+      return { customParameters: mergedCustomParams };
+    });
+  }, [updateConfig]);
 
   const handleResetParameters = useCallback(() => {
     resetParameters();

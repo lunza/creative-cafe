@@ -44,6 +44,26 @@ export interface AIProcessingResult {
   preview: string;
 }
 
+export interface CharacterChatRecord {
+  fileName: string;
+  characterCardName: string;
+  fileSize: number;
+  lastModified: string;
+  messageCount: number;
+  filePath: string;
+  creativeId: string;
+  characterCardId: string;
+  thumbnailPath?: string | null;
+}
+
+export interface VectorizeChatResult {
+  success: boolean;
+  messagesVectorized: number;
+  messagesFailed: number;
+  error?: string;
+  messageVectorIds: string[];
+}
+
 // Electron API 类型
 export interface MemoryAPI {
   // 表格模板管理
@@ -75,6 +95,19 @@ export interface MemoryAPI {
   ) => Promise<AIProcessingResult[]>;
   applyAIResults: (chatId: string, results: AIProcessingResult[]) => Promise<string>;
   deleteChatSession: (chatId: string) => Promise<boolean>;
+
+  getCharacterChatRecords: () => Promise<CharacterChatRecord[]>;
+  getCharacterChatRecord: (fileName: string) => Promise<any>;
+  saveCharacterChatRecord: (fileName: string, content: string) => Promise<void>;
+  deleteCharacterChatRecord: (fileName: string, characterCardName: string) => Promise<{ success: boolean; error?: string }>;
+  vectorizeCharacterChat: (fileName: string) => Promise<{
+    success: boolean;
+    messagesVectorized: number;
+    messagesFailed: number;
+    error?: string;
+    messageVectorIds: string[];
+  }>;
+  getCharacterThumbnail: (characterCardName: string) => Promise<string | null>;
   
   // 表格数据管理
   getTableData: (chatId: string) => Promise<any>;

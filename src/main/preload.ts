@@ -148,7 +148,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
         callback(message, type);
       });
     },
-    
+
+    getCharacterChatRecords: () => ipcRenderer.invoke('memory:getCharacterChatRecords'),
+    getCharacterChatRecord: (fileName: string) => ipcRenderer.invoke('memory:getCharacterChatRecord', fileName),
+    saveCharacterChatRecord: (fileName: string, content: string) => ipcRenderer.invoke('memory:saveCharacterChatRecord', fileName, content),
+    deleteCharacterChatRecord: (fileName: string, characterCardName: string) => ipcRenderer.invoke('memory:deleteCharacterChatRecord', fileName, characterCardName),
+    vectorizeCharacterChat: (fileName: string) => ipcRenderer.invoke('memory:vectorizeCharacterChat', fileName),
+    getCharacterThumbnail: (characterCardName: string) => ipcRenderer.invoke('memory:getCharacterThumbnail', characterCardName),
+
     // 外部系统调用 API（供其他系统调用）
     external: {
       processSingleChat: (request: any) => ipcRenderer.invoke('memory:external:processSingleChat', request),

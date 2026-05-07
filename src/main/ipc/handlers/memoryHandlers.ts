@@ -9,6 +9,8 @@ import { getUserDataPath } from '../../utils/appPath';
 import { getStorageService } from '../../services/storageService';
 import { tableTemplateService } from '../../services/memory/tableTemplateService';
 import { chatLogService } from '../../services/memory/chatLogService';
+import { characterChatRecordService } from '../../services/memory/characterChatRecordService';
+import { chatVectorizationService } from '../../services/ChatVectorizationService';
 import { TableTemplate, TableSheet } from '../../services/memory/tableTemplateService';
 import { 
   ChatSession, 
@@ -346,6 +348,99 @@ export function registerMemoryHandlers() {
    */
   ipcMain.handle('memory:getMemoryDirectory', async (): Promise<string> => {
     return path.join(getUserDataPath(), 'data', 'memory');
+  });
+
+  // ========== 角色卡聊天记录管理 ==========
+
+  /**
+   * 获取所有角色卡聊天记录
+   */
+  ipcMain.handle('memory:getCharacterChatRecords', async () => {
+    try {
+      console.log('[IPC] memory:getCharacterChatRecords');
+      const records = characterChatRecordService.getCharacterChatRecords();
+      return records;
+    } catch (error) {
+      console.error('[IPC] memory:getCharacterChatRecords error:', error);
+      return [];
+    }
+  });
+
+  /**
+   * 获取单个角色卡聊天记录
+   */
+  ipcMain.handle('memory:getCharacterChatRecord', async (_event: IpcMainInvokeEvent, fileName: string) => {
+    try {
+      console.log('[IPC] memory:getCharacterChatRecord:', fileName);
+      const record = characterChatRecordService.getCharacterChatRecord(fileName);
+      return record;
+    } catch (error) {
+      console.error('[IPC] memory:getCharacterChatRecord error:', error);
+      return null;
+    }
+  });
+
+  /**
+   * 保存角色卡聊天记录
+   */
+  ipcMain.handle('memory:saveCharacterChatRecord', async (_event: IpcMainInvokeEvent, fileName: string, content: string) => {
+    try {
+      console.log('[IPC] memory:saveCharacterChatRecord:', fileName);
+      const result = characterChatRecordService.saveCharacterChatRecord(fileName, content);
+      return result;
+    } catch (error) {
+      console.error('[IPC] memory:saveCharacterChatRecord error:', error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  /**
+   * 删除角色卡聊天记录
+   */
+  ipcMain.handle('memory:deleteCharacterChatRecord', async (_event: IpcMainInvokeEvent, fileName: string, characterCardName: string) => {
+    try {
+      console.log('[IPC] memory:deleteCharacterChatRecord:', fileName, characterCardName);
+      const result = characterChatRecordService.deleteCharacterChatRecord(fileName, characterCardName);
+      return result;
+    } catch (error) {
+      console.error('[IPC] memory:deleteCharacterChatRecord error:', error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  /**
+   * 向量化角色卡聊天记录
+   */
+  ipcMain.handle('memory:vectorizeCharacterChat', async (_event: IpcMainInvokeEvent, fileName: string) => {
+    try {
+      console.log('[IPC] memory:vectorizeCharacterChat:', fileName);
+      const record = characterChatRecordService.getCharacterChatRecord(fileName);
+      if (!record) {
+        return { success: false, error: 'Chat record not found' };
+      }
+      const characterId = record.characterCardName;
+      const messages = record.messages || [];
+      const result = await chatVectorizationService.vectorizeChat(characterId, messages);
+      console.log('[IPC] memory:vectorizeCharacterChat result:', result);
+      return result;
+    } catch (error) {
+      console.error('[IPC] memory:vectorizeCharacterChat error:', error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  /**
+   * 获取角色卡缩略图
+   */
+  ipcMain.handle('memory:getCharacterThumbnail', async (_event: IpcMainInvokeEvent, characterCardName: string) => {
+    try {
+      console.log('[IPC] memory:getCharacterThumbnail:', characterCardName);
+      const thumbnail = await characterChatRecordService.getCharacterThumbnail(characterCardName);
+      return thumbnail;
+    } catch (error) {
+      console.error('[IPC] memory:getCharacterThumbnail error:', error);
+      return null;
+    }
   });
 
   // ========== 外部系统调用 API ==========
