@@ -26,8 +26,8 @@ export interface ParseResult {
 class TableEditParser {
   private readonly TABLE_EDIT_TAG_REGEX = /<tableEdit[^>]*>([\s\S]*?)<\/tableEdit>/gi;
   private readonly HTML_COMMENT_REGEX = /<!--([\s\S]*?)-->/g;
-  private readonly INSERT_ROW_REGEX = /insertRow\((\d+),\s*(\{[^}]+\})\)/;
-  private readonly UPDATE_ROW_REGEX = /updateRow\((\d+),\s*(\d+),\s*(\{[^}]+\})\)/;
+  private readonly INSERT_ROW_REGEX = /insertRow\((\d+),\s*(\{[\s\S]+\})\)/;
+  private readonly UPDATE_ROW_REGEX = /updateRow\((\d+),\s*(\d+),\s*(\{[\s\S]+\})\)/;
   private readonly DELETE_ROW_REGEX = /deleteRow\((\d+),\s*(\d+)\)/;
 
   /**
@@ -186,10 +186,21 @@ class TableEditParser {
       return null;
     }
 
+    // 将字段索引从 1-based 转换为 0-based
+    const convertedData: Record<string, string> = {};
+    for (const [key, value] of Object.entries(data)) {
+      const numericKey = parseInt(key, 10);
+      if (!isNaN(numericKey)) {
+        convertedData[String(numericKey - 1)] = value;
+      } else {
+        convertedData[key] = value;
+      }
+    }
+
     return {
       type: 'insertRow',
-      tableIndex,
-      data,
+      tableIndex: tableIndex - 1,
+      data: convertedData,
       rawCommand: line
     };
   }
@@ -213,11 +224,22 @@ class TableEditParser {
       return null;
     }
 
+    // 将字段索引从 1-based 转换为 0-based
+    const convertedData: Record<string, string> = {};
+    for (const [key, value] of Object.entries(data)) {
+      const numericKey = parseInt(key, 10);
+      if (!isNaN(numericKey)) {
+        convertedData[String(numericKey - 1)] = value;
+      } else {
+        convertedData[key] = value;
+      }
+    }
+
     return {
       type: 'updateRow',
-      tableIndex,
-      rowIndex,
-      data,
+      tableIndex: tableIndex - 1,
+      rowIndex: rowIndex - 1,
+      data: convertedData,
       rawCommand: line
     };
   }
@@ -236,8 +258,8 @@ class TableEditParser {
 
     return {
       type: 'deleteRow',
-      tableIndex,
-      rowIndex,
+      tableIndex: tableIndex - 1,
+      rowIndex: rowIndex - 1,
       rawCommand: line
     };
   }
@@ -247,6 +269,21 @@ class TableEditParser {
    */
   private parseDataObject(dataStr: string): Record<string, string> | null {
     try {
+      // 首先尝试直接解析（AI 返回的标准 JSON）
+      try {
+        const parsed = JSON.parse(dataStr);
+        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+          const result: Record<string, string> = {};
+          for (const [key, value] of Object.entries(parsed)) {
+            result[key] = String(value);
+          }
+          return result;
+        }
+      } catch {
+        // 直接解析失败，尝试规范化后解析
+      }
+
+      // 规范化后重试
       const normalizedStr = this.normalizeJsonObject(dataStr);
       const parsed = JSON.parse(normalizedStr);
 
@@ -269,11 +306,16 @@ class TableEditParser {
 
   /**
    * 规范化 JSON 对象字符串（处理非标准格式）
+   * 注意：此方法可能破坏已包含冒号的合法 JSON 值（如 "00:00"）
+   * 因此 parseDataObject 应优先直接解析
    */
   private normalizeJsonObject(str: string): string {
     let normalized = str.trim();
 
-    normalized = normalized.replace(/(\w+)\s*:/g, '"$1":');
+    // 仅对未加引号的键名添加引号
+    normalized = normalized.replace(/(\{|\,)\s*(\w+)\s*:/g, '$1"$2":');
+    // 处理开头的键名
+    normalized = normalized.replace(/^\s*(\w+)\s*:/, '"$1":');
 
     normalized = normalized.replace(/:\s*'([^']*)'/g, ':"$1"');
 

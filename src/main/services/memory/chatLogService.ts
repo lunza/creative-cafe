@@ -790,7 +790,7 @@ ${chatContent}
   ): string {
     // 构建模板结构描述
     const templateDescription = template.sheets.map((sheet: any, index: number) => {
-      return `- [索引${index}] ${sheet.name}：字段包括 [${sheet.headers.join(', ')}]
+      return `- [索引${index + 1}] ${sheet.name}：字段包括 [${sheet.headers.map((h: string, i: number) => `${i + 1}:${h}`).join(', ')}]
   表格用途：${sheet.description || '暂无描述'}`;
     }).join('\n');
 
@@ -817,19 +817,19 @@ deleteRow(表格索引, 行索引)
 </tableEdit>
 
 参数说明:
-- 表格索引: 从0开始,对应模板中页签的顺序
-- 行索引: 从0开始,对应该表格中的数据行索引
-- 字段索引: 从0开始,对应该表格表头的字段索引
-- 每个表格的字段结构固定为: [0:流水号, 1:唯一id, 2+:自定义字段]
-- 流水号(字段0)由系统自动递增,通常不需要手动填写
-- 唯一id(字段1)由AI根据实体名称生成,需具有语义且保持一致性
+- 表格索引: 从1开始,对应模板中页签的顺序
+- 行索引: 从1开始,对应该表格中的数据行索引
+- 字段索引: 从1开始,对应该表格表头的字段索引
+- 每个表格的字段结构固定为: [1:流水号, 2:唯一id, 3+:自定义字段]
+- 流水号(字段1)由系统自动递增,通常不需要手动填写
+- 唯一id(字段2)由AI根据实体名称生成,需具有语义且保持一致性
 
-示例(以时空表格为例,字段为[流水号,唯一id,时间,地点,描述,备注]):
-- insertRow(0, {"1":"oct_school_001","2":"十月","3":"学校","4":"下雪天","5":""}) 
+示例(以时空表格为例,字段为[1:流水号,2:唯一id,3:时间,4:地点,5:描述,6:备注]):
+- insertRow(1, {"2":"oct_school_001","3":"十月","4":"学校","5":"下雪天","6":""}) 
   → 在第1个表格新增一行:唯一id=oct_school_001,时间=十月,地点=学校,描述=下雪天
-- updateRow(4, 1, {"1":"xiaohua_001","2":"小花","3":"破坏表白失败"})
+- updateRow(5, 2, {"2":"xiaohua_001","3":"小花","4":"破坏表白失败"})
   → 修改第5个表格的第2条数据,更新唯一id、角色名等字段
-- deleteRow(1, 2)
+- deleteRow(2, 3)
   → 删除第2个表格的第3条数据
 
 【核心任务：唯一ID策略与变体称呼识别】
@@ -891,9 +891,9 @@ ${template.sheets.map((sheet: any) => {
 
 <tableEdit>
 <!-- 
-insertRow(0, {"2":"今天","3":"中央公园","4":"朱迪在中央公园","5":""})
-insertRow(4, {"2":"money_001","3":"100元钱","4":"现金","5":"朱迪在中央公园捡到的100元钱","6":"已拾取","7":""})
-updateRow(1, 0, {"3":"朱迪","6":"兔子警官"})
+insertRow(1, {"3":"今天","4":"中央公园","5":"朱迪在中央公园","6":""})
+insertRow(5, {"2":"money_001","3":"100元钱","4":"现金","5":"朱迪在中央公园捡到的100元钱","6":"已拾取","7":""})
+updateRow(2, 1, {"4":"朱迪","7":"兔子警官"})
 -->
 </tableEdit>
 
@@ -1123,11 +1123,23 @@ updateRow(1, 0, {"3":"朱迪","6":"兔子警官"})
       }
       
       addLog('发送 AI API 请求...', 'info');
+      const trimmedApiKey = apiKey?.trim() || '';
+      let authHeader: Record<string, string> = {};
+      if (trimmedApiKey) {
+        if (trimmedApiKey.startsWith('Bearer ')) {
+          authHeader['Authorization'] = trimmedApiKey;
+          addLog('API密钥已包含Bearer前缀，直接使用', 'debug');
+        } else {
+          authHeader['Authorization'] = `Bearer ${trimmedApiKey}`;
+          addLog('API密钥不包含Bearer前缀，自动添加', 'debug');
+        }
+      }
+      
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {})
+          ...authHeader
         },
         body: JSON.stringify(requestBody)
       });

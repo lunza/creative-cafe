@@ -37,11 +37,11 @@ import './MemoryChatManager.css';
 
 // 表格类型默认字段配置
 const TABLE_DEFAULT_FIELDS: Record<string, string[]> = {
-  '时空表格': ['日期', '时间', '地点', '此地角色'],
-  '物品表格': ['拥有人', '物品描述', '物品名', '重要原因'],
-  '角色表格': ['角色名', '身份', '关系', '特征', '备注'],
-  '社交表格': ['时间', '参与人', '事件', '结果', '备注'],
-  '事件表格': ['时间', '事件名', '参与人', '描述', '影响', '备注']
+  '时空表格': ['流水号', '唯一id', '日期', '时间', '地点', '此地角色'],
+  '物品表格': ['流水号', '唯一id', '物品名', '类型', '描述', '状态', '备注/持有人'],
+  '角色表格': ['流水号', '唯一id', '角色名', '身份', '关系', '特征', '备注'],
+  '社交表格': ['流水号', '唯一id', '时间', '参与人', '事件', '结果', '备注'],
+  '事件表格': ['流水号', '唯一id', '时间', '事件名', '参与人', '描述', '影响', '备注']
 };
 
 const { Title, Text } = Typography;
@@ -111,11 +111,38 @@ const MemoryTemplateManager: React.FC = () => {
         name: template.name,
         description: template.description
       });
-      // 初始化表头数据
+      // 初始化表头数据，确保包含"流水号"和"唯一id"，并同步其他字段
       const headers: Record<string, string[]> = {};
       const descriptions: Record<string, string> = {};
       template.sheets.forEach(sheet => {
-        headers[sheet.name] = sheet.headers;
+        let sheetHeaders = [...sheet.headers];
+        
+        // 确保每个表格都包含"流水号"和"唯一id"字段
+        if (!sheetHeaders.includes('流水号')) {
+          sheetHeaders.unshift('流水号');
+        }
+        if (!sheetHeaders.includes('唯一id')) {
+          // "唯一id"应该放在"流水号"之后
+          const liushuiIndex = sheetHeaders.indexOf('流水号');
+          sheetHeaders.splice(liushuiIndex + 1, 0, '唯一id');
+        }
+        
+        // 同步其他字段到默认结构（如果表名匹配预设表格类型）
+        const defaultFields = TABLE_DEFAULT_FIELDS[sheet.name];
+        if (defaultFields) {
+          // 保留现有数据字段的值，但按照默认结构重新排序
+          const newHeaders = [...defaultFields];
+          
+          // 检查是否需要更新字段结构（如果当前字段数量与默认不一致，或字段名不同）
+          const needsUpdate = sheetHeaders.length !== defaultFields.length || 
+            !sheetHeaders.every((h, i) => h === defaultFields[i]);
+          
+          if (needsUpdate) {
+            sheetHeaders = newHeaders;
+          }
+        }
+        
+        headers[sheet.name] = sheetHeaders;
         descriptions[sheet.name] = sheet.description;
       });
       setSheetHeaders(headers);

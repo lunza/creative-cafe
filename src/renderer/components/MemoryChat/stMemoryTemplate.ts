@@ -14,31 +14,31 @@ export const DEFAULT_MEMORY_TEMPLATE: ExcelTemplate = {
     {
       name: '时空表格',
       description: '记录时空信息的表格，应保持在一行。记录时间和地点信息，帮助AI理解当前场景的时空背景。',
-      headers: ['时间', '地点', '描述', '备注'],
+      headers: ['流水号', '唯一id', '时间', '地点', '描述', '备注'],
       order: 1
     },
     {
       name: '角色表格',
       description: '角色天生或不易改变的特征表格，思考本轮有否有其中的角色，他应作出什么反应。记录角色的基本信息、身份、关系和特征。',
-      headers: ['角色名', '身份', '关系', '特征', '备注'],
+      headers: ['流水号', '唯一id', '角色名', '身份', '关系', '特征', '备注'],
       order: 2
     },
     {
       name: '社交表格',
       description: '思考如果有角色和其他角色互动，应记录他们之间的关系和互动情况。记录角色之间的社交关系、互动历史和关系状态。',
-      headers: ['时间', '参与人', '事件', '结果', '备注'],
+      headers: ['流水号', '唯一id', '时间', '参与人', '事件', '结果', '备注'],
       order: 3
     },
     {
       name: '物品表格',
-      description: '某人携带的物品；或无明确所属人，但在剧情内较为重要公用物品。记录物品的拥有人、描述、名称和重要性等信息。',
-      headers: ['物品名', '类型', '描述', '状态', '备注/持有人'],
+      description: '某人持有的物品或对剧情有关键推进作用的公共物品。记录物品的拥有人、描述、名称和重要性等信息。',
+      headers: ['流水号', '唯一id', '物品名', '类型', '描述', '状态', '备注/持有人'],
       order: 4
     },
     {
       name: '事件表格',
       description: '记录角色经历的重要事件。记录事件的时间、名称、参与人、描述和影响等信息。',
-      headers: ['时间', '事件名', '参与人', '描述', '影响', '备注'],
+      headers: ['流水号', '唯一id', '时间', '事件名', '参与人', '描述', '影响', '备注'],
       order: 5
     }
   ],
@@ -52,7 +52,7 @@ export const TABLE_STRUCTURE_CONFIG = [
   {
     tableIndex: 0,
     tableName: '时空表格',
-    columns: ['时间', '地点', '描述', '备注'],
+    columns: ['流水号', '唯一id', '时间', '地点', '描述', '备注'],
     note: '记录场景的时间和空间信息',
     initNode: '以下是时空表格的初始数据：',
     insertNode: '在时空表格中添加新记录：',
@@ -67,7 +67,7 @@ export const TABLE_STRUCTURE_CONFIG = [
   {
     tableIndex: 1,
     tableName: '角色表格',
-    columns: ['角色名', '身份', '关系', '特征', '备注'],
+    columns: ['流水号', '唯一id', '角色名', '身份', '关系', '特征', '备注'],
     note: '记录角色信息和关系网络',
     initNode: '以下是角色表格的初始数据：',
     insertNode: '在角色表格中添加新记录：',
@@ -82,7 +82,7 @@ export const TABLE_STRUCTURE_CONFIG = [
   {
     tableIndex: 2,
     tableName: '社交表格',
-    columns: ['时间', '参与人', '事件', '结果', '备注'],
+    columns: ['流水号', '唯一id', '时间', '参与人', '事件', '结果', '备注'],
     note: '记录社交互动和关系变化',
     initNode: '以下是社交表格的初始数据：',
     insertNode: '在社交表格中添加新记录：',
@@ -97,7 +97,7 @@ export const TABLE_STRUCTURE_CONFIG = [
   {
     tableIndex: 3,
     tableName: '物品表格',
-    columns: ['物品名', '类型', '描述', '状态', '备注/持有人'],
+    columns: ['流水号', '唯一id', '物品名', '类型', '描述', '状态', '备注/持有人'],
     note: '记录物品信息和状态变化',
     initNode: '以下是物品表格的初始数据：',
     insertNode: '在物品表格中添加新记录：',
