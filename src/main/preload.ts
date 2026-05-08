@@ -59,7 +59,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setDirectory: (dir: string) => ipcRenderer.invoke('character:setDirectory', dir),
     import: (sourcePath: string, fileName: string) => ipcRenderer.invoke('character:import', sourcePath, fileName),
     getWorldBookRelations: (path: string) => ipcRenderer.invoke('character:getWorldBookRelations', path),
-    setWorldBookRelations: (path: string, relations: any[]) => ipcRenderer.invoke('character:setWorldBookRelations', path, relations)
+    setWorldBookRelations: (path: string, relations: any[]) => ipcRenderer.invoke('character:setWorldBookRelations', path, relations),
+    savePNGToDirectory: (base64Data: string, filename: string) => ipcRenderer.invoke('character:savePNGToDirectory', base64Data, filename),
+    exportCharacterCard: (params: { base64Image: string; filename: string; characterData: any }) => ipcRenderer.invoke('character:exportCharacterCard', params)
   },
   characterConfig: {
     save: (characterCardId: string, config: any) => ipcRenderer.invoke('characterConfig:save', characterCardId, config),
@@ -243,7 +245,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   knowledge: {
     list: (filter?: Record<string, any>, page?: number, pageSize?: number) =>
       ipcRenderer.invoke('knowledge:list', { filter, page, pageSize }),
-    create: (data: any) => ipcRenderer.invoke('knowledge:create', { data }),
+    create: (item: any) => ipcRenderer.invoke('knowledge:create', { item }),
     createBatch: (items: any[]) => ipcRenderer.invoke('knowledge:createBatch', { items }),
     update: (id: string, updates: any) => ipcRenderer.invoke('knowledge:update', { id, updates }),
     delete: (id: string) => ipcRenderer.invoke('knowledge:delete', { id }),

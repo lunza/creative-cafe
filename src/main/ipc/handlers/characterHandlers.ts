@@ -1,9 +1,11 @@
 import { ipcMain, app } from 'electron';
-import { characterService } from '../../services/characterService';
+import { characterService, encode } from '../../services/characterService';
 import { getUserDataPath } from '../../utils/appPath';
 import { getStorageService } from '../../services/storageService';
 import fs from 'fs/promises';
 import path from 'path';
+import extract from 'png-chunks-extract';
+import * as PNGtext from 'png-chunk-text';
 
 // 配置文件路径：与角色卡同目录、同名，扩展名改为 .json
 // 例如：角色卡路径为 "data/characters/克拉拉.png" → 配置文件为 "data/characters/克拉拉.json"
@@ -130,6 +132,161 @@ export function characterHandlers() {
     } catch (error) {
       console.log('[characterConfig:load] No saved config for:', characterCardId, error instanceof Error ? error.message : 'Unknown error');
       return { success: false, config: null };
+    }
+  });
+
+  // ========== 导出PNG到角色卡目录 ==========
+  
+  /**
+   * 保存PNG角色卡到角色卡目录（包含正确的chara和ccv3 tEXt chunks）
+   * @param params.base64Image PNG图片的base64编码
+   * @param params.filename 文件名（不含扩展名）
+   * @param params.characterData 角色卡数据
+   */
+  ipcMain.handle('character:savePNGToDirectory', async (_event, params: {
+    base64Image: string;
+    filename: string;
+    characterData: any;
+  }) => {
+    try {
+      console.log('[character:savePNGToDirectory] Starting save:', { filename: params.filename });
+      
+      const { base64Image, filename, characterData } = params;
+      
+      // 从base64解码为Buffer
+      const base64Data = base64Image.replace(/^data:image\/png;base64,/, '');
+      const imageBuffer = Buffer.from(base64Data, 'base64');
+      
+      // 使用png-chunks-extract解析PNG chunks
+      const chunks = extract(new Uint8Array(imageBuffer));
+      
+      // 移除已有的chara和ccv3 chunks（如果有）
+      const tEXtChunks = chunks.filter(chunk => chunk.name === 'tEXt');
+      for (const tEXtChunk of tEXtChunks) {
+        const chunkData = PNGtext.decode(tEXtChunk.data);
+        if (chunkData.keyword.toLowerCase() === 'chara' || chunkData.keyword.toLowerCase() === 'ccv3') {
+          chunks.splice(chunks.indexOf(tEXtChunk), 1);
+        }
+      }
+      
+      // 创建V2格式的chara chunk
+      console.log('[character:savePNGToDirectory] V2 data:', characterData.data);
+      const v2Data = JSON.stringify(characterData.data);
+      const v2Base64 = Buffer.from(v2Data, 'utf8').toString('base64');
+      chunks.splice(-1, 0, PNGtext.encode('chara', v2Base64));
+      
+      // 创建V3格式的ccv3 chunk
+      const v3Data = {
+        spec: 'chara_card_v3',
+        spec_version: '3.0',
+        data: characterData.data
+      };
+      console.log('[character:savePNGToDirectory] V3 data:', v3Data);
+      const v3Base64 = Buffer.from(JSON.stringify(v3Data), 'utf8').toString('base64');
+      chunks.splice(-1, 0, PNGtext.encode('ccv3', v3Base64));
+      
+      // 使用png-chunks-encode重新编码PNG
+      const newBuffer = Buffer.from(encode(chunks));
+      
+      console.log('[character:savePNGToDirectory] PNG encoded successfully, size:', newBuffer.length);
+      
+      const characterDir = characterService.getCharacterDir();
+      console.log('[character:savePNGToDirectory] Character directory:', characterDir);
+      
+      // 确保目录存在
+      try {
+        await fs.access(characterDir);
+      } catch {
+        await fs.mkdir(characterDir, { recursive: true });
+        console.log('[character:savePNGToDirectory] Created character directory:', characterDir);
+      }
+      
+      // 构建完整文件路径
+      const filePath = path.join(characterDir, `${filename}.png`);
+      console.log('[character:savePNGToDirectory] File path:', filePath);
+      
+      // 写入处理后的PNG文件
+      await fs.writeFile(filePath, newBuffer);
+      console.log('[character:savePNGToDirectory] Successfully saved:', filePath);
+      
+      return { success: true, path: filePath };
+    } catch (error) {
+      console.error('[character:savePNGToDirectory] Failed to save:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined
+      };
+    }
+  });
+
+  // ========== 导出角色卡（使用正确的PNG chunk处理） ==========
+  
+  /**
+   * 导出角色卡为PNG文件（包含正确的chara和ccv3 tEXt chunks）
+   * @param base64Image PNG图片的base64编码
+   * @param filename 文件名
+   * @param characterData 角色卡数据
+   */
+  ipcMain.handle('character:exportCharacterCard', async (_event, params: {
+    base64Image: string;
+    filename: string;
+    characterData: any;
+  }) => {
+    try {
+      console.log('[character:exportCharacterCard] Starting export:', { filename: params.filename });
+      
+      const { base64Image, filename, characterData } = params;
+      
+      // 从base64解码为Buffer
+      const base64Data = base64Image.replace(/^data:image\/png;base64,/, '');
+      const imageBuffer = Buffer.from(base64Data, 'base64');
+      
+      // 使用png-chunks-extract解析PNG chunks
+      const chunks = extract(new Uint8Array(imageBuffer));
+      
+      // 移除已有的chara和ccv3 chunks（如果有）
+      const tEXtChunks = chunks.filter(chunk => chunk.name === 'tEXt');
+      for (const tEXtChunk of tEXtChunks) {
+        const chunkData = PNGtext.decode(tEXtChunk.data);
+        if (chunkData.keyword.toLowerCase() === 'chara' || chunkData.keyword.toLowerCase() === 'ccv3') {
+          chunks.splice(chunks.indexOf(tEXtChunk), 1);
+        }
+      }
+      
+      // 创建V2格式的chara chunk
+      const v2Data = JSON.stringify(characterData.data);
+      const v2Base64 = Buffer.from(v2Data, 'utf8').toString('base64');
+      chunks.splice(-1, 0, PNGtext.encode('chara', v2Base64));
+      
+      // 创建V3格式的ccv3 chunk
+      const v3Data = {
+        spec: 'chara_card_v3',
+        spec_version: '3.0',
+        data: characterData.data
+      };
+      const v3Base64 = Buffer.from(JSON.stringify(v3Data), 'utf8').toString('base64');
+      chunks.splice(-1, 0, PNGtext.encode('ccv3', v3Base64));
+      
+      // 使用png-chunks-encode重新编码PNG
+      const newBuffer = Buffer.from(encode(chunks));
+      
+      console.log('[character:exportCharacterCard] PNG encoded successfully, size:', newBuffer.length);
+      
+      // 将编码后的PNG转回base64返回给前端
+      const resultBase64 = newBuffer.toString('base64');
+      
+      return { 
+        success: true, 
+        base64Png: `data:image/png;base64,${resultBase64}`
+      };
+    } catch (error) {
+      console.error('[character:exportCharacterCard] Failed:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined
+      };
     }
   });
 }

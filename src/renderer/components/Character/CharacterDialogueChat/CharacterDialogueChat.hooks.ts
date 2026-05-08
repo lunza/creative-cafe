@@ -326,7 +326,6 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
             messages: savedChat.messages,
           }));
           messagesRef.current = savedChat.messages;
-          firstMessageSentRef.current = true;
           addLog(`[CharacterDialogueChat] Loaded ${savedChat.messages.length} messages from history`, 'info');
         } else if (characterInfo.first_mes && characterInfo.first_mes.trim()) {
           console.log('[CharacterDialogueChat] Setting first_mes as initial message');
@@ -343,7 +342,6 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
             messages: [firstMessage],
           }));
           messagesRef.current = [firstMessage];
-          firstMessageSentRef.current = true;
           await saveChatToStore([firstMessage]);
           addLog(`[CharacterDialogueChat] First message loaded from character card (${characterInfo.first_mes.length} chars)`, 'info');
         } else {
@@ -372,7 +370,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     return setting.aiEngines[0];
   }, [setting]);
 
-  const buildDialoguePrompt = useCallback((): string => {
+  const buildPromptCore = useCallback((): { characterContext: string; personaSection: string; charName: string } => {
     const charName = characterInfo.characterCardName || 'Character';
     const characterContext = buildCharacterContext({
       name: charName,
@@ -386,12 +384,26 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
 
     const personaSection = buildPersonaSection(selectedPersona);
 
+    return { characterContext, personaSection, charName };
+  }, [
+    characterInfo.characterCardName,
+    characterInfo.personality,
+    characterInfo.characterCardContent,
+    characterInfo.scenario,
+    characterInfo.mes_example,
+    characterInfo.system_prompt,
+    characterInfo.creator_notes,
+    selectedPersona,
+  ]);
+
+  const buildDialoguePrompt = useCallback((): string => {
+    const { characterContext, personaSection, charName } = buildPromptCore();
+
     return `【任务类型：角色扮演对话】
 
 【角色信息】
 ${characterContext}
-${personaSection}
-【对话任务说明】
+${personaSection}【对话任务说明】
 你正在扮演 {{char}} 这个角色，与 ${selectedPersona?.name || DEFAULT_USER_NAME} 进行角色扮演对话。   
 在提示词中，{{char}} 代表 ${charName}，${selectedPersona?.name || DEFAULT_USER_NAME} 代表当前对话用户。
 你需要完全代入角色，以角色的身份与用户进行自然的交流。
@@ -417,37 +429,16 @@ ${personaSection}
 
 【输出格式】
 直接输出角色的对话和行动描写，像真实的人在说话一样。不要添加任何额外的标记或说明。`;
-  }, [
-    characterInfo.characterCardName,
-    characterInfo.personality,
-    characterInfo.characterCardContent,
-    characterInfo.scenario,
-    characterInfo.mes_example,
-    characterInfo.system_prompt,
-    characterInfo.creator_notes,
-    selectedPersona,
-  ]);
+  }, [buildPromptCore, selectedPersona]);
 
   const buildContinuationPrompt = useCallback((): string => {
-    const charName = characterInfo.characterCardName || 'Character';
-    const characterContext = buildCharacterContext({
-      name: charName,
-      personality: characterInfo.personality,
-      description: characterInfo.characterCardContent,
-      scenario: characterInfo.scenario,
-      mes_example: characterInfo.mes_example,
-      system_prompt: characterInfo.system_prompt,
-      creator_notes: characterInfo.creator_notes,
-    }, DEFAULT_USER_NAME);
-
-    const personaSection = buildPersonaSection(selectedPersona);
+    const { characterContext, personaSection, charName } = buildPromptCore();
 
     return `【任务类型：内容续写】
 
 【角色信息】
 ${characterContext}
-${personaSection}
-【续写任务说明】
+${personaSection}【续写任务说明】
 你需要续写以下角色的叙述内容。请仔细阅读前文，然后自然地继续写下去，保持风格和上下文的连贯性。      
 在提示词中，{{char}} 代表 ${charName}，${selectedPersona?.name || DEFAULT_USER_NAME} 代表当前对话用户。
 
@@ -472,16 +463,7 @@ ${personaSection}
 
 【输出格式】
 只输出纯粹的续写内容，不要有任何开场白、结束语或其他多余文字。直接从故事断点处继续叙述，保持原文的视角和时态。`;
-  }, [
-    characterInfo.characterCardName,
-    characterInfo.personality,
-    characterInfo.characterCardContent,
-    characterInfo.scenario,
-    characterInfo.mes_example,
-    characterInfo.system_prompt,
-    characterInfo.creator_notes,
-    selectedPersona,
-  ]);
+  }, [buildPromptCore, selectedPersona]);
 
   const requestAIResponse = useCallback(async (
     contextMessages: ChatMessage[],
@@ -506,6 +488,32 @@ ${personaSection}
     }
 
     const effectiveParams = getEffectiveParams();
+    let streamTimeout: NodeJS.Timeout | null = null;
+
+    const clearTimeout = () => {
+      if (streamTimeout) {
+        clearTimeout(streamTimeout);
+        streamTimeout = null;
+      }
+    };
+
+    streamTimeout = setTimeout(() => {
+      addLog('[CharacterDialogueChat] Stream timeout reached (120s)', 'warn');
+      engine.cancelRequest();
+      setState(prev => ({
+        ...prev,
+        messages: prev.messages.map(msg =>
+          msg.id === targetMessageId
+            ? { ...msg, content: msg.content || '响应超时，请重试', status: 'error' as const }
+            : msg
+        ),
+        isLoading: false,
+        isStreaming: false,
+        error: '响应超时',
+      }));
+      message.error('响应超时，请重试');
+      initialContentRef.current = '';
+    }, 120000);
     
     console.log(`[CharacterDialogueChat] === Request Assembly ===`);
     console.log(`[CharacterDialogueChat] activeEngine.max_tokens:`, activeEngine.max_tokens);
@@ -604,6 +612,7 @@ ${personaSection}
     });
 
     engine.onComplete((response: AIResponse) => {
+      clearTimeout();
       const accumulatedContent = streamContentRef.current;
       const serverContent = response?.content || '';
       const hasInitialContent = initialContentRef.current.length > 0;
@@ -672,6 +681,7 @@ ${personaSection}
     });
 
     engine.onError((error) => {
+      clearTimeout();
       setState(prev => ({
         ...prev,
         messages: prev.messages.map(msg =>
@@ -826,8 +836,6 @@ ${personaSection}
       );
       engine.cancelRequest();
     }
-
-    firstMessageSentRef.current = false;
 
     setState({
       messages: [],

@@ -1,3 +1,7 @@
+.worldbook-manager {
+  padding: 20px;
+}
+
 .dark .ant-modal-content {
   background-color: var(--bg-color, #141414) !important;
   color: var(--text-color, #ffffff) !important;

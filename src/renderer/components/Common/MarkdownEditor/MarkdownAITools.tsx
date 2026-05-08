@@ -9,11 +9,13 @@ import {
   SUPPORTED_LANGUAGES,
   TranslationLanguage,
   AIToolState,
-  ModalState
+  ModalState,
+  SelectionInfo
 } from './MarkdownAITools.types';
 import {
   generateSystemPrompt,
   getSelectedText,
+  getSelectionInfo,
   HistoryManager,
   createErrorMessage,
   validateSelectedText,
@@ -53,13 +55,18 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
   const [processingText, setProcessingText] = useState('');
   
   // 模态框状态
-  const [modalState, setModalState] = useState<ModalState>({
+  const [modalState, setModalState] = useState<ModalState & { selectionInfo: SelectionInfo }>({
     isOpen: false,
     toolType: null,
-    selectedText: ''
+    selectedText: '',
+    selectionInfo: { text: '', from: 0, to: 0, isEmpty: true }
   });
   const [customRequirements, setCustomRequirements] = useState('');
   const inputRef = useRef<InputRef>(null);
+
+  // 用于流式替换时保存原始编辑器内容和替换起始位置
+  const originalContentRef = useRef<string>('');
+  const replacementStartIndexRef = useRef<number>(-1);
 
   // 初始化 AIService
   const getAIServiceConfig = useCallback((): { config: AIServiceConfig | null; error: string | null } => {
@@ -224,16 +231,21 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
       return;
     }
 
+    // 获取编辑器元素以计算精确选区位置
+    const editorElement = document.querySelector('[data-testid="milkdown-editor"]') as HTMLElement;
+    const selectionInfo = getSelectionInfo(editorElement || document.body);
+
     // 检查文本长度
     if (selectedText.length > 500) {
       message.warning(`文本较长(${selectedText.length}字)，处理可能需要一些时间`);
     }
 
-    // 打开模态框
+    // 打开模态框，同时保存选区位置信息
     setModalState({
       isOpen: true,
       toolType,
-      selectedText
+      selectedText,
+      selectionInfo
     });
     setCustomRequirements('');
   }, []);
@@ -252,7 +264,11 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
       return;
     }
 
-    await executeAITool(AIToolType.Translate, selectedText, undefined);
+    // 获取编辑器元素以计算精确选区位置
+    const editorElement = document.querySelector('[data-testid="milkdown-editor"]') as HTMLElement;
+    const selectionInfo = getSelectionInfo(editorElement || document.body);
+
+    await executeAITool(AIToolType.Translate, selectedText, selectionInfo, undefined);
   }, [targetLanguage]);
 
   // 取消按钮
@@ -260,16 +276,19 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
     setModalState({
       isOpen: false,
       toolType: null,
-      selectedText: ''
+      selectedText: '',
+      selectionInfo: { text: '', from: 0, to: 0, isEmpty: true }
     });
     setCustomRequirements('');
+    originalContentRef.current = '';
+    replacementStartIndexRef.current = -1;
   }, []);
 
   // 使用默认设置
   const handleUseDefault = useCallback(async () => {
     if (!modalState.toolType) return;
     
-    await executeAITool(modalState.toolType, modalState.selectedText, undefined);
+    await executeAITool(modalState.toolType, modalState.selectedText, modalState.selectionInfo, undefined);
     handleCancel();
   }, [modalState]);
 
@@ -277,20 +296,44 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
   const handleConfirm = useCallback(async () => {
     if (!modalState.toolType) return;
     
-    await executeAITool(modalState.toolType, modalState.selectedText, customRequirements);
+    await executeAITool(modalState.toolType, modalState.selectedText, modalState.selectionInfo, customRequirements);
     handleCancel();
   }, [modalState, customRequirements]);
 
-  // 执行AI工具 - 流式响应版本
+  // 基于位置的文本替换函数 - 修复选区替换逻辑
+  const replaceByPosition = useCallback((
+    content: string,
+    from: number,
+    to: number,
+    newText: string
+  ): string => {
+    if (from < 0 || to > content.length || from > to) {
+      addLog(`[MarkdownAI] ⚠️ 位置索引无效: from=${from}, to=${to}, contentLength=${content.length}`, 'warn');
+      return content;
+    }
+    return content.substring(0, from) + newText + content.substring(to);
+  }, [addLog]);
+
+  // 执行AI工具 - 流式响应版本（基于位置索引替换）
   const executeAITool = useCallback(async (
     toolType: AIToolType, 
     selectedText: string,
+    selectionInfo: SelectionInfo,
     customRequirements?: string
   ) => {
     const startTime = Date.now();
     const toolName = getToolName(toolType);
     const toolTypeStr = AIToolType[toolType];
     const requestId = `md_ai_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // 获取当前编辑器内容，并使用 indexOf 找到选中文本的精确位置
+    const currentContent = getEditorContent();
+    originalContentRef.current = currentContent;
+    
+    // 使用 indexOf 在原始内容中查找选中文本的起始位置
+    const replaceFrom = currentContent.indexOf(selectedText);
+    const replaceTo = replaceFrom !== -1 ? replaceFrom + selectedText.length : -1;
+    const isValidPosition = replaceFrom !== -1;
     
     addLog(`[MarkdownAI] ======================================`);
     addLog(`[MarkdownAI] 🚀 开始执行 ${toolName} 工具 (流式响应)`, 'debug');
@@ -302,6 +345,8 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
     addLog(`[MarkdownAI] 【输入参数】目标语言: ${toolType === AIToolType.Translate ? targetLanguage.nativeName : 'N/A'}`, 'debug');
     addLog(`[MarkdownAI] 【输入参数】自定义要求: ${customRequirements || '无'}`, 'debug');
     addLog(`[MarkdownAI] 【输入参数】选中文本长度: ${selectedText.length} 字符`, 'debug');
+    addLog(`[MarkdownAI] 【输入参数】查找到的替换位置: from=${replaceFrom}, to=${replaceTo}`, 'debug');
+    addLog(`[MarkdownAI] 【输入参数】位置有效性: ${isValidPosition ? '有效' : '无效'}`, 'debug');
     addLog(`[MarkdownAI] 【输入参数】选中文本内容:`, 'debug');
     addLog(`[MarkdownAI] --- 开始 ---`, 'debug');
     addLog(selectedText, 'debug');
@@ -404,16 +449,22 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
               accumulatedContent += chunk;
               setStreamingContent(accumulatedContent);
               
-              // 优化：流式响应期间，节流更新编辑器内容
-              // 每 5 个 chunk 或每 200ms 更新一次编辑器，避免频繁触发保存和重渲染
+              // 流式响应期间，节流更新编辑器内容
+              // 每 5 个 chunk 或完成时更新一次编辑器
               const shouldUpdateEditor = streamChunkCount % 5 === 0 || done;
               if (shouldUpdateEditor) {
-                // 实时更新编辑器内容
-                // 修复：始终基于原始的 currentContent 进行替换，避免多次替换导致内容丢失
-                const escapedOriginal = selectedText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                const regex = new RegExp(escapedOriginal, 'g');
-                const newContent = currentContent.replace(regex, accumulatedContent);
-                setEditorContent(newContent);
+                if (isValidPosition) {
+                  // 使用精确位置替换 - 只替换用户选中的部分
+                  const newContent = replaceByPosition(
+                    originalContentRef.current,
+                    replaceFrom,
+                    replaceTo,
+                    accumulatedContent
+                  );
+                  setEditorContent(newContent);
+                } else {
+                  addLog(`[MarkdownAI] ⚠️ 无法找到选中文本在编辑器中的位置`, 'warn');
+                }
               }
 
               // 每 10 个 chunk 记录一次进度
@@ -480,30 +531,31 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
           addLog(`[MarkdownAI] 【润色结果】输入长度: ${selectedText.length} 字符`, 'debug');
           addLog(`[MarkdownAI] 【润色结果】输出长度: ${cleanedText.length} 字符`, 'debug');
           addLog(`[MarkdownAI] 【润色结果】字符变化: ${cleanedText.length - selectedText.length > 0 ? '+' : ''}${cleanedText.length - selectedText.length}`, 'debug');
-          addLog(`[MarkdownAI] 【润色结果】内容已替换到编辑器`, 'debug');
           break;
         case AIToolType.Expand:
           addLog(`[MarkdownAI] 【扩写结果】输入长度: ${selectedText.length} 字符`, 'debug');
           addLog(`[MarkdownAI] 【扩写结果】输出长度: ${cleanedText.length} 字符`, 'debug');
           addLog(`[MarkdownAI] 【扩写结果】扩写增加: ${cleanedText.length - selectedText.length > 0 ? '+' : ''}${cleanedText.length - selectedText.length} 字符`, 'debug');
           addLog(`[MarkdownAI] 【扩写结果】扩写倍数: ${(cleanedText.length / Math.max(selectedText.length, 1)).toFixed(2)}x`, 'debug');
-          addLog(`[MarkdownAI] 【扩写结果】内容已替换到编辑器`, 'debug');
           break;
         case AIToolType.Translate:
           addLog(`[MarkdownAI] 【翻译结果】输入语言: 原始文本`, 'debug');
           addLog(`[MarkdownAI] 【翻译结果】目标语言: ${targetLanguage.nativeName} (${targetLanguage.name})`, 'debug');
           addLog(`[MarkdownAI] 【翻译结果】输入长度: ${selectedText.length} 字符`, 'debug');
           addLog(`[MarkdownAI] 【翻译结果】输出长度: ${cleanedText.length} 字符`, 'debug');
-          addLog(`[MarkdownAI] 【翻译结果】内容已替换到编辑器`, 'debug');
           break;
       }
       
-      // 最终更新编辑器
-      const currentContent = getEditorContent();
-      const escapedOriginal = selectedText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const regex = new RegExp(escapedOriginal, 'g');
-      const newContent = currentContent.replace(regex, cleanedText);
-      setEditorContent(newContent);
+      // 最终更新编辑器 - 使用固定位置替换
+      if (isValidPosition) {
+        const finalContent = replaceByPosition(originalContentRef.current, replaceFrom, replaceTo, cleanedText);
+        setEditorContent(finalContent);
+        addLog(`[MarkdownAI] 【最终替换】使用固定位置替换 (from=${replaceFrom}, to=${replaceTo})`, 'debug');
+      } else {
+        addLog(`[MarkdownAI] 【最终替换】无法找到选中文本位置，跳过替换`, 'error');
+        message.error('无法定位选中文本，请重试');
+      }
+      addLog(`[MarkdownAI] 【最终替换】内容已更新到编辑器`, 'debug');
       
       const endTime = Date.now();
       const duration = (endTime - startTime) / 1000;
@@ -558,7 +610,7 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
       setStreamingContent('');
       setProcessingText('');
     }
-  }, [getEditorContent, setEditorContent, saveToHistory, targetLanguage, getAIServiceConfig, addLog]);
+  }, [getEditorContent, setEditorContent, saveToHistory, targetLanguage, getAIServiceConfig, addLog, replaceByPosition]);
 
   const getLanguageMenuItems = () => {
     return SUPPORTED_LANGUAGES.map((lang) => ({

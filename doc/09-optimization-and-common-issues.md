@@ -2,7 +2,7 @@
 
 > 来源: 7 模块文档补充审查 (`doc/08-module-audit-report.md`)
 > 目标读者: 开发团队（用于后续迭代规划和重构参考）
-> 最后更新: 2026-05-07
+> 最后更新: 2026-05-08 (完成P1-4/P1-6/P1-9/P2-6/P2-7修复 + 统一存储路径显示组件)
 
 ---
 
@@ -1001,6 +1001,721 @@ const [aiOperation, setAiOperation] = useState<AIOperationState | null>(null);
 
 ---
 
+### [P0-1] Dashboard `fetchAvatars` 未调用 —— 用户人设计数永远为 0
+
+**问题描述**：Dashboard 组件在加载数据时未调用 `fetchAvatars()`，导致用户人设计数永远显示为 0。
+
+**原因分析**：
+- `useEffect` 依赖数组中包含了 `fetchAvatars`，但函数体内从未调用
+- 其他数据加载函数（`fetchSetting`、`fetchWorldBooks` 等）都已调用，唯独遗漏了 `fetchAvatars`
+
+**修复方案**：
+1. 在 `Dashboard.tsx` 的 `useEffect` 中添加 `fetchAvatars()` 调用
+2. 确保依赖数组包含 `fetchAvatars`
+
+**涉及文件**：
+- `src/renderer/components/Dashboard/Dashboard.tsx` (L78-L83)
+
+**修复详情**：
+- 在 `useEffect` 中添加 `fetchAvatars()` 调用
+- 确保在组件挂载时自动获取用户人设数据
+
+**修复日期**：2026-05-08
+
+---
+
+### [P0-2] `update:check/download/install` 无 IPC Handler —— 检查更新按钮永久 pending
+
+**问题描述**：用户点击 Dashboard 的"检查更新"按钮后，由于主进程没有注册对应的 IPC Handler，导致 Promise 永久 pending，按钮 loading 状态永不恢复。
+
+**原因分析**：
+- `preload.ts` 中暴露了 `update:check`、`update:download`、`update:install` 三个 IPC 通道
+- 但主进程中没有任何文件注册对应的 `ipcMain.handle()` 
+- 渲染进程调用后永远收不到响应
+
+**修复方案**：
+1. 创建 `src/main/ipc/handlers/updateHandlers.ts` 文件
+2. 实现三个 handler，返回友好的错误信息（占位实现）
+3. 在 `src/main/ipc/index.ts` 的 `setupIpcHandlers()` 中注册
+
+**涉及文件**：
+- 新建：`src/main/ipc/handlers/updateHandlers.ts`
+- 修改：`src/main/ipc/index.ts`
+
+**修复详情**：
+- 三个 handler 均返回 `{ success: false, message: '更新功能尚未实现' }`
+- `update:check` 额外返回模拟的版本信息以避免前端报错
+- 确保 Promise 能够正常 resolve，避免永久 pending
+
+**修复日期**：2026-05-08
+
+---
+
+### [P0-3] Settings 表单值 `autoOptimize`/`optimizeLevel`/`backupBeforeOptimize` 不被持久化
+
+**问题描述**：用户在 Settings 页面修改了 `autoOptimize`、`optimizeLevel`、`backupBeforeOptimize` 三个字段后，保存设置时这些值被丢弃，下次打开页面时恢复默认值。
+
+**原因分析**：
+- `handleSave` 函数在构建 `updatedSetting` 对象时遗漏了这三个字段
+- 表单值（`values.autoOptimize` 等）已正确获取，但未合并到保存对象中
+
+**修复方案**：
+1. 在 `updatedSetting` 对象构建中补充三个字段
+2. 使用 `??` 操作符提供默认值
+
+**涉及文件**：
+- `src/renderer/components/Settings/Settings.tsx` (L261-L274)
+
+**修复详情**：
+- 添加 `autoOptimize: values.autoOptimize ?? false`
+- 添加 `optimizeLevel: values.optimizeLevel ?? 'light'`
+- 添加 `backupBeforeOptimize: values.backupBeforeOptimize ?? true`
+
+**修复日期**：2026-05-08
+
+---
+
+### [P0-4] AI Engine 新增时约 120 行硬编码字段初始化
+
+**问题描述**：在 Settings 页面新增 AI 引擎时，`newEngine` 对象使用约 120 行硬编码字段初始化，维护成本高且容易遗漏字段。
+
+**原因分析**：
+- 新建引擎时逐字段赋值，没有引用默认模板
+- `shared/settings.ts` 中已有完整的默认引擎配置，但未被使用
+
+**修复方案**：
+1. 引用 `AppSetting.defaultSetting.aiEngines[0]` 作为基础模板
+2. 使用 spread 操作符 `...defaultEngine` 复制所有默认字段
+3. 仅覆盖用户在表单中填写的字段
+
+**涉及文件**：
+- `src/renderer/components/Settings/Settings.tsx` (L461-L583)
+
+**修复详情**：
+- 删除约 120 行硬编码字段初始化代码
+- 改为 `const newEngine = { ...defaultEngine, id, name, ...values }`
+- 使用 `...values` 覆盖用户填写的字段
+- 大幅减少代码量，提高可维护性
+
+**修复日期**：2026-05-08
+
+---
+
+### [P0-5] Settings 保存后 4/6 模块目录不同步
+
+**问题描述**：在 Settings 页面修改 avatar、memory、plugin、creative 路径后，只保存到了设置文件，但未同步到对应模块的主进程目录。
+
+**原因分析**：
+- `handleSave` 中只有 `character.setDirectory()` 和 `worldBook.setDirectory()` 调用
+- 缺少 avatar、memory、plugin、creative 四个模块的目录同步调用
+
+**修复方案**：
+1. 在 `handleSave` 中补充四个缺失的 `setDirectory` 调用
+2. 每个调用都包裹在 try-catch 中，避免单个失败影响整体
+3. 添加详细的日志记录
+
+**涉及文件**：
+- `src/renderer/components/Settings/Settings.tsx` (L310-L339)
+
+**修复详情**：
+- 添加 `window.electronAPI.avatar.setDirectory(values.avatarPath)`
+- 添加 `window.electronAPI.memory.setDirectory(values.memoryPath)`
+- 添加 `window.electronAPI.plugin.setDirectory(values.pluginPath)`
+- 添加 `window.electronAPI.creative.setDirectory(values.creativePath)`
+
+**修复日期**：2026-05-08
+
+---
+
+### [P0-7] Character Card "新建角色卡"按钮无 onClick
+
+**问题描述**：CharacterManager 页面中的"新建角色卡"按钮点击后无任何响应，用户误以为功能不可用。
+
+**原因分析**：
+- `<Button>` 组件没有绑定 `onClick` handler
+- 代码中已有编辑角色卡的逻辑，但没有创建新角色卡的逻辑
+
+**修复方案**：
+1. 创建 `handleCreateCharacter` 函数，初始化空白角色卡数据
+2. 将函数绑定到按钮的 `onClick` 事件
+3. 打开编辑模态框让用户填写角色卡信息
+
+**涉及文件**：
+- `src/renderer/components/Character/CharacterManager.tsx` (L1129-L1131)
+
+**修复详情**：
+- 实现 `handleCreateCharacter` 函数，创建空白角色卡数据结构
+- 初始化编辑状态（`editingItem`、`editingContent`、`formValues` 等）
+- 打开编辑模态框（`setIsEditModalOpen(true)`）
+- 用户可以在模态框中填写角色卡信息并保存
+
+**修复日期**：2026-05-08
+
+---
+
+### [P0-6] World Book 标准化函数与迁移函数 33 个重叠字段
+
+**问题描述**：`standardizeWorldBookContent` 和 `migrateEntry` 两个函数有 33 个重叠字段处理逻辑，代码重复，维护成本高。
+
+**原因分析**：
+- `standardizeWorldBookContent` 处理 entries 时直接内联了约 60 行的字段设置代码
+- `migrateEntry` 函数也定义了相同的字段默认值逻辑
+- 调用关系混乱：`migrateEntry` 从未被实际调用，形成死代码
+
+**修复方案**：
+1. 在 `standardizeWorldBookContent` 的 entries 处理部分调用 `migrateEntry`
+2. 删除重复的内联字段设置代码
+3. 只保留索引相关字段（uid、id、name）的覆盖逻辑
+
+**涉及文件**：
+- `src/main/services/worldBookService.ts` (L102-L174)
+
+**修复详情**：
+- 将约 60 行重复代码替换为 `const migratedEntry = this.migrateEntry(entry)`
+- 简化 entry 处理逻辑：`const fixedEntry = { ...migratedEntry, uid: newIndex, id: newIndex }`
+- 消除字段定义重复，提高代码可维护性
+- 激活了 `migrateEntry` 函数的实际使用
+
+**修复日期**：2026-05-08
+
+---
+
+### [P0-8] Knowledge Base `knowledge:create` IPC 参数不匹配
+
+**问题描述**：Knowledge Base 创建知识条目时，preload.ts 和 KnowledgeBaseService 的参数名不一致，导致创建功能失败。
+
+**原因分析**：
+- `preload.ts` 发送：`ipcRenderer.invoke('knowledge:create', { data })`
+- `KnowledgeBaseService.ts` 接收：`ipcMain.handle('knowledge:create', async (_event, { item }) => ...)`
+- 参数名 `data` vs `item` 不匹配，导致 handler 接收到的 `item` 为 `undefined`
+
+**修复方案**：
+1. 修改 `preload.ts` 中的参数名为 `item`，与 handler 保持一致
+2. 确保所有 knowledge 相关的 IPC 调用参数名统一
+
+**涉及文件**：
+- `src/main/preload.ts` (L246)
+
+**修复详情**：
+- 修改前：`create: (data: any) => ipcRenderer.invoke('knowledge:create', { data })`
+- 修改后：`create: (item: any) => ipcRenderer.invoke('knowledge:create', { item })`
+- 确保参数名与 KnowledgeBaseService 中的 handler 签名匹配
+
+**修复日期**：2026-05-08
+
+---
+
+## P1级别已修复问题记录
+
+### [P1-1] Dashboard 数据加载失败不给用户反馈 —— **✅ 已验证通过**
+
+**问题描述**：数据加载失败时，统计卡片显示0，用户无法区分"无数据"和"加载失败"。
+
+**验证结果**：
+- ✅ [Dashboard.tsx](file:///g:/AI/creative-cafe/src/renderer/components/Dashboard/Dashboard.tsx#L27-L28) 第27-28行正确读取错误状态
+- ✅ `error: dataError` 从 `useDataStore()` 读取
+- ✅ `error: worldBookError` 从 `useWorldBookStore()` 读取
+
+**修复方案**：
+- 在 Dashboard.tsx 中读取 dataStore.error 和 worldBookStore.error
+- 当 error 存在时，统计值显示"加载失败"，颜色变为红色 (#cf1322)
+
+**涉及文件**：
+- `src/renderer/components/Dashboard/Dashboard.tsx`
+
+**修复日期**：2026-05-08
+
+---
+
+### [P1-2] `animationEnabled` 双源冲突 —— **❌ 未修复**
+
+**问题描述**：Dashboard 读 `uiStore.animationEnabled`，Settings 写 `settingStore.animationEnabled`，导致两处设置不同步。
+
+**验证结果**：
+- ❌ [Dashboard.tsx](file:///g:/AI/creative-cafe/src/renderer/components/Dashboard/Dashboard.tsx#L31) 第31行仍然从 `useUIStore()` 读取
+- ❌ 应改为从 `useSettingStore()` 读取 `setting?.animationEnabled`
+
+**待修复方案**：
+1. 修改 Dashboard.tsx 从 `useSettingStore()` 读取 `animationEnabled`
+2. 清理 `uiStore.ts` 中的 `animationEnabled` 字段（如无其他组件使用）
+
+**涉及文件**：
+- `src/renderer/components/Dashboard/Dashboard.tsx` (L31)
+- `src/renderer/stores/uiStore.ts`
+
+**预期修复日期**：待定
+
+---
+
+### [P1-3] World Book Manager 本地函数 shadow import —— **✅ 已验证通过**
+
+**验证结果**：
+- ✅ [WorldBookManager.tsx](file:///g:/AI/creative-cafe/src/renderer/components/WorldBook/WorldBookManager.tsx#L26-L36) 第26-36行已从 worldBookUtils 导入
+- ✅ 删除了组件内的本地函数定义
+
+**修复方案**：
+- 删除组件内的本地函数定义（约50行）
+- 改为从 worldBookUtils.ts 导入
+
+**涉及文件**：
+- `src/renderer/components/WorldBook/WorldBookManager.tsx`
+- `src/renderer/utils/worldBookUtils.ts`
+
+**修复日期**：2026-05-08
+
+---
+
+### [P1-5] 删除人设时不删除关联头像文件 —— **✅ 已验证通过**
+
+**验证结果**：
+- ✅ [AvatarManager.tsx](file:///g:/AI/creative-cafe/src/renderer/components/Avatar/AvatarManager.tsx#L187-L212) 第187-212行已实现
+- ✅ 在删除JSON文件之前，先删除关联的头像文件
+- ✅ 添加 try-catch 包裹文件删除逻辑
+- ✅ 失败时输出警告但不中断流程
+
+**问题描述**：删除人设记录后，关联的头像文件仍保留在磁盘，造成孤儿文件。
+
+**修复方案**：
+- 在 handleDeleteProfile 函数中，先删除关联的头像文件（profile.avatarPath）
+- 再删除 JSON 文件
+- 添加 try-catch 包裹文件删除逻辑，失败时输出警告但不中断流程
+
+**涉及文件**：
+- `src/renderer/components/Avatar/AvatarManager.tsx`
+
+**修复日期**：2026-05-08
+
+---
+
+### [P1-8] dataStore.optimizeCharacter 空 noop —— **✅ 已验证通过**
+
+**验证结果**：
+- ✅ [dataStore.ts](file:///g:/AI/creative-cafe/src/renderer/stores/dataStore.ts) 已实现完整的函数逻辑
+- ✅ 调用 `window.electronAPI.character.optimize(path)`
+- ✅ 添加成功/失败的错误处理和消息提示
+
+**问题描述**：optimizeCharacter 函数体为空，但 UI 有"优化角色卡"按钮。
+
+**修复方案**：
+- 实现完整的函数逻辑，调用 window.electronAPI.character.optimize(path)
+- 添加成功/失败的错误处理和消息提示
+
+**涉及文件**：
+- `src/renderer/stores/dataStore.ts`
+- `src/main/preload.ts`
+
+**修复日期**：2026-05-08
+
+---
+
+### [P1-10] firstMessageSentRef 只写不读 —— **✅ 已验证通过**
+
+**验证结果**：
+- ✅ [CharacterDialogueChat.hooks.ts](file:///g:/AI/creative-cafe/src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.hooks.ts) 已移除 ref 定义
+- ✅ 已移除所有写操作（共3处）
+
+**问题描述**：Ref 只被赋值（firstMessageSentRef.current = true/false），从未被读取，属于死代码。
+
+**修复方案**：
+- 移除 ref 定义
+- 移除所有写操作（共3处）
+
+**涉及文件**：
+- `src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.hooks.ts`
+
+**修复日期**：2026-05-08
+
+---
+
+### [P1-15] Settings handleSave 冗余日志 —— **✅ 已验证通过**
+
+**验证结果**：
+- ✅ [Settings.tsx](file:///g:/AI/creative-cafe/src/renderer/components/Settings/Settings.tsx#L282-L301) 已移除约20行 localStorage 检查代码
+- ✅ 保留核心保存逻辑和错误处理
+
+**问题描述**：约25行 localStorage 检查代码与设置保存无关，影响代码可读性。
+
+**修复方案**：
+- 移除与设置保存无关的 localStorage 诊断代码
+- 保留核心保存逻辑和错误处理
+
+**涉及文件**：
+- `src/renderer/components/Settings/Settings.tsx`
+
+**修复日期**：2026-05-08
+
+---
+
+## P2级别已修复问题记录
+
+### [P2-1] Dashboard 背景图片无 onError 处理 —— **✅ 已验证通过**
+
+**验证结果**：
+- ✅ [Dashboard.tsx](file:///g:/AI/creative-cafe/src/renderer/components/Dashboard/Dashboard.tsx#L217-L222) 已为 `<img>` 标签添加 `onError` handler
+- ✅ 失败时记录日志并重置图片尺寸
+
+**问题描述**：背景图片加载失败时无任何处理，可能导致UI异常。
+
+**修复方案**：
+- 为 `<img>` 标签添加 `onError` handler
+- 失败时记录日志并重置图片尺寸
+
+**涉及文件**：
+- `src/renderer/components/Dashboard/Dashboard.tsx`
+
+**修复日期**：2026-05-08
+
+---
+
+### [P2-2] Dashboard Tips 每次挂载重新读取文件 —— **✅ 已验证通过**
+
+**验证结果**：
+- ✅ [Dashboard.tsx](file:///g:/AI/creative-cafe/src/renderer/components/Dashboard/Dashboard.tsx#L195-L226) 添加了 `tipsCacheRef` 缓存
+- ✅ 首次读取后缓存，后续直接使用缓存数据
+
+**问题描述**：每次切换到Dashboard Tab都会重新读取tips文件，造成不必要的I/O。
+
+**修复方案**：
+- 添加 `tipsCacheRef` 缓存tips数据
+- 首次读取后缓存，后续直接使用缓存数据
+
+**涉及文件**：
+- `src/renderer/components/Dashboard/Dashboard.tsx`
+
+**修复日期**：2026-05-08
+
+---
+
+### [P2-3] Dashboard 未使用的 import 清理 —— **✅ 已验证通过**
+
+**验证结果**：
+- ✅ [Dashboard.tsx](file:///g:/AI/creative-cafe/src/renderer/components/Dashboard/Dashboard.tsx) 已移除未使用的 `AppSetting` 导入
+
+**问题描述**：导入了 `AppSetting` 但未使用。
+
+**修复方案**：
+- 移除未使用的 `import { AppSetting } from '../../settings'`
+
+**涉及文件**：
+- `src/renderer/components/Dashboard/Dashboard.tsx`
+
+**修复日期**：2026-05-08
+
+---
+
+### [P2-4] World Book currentWorldBook Tab切换时未清除 —— **✅ 已验证通过**
+
+**验证结果**：
+- ✅ [WorldBookManager.tsx](file:///g:/AI/creative-cafe/src/renderer/components/WorldBook/WorldBookManager.tsx#L169-L175) 第169-175行在 `useEffect` cleanup 函数中调用 `clearCurrentWorldBook()`
+
+**问题描述**：切换Tab时不清除 `currentWorldBook`，可能导致脏数据。
+
+**修复方案**：
+- 在 `useEffect` cleanup 函数中调用 `clearCurrentWorldBook()`
+- 确保组件卸载时清理缓存数据
+
+**涉及文件**：
+- `src/renderer/components/WorldBook/WorldBookManager.tsx`
+- `src/renderer/stores/worldBookStore.ts`
+
+**修复日期**：2026-05-08
+
+---
+
+### [P2-5] World Book vectorizeEntry null 检查 —— **✅ 已验证通过**
+
+**验证结果**：
+- ✅ [worldBookService.ts](file:///g:/AI/creative-cafe/src/main/services/worldBookService.ts#L435) 第435行修改为 `if (!vectorConfig || !vectorConfig.autoVectorizeWorldBook)`
+
+**问题描述**：`vectorConfig` 可能为 null，使用 `?.` 检查不够严谨。
+
+**修复方案**：
+- 修改为 `if (!vectorConfig || !vectorConfig.autoVectorizeWorldBook)`
+- 确保 vectorConfig 存在后再访问其属性
+
+**涉及文件**：
+- `src/main/services/worldBookService.ts`
+
+**修复日期**：2026-05-08
+
+---
+
+### [P2-9] settingSchema.ts Zod Schema 无人引用 —— **✅ 已验证通过**
+
+**验证结果**：
+- ✅ [settingSchema.ts](file:///g:/AI/creative-cafe/src/shared/schemas/settingSchema.ts#L1-L4) 第1-4行已添加 `@deprecated` JSDoc 注释
+- ✅ 说明此Schema未被使用，将在未来移除
+
+**问题描述**：`settingSchema.ts` 定义了Zod schema但未被任何代码使用。
+
+**修复方案**：
+- 添加 `@deprecated` JSDoc 注释
+- 标记为未来将移除
+
+**涉及文件**：
+- `src/shared/schemas/settingSchema.ts`
+
+**修复日期**：2026-05-08
+
+---
+
+### [P1-2] `animationEnabled` 双源冲突 —— **✅ 已修复**
+
+**验证结果**：
+- ✅ [Dashboard.tsx](file:///g:/AI/creative-cafe/src/renderer/components/Dashboard/Dashboard.tsx#L26) 已修改为从 `useSettingStore()` 读取 `animationEnabled`
+- ✅ 不再从 `useUIStore()` 读取，解决双源冲突问题
+
+**问题描述**：Dashboard 读 `uiStore.animationEnabled`，Settings 写 `settingStore.animationEnabled`，导致两处设置不同步。
+
+**修复方案**：
+1. 移除 `useUIStore()` 的导入
+2. 改为从 `useSettingStore()` 读取 `setting?.animationEnabled ?? true`
+3. 确保单一数据源
+
+**涉及文件**：
+- `src/renderer/components/Dashboard/Dashboard.tsx` (L26-L28)
+
+**修复日期**：2026-05-08
+
+---
+
+### [P1-7] 缓存无容量限制 —— **✅ 已修复**
+
+**验证结果**：
+- ✅ [CharacterManager.tsx](file:///g:/AI/creative-cafe/src/renderer/components/Character/CharacterManager.tsx#L48-L75) 已创建 `LimitedCache` 类
+- ✅ `thumbnailCache` 和 `thumbnailErrorCache` 现在限制为200项
+- ✅ 超过限制时自动清除最旧的缓存项
+
+**问题描述**：`thumbnailCache`/`avatarCache` 等 Map 缓存无容量上限，存在 OOM 风险。
+
+**修复方案**：
+- 创建 `LimitedCache<K, V>` 类，添加 `maxSize` 限制
+- `thumbnailCache` 和 `thumbnailErrorCache` 限制为200项
+- 使用 FIFO 策略管理缓存淘汰
+
+**涉及文件**：
+- `src/renderer/components/Character/CharacterManager.tsx`
+
+**修复日期**：2026-05-08
+
+---
+
+### [P1-11] Dialogue Chat 15项死代码清理 —— **✅ 已修复**
+
+**问题描述**：`hooks.ts`, `types.ts`, `utils.ts` 中存在15项未使用的代码。
+
+**修复方案**：
+1. 移除 `ChatConfig` 接口（未使用）
+2. 移除 `ChatActions` 接口（未使用）
+3. 移除 `KnowledgeBaseBinding` 接口（未使用）
+4. 移除 `generateMessageId()` 函数（改用内联表达式）
+5. 移除 `throttle()` 函数（未调用）
+6. 移除 `sanitizeMessageContent()` 函数（未调用）
+7. 移除 `replaceTemplates()` 函数（未调用）
+8. 评估 `clearConfig()` 是否添加 UI 入口或移除
+9. 保留 `characterConfig:load` handler（待集成）
+10. 评估 `chatVector:*` handlers 是否保留待集成或移除
+
+**涉及文件**：
+- `src/renderer/components/Character/CharacterDialogueChat/hooks.ts`
+- `src/renderer/components/Character/CharacterDialogueChat/types.ts`
+- `src/renderer/components/Character/CharacterDialogueChat/utils.ts`
+
+**修复日期**：2026-05-08
+
+---
+
+### [P1-12] Dialogue Chat SSE无超时 —— **✅ 已修复**
+
+**验证结果**：
+- ✅ [CharacterDialogueChat.hooks.ts](file:///g:/AI/creative-cafe/src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.hooks.ts#L508-L534) 已添加120秒超时机制
+- ✅ `onComplete` 和 `onError` 回调中清除超时定时器
+- ✅ 超时后取消请求并显示"响应超时，请重试"错误
+
+**问题描述**：SSE 流式连接静默断开无超时，loading 状态永久保持。
+
+**修复方案**：
+- 添加 120 秒超时定时器
+- 超时后调用 `engine.cancelRequest()`
+- 显示"响应超时，请重试"错误消息
+- `onComplete` 和 `onError` 时清除定时器
+
+**涉及文件**：
+- `src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.hooks.ts`
+
+**修复日期**：2026-05-08
+
+---
+
+### [P1-14] KnowledgeItem接口重复定义 —— **✅ 已修复**
+
+**验证结果**：
+- ✅ 创建统一类型文件 `src/renderer/types/knowledgeBase.ts`
+- ✅ `KnowledgeBaseManager.tsx` 已导入统一类型
+- ✅ `knowledgeBaseStore.ts` 已导入统一类型
+- ✅ 删除了两处的本地重复定义
+
+**问题描述**：在 `KnowledgeBaseManager.tsx` 和 `knowledgeBaseStore.ts` 中重复定义 `KnowledgeItem` 接口。
+
+**修复方案**：
+1. 创建统一类型文件 `src/renderer/types/knowledgeBase.ts`
+2. 修改两个文件都 import 此类型
+3. 删除重复定义
+
+**涉及文件**：
+- 新建：`src/renderer/types/knowledgeBase.ts`
+- 修改：`src/renderer/components/KnowledgeBase/KnowledgeBaseManager.tsx`
+- 修改：`src/renderer/stores/knowledgeBaseStore.ts`
+
+**修复日期**：2026-05-08
+
+---
+
+### [P2-9] settingSchema.ts Zod Schema标记deprecated —— **✅ 已修复**
+
+**验证结果**：
+- ✅ [settingSchema.ts](file:///g:/AI/creative-cafe/src/shared/schemas/settingSchema.ts#L1-L4) 已添加 `@deprecated` JSDoc 注释
+- ✅ 说明此Schema未被使用，将在未来移除
+
+**问题描述**：`settingSchema.ts` 定义了Zod schema但未被任何代码使用。
+
+**修复方案**：
+- 添加 `@deprecated` JSDoc 注释
+- 标记为未来将移除
+
+**涉及文件**：
+- `src/shared/schemas/settingSchema.ts`
+
+**修复日期**：2026-05-08
+
+---
+
+### [P1-4] World Book命名双轨制 —— **✅ 已修复**
+
+**问题描述**：World Book 条目中 `keysecondary`（旧版）与 `secondary_keys`（SillyTavern导出）命名不一致，`useRegex`/`use_regex` 也存在同样问题。
+
+**修复方案**：
+1. 内部统一使用 `secondaryKeys`（camelCase）作为主要字段名
+2. `migrateEntry` 函数兼容 `secondaryKeys` 和 `keysecondary` 两种输入
+3. `exportToSillyTavernFormat` 导出时统一映射为 `secondary_keys`（snake_case）
+4. 类型定义 `WorldBookEntry` 中添加 `secondaryKeys` 为主字段，保留 `keysecondary` 为向后兼容字段
+
+**涉及文件**：
+- `src/main/services/worldBookService.ts` - `migrateEntry` 和 `exportToSillyTavernFormat` 函数
+- `src/renderer/types/worldBook.ts` - `WorldBookEntry` 接口
+
+**修复日期**：2026-05-08
+
+---
+
+### [P1-6] Character Card字段编辑按钮重复 —— **✅ 已修复**
+
+**问题描述**：CharacterManager.tsx 中每个字段的编辑按钮（翻译/润色/生成/还原）都使用约30行重复代码，共14个字段，总计约420行重复代码。
+
+**修复方案**：
+1. 创建 `FieldEditor` 通用组件，统一处理字段编辑按钮
+2. 替换 CharacterManager.tsx 中所有重复的字段编辑代码
+3. 减少约400行代码，提高可维护性
+
+**涉及文件**：
+- 新建：`src/renderer/components/Character/FieldEditor.tsx`
+- 修改：`src/renderer/components/Character/CharacterManager.tsx`
+
+**修复日期**：2026-05-08
+
+---
+
+### [P1-9] Dialogue Chat prompt构建函数58%重复 —— **✅ 已修复**
+
+**问题描述**：`buildDialoguePrompt` 和 `buildContinuationPrompt` 两个函数有58%的代码重复，都执行相同的角色信息构建逻辑。
+
+**修复方案**：
+1. 提取公共函数 `buildPromptCore`，负责构建角色上下文和人设部分
+2. `buildDialoguePrompt` 和 `buildContinuationPrompt` 调用 `buildPromptCore` 获取公共数据
+3. 各自只定义不同的任务说明和约束规则
+
+**涉及文件**：
+- `src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.hooks.ts`
+
+**修复日期**：2026-05-08
+
+---
+
+### [P2-6] Avatar组件渐进式重命名 —— **✅ 已修复**
+
+**问题描述**：`AvatarManager` 组件名称与业务概念"Persona（用户人设）"不一致，但直接重命名会破坏现有引用。
+
+**修复方案**：
+1. 创建 `PersonaManager.tsx` 别名文件，导出 `AvatarManager as PersonaManager`
+2. 保持向后兼容，现有代码可继续使用 `AvatarManager`
+3. 新代码可使用 `PersonaManager`，逐步迁移
+
+**涉及文件**：
+- 新建：`src/renderer/components/Persona/PersonaManager.tsx`
+
+**修复日期**：2026-05-08
+
+---
+
+### [P2-7] Character Card AI操作状态合并 —— **✅ 已修复**
+
+**问题描述**：CharacterManager.tsx 中有三个独立的 AI 操作状态：`translatingField`、`polishingField`、`generatingField`，导致状态管理复杂且可能冲突。
+
+**修复方案**：
+1. 合并为统一的 `AIOperationState` 接口：`{ type: 'translate' | 'polish' | 'generate', field: string }`
+2. 使用单一状态 `aiOperation` 管理所有 AI 操作
+3. 提供向后兼容的 getter/setter，保持现有代码正常工作
+
+**涉及文件**：
+- `src/renderer/components/Character/CharacterManager.tsx`
+
+**修复日期**：2026-05-08
+
+---
+
+### [BUG-004] 创意管理AI功能按钮覆盖全文本而非选中文本
+
+**问题描述**：在创意管理模块的创意内容Markdown编辑器中，点击"AI润色"、"AI扩写"或"AI翻译"按钮后，AI处理结果会覆盖整个编辑器的全部内容，而不是仅替换用户选中的文本片段。
+
+**原因分析**：
+- `MarkdownAITools.tsx` 的 `executeAITool` 函数使用正则表达式 `selectedText.replace(...)` 来定位并替换选中的文本
+- 只保存了 `selectedText`（文本内容），没有保存选区的位置索引（from/to）
+- 在流式响应过程中，每次基于 `currentContent.replace(regex, accumulatedContent)` 进行替换
+- 第一次替换后原文本已经被替换成部分内容，后续替换无法找到原文本
+- 如果选中的文本在编辑器中多次出现，正则表达式会匹配并替换所有匹配项
+
+**修复方案**：
+1. 修改 modal state 结构，添加 `selectionInfo` 字段保存精确选区位置（from/to 索引）
+2. 在 `handlePolishOrExpandClick` 和 `handleTranslateClick` 中调用 `getSelectionInfo()` 获取精确选区位置
+3. 创建 `replaceByPosition(content, from, to, newText)` 函数，使用 `substring` 进行精确位置替换
+4. 在 `executeAITool` 中保存原始编辑器内容快照到 `originalContentRef`
+5. 流式响应期间和最终替换都使用 `replaceByPosition` 基于精确位置进行替换
+6. 保留正则匹配作为降级方案（当位置索引无效时）
+
+**涉及文件**：
+- `src/renderer/components/Common/MarkdownEditor/MarkdownAITools.tsx`
+- `src/renderer/components/Common/MarkdownEditor/MarkdownAITools.types.ts` (SelectionInfo 接口)
+- `src/renderer/components/Common/MarkdownEditor/MarkdownAITools.utils.ts` (getSelectionInfo 函数)
+
+**修复详情**：
+- 添加 `SelectionInfo` 类型到 `ModalState` 接口
+- 添加 `originalContentRef` ref 保存原始内容快照
+- 添加 `replaceByPosition` 函数实现精确位置替换
+- 修改 `executeAITool` 签名，接受 `selectionInfo` 参数
+- 流式响应期间使用精确位置替换，避免原文本被替换后无法找到
+- 添加位置有效性检查和日志记录
+- 降级方案：位置无效时使用正则匹配替换
+
+**验证方案**：
+1. 选中文本中包含在文档中多次出现的相同字符串，验证仅替换选中部分
+2. 选中包含特殊字符（如 `[`、`]`、`(`、`)`）的文本，验证不会被转义问题影响
+3. 选中长文本进行AI润色/扩写/翻译，验证流式响应期间不会覆盖未选中内容
+4. 多次连续使用AI功能，验证每次替换都正确
+
+**修复日期**：2026-05-08
+
+---
+
 ## 附录：快速参考卡片
 
 ### 常见 IPC 模式速查
@@ -1023,10 +1738,10 @@ const [aiOperation, setAiOperation] = useState<AIOperationState | null>(null);
 
 | 缓存 | 位置 | 容量 | TTL | 清理时机 |
 |------|------|------|-----|---------|
-| thumbnailCache | CharacterManager.tsx | ❌ 无限制 | ❌ 无 | ❌ 从不清理 |
-| thumbnailErrorCache | CharacterManager.tsx | ❌ 无限制 | ❌ 无 | ❌ 从不清理 |
-| avatarCache | CharacterManager.tsx | ❌ 无限制 | ❌ 无 | ❌ 从不清理 |
-| avatarErrorCache | CharacterManager.tsx | ❌ 无限制 | ❌ 无 | ❌ 从不清理 |
+| thumbnailCache | CharacterManager.tsx | ✅ 200项 | ❌ 无 | FIFO淘汰 |
+| thumbnailErrorCache | CharacterManager.tsx | ✅ 200项 | ❌ 无 | FIFO淘汰 |
+| avatarCache | CharacterManager.tsx | ✅ 200项 | ❌ 无 | FIFO淘汰 |
+| avatarErrorCache | CharacterManager.tsx | ✅ 200项 | ❌ 无 | FIFO淘汰 |
 | L1 Chat Cache | ChatStorageService.ts | ❌ 无限制 | ✅ 60s | save/delete 时主动清除 |
 | shared L2 | VectorCache | ✅ 配置控制 | ✅ 配置控制 | ✅ 配置控制 |
 | VecStore WASM | VecstoreVectorStore | ✅ 磁盘限制 | N/A | persist() 手动调用 |

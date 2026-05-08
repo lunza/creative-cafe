@@ -1,17 +1,38 @@
 export interface CharacterCardV3 {
-  name: string;
-  description: string;
-  personality: string;
-  scenario: string;
-  first_mes: string;
-  mes_example: string;
-  creator_notes: string;
-  system_prompt: string;
-  post_history_instructions: string;
-  tags: string[];
-  spec: 'chara_card_v3';
-  spec_version: '3.0';
+  name?: string;
+  description?: string;
+  personality?: string;
+  scenario?: string;
+  first_mes?: string;
+  mes_example?: string;
+  creator_notes?: string;
+  system_prompt?: string;
+  post_history_instructions?: string;
+  tags?: string[];
+  spec?: 'chara_card_v3';
+  spec_version?: '3.0';
   data: {
+    name?: string;
+    description?: string;
+    personality?: string;
+    scenario?: string;
+    first_mes?: string;
+    mes_example?: string;
+    creator_notes?: string;
+    system_prompt?: string;
+    post_history_instructions?: string;
+    tags?: string[];
+    creator?: string;
+    character_version?: string;
+    alternate_greetings?: string[];
+    character_book?: any;
+    assets?: any;
+    nickname?: string;
+    creator_notes_multilingual?: any;
+    source?: string;
+    group_only_greetings?: any;
+    creation_date?: string;
+    modification_date?: string;
     extensions: Record<string, any>;
   };
 }
@@ -39,19 +60,19 @@ export function formatCharacterCardV3(characterName: string, characterContent: s
   const parsedContent = parseMarkdownContent(characterContent);
 
   return {
-    name: parsedContent.name || characterName,
-    description: parsedContent.description || '',
-    personality: parsedContent.personality || '',
-    scenario: parsedContent.scenario || '',
-    first_mes: parsedContent.firstMessage || '',
-    mes_example: parsedContent.messageExample || '',
-    creator_notes: parsedContent.creatorNotes || '',
-    system_prompt: parsedContent.systemPrompt || '',
-    post_history_instructions: parsedContent.postHistoryInstructions || '',
-    tags,
     spec: 'chara_card_v3',
     spec_version: '3.0',
     data: {
+      name: parsedContent.name || characterName,
+      description: parsedContent.description || '',
+      personality: parsedContent.personality || '',
+      scenario: parsedContent.scenario || '',
+      first_mes: parsedContent.firstMessage || '',
+      mes_example: parsedContent.messageExample || '',
+      creator_notes: parsedContent.creatorNotes || '',
+      system_prompt: parsedContent.systemPrompt || '',
+      post_history_instructions: parsedContent.postHistoryInstructions || '',
+      tags,
       extensions: {}
     }
   };
@@ -140,103 +161,110 @@ export function downloadFile(filename: string, content: string, mimeType: string
   URL.revokeObjectURL(url);
 }
 
-export function downloadCharacterCardPNG(characterCard: CharacterCardV3, filename: string) {
-  const jsonContent = JSON.stringify(characterCard, null, 2);
-
+export function downloadCharacterCardPNG(characterCard: CharacterCardV3, filename: string, imageBase64?: string) {
+  console.log('[PNG Export] Starting export...', { filename, hasImage: !!imageBase64 });
+  
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
 
   if (!ctx) {
-    downloadFile(`${filename}.json`, jsonContent);
+    message.error('无法创建canvas');
     return;
   }
 
-  const img = new Image();
   const defaultSize = 512;
+  canvas.width = defaultSize;
+  canvas.height = defaultSize;
 
-  img.onload = () => {
-    canvas.width = img.width || defaultSize;
-    canvas.height = img.height || defaultSize;
-
-    ctx.drawImage(img, 0, 0);
-
-    const textEncoder = new TextEncoder();
-    const jsonData = textEncoder.encode(jsonContent);
-
-    const dataView = new DataView(new ArrayBuffer(8));
-    dataView.setUint32(0, 0x00000000, true);
-    dataView.setUint32(4, jsonData.length, true);
-
-    const pngChunk = new Uint8Array(
-      new Uint8Array(dataView.buffer).buffer.byteLength + jsonData.length + 4
-    );
-
-    pngChunk.set(new Uint8Array(dataView.buffer), 0);
-    pngChunk.set(jsonData, 8);
-
-    const textChunk = new Uint8Array(4 + 4 + 4 + pngChunk.length + 4);
-    const chunkDataLength = pngChunk.length;
-
-    const lengthView = new DataView(textChunk.buffer, 0, 4);
-    lengthView.setUint32(0, chunkDataLength, false);
-
-    const typeBytes = new Uint8Array(4);
-    typeBytes[0] = 116;
-    typeBytes[1] = 101;
-    typeBytes[2] = 120;
-    typeBytes[3] = 116;
-    textChunk.set(typeBytes, 4);
-
-    textChunk.set(pngChunk, 8);
-
-    const crc32 = calculateCRC32(typeBytes, pngChunk);
-    const crcView = new DataView(textChunk.buffer, textChunk.length - 4, 4);
-    crcView.setUint32(0, crc32, false);
-
+  const processAndDownload = () => {
+    console.log('[PNG Export] Converting canvas to blob...');
     canvas.toBlob((blob) => {
       if (!blob) {
-        downloadFile(`${filename}.json`, jsonContent);
+        console.error('[PNG Export] canvas.toBlob returned null');
+        message.error('无法生成PNG');
         return;
       }
+      console.log('[PNG Export] Blob created, size:', blob.size, 'type:', blob.type);
 
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const pngData = new Uint8Array(reader.result as ArrayBuffer);
+      blob.arrayBuffer().then((pngBuffer) => {
+        const pngData = new Uint8Array(pngBuffer);
+        console.log('[PNG Export] PNG data length:', pngData.length);
 
-        const iendIndex = findIENDIndex(pngData);
-        if (iendIndex === -1) {
-          downloadFile(`${filename}.json`, jsonContent);
-          return;
-        }
+        // 转换为base64并调用主进程处理PNG chunks
+        const reader = new FileReader();
+        reader.onloadend = async () => {
+          try {
+            const base64Png = reader.result as string;
+            
+            // 调用主进程正确处理PNG chunks（使用png-chunks-extract和encode）
+            const result = await (window as any).electronAPI.character.exportCharacterCard({
+              base64Image: base64Png,
+              filename: characterCard.name || 'character_card',
+              characterData: characterCard
+            });
 
-        const newPngData = new Uint8Array(iendIndex + 4 + textChunk.length + (pngData.length - iendIndex));
-        newPngData.set(pngData.slice(0, iendIndex), 0);
-        newPngData.set(textChunk, iendIndex);
-        newPngData.set(pngData.slice(iendIndex), iendIndex + textChunk.length);
-
-        const finalBlob = new Blob([newPngData], { type: 'image/png' });
-        const url = URL.createObjectURL(finalBlob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${filename}.png`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      };
-      reader.readAsArrayBuffer(blob);
+            if (result.success) {
+              console.log('[PNG Export] Character card processed successfully');
+              
+              // 下载处理后的PNG
+              const link = document.createElement('a');
+              link.href = result.base64Png;
+              link.download = `${characterCard.name || 'character_card'}.png`;
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+            } else {
+              console.error('[PNG Export] Failed to process:', result.error);
+              message.error(`导出失败：${result.error}`);
+            }
+          } catch (error) {
+            console.error('[PNG Export] Error:', error);
+            message.error('导出失败');
+          }
+        };
+        reader.readAsDataURL(blob);
+      }).catch((error) => {
+        console.error('[PNG Export] Error reading blob:', error);
+        message.error('导出失败');
+      });
     }, 'image/png');
   };
 
-  img.onerror = () => {
-    downloadFile(`${filename}.json`, jsonContent);
-  };
+  if (imageBase64) {
+    console.log('[PNG Export] Loading image from base64...');
+    const img = new Image();
+    img.onload = () => {
+      console.log('[PNG Export] Image loaded, size:', img.width, 'x', img.height);
+      canvas.width = img.width || defaultSize;
+      canvas.height = img.height || defaultSize;
+      ctx.drawImage(img, 0, 0);
+      processAndDownload();
+    };
+    img.onerror = (e) => {
+      console.error('[PNG Export] Image load failed:', e);
+      drawDefaultCard();
+      processAndDownload();
+    };
+    img.src = imageBase64;
+  } else {
+    console.log('[PNG Export] No image provided, using default card');
+    drawDefaultCard();
+    processAndDownload();
+  }
 
-  img.src = '';
-
-  setTimeout(() => {
-    downloadFile(`${filename}.json`, jsonContent);
-  }, 100);
+  function drawDefaultCard() {
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 32px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(characterCard.name || 'Character Card', canvas.width / 2, canvas.height / 2 - 20);
+    
+    ctx.font = '16px Arial';
+    ctx.fillStyle = '#cccccc';
+    ctx.fillText('SillyTavern V3', canvas.width / 2, canvas.height / 2 + 20);
+  }
 }
 
 function calculateCRC32(typeBytes: Uint8Array, data: Uint8Array): number {
@@ -270,17 +298,17 @@ function getCRC32Table(): number[] {
 }
 
 function findIENDIndex(data: Uint8Array): number {
-  const iendSignature = [0x49, 0x45, 0x4E, 0x44];
-
-  for (let i = 0; i < data.length - 8; i++) {
-    if (
-      data[i] === iendSignature[0] &&
-      data[i + 1] === iendSignature[1] &&
-      data[i + 2] === iendSignature[2] &&
-      data[i + 3] === iendSignature[3]
-    ) {
-      return i + 4;
+  // PNG IEND chunk结构：
+  // 4字节长度(00 00 00 00) + 4字节类型(49 45 4E 44="IEND") + 4字节CRC
+  // IEND是PNG的最后一个chunk，所以从末尾往前找更可靠
+  
+  // 从文件末尾往前搜索完整的IEND chunk标识：00 00 00 00 49 45 4E 44
+  for (let i = data.length - 12; i >= 0; i--) {
+    if (data[i] === 0 && data[i+1] === 0 && data[i+2] === 0 && data[i+3] === 0 &&
+        data[i+4] === 73 && data[i+5] === 69 && data[i+6] === 78 && data[i+7] === 68) {
+      return i; // 返回IEND chunk的起始位置（长度字段）
     }
   }
+  
   return -1;
 }

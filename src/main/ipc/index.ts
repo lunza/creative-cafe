@@ -7,6 +7,7 @@ import { fileHandlers } from './handlers/fileHandlers';
 import { appHandlers } from './handlers/appHandlers';
 import { pluginHandlers } from './handlers/pluginHandlers';
 import { documentHandlers } from './handlers/documentHandlers';
+import { updateHandlers } from './handlers/updateHandlers';
 import './handlers/aiHandlers';
 import { getStorageService } from '../services/storageService';
 import { embeddingService } from '../services/EmbeddingService';
@@ -28,6 +29,7 @@ export function setupIpcHandlers() {
   appHandlers();
   pluginHandlers();
   documentHandlers();
+  updateHandlers();
 
   embeddingService.initialize();
   embeddingService.registerIpcHandlers();

@@ -148,9 +148,14 @@ export const useDataStore = create<DataState>((set, get) => ({
   optimizeCharacter: async (path) => {
     set({ loading: true, error: null });
     try {
-      set({ loading: false });
+      const result = await window.electronAPI.character.optimize(path);
+      if (result.success) {
+        set({ loading: false });
+      } else {
+        set({ error: `优化失败: ${result.message}`, loading: false });
+      }
     } catch (error) {
-      set({ error: 'Failed to optimize character', loading: false });
+      set({ error: `优化异常: ${error instanceof Error ? error.message : '未知错误'}`, loading: false });
     }
   },
   checkPluginUpdates: async () => {

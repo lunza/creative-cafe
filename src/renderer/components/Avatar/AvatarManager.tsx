@@ -1,8 +1,10 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Card, Button, Space, message, Input, Upload, Avatar, Typography, Form, Modal, Popconfirm, Row, Col, Empty, Tag } from 'antd';
-import { PlusOutlined, UploadOutlined, UserOutlined, SaveOutlined, EditOutlined, DeleteOutlined, ArrowLeftOutlined } from '@ant-design/icons';
+import { PlusOutlined, UploadOutlined, UserOutlined, SaveOutlined, EditOutlined, DeleteOutlined, ArrowLeftOutlined, FolderOpenOutlined, CopyOutlined } from '@ant-design/icons';
 import { useDataStore } from '../../stores/dataStore';
 import { useLogStore } from '../../stores/logStore';
+import { useUIStore } from '../../stores/uiStore';
+import { StoragePathDisplay } from '../common/StoragePathDisplay';
 import type { UploadFile } from 'antd/es/upload/interface';
 import './AvatarManager.css';
 
@@ -88,6 +90,25 @@ const AvatarManager: React.FC = () => {
     };
     getAvatarDir();
   }, [addLog]);
+
+  const handleOpenFolder = async () => {
+    try {
+      if (!avatarDir) return;
+      await window.electronAPI.file.openFolder(avatarDir);
+    } catch (error) {
+      message.error('打开文件夹失败');
+    }
+  };
+
+  const handleCopyPath = async () => {
+    try {
+      if (!avatarDir) return;
+      await navigator.clipboard.writeText(avatarDir);
+      message.success('路径已复制到剪贴板');
+    } catch (error) {
+      message.error('复制路径失败');
+    }
+  };
 
   useEffect(() => {
     if (avatarDir) {
@@ -186,6 +207,15 @@ const AvatarManager: React.FC = () => {
 
   const handleDeleteProfile = useCallback(async (profile: UserAvatarProfile) => {
     try {
+      if (profile.avatarPath) {
+        try {
+          await window.electronAPI.file.delete(profile.avatarPath);
+          addLog(`[Avatar] 删除关联头像文件: ${profile.avatarPath}`, 'info');
+        } catch (fileError) {
+          addLog(`[Avatar] 删除头像文件失败（可能已不存在）: ${fileError instanceof Error ? fileError.message : '未知错误'}`, 'warn');
+        }
+      }
+      
       const filePath = `${avatarDir}/${profile.id}.json`;
       await window.electronAPI.avatar.delete(filePath);
       addLog(`[Avatar] 删除人设成功: ${profile.name}`, 'info');
@@ -403,10 +433,13 @@ const AvatarManager: React.FC = () => {
   return (
     <div className="avatar-manager">
       <div className="avatar-header">
-        <Title level={2} style={{ margin: 0 }}>用户人设管理</Title>
-        <Text type="secondary" style={{ marginBottom: 16, display: 'block' }}>
-          存储路径: {avatarDir || '加载中...'}
-        </Text>
+        <h2>用户人设管理</h2>
+        <StoragePathDisplay
+          label="人设存储路径"
+          path={avatarDir}
+          onOpenFolder={handleOpenFolder}
+          onCopyPath={handleCopyPath}
+        />
         <Space>
           <Button onClick={loadProfiles}>
             刷新

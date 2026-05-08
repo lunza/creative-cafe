@@ -18,17 +18,16 @@ import { useDataStore } from '../../stores/dataStore';
 import { useWorldBookStore } from '../../stores/worldBookStore';
 import { useSettingStore } from '../../stores/settingStore';
 import { useLogStore } from '../../stores/logStore';
-import { useUIStore } from '../../stores/uiStore';
 import { ANIMATIONS, ANIMATION_DELAYS, CARD_ANIMATIONS, HOVER_EFFECTS, BUTTON_ANIMATIONS } from '../../utils/animation';
-import { AppSetting } from '../../settings';
+
 import './Dashboard.css';
 
 const Dashboard: React.FC = () => {
-  const { characters, installedPlugins, avatars, fetchCharacters, fetchInstalledPlugins, fetchAvatars } = useDataStore();
-  const { worldBooks, fetchWorldBooks } = useWorldBookStore();
+  const { characters, installedPlugins, avatars, fetchCharacters, fetchInstalledPlugins, fetchAvatars, error: dataError } = useDataStore();
+  const { worldBooks, fetchWorldBooks, error: worldBookError } = useWorldBookStore();
   const { setting, fetchSetting } = useSettingStore();
   const { addLog } = useLogStore();
-  const { animationEnabled } = useUIStore();
+  const animationEnabled = setting?.animationEnabled ?? true;
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
   const backgroundRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(800);
@@ -80,6 +79,7 @@ const Dashboard: React.FC = () => {
     fetchWorldBooks();
     fetchCharacters();
     fetchInstalledPlugins();
+    fetchAvatars();
   }, [fetchSetting, fetchWorldBooks, fetchCharacters, fetchInstalledPlugins, fetchAvatars]);
 
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
@@ -194,12 +194,20 @@ const Dashboard: React.FC = () => {
   const [tips, setTips] = useState<Tip[]>([]);
   const [tipsLoading, setTipsLoading] = useState(true);
   const carouselRef = useRef<any>(null);
+  const tipsCacheRef = useRef<Tip[] | null>(null);
 
   useEffect(() => {
     const loadTips = async () => {
+      if (tipsCacheRef.current) {
+        setTips(tipsCacheRef.current);
+        setTipsLoading(false);
+        return;
+      }
+      
       try {
         const tipsData = await window.electronAPI.file.readJson('tips');
         if (tipsData && Array.isArray(tipsData)) {
+          tipsCacheRef.current = tipsData;
           setTips(tipsData);
         }
       } catch (error) {
@@ -207,6 +215,7 @@ const Dashboard: React.FC = () => {
         const defaultTips: Tip[] = [
           { id: 1, title: "使用提示", content: "欢迎使用 Creative-Cafe！这是一个强大的角色卡和世界书管理工具。" }
         ];
+        tipsCacheRef.current = defaultTips;
         setTips(defaultTips);
       } finally {
         setTipsLoading(false);
@@ -236,6 +245,10 @@ const Dashboard: React.FC = () => {
               src={setting.dashboardBackgroundImage}
               alt="仪表盘背景"
               onLoad={handleImageLoad}
+              onError={() => {
+                addLog('仪表盘背景图片加载失败', 'warn');
+                setImageSize({ width: 0, height: 0 });
+              }}
               style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', borderRadius: '16px' }}
             />
           ) : (
@@ -249,22 +262,42 @@ const Dashboard: React.FC = () => {
         <Row gutter={[16, 16]} style={{ marginTop: 24, width: '100%', marginLeft: 0, marginRight: 0 }}>
           <Col xs={24} sm={12} md={4} style={{ paddingLeft: 8, paddingRight: 8 }}>
             <Card onClick={handleOpenWorldBookFolder} style={{ cursor: 'pointer' }} hoverable className={getAnimatedClass('', `${ANIMATIONS.fadeInUp} ${ANIMATION_DELAYS['100']} ${CARD_ANIMATIONS.animated} ${HOVER_EFFECTS.lift}`)}>
-              <Statistic title="世界书数量" value={totalWorldBooks} prefix={<BookOutlined />} valueStyle={{ color: '#3f8600' }} />
+              <Statistic 
+                title="世界书数量" 
+                value={worldBookError ? '加载失败' : totalWorldBooks} 
+                prefix={<BookOutlined />} 
+                valueStyle={{ color: worldBookError ? '#cf1322' : '#3f8600' }} 
+              />
             </Card>
           </Col>
           <Col xs={24} sm={12} md={4} style={{ paddingLeft: 8, paddingRight: 8 }}>
             <Card onClick={handleOpenCharacterFolder} style={{ cursor: 'pointer' }} hoverable className={getAnimatedClass('', `${ANIMATIONS.fadeInUp} ${ANIMATION_DELAYS['200']} ${CARD_ANIMATIONS.animated} ${HOVER_EFFECTS.lift}`)}>
-              <Statistic title="角色卡数量" value={totalCharacters} prefix={<UserOutlined />} valueStyle={{ color: '#1890ff' }} />
+              <Statistic 
+                title="角色卡数量" 
+                value={dataError ? '加载失败' : totalCharacters} 
+                prefix={<UserOutlined />} 
+                valueStyle={{ color: dataError ? '#cf1322' : '#1890ff' }} 
+              />
             </Card>
           </Col>
           <Col xs={24} sm={12} md={4} style={{ paddingLeft: 8, paddingRight: 8 }}>
             <Card onClick={handleOpenAvatarFolder} style={{ cursor: 'pointer' }} hoverable className={getAnimatedClass('', `${ANIMATIONS.fadeInUp} ${ANIMATION_DELAYS['300']} ${CARD_ANIMATIONS.animated} ${HOVER_EFFECTS.lift}`)}>
-              <Statistic title="用户设定数量" value={totalAvatars} prefix={<AvatarIcon />} valueStyle={{ color: '#fa8c16' }} />
+              <Statistic 
+                title="用户设定数量" 
+                value={dataError ? '加载失败' : totalAvatars} 
+                prefix={<AvatarIcon />} 
+                valueStyle={{ color: dataError ? '#cf1322' : '#fa8c16' }} 
+              />
             </Card>
           </Col>
           <Col xs={24} sm={12} md={4} style={{ paddingLeft: 8, paddingRight: 8 }}>
             <Card className={getAnimatedClass('', `${ANIMATIONS.fadeInUp} ${ANIMATION_DELAYS['400']} ${CARD_ANIMATIONS.animated} ${HOVER_EFFECTS.lift}`)}>
-              <Statistic title="已安装插件" value={totalPlugins} prefix={<ThunderboltOutlined />} valueStyle={{ color: '#722ed1' }} />
+              <Statistic 
+                title="已安装插件" 
+                value={dataError ? '加载失败' : totalPlugins} 
+                prefix={<ThunderboltOutlined />} 
+                valueStyle={{ color: dataError ? '#cf1322' : '#722ed1' }} 
+              />
             </Card>
           </Col>
           <Col xs={24} sm={12} md={4} style={{ paddingLeft: 8, paddingRight: 8 }}>

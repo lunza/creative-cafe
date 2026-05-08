@@ -14,7 +14,9 @@ import {
   UserOutlined,
   RobotOutlined,
   ExperimentOutlined,
-  MessageOutlined
+  MessageOutlined,
+  FolderOpenOutlined,
+  CopyOutlined
 } from '@ant-design/icons';
 import { useDataStore } from '../../stores/dataStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -29,6 +31,8 @@ import { CharacterDialogueChat } from './CharacterDialogueChat';
 import type { CharacterInfo } from './CharacterDialogueChat';
 import { WorldBookRelationPanel } from './WorldBookRelationPanel';
 import { useWorldBookStore } from '../../stores/worldBookStore';
+import { FieldEditor } from './FieldEditor';
+import { StoragePathDisplay } from '../common/StoragePathDisplay';
 import './CharacterManager.css';
 
 const { Text } = Typography;
@@ -45,8 +49,37 @@ interface Character {
   cardVersion?: 'v1' | 'v2' | 'v3';
 }
 
-const thumbnailCache: Map<string, string> = new Map();
-const thumbnailErrorCache: Map<string, boolean> = new Map();
+class LimitedCache<K, V> {
+  private cache = new Map<K, V>();
+  private maxSize: number;
+  
+  constructor(maxSize: number = 200) {
+    this.maxSize = maxSize;
+  }
+  
+  get(key: K): V | undefined {
+    if (!this.cache.has(key)) return undefined;
+    const value = this.cache.get(key)!;
+    this.cache.delete(key);
+    this.cache.set(key, value);
+    return value;
+  }
+  
+  has(key: K): boolean {
+    return this.cache.has(key);
+  }
+  
+  set(key: K, value: V): void {
+    if (this.cache.size >= this.maxSize) {
+      const firstKey = this.cache.keys().next().value;
+      this.cache.delete(firstKey);
+    }
+    this.cache.set(key, value);
+  }
+}
+
+const thumbnailCache = new LimitedCache<string, string>(200);
+const thumbnailErrorCache = new LimitedCache<string, boolean>(200);
 
 const ThumbnailImage: React.FC<{ filePath: string; name: string; size?: number }> = ({ filePath, name, size = 60 }) => {
   const [imageSrc, setImageSrc] = useState<string | null>(thumbnailCache.get(filePath) || null);
@@ -260,9 +293,27 @@ const CharacterManager: React.FC = () => {
   const [editingContent, setEditingContent] = useState<any>(null);
   const [formValues, setFormValues] = useState<any>({});
   const [originalValues, setOriginalValues] = useState<any>({});
-  const [translatingField, setTranslatingField] = useState<string | null>(null);
-  const [polishingField, setPolishingField] = useState<string | null>(null);
-  const [generatingField, setGeneratingField] = useState<string | null>(null);
+  // AI操作状态合并 - 统一翻译/润色/生成操作
+interface AIOperationState {
+  type: 'translate' | 'polish' | 'generate';
+  field: string;
+}
+
+const [aiOperation, setAiOperation] = useState<AIOperationState | null>(null);
+
+// 向后兼容的getter/setter
+const translatingField = aiOperation?.type === 'translate' ? aiOperation.field : null;
+const setTranslatingField = (field: string | null) => {
+  setAiOperation(field ? { type: 'translate', field } : null);
+};
+const polishingField = aiOperation?.type === 'polish' ? aiOperation.field : null;
+const setPolishingField = (field: string | null) => {
+  setAiOperation(field ? { type: 'polish', field } : null);
+};
+const generatingField = aiOperation?.type === 'generate' ? aiOperation.field : null;
+const setGeneratingField = (field: string | null) => {
+  setAiOperation(field ? { type: 'generate', field } : null);
+};
   const [characterDir, setCharacterDir] = useState<string>('');
   const [polishRequirements, setPolishRequirements] = useState<string>('');
   const [isPolishModalOpen, setIsPolishModalOpen] = useState<boolean>(false);
@@ -305,6 +356,29 @@ const CharacterManager: React.FC = () => {
     getCharacterDir();
     fetchCharacters();
   }, [fetchCharacters, addLog]);
+
+  const handleOpenFolder = async () => {
+    try {
+      const folderPath = setting?.characterPath || '__USER_DATA__/data/characters';
+      const userDataPath = await window.electronAPI.app.getUserDataPath();
+      const resolvedPath = folderPath.replace('__USER_DATA__', userDataPath);
+      await window.electronAPI.file.openFolder(resolvedPath);
+    } catch (error) {
+      message.error('打开文件夹失败');
+    }
+  };
+
+  const handleCopyPath = async () => {
+    try {
+      const folderPath = setting?.characterPath || '__USER_DATA__/data/characters';
+      const userDataPath = await window.electronAPI.app.getUserDataPath();
+      const resolvedPath = folderPath.replace('__USER_DATA__', userDataPath);
+      await navigator.clipboard.writeText(resolvedPath);
+      message.success('路径已复制到剪贴板');
+    } catch (error) {
+      message.error('复制路径失败');
+    }
+  };
 
   const handleOptimize = async (path: string) => {
     addLog(`[Character] 开始优化角色卡: ${path}`);
@@ -438,6 +512,50 @@ const CharacterManager: React.FC = () => {
       addLog(`[Character] 读取角色卡失败: ${record.path}`, 'error');
       message.error('读取角色卡失败');
     }
+  };
+
+  const handleCreateCharacter = () => {
+    addLog('[Character] 创建新角色卡');
+    const blankCharacter = {
+      path: '',
+      data: {
+        name: '新角色',
+        description: '',
+        personality: '',
+        scenario: '',
+        first_mes: '',
+        mes_example: [],
+        creator_notes: '',
+        nickname: '',
+        source: '',
+        character_version: '',
+        creator: '',
+        post_history_instructions: '',
+        tags: [],
+        alternate_greetings: [],
+        extensions: {},
+        group_only_greetings: []
+      }
+    };
+    setEditingItem(blankCharacter);
+    setEditingContent(blankCharacter.data);
+    setFormValues({
+      name: '新角色',
+      description: '',
+      personality: '',
+      scenario: '',
+      first_mes: '',
+      mes_example: '',
+      creator_notes: '',
+      nickname: '',
+      source: '',
+      character_version: '',
+      creator: '',
+      post_history_instructions: ''
+    });
+    setOriginalValues({});
+    setWorldBookRelations([]);
+    setIsEditModalOpen(true);
   };
 
   const handleEditModalOk = async () => {
@@ -1110,9 +1228,12 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
     <div className="character-manager">
       <div className="character-header">
         <h2>角色卡管理</h2>
-        <Text type="secondary" style={{ marginBottom: 16, display: 'block' }}>
-          角色卡存储地址: {characterDir}
-        </Text>
+        <StoragePathDisplay
+          label="角色卡存储路径"
+          path={characterDir}
+          onOpenFolder={handleOpenFolder}
+          onCopyPath={handleCopyPath}
+        />
         <Card size="small" style={{ marginBottom: 16, background: '#fffbe6', borderColor: '#ffe58f' }}>
           <Space>
             <Text type="warning">ℹ️ 提示：</Text>
@@ -1126,7 +1247,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
           <Button icon={<UploadOutlined />} onClick={handleImportCharacter}>
             导入角色卡
           </Button>
-          <Button type="primary" icon={<PlusOutlined />}>
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleCreateCharacter}>
             新建角色卡
           </Button>
         </Space>
@@ -1667,210 +1788,78 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
         <div style={{ maxHeight: 600, overflowY: 'auto' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
             <div>
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1890ff' }}>角色名称</label>
-                <Space style={{ width: '100%' }}>
-                  <Input 
-                    style={{ flex: 1 }} 
-                    value={formValues.name} 
-                    onChange={(e) => setFormValues({ ...formValues, name: e.target.value })} 
-                    placeholder="请输入角色名称"
-                  />
-                  <Button 
-                    type="primary" 
-                    icon={translatingField === 'name' ? <LoadingOutlined spin /> : <TranslationOutlined />} 
-                    onClick={() => handleTranslate('name')}
-                    loading={translatingField === 'name'}
-                  >
-                    翻译
-                  </Button>
-                  <Button 
-                    type="primary" 
-                    icon={polishingField === 'name' ? <LoadingOutlined spin /> : <EditOutlined />} 
-                    onClick={() => handlePolish('name')}
-                    loading={polishingField === 'name'}
-                  >
-                    润色
-                  </Button>
-                </Space>
-                <Button 
-                  type="text" 
-                  style={{ marginTop: 8 }} 
-                  onClick={() => handleRestore('name')}
-                >
-                  还原
-                </Button>
-              </div>
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1890ff' }}>昵称</label>
-                <Space style={{ width: '100%' }}>
-                  <Input 
-                    style={{ flex: 1 }} 
-                    value={formValues.nickname} 
-                    onChange={(e) => setFormValues({ ...formValues, nickname: e.target.value })} 
-                    placeholder="请输入昵称"
-                  />
-                  <Button 
-                    type="primary" 
-                    icon={translatingField === 'nickname' ? <LoadingOutlined spin /> : <TranslationOutlined />} 
-                    onClick={() => handleTranslate('nickname')}
-                    loading={translatingField === 'nickname'}
-                  >
-                    翻译
-                  </Button>
-                  <Button 
-                    type="primary" 
-                    icon={polishingField === 'nickname' ? <LoadingOutlined spin /> : <EditOutlined />} 
-                    onClick={() => handlePolish('nickname')}
-                    loading={polishingField === 'nickname'}
-                  >
-                    润色
-                  </Button>
-                </Space>
-                <Button 
-                  type="text" 
-                  style={{ marginTop: 8 }} 
-                  onClick={() => handleRestore('nickname')}
-                >
-                  还原
-                </Button>
-              </div>
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1890ff' }}>来源</label>
-                <Space style={{ width: '100%' }}>
-                  <Input 
-                    style={{ flex: 1 }} 
-                    value={formValues.source} 
-                    onChange={(e) => setFormValues({ ...formValues, source: e.target.value })} 
-                    placeholder="请输入来源"
-                  />
-                  <Button 
-                    type="primary" 
-                    icon={translatingField === 'source' ? <LoadingOutlined spin /> : <TranslationOutlined />} 
-                    onClick={() => handleTranslate('source')}
-                    loading={translatingField === 'source'}
-                  >
-                    翻译
-                  </Button>
-                  <Button 
-                    type="primary" 
-                    icon={polishingField === 'source' ? <LoadingOutlined spin /> : <EditOutlined />} 
-                    onClick={() => handlePolish('source')}
-                    loading={polishingField === 'source'}
-                  >
-                    润色
-                  </Button>
-                </Space>
-                <Button 
-                  type="text" 
-                  style={{ marginTop: 8 }} 
-                  onClick={() => handleRestore('source')}
-                >
-                  还原
-                </Button>
-              </div>
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1890ff' }}>创建者</label>
-                <Space style={{ width: '100%' }}>
-                  <Input 
-                    style={{ flex: 1 }} 
-                    value={formValues.creator} 
-                    onChange={(e) => setFormValues({ ...formValues, creator: e.target.value })} 
-                    placeholder="请输入创建者"
-                  />
-                  <Button 
-                    type="primary" 
-                    icon={translatingField === 'creator' ? <LoadingOutlined spin /> : <TranslationOutlined />} 
-                    onClick={() => handleTranslate('creator')}
-                    loading={translatingField === 'creator'}
-                  >
-                    翻译
-                  </Button>
-                  <Button 
-                    type="primary" 
-                    icon={polishingField === 'creator' ? <LoadingOutlined spin /> : <EditOutlined />} 
-                    onClick={() => handlePolish('creator')}
-                    loading={polishingField === 'creator'}
-                  >
-                    润色
-                  </Button>
-                </Space>
-                <Button 
-                  type="text" 
-                  style={{ marginTop: 8 }} 
-                  onClick={() => handleRestore('creator')}
-                >
-                  还原
-                </Button>
-              </div>
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1890ff' }}>版本信息</label>
-                <Space style={{ width: '100%' }}>
-                  <Input 
-                    style={{ flex: 1 }} 
-                    value={formValues.character_version} 
-                    onChange={(e) => setFormValues({ ...formValues, character_version: e.target.value })} 
-                    placeholder="请输入版本信息"
-                  />
-                  <Button 
-                    type="primary" 
-                    icon={translatingField === 'character_version' ? <LoadingOutlined spin /> : <TranslationOutlined />} 
-                    onClick={() => handleTranslate('character_version')}
-                    loading={translatingField === 'character_version'}
-                  >
-                    翻译
-                  </Button>
-                  <Button 
-                    type="primary" 
-                    icon={polishingField === 'character_version' ? <LoadingOutlined spin /> : <EditOutlined />} 
-                    onClick={() => handlePolish('character_version')}
-                    loading={polishingField === 'character_version'}
-                  >
-                    润色
-                  </Button>
-                </Space>
-                <Button 
-                  type="text" 
-                  style={{ marginTop: 8 }} 
-                  onClick={() => handleRestore('character_version')}
-                >
-                  还原
-                </Button>
-              </div>
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1890ff' }}>标签（用逗号分隔）</label>
-                <Space style={{ width: '100%' }}>
-                  <Input 
-                    style={{ flex: 1 }} 
-                    value={formValues.tags} 
-                    onChange={(e) => setFormValues({ ...formValues, tags: e.target.value })} 
-                    placeholder="请输入标签，用逗号分隔"
-                  />
-                  <Button 
-                    type="primary" 
-                    icon={translatingField === 'tags' ? <LoadingOutlined spin /> : <TranslationOutlined />} 
-                    onClick={() => handleTranslate('tags')}
-                    loading={translatingField === 'tags'}
-                  >
-                    翻译
-                  </Button>
-                  <Button 
-                    type="primary" 
-                    icon={polishingField === 'tags' ? <LoadingOutlined spin /> : <EditOutlined />} 
-                    onClick={() => handlePolish('tags')}
-                    loading={polishingField === 'tags'}
-                  >
-                    润色
-                  </Button>
-                </Space>
-                <Button 
-                  type="text" 
-                  style={{ marginTop: 8 }} 
-                  onClick={() => handleRestore('tags')}
-                >
-                  还原
-                </Button>
-              </div>
+              <FieldEditor
+                label="角色名称"
+                field="name"
+                value={formValues.name}
+                onChange={(value) => setFormValues({ ...formValues, name: value })}
+                onTranslate={handleTranslate}
+                onPolish={handlePolish}
+                onRestore={handleRestore}
+                translatingField={translatingField}
+                polishingField={polishingField}
+                generatingField={generatingField}
+              />
+              <FieldEditor
+                label="昵称"
+                field="nickname"
+                value={formValues.nickname}
+                onChange={(value) => setFormValues({ ...formValues, nickname: value })}
+                onTranslate={handleTranslate}
+                onPolish={handlePolish}
+                onRestore={handleRestore}
+                translatingField={translatingField}
+                polishingField={polishingField}
+                generatingField={generatingField}
+              />
+              <FieldEditor
+                label="来源"
+                field="source"
+                value={formValues.source}
+                onChange={(value) => setFormValues({ ...formValues, source: value })}
+                onTranslate={handleTranslate}
+                onPolish={handlePolish}
+                onRestore={handleRestore}
+                translatingField={translatingField}
+                polishingField={polishingField}
+                generatingField={generatingField}
+              />
+              <FieldEditor
+                label="创建者"
+                field="creator"
+                value={formValues.creator}
+                onChange={(value) => setFormValues({ ...formValues, creator: value })}
+                onTranslate={handleTranslate}
+                onPolish={handlePolish}
+                onRestore={handleRestore}
+                translatingField={translatingField}
+                polishingField={polishingField}
+                generatingField={generatingField}
+              />
+              <FieldEditor
+                label="版本信息"
+                field="character_version"
+                value={formValues.character_version}
+                onChange={(value) => setFormValues({ ...formValues, character_version: value })}
+                onTranslate={handleTranslate}
+                onPolish={handlePolish}
+                onRestore={handleRestore}
+                translatingField={translatingField}
+                polishingField={polishingField}
+                generatingField={generatingField}
+              />
+              <FieldEditor
+                label="标签（用逗号分隔）"
+                field="tags"
+                value={formValues.tags}
+                onChange={(value) => setFormValues({ ...formValues, tags: value })}
+                onTranslate={handleTranslate}
+                onPolish={handlePolish}
+                onRestore={handleRestore}
+                translatingField={translatingField}
+                polishingField={polishingField}
+                generatingField={generatingField}
+              />
               <div style={{ marginBottom: 16 }}>
                 <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1890ff' }}>仅群组问候</label>
                 <Checkbox 
@@ -1882,402 +1871,159 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
               </div>
             </div>
             <div>
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1890ff' }}>个性</label>
-                <div style={{ marginBottom: 8 }}>
-                  <Input.TextArea 
-                    value={formValues.personality} 
-                    onChange={(e) => setFormValues({ ...formValues, personality: e.target.value })} 
-                    placeholder="请输入角色个性"
-                    rows={4}
-                  />
-                </div>
-                <Space>
-                  <Button 
-                    type="primary" 
-                    icon={generatingField === 'personality' ? <LoadingOutlined spin /> : <RobotOutlined />} 
-                    onClick={() => handleGenerate('personality')}
-                    loading={generatingField === 'personality'}
-                  >
-                    生成
-                  </Button>
-                  <Button 
-                    type="primary" 
-                    icon={translatingField === 'personality' ? <LoadingOutlined spin /> : <TranslationOutlined />} 
-                    onClick={() => handleTranslate('personality')}
-                    loading={translatingField === 'personality'}
-                  >
-                    翻译
-                  </Button>
-                  <Button 
-                    type="primary" 
-                    icon={polishingField === 'personality' ? <LoadingOutlined spin /> : <EditOutlined />} 
-                    onClick={() => handlePolish('personality')}
-                    loading={polishingField === 'personality'}
-                  >
-                    润色
-                  </Button>
-                  <Button 
-                    type="text" 
-                    onClick={() => handleRestore('personality')}
-                  >
-                    还原
-                  </Button>
-                </Space>
-              </div>
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1890ff' }}>场景</label>
-                <div style={{ marginBottom: 8 }}>
-                  <Input.TextArea 
-                    value={formValues.scenario} 
-                    onChange={(e) => setFormValues({ ...formValues, scenario: e.target.value })} 
-                    placeholder="请输入场景"
-                    rows={4}
-                  />
-                </div>
-                <Space>
-                  <Button 
-                    type="primary" 
-                    icon={generatingField === 'scenario' ? <LoadingOutlined spin /> : <RobotOutlined />} 
-                    onClick={() => handleGenerate('scenario')}
-                    loading={generatingField === 'scenario'}
-                  >
-                    生成
-                  </Button>
-                  <Button 
-                    type="primary" 
-                    icon={translatingField === 'scenario' ? <LoadingOutlined spin /> : <TranslationOutlined />} 
-                    onClick={() => handleTranslate('scenario')}
-                    loading={translatingField === 'scenario'}
-                  >
-                    翻译
-                  </Button>
-                  <Button 
-                    type="primary" 
-                    icon={polishingField === 'scenario' ? <LoadingOutlined spin /> : <EditOutlined />} 
-                    onClick={() => handlePolish('scenario')}
-                    loading={polishingField === 'scenario'}
-                  >
-                    润色
-                  </Button>
-                  <Button 
-                    type="text" 
-                    onClick={() => handleRestore('scenario')}
-                  >
-                    还原
-                  </Button>
-                </Space>
-              </div>
-            </div>
-          </div>
-          
-          <div style={{ marginBottom: 20 }}>
-            <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1890ff' }}>描述</label>
-            <div style={{ marginBottom: 8 }}>
-              <Input.TextArea 
-                value={formValues.description} 
-                onChange={(e) => setFormValues({ ...formValues, description: e.target.value })} 
-                placeholder="请输入角色描述"
-                rows={6}
-              />
-            </div>
-            <Space>
-              <Button 
-                type="primary" 
-                icon={generatingField === 'description' ? <LoadingOutlined spin /> : <RobotOutlined />} 
-                onClick={() => handleGenerate('description')}
-                loading={generatingField === 'description'}
-              >
-                生成
-              </Button>
-              <Button 
-                type="primary" 
-                icon={translatingField === 'description' ? <LoadingOutlined spin /> : <TranslationOutlined />} 
-                onClick={() => handleTranslate('description')}
-                loading={translatingField === 'description'}
-              >
-                翻译
-              </Button>
-              <Button 
-                type="primary" 
-                icon={polishingField === 'description' ? <LoadingOutlined spin /> : <EditOutlined />} 
-                onClick={() => handlePolish('description')}
-                loading={polishingField === 'description'}
-              >
-                润色
-              </Button>
-              <Button 
-                type="text" 
-                onClick={() => handleRestore('description')}
-              >
-                还原
-              </Button>
-            </Space>
-          </div>
-          
-          <div style={{ marginBottom: 20 }}>
-            <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1890ff' }}>初始消息</label>
-            <div style={{ marginBottom: 8 }}>
-              <Input.TextArea 
-                value={formValues.first_mes} 
-                onChange={(e) => setFormValues({ ...formValues, first_mes: e.target.value })} 
-                placeholder="请输入初始消息"
+              <FieldEditor
+                label="个性"
+                field="personality"
+                value={formValues.personality}
+                onChange={(value) => setFormValues({ ...formValues, personality: value })}
+                inputType="textarea"
                 rows={4}
+                showGenerate
+                onTranslate={handleTranslate}
+                onPolish={handlePolish}
+                onGenerate={handleGenerate}
+                onRestore={handleRestore}
+                translatingField={translatingField}
+                polishingField={polishingField}
+                generatingField={generatingField}
               />
-            </div>
-            <Space>
-              <Button 
-                type="primary" 
-                icon={generatingField === 'first_mes' ? <LoadingOutlined spin /> : <RobotOutlined />} 
-                onClick={() => handleGenerate('first_mes')}
-                loading={generatingField === 'first_mes'}
-              >
-                生成
-              </Button>
-              <Button 
-                type="primary" 
-                icon={translatingField === 'first_mes' ? <LoadingOutlined spin /> : <TranslationOutlined />} 
-                onClick={() => handleTranslate('first_mes')}
-                loading={translatingField === 'first_mes'}
-              >
-                翻译
-              </Button>
-              <Button 
-                type="primary" 
-                icon={polishingField === 'first_mes' ? <LoadingOutlined spin /> : <EditOutlined />} 
-                onClick={() => handlePolish('first_mes')}
-                loading={polishingField === 'first_mes'}
-              >
-                润色
-              </Button>
-              <Button 
-                type="text" 
-                onClick={() => handleRestore('first_mes')}
-              >
-                还原
-              </Button>
-            </Space>
-          </div>
-          
-          <div style={{ marginBottom: 20 }}>
-            <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1890ff' }}>示例消息（每条消息占一行）</label>
-            <div style={{ marginBottom: 8 }}>
-              <Input.TextArea 
-                value={formValues.mes_example} 
-                onChange={(e) => setFormValues({ ...formValues, mes_example: e.target.value })} 
-                placeholder="请输入示例消息，每条消息占一行"
-                rows={6}
-              />
-            </div>
-            <Space>
-              <Button 
-                type="primary" 
-                icon={generatingField === 'mes_example' ? <LoadingOutlined spin /> : <RobotOutlined />} 
-                onClick={() => handleGenerate('mes_example')}
-                loading={generatingField === 'mes_example'}
-              >
-                生成
-              </Button>
-              <Button 
-                type="primary" 
-                icon={translatingField === 'mes_example' ? <LoadingOutlined spin /> : <TranslationOutlined />} 
-                onClick={() => handleTranslate('mes_example')}
-                loading={translatingField === 'mes_example'}
-              >
-                翻译
-              </Button>
-              <Button 
-                type="primary" 
-                icon={polishingField === 'mes_example' ? <LoadingOutlined spin /> : <EditOutlined />} 
-                onClick={() => handlePolish('mes_example')}
-                loading={polishingField === 'mes_example'}
-              >
-                润色
-              </Button>
-              <Button 
-                type="text" 
-                onClick={() => handleRestore('mes_example')}
-              >
-                还原
-              </Button>
-            </Space>
-          </div>
-          
-          <div style={{ marginBottom: 20 }}>
-            <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1890ff' }}>系统提示</label>
-            <div style={{ marginBottom: 8 }}>
-              <Input.TextArea 
-                value={formValues.system_prompt} 
-                onChange={(e) => setFormValues({ ...formValues, system_prompt: e.target.value })} 
-                placeholder="请输入系统提示"
+              <FieldEditor
+                label="场景"
+                field="scenario"
+                value={formValues.scenario}
+                onChange={(value) => setFormValues({ ...formValues, scenario: value })}
+                inputType="textarea"
                 rows={4}
+                showGenerate
+                onTranslate={handleTranslate}
+                onPolish={handlePolish}
+                onGenerate={handleGenerate}
+                onRestore={handleRestore}
+                translatingField={translatingField}
+                polishingField={polishingField}
+                generatingField={generatingField}
               />
             </div>
-            <Space>
-              <Button 
-                type="primary" 
-                icon={generatingField === 'system_prompt' ? <LoadingOutlined spin /> : <RobotOutlined />} 
-                onClick={() => handleGenerate('system_prompt')}
-                loading={generatingField === 'system_prompt'}
-              >
-                生成
-              </Button>
-              <Button 
-                type="primary" 
-                icon={translatingField === 'system_prompt' ? <LoadingOutlined spin /> : <TranslationOutlined />} 
-                onClick={() => handleTranslate('system_prompt')}
-                loading={translatingField === 'system_prompt'}
-              >
-                翻译
-              </Button>
-              <Button 
-                type="primary" 
-                icon={polishingField === 'system_prompt' ? <LoadingOutlined spin /> : <EditOutlined />} 
-                onClick={() => handlePolish('system_prompt')}
-                loading={polishingField === 'system_prompt'}
-              >
-                润色
-              </Button>
-              <Button 
-                type="text" 
-                onClick={() => handleRestore('system_prompt')}
-              >
-                还原
-              </Button>
-            </Space>
           </div>
           
-          <div style={{ marginBottom: 20 }}>
-            <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1890ff' }}>历史记录后指令</label>
-            <div style={{ marginBottom: 8 }}>
-              <Input.TextArea 
-                value={formValues.post_history_instructions} 
-                onChange={(e) => setFormValues({ ...formValues, post_history_instructions: e.target.value })} 
-                placeholder="请输入历史记录后指令"
-                rows={4}
-              />
-            </div>
-            <Space>
-              <Button 
-                type="primary" 
-                icon={generatingField === 'post_history_instructions' ? <LoadingOutlined spin /> : <RobotOutlined />} 
-                onClick={() => handleGenerate('post_history_instructions')}
-                loading={generatingField === 'post_history_instructions'}
-              >
-                生成
-              </Button>
-              <Button 
-                type="primary" 
-                icon={translatingField === 'post_history_instructions' ? <LoadingOutlined spin /> : <TranslationOutlined />} 
-                onClick={() => handleTranslate('post_history_instructions')}
-                loading={translatingField === 'post_history_instructions'}
-              >
-                翻译
-              </Button>
-              <Button 
-                type="primary" 
-                icon={polishingField === 'post_history_instructions' ? <LoadingOutlined spin /> : <EditOutlined />} 
-                onClick={() => handlePolish('post_history_instructions')}
-                loading={polishingField === 'post_history_instructions'}
-              >
-                润色
-              </Button>
-              <Button 
-                type="text" 
-                onClick={() => handleRestore('post_history_instructions')}
-              >
-                还原
-              </Button>
-            </Space>
-          </div>
+          <FieldEditor
+            label="描述"
+            field="description"
+            value={formValues.description}
+            onChange={(value) => setFormValues({ ...formValues, description: value })}
+            inputType="textarea"
+            rows={6}
+            showGenerate
+            onTranslate={handleTranslate}
+            onPolish={handlePolish}
+            onGenerate={handleGenerate}
+            onRestore={handleRestore}
+            translatingField={translatingField}
+            polishingField={polishingField}
+            generatingField={generatingField}
+          />
           
-          <div style={{ marginBottom: 20 }}>
-            <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1890ff' }}>替代问候（每条问候占一行）</label>
-            <div style={{ marginBottom: 8 }}>
-              <Input.TextArea 
-                value={formValues.alternate_greetings} 
-                onChange={(e) => setFormValues({ ...formValues, alternate_greetings: e.target.value })} 
-                placeholder="请输入替代问候，每条问候占一行"
-                rows={4}
-              />
-            </div>
-            <Space>
-              <Button 
-                type="primary" 
-                icon={generatingField === 'alternate_greetings' ? <LoadingOutlined spin /> : <RobotOutlined />} 
-                onClick={() => handleGenerate('alternate_greetings')}
-                loading={generatingField === 'alternate_greetings'}
-              >
-                生成
-              </Button>
-              <Button 
-                type="primary" 
-                icon={translatingField === 'alternate_greetings' ? <LoadingOutlined spin /> : <TranslationOutlined />} 
-                onClick={() => handleTranslate('alternate_greetings')}
-                loading={translatingField === 'alternate_greetings'}
-              >
-                翻译
-              </Button>
-              <Button 
-                type="primary" 
-                icon={polishingField === 'alternate_greetings' ? <LoadingOutlined spin /> : <EditOutlined />} 
-                onClick={() => handlePolish('alternate_greetings')}
-                loading={polishingField === 'alternate_greetings'}
-              >
-                润色
-              </Button>
-              <Button 
-                type="text" 
-                onClick={() => handleRestore('alternate_greetings')}
-              >
-                还原
-              </Button>
-            </Space>
-          </div>
+          <FieldEditor
+            label="初始消息"
+            field="first_mes"
+            value={formValues.first_mes}
+            onChange={(value) => setFormValues({ ...formValues, first_mes: value })}
+            inputType="textarea"
+            rows={4}
+            showGenerate
+            onTranslate={handleTranslate}
+            onPolish={handlePolish}
+            onGenerate={handleGenerate}
+            onRestore={handleRestore}
+            translatingField={translatingField}
+            polishingField={polishingField}
+            generatingField={generatingField}
+          />
           
-          <div style={{ marginBottom: 20 }}>
-            <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1890ff' }}>创建者笔记</label>
-            <div style={{ marginBottom: 8 }}>
-              <Input.TextArea 
-                value={formValues.creator_notes} 
-                onChange={(e) => setFormValues({ ...formValues, creator_notes: e.target.value })} 
-                placeholder="请输入创建者笔记"
-                rows={6}
-              />
-            </div>
-            <Space>
-              <Button 
-                type="primary" 
-                icon={generatingField === 'creator_notes' ? <LoadingOutlined spin /> : <RobotOutlined />} 
-                onClick={() => handleGenerate('creator_notes')}
-                loading={generatingField === 'creator_notes'}
-              >
-                生成
-              </Button>
-              <Button 
-                type="primary" 
-                icon={translatingField === 'creator_notes' ? <LoadingOutlined spin /> : <TranslationOutlined />} 
-                onClick={() => handleTranslate('creator_notes')}
-                loading={translatingField === 'creator_notes'}
-              >
-                翻译
-              </Button>
-              <Button 
-                type="primary" 
-                icon={polishingField === 'creator_notes' ? <LoadingOutlined spin /> : <EditOutlined />} 
-                onClick={() => handlePolish('creator_notes')}
-                loading={polishingField === 'creator_notes'}
-              >
-                润色
-              </Button>
-              <Button 
-                type="text" 
-                onClick={() => handleRestore('creator_notes')}
-              >
-                还原
-              </Button>
-            </Space>
-          </div>
+          <FieldEditor
+            label="示例消息（每条消息占一行）"
+            field="mes_example"
+            value={formValues.mes_example}
+            onChange={(value) => setFormValues({ ...formValues, mes_example: value })}
+            inputType="textarea"
+            rows={6}
+            showGenerate
+            onTranslate={handleTranslate}
+            onPolish={handlePolish}
+            onGenerate={handleGenerate}
+            onRestore={handleRestore}
+            translatingField={translatingField}
+            polishingField={polishingField}
+            generatingField={generatingField}
+          />
+          
+          <FieldEditor
+            label="系统提示"
+            field="system_prompt"
+            value={formValues.system_prompt}
+            onChange={(value) => setFormValues({ ...formValues, system_prompt: value })}
+            inputType="textarea"
+            rows={4}
+            showGenerate
+            onTranslate={handleTranslate}
+            onPolish={handlePolish}
+            onGenerate={handleGenerate}
+            onRestore={handleRestore}
+            translatingField={translatingField}
+            polishingField={polishingField}
+            generatingField={generatingField}
+          />
+          
+          <FieldEditor
+            label="历史记录后指令"
+            field="post_history_instructions"
+            value={formValues.post_history_instructions}
+            onChange={(value) => setFormValues({ ...formValues, post_history_instructions: value })}
+            inputType="textarea"
+            rows={4}
+            showGenerate
+            onTranslate={handleTranslate}
+            onPolish={handlePolish}
+            onGenerate={handleGenerate}
+            onRestore={handleRestore}
+            translatingField={translatingField}
+            polishingField={polishingField}
+            generatingField={generatingField}
+          />
+          
+          <FieldEditor
+            label="替代问候（每条问候占一行）"
+            field="alternate_greetings"
+            value={formValues.alternate_greetings}
+            onChange={(value) => setFormValues({ ...formValues, alternate_greetings: value })}
+            inputType="textarea"
+            rows={4}
+            showGenerate
+            onTranslate={handleTranslate}
+            onPolish={handlePolish}
+            onGenerate={handleGenerate}
+            onRestore={handleRestore}
+            translatingField={translatingField}
+            polishingField={polishingField}
+            generatingField={generatingField}
+          />
+          
+          <FieldEditor
+            label="创建者笔记"
+            field="creator_notes"
+            value={formValues.creator_notes}
+            onChange={(value) => setFormValues({ ...formValues, creator_notes: value })}
+            inputType="textarea"
+            rows={6}
+            showGenerate
+            onTranslate={handleTranslate}
+            onPolish={handlePolish}
+            onGenerate={handleGenerate}
+            onRestore={handleRestore}
+            translatingField={translatingField}
+            polishingField={polishingField}
+            generatingField={generatingField}
+          />
 
           <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid var(--border-color, #e8e8e8)' }}>
             <WorldBookRelationPanel

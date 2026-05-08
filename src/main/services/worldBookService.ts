@@ -102,75 +102,16 @@ class WorldBookService {
       for (const oldKey of sortedKeys) {
         const entry = entries[oldKey];
         
-        // 标准化每个条目
+        // 调用 migrateEntry 处理字段迁移和兼容性
+        const migratedEntry = this.migrateEntry(entry);
+        
+        // 标准化每个条目，覆盖索引相关字段
         const fixedEntry = {
-          ...entry,
+          ...migratedEntry,
           // 修正索引
           uid: newIndex,
           id: newIndex,
-          // 确保必需字段存在
-          priority: entry.priority !== undefined ? entry.priority : (entry.order || 100),
-          insertion_order: entry.insertion_order !== undefined ? entry.insertion_order : (entry.order || 100),
-          enabled: entry.enabled !== undefined ? entry.enabled : true,
-          name: entry.name || entry.comment || `Entry ${newIndex}`,
-          // 修正数据类型
-          // 修正数据类型
-      // position 字段：SillyTavern 使用数字类型 (0=before_char, 1=after_char, 2=before_example, 3=at_depth)
-      position: typeof entry.position === 'number' ? entry.position : 1,
-          delayUntilRecursion: typeof entry.delayUntilRecursion === 'boolean' 
-            ? (entry.delayUntilRecursion ? 1 : 0) 
-            : (entry.delayUntilRecursion || 0),
-          // 确保 extensions 字段存在
-          extensions: entry.extensions || {
-            depth: entry.depth || 4,
-            weight: 10,
-            addMemo: entry.addMemo !== undefined ? entry.addMemo : true,
-            displayIndex: entry.displayIndex || 0,
-            useProbability: entry.useProbability !== undefined ? entry.useProbability : true,
-            characterFilter: null,
-            excludeRecursion: entry.excludeRecursion || false
-          },
-          // 确保数组字段存在
-          keysecondary: Array.isArray(entry.keysecondary) ? entry.keysecondary : [],
-          secondary_keys: Array.isArray(entry.secondary_keys) ? entry.secondary_keys : [],
-          tags: Array.isArray(entry.tags) ? entry.tags : [],
-          triggers: Array.isArray(entry.triggers) ? entry.triggers : [],
-          // 确保 characterFilter 存在
-          characterFilter: entry.characterFilter || {
-            isExclude: false,
-            names: [],
-            tags: []
-          },
-          // 确保其他必需字段
-          caseSensitive: entry.caseSensitive !== undefined ? entry.caseSensitive : null,
-          matchWholeWords: entry.matchWholeWords !== undefined ? entry.matchWholeWords : null,
-          useGroupScoring: entry.useGroupScoring !== undefined ? entry.useGroupScoring : null,
-          scanDepth: entry.scanDepth !== undefined ? entry.scanDepth : null,
-          groupOverride: entry.groupOverride !== undefined ? entry.groupOverride : false,
-          groupWeight: entry.groupWeight !== undefined ? entry.groupWeight : 100,
-          outletName: entry.outletName || '',
-          matchPersonaDescription: entry.matchPersonaDescription !== undefined ? entry.matchPersonaDescription : false,
-          matchCharacterDescription: entry.matchCharacterDescription !== undefined ? entry.matchCharacterDescription : false,
-          matchCharacterPersonality: entry.matchCharacterPersonality !== undefined ? entry.matchCharacterPersonality : false,
-          matchCharacterDepthPrompt: entry.matchCharacterDepthPrompt !== undefined ? entry.matchCharacterDepthPrompt : false,
-          matchScenario: entry.matchScenario !== undefined ? entry.matchScenario : false,
-          matchCreatorNotes: entry.matchCreatorNotes !== undefined ? entry.matchCreatorNotes : false,
-          ignoreBudget: entry.ignoreBudget !== undefined ? entry.ignoreBudget : false,
-          preventRecursion: entry.preventRecursion !== undefined ? entry.preventRecursion : false,
-          vectorized: entry.vectorized !== undefined ? entry.vectorized : false,
-          selectiveLogic: entry.selectiveLogic !== undefined ? entry.selectiveLogic : 0,
-          automationId: entry.automationId || '',
-          displayIndex: entry.displayIndex !== undefined ? entry.displayIndex : 0,
-          useProbability: entry.useProbability !== undefined ? entry.useProbability : true,
-          addMemo: entry.addMemo !== undefined ? entry.addMemo : true,
-          excludeRecursion: entry.excludeRecursion !== undefined ? entry.excludeRecursion : false,
-          depth: entry.depth !== undefined ? entry.depth : 4,
-          probability: entry.probability !== undefined ? entry.probability : 100,
-          group: entry.group || '',
-          disable: entry.disable !== undefined ? entry.disable : false,
-          constant: entry.constant !== undefined ? entry.constant : false,
-          selective: entry.selective !== undefined ? entry.selective : true,
-          order: entry.order !== undefined ? entry.order : 100
+          name: migratedEntry.name || `Entry ${newIndex}`
         };
         
         fixedEntries[newIndex.toString()] = fixedEntry;
@@ -189,18 +130,24 @@ class WorldBookService {
   private migrateEntry(entry: any): any {
     if (!entry) return entry;
     
+    // 统一 secondary_keys 命名：支持 keysecondary（旧版）和 secondaryKeys（新版）
+    const secondaryKeys = Array.isArray(entry.secondaryKeys) 
+      ? entry.secondaryKeys 
+      : Array.isArray(entry.keysecondary) 
+        ? entry.keysecondary 
+        : (typeof entry.keysecondary === 'string' && entry.keysecondary.trim() !== '' ? [entry.keysecondary] : []);
+    
     return {
       ...entry,
       // 迁移 key 为数组 (string → string[])
       key: Array.isArray(entry.key) 
         ? entry.key 
         : (typeof entry.key === 'string' && entry.key.trim() !== '' ? [entry.key] : []),
-      // 迁移 keysecondary 为数组 (string → string[])
-      keysecondary: Array.isArray(entry.keysecondary) 
-        ? entry.keysecondary 
-        : (typeof entry.keysecondary === 'string' && entry.keysecondary.trim() !== '' ? [entry.keysecondary] : []),
+      // 统一使用 secondaryKeys 内部命名
+      secondaryKeys,
+      // 兼容旧版字段名，避免破坏现有数据
+      keysecondary: secondaryKeys,
       // 确保数组字段存在
-      secondary_keys: Array.isArray(entry.secondary_keys) ? entry.secondary_keys : [],
       tags: Array.isArray(entry.tags) ? entry.tags : [],
       triggers: Array.isArray(entry.triggers) ? entry.triggers : [],
       // 确保 characterFilter 存在
@@ -217,7 +164,7 @@ class WorldBookService {
       probability: entry.probability !== undefined ? entry.probability : 100,
       group: entry.group || '',
       disable: entry.disable !== undefined ? entry.disable : false,
-      // 兼容两种命名方式
+      // 兼容两种命名方式，内部统一使用 useRegex
       useRegex: entry.useRegex !== undefined ? entry.useRegex : (entry.use_regex || false),
       vectorized: entry.vectorized !== undefined ? entry.vectorized : false,
       caseSensitive: entry.caseSensitive !== undefined ? entry.caseSensitive : (entry.case_sensitive || false),
@@ -272,10 +219,13 @@ class WorldBookService {
       exportedEntries[key] = {
         ...e,
         // 导出时使用 SillyTavern 的字段名
+        secondary_keys: e.secondaryKeys || e.keysecondary || [],
         use_regex: e.useRegex || false,
         case_sensitive: e.caseSensitive || false,
       };
       // 移除内部字段名
+      delete exportedEntries[key].secondaryKeys;
+      delete exportedEntries[key].keysecondary;
       delete exportedEntries[key].useRegex;
       delete exportedEntries[key].caseSensitive;
     }
@@ -491,7 +441,7 @@ class WorldBookService {
       const settings = storageService.get<any>('settings');
       const vectorConfig = settings?.vector;
 
-      if (!vectorConfig?.autoVectorizeWorldBook) {
+      if (!vectorConfig || !vectorConfig.autoVectorizeWorldBook) {
         return { success: false, error: '自动向量化未启用' };
       }
 

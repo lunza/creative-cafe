@@ -6,25 +6,13 @@ import { useVectorStore } from '../../stores/vectorStore';
 import { VectorScopeSelector } from '../Vector/VectorScopeSelector';
 import type { ColumnsType } from 'antd/es/table';
 import type { TableRowSelection } from 'antd/es/table/interface';
+import type { KnowledgeItem } from '../../types/knowledgeBase';
 
 const { TextArea } = Input;
 const { Option } = Select;
 const { Text } = Typography;
 
 const SUPPORTED_FORMATS = ['.pdf', '.docx', '.doc', '.xlsx', '.xls', '.txt', '.md'];
-
-interface KnowledgeItem {
-  id: string;
-  title: string;
-  content: string;
-  source: string;
-  category: string[];
-  tags: string[];
-  relatedCharacterIds: string[];
-  relatedWorldBookPaths: string[];
-  metadata: Record<string, any>;
-  documentId?: string;
-}
 
 interface TreeKnowledgeItem extends KnowledgeItem {
   key: string;

@@ -4,17 +4,20 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Tabs, Typography, Space } from 'antd';
+import { Tabs, Typography, Space, message } from 'antd';
 import {
   FileTextOutlined,
-  CommentOutlined
+  CommentOutlined,
+  FolderOpenOutlined,
+  CopyOutlined
 } from '@ant-design/icons';
 import MemoryTemplateManager from './TemplateManager';
 import ChatManager from './ChatManager';
+import { StoragePathDisplay } from '../common/StoragePathDisplay';
 import '../../styles/list-common.css';
 import './MemoryChatManager.css';
 
-const { Text } = Typography;
+const { Text, Title } = Typography;
 
 const MemoryChatManager: React.FC = () => {
   const [activeTab, setActiveTab] = useState('templates');
@@ -33,6 +36,25 @@ const MemoryChatManager: React.FC = () => {
     }
   }, []);
 
+  const handleOpenFolder = async () => {
+    try {
+      if (!memoryDir) return;
+      await window.electronAPI.file.openFolder(memoryDir);
+    } catch (error) {
+      message.error('打开文件夹失败');
+    }
+  };
+
+  const handleCopyPath = async () => {
+    try {
+      if (!memoryDir) return;
+      await navigator.clipboard.writeText(memoryDir);
+      message.success('路径已复制到剪贴板');
+    } catch (error) {
+      message.error('复制路径失败');
+    }
+  };
+
   const tabItems = [
     {
       key: 'templates',
@@ -50,12 +72,14 @@ const MemoryChatManager: React.FC = () => {
 
   return (
     <div className="memory-chat-manager-container list-container">
+      <h2>记忆管理</h2>
       {memoryDir && (
-        <div style={{ marginBottom: 8 }}>
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            存储路径: <Text copyable style={{ fontSize: 12 }}>{memoryDir}</Text>
-          </Text>
-        </div>
+        <StoragePathDisplay
+          label="存储路径"
+          path={memoryDir}
+          onOpenFolder={handleOpenFolder}
+          onCopyPath={handleCopyPath}
+        />
       )}
       <Tabs
         activeKey={activeTab}

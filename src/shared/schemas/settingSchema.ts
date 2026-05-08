@@ -1,3 +1,7 @@
+/**
+ * @deprecated 此Schema未被使用，将在未来移除。
+ * 如需运行时验证设置，请集成到 settingService.validateSetting 中。
+ */
 import { z } from 'zod';
 
 export const settingSchema = z.object({

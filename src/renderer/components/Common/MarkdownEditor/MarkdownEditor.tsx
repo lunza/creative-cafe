@@ -77,7 +77,6 @@ const MarkdownEditorComponent = (
   const rootRef = useRef<HTMLDivElement>(null);
   const crepeRef = useRef<Crepe | null>(null);
   const contentRef = useRef<string>('');
-  const editorInstanceRef = useRef<any>(null);
   const cursorStateRef = useRef<any>(null);
   const lastSavedContentRef = useRef<string>('');
   const onLoadRef = useRef(onLoad);
@@ -124,21 +123,76 @@ const MarkdownEditorComponent = (
     setIsReady(true);
   }, []);
 
+  // 监听外部 value 变化，使用 ref 追踪避免重复同步
+  const lastSyncedValueRef = useRef(value);
+  
   useEffect(() => {
-    console.log(`[MarkdownEditor #${instanceIdRef.current}] value prop changed`, { 
-      newValueLength: value?.length || 0, 
-      oldInternalLength: internalContent.length,
-      storageKey,
-      callStack: new Error().stack?.split('\n').slice(1, 3).join('\n')
-    });
-    if (value !== undefined && value !== internalContent) {
-      console.log(`[MarkdownEditor #${instanceIdRef.current}] Syncing value prop to internalContent`);
-      const safeContent = safeParseContent(value);
-      setInternalContent(safeContent);
-      contentRef.current = safeContent;
-      setContentKey(prev => prev + 1);
+    // 如果 value 没有真正变化，跳过
+    if (value === lastSyncedValueRef.current) {
+      return;
     }
-  }, [value]);
+    
+    // value 变为 undefined 时不同步（可能是组件切换导致）
+    if (value === undefined) {
+      lastSyncedValueRef.current = value;
+      return;
+    }
+    
+    const safeValue = safeParseContent(value);
+    
+    // 检测是否是受控模式的反馈循环：
+    // 如果新 value 与 contentRef 相同，说明是 onChange 回调触发的父组件更新，
+    // 不需要重新同步（用户正在输入，编辑器内容已经是最新的）
+    if (safeValue === contentRef.current) {
+      lastSyncedValueRef.current = value;
+      return;
+    }
+    
+    // 只有当外部 value 与内部状态不同时才同步（说明是真正的外部更新，而非用户输入）
+    if (safeValue !== internalContent) {
+      lastSyncedValueRef.current = value;
+      addLog('MarkdownEditor: 外部 value 变化，同步到内部状态', 'debug', {
+        category: 'system',
+        context: { newValue: safeValue.substring(0, 50), currentInternal: internalContent.substring(0, 50) }
+      });
+      setInternalContent(safeValue);
+      
+      // 如果编辑器已存在，直接更新内容而不重建
+      if (crepeRef.current) {
+        try {
+          // 修复：ProseMirror 不接受空字符串作为文档内容
+          // 空内容时需要重建编辑器以确保正确的文档结构
+          if (safeValue.trim() === '') {
+            addLog('MarkdownEditor: 检测到空内容，重建编辑器实例', 'debug', {
+              category: 'system',
+              context: { contentLength: 0 }
+            });
+            // 空内容时递增 contentKey 重建编辑器，确保光标可见
+            setContentKey(prev => prev + 1);
+          } else {
+            crepeRef.current.editor.cmd.update(safeValue);
+            contentRef.current = safeValue;
+            addLog('MarkdownEditor: 通过 Milkdown API 更新内容（流式兼容）', 'debug', {
+              category: 'system',
+              context: { contentLength: safeValue.length }
+            });
+          }
+        } catch (e) {
+          // 如果 API 更新失败，回退到重建编辑器
+          addLog('MarkdownEditor: Milkdown API 更新失败，回退到重建', 'warn', {
+            category: 'system',
+            error: e instanceof Error ? e.message : String(e)
+          });
+          setContentKey(prev => prev + 1);
+        }
+      } else {
+        setContentKey(prev => prev + 1);
+      }
+      
+      // 同步更新 contentRef，防止 markdownUpdated 监听器的干扰
+      contentRef.current = safeValue;
+    }
+  }, [value, addLog]);
 
   const renderCountRef = useRef(0);
   renderCountRef.current += 1;
@@ -183,7 +237,7 @@ const MarkdownEditorComponent = (
     });
     
     // 如果编辑器已存在，优先使用 Milkdown API 更新内容，避免重建编辑器丢失光标
-    if (crepeRef.current && editorInstanceRef.current) {
+    if (crepeRef.current) {
       try {
         crepeRef.current.editor.cmd.update(safeContent);
         contentRef.current = safeContent;
@@ -435,67 +489,18 @@ const MarkdownEditorComponent = (
 
   // ==================== 副作用处理 ====================
 
-  // 监听外部 value 变化（仅在外部 value 真正变化时同步，避免与用户输入冲突）
-  useEffect(() => {
-    if (value !== undefined) {
-      const safeValue = safeParseContent(value);
-      
-      // 检测是否是受控模式的反馈循环：
-      // 如果新 value 与 contentRef 相同，说明是 onChange 回调触发的父组件更新，
-      // 不需要重新同步（用户正在输入，编辑器内容已经是最新的）
-      if (safeValue === contentRef.current) {
-        // 这是反馈循环，不做任何操作，保持编辑器状态不变
-        return;
-      }
-      
-      // 只有当外部 value 与内部状态不同时才同步（说明是真正的外部更新，而非用户输入）
-      if (safeValue !== internalContent) {
-        addLog('MarkdownEditor: 外部 value 变化，同步到内部状态', 'debug', {
-          category: 'system',
-          context: { newValue: safeValue.substring(0, 50), currentInternal: internalContent.substring(0, 50) }
-        });
-        setInternalContent(safeValue);
-        
-        // 如果编辑器已存在，直接更新内容而不重建
-        if (crepeRef.current && editorInstanceRef.current) {
-          try {
-            // 修复：ProseMirror 不接受空字符串作为文档内容
-            // 空内容时需要重建编辑器以确保正确的文档结构
-            if (safeValue.trim() === '') {
-              addLog('MarkdownEditor: 检测到空内容，重建编辑器实例', 'debug', {
-                category: 'system',
-                context: { contentLength: 0 }
-              });
-              // 空内容时递增 contentKey 重建编辑器，确保光标可见
-              setContentKey(prev => prev + 1);
-            } else {
-              crepeRef.current.editor.cmd.update(safeValue);
-              contentRef.current = safeValue;
-              addLog('MarkdownEditor: 通过 Milkdown API 更新内容（流式兼容）', 'debug', {
-                category: 'system',
-                context: { contentLength: safeValue.length }
-              });
-            }
-          } catch (e) {
-            // 如果 API 更新失败，回退到重建编辑器
-            addLog('MarkdownEditor: Milkdown API 更新失败，回退到重建', 'warn', {
-              category: 'system',
-              error: e instanceof Error ? e.message : String(e)
-            });
-            setContentKey(prev => prev + 1);
-          }
-        } else {
-          setContentKey(prev => prev + 1);
-        }
-        
-        // 同步更新 contentRef，防止 markdownUpdated 监听器的干扰
-        contentRef.current = safeValue;
-      }
-    }
-  }, [value, addLog]);
+  // 跟踪是否已经初始化过
+  const hasInitializedRef = useRef(false);
 
   // 初始化时加载设置和存储的内容
   useEffect(() => {
+    // 如果已经初始化过，跳过
+    if (hasInitializedRef.current) {
+      return;
+    }
+    
+    hasInitializedRef.current = true;
+    
     console.log('[MarkdownEditor] useEffect: init triggered', { 
       enableSave, 
       valueIsUndefined: value === undefined,
@@ -507,7 +512,7 @@ const MarkdownEditorComponent = (
     } else {
       setIsLoading(false);
     }
-  }, [fetchSetting, enableSave, loadFromStorage, value]);
+  }, [fetchSetting, enableSave, loadFromStorage]);
 
   // 注意：组件卸载时不再自动保存内容。
   // 所有内容保存必须通过用户明确的手动操作（点击保存按钮或 Ctrl+S）完成。

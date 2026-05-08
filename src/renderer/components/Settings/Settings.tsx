@@ -6,6 +6,7 @@ import { useSettingStore } from '../../stores/settingStore';
 import { useLogStore } from '../../stores/logStore';
 import { AIEngineSetting } from '../../types/setting';
 import { VectorConfigPanel, VectorConfigPanelRef } from '../Vector/VectorConfigPanel';
+import { AppSetting } from '../../settings';
 import './Settings.css';
 
 const Settings: React.FC = () => {
@@ -271,34 +272,12 @@ const Settings: React.FC = () => {
           dashboardBackgroundImage: dashboardBackgroundImage,
           debugMode: debugMode,
           vector: vectorConfig,
+          autoOptimize: values.autoOptimize ?? false,
+          optimizeLevel: values.optimizeLevel ?? 'light',
+          backupBeforeOptimize: values.backupBeforeOptimize ?? true,
         };
         
         addLog(`更新后的设置: ${JSON.stringify(updatedSetting)}`, 'info');
-        
-        // 检查设置对象的大小
-        const settingSize = JSON.stringify(updatedSetting).length;
-        addLog(`设置对象大小: ${settingSize} bytes`, 'info');
-        
-        // 检查 localStorage 是否可用
-        let storageAvailable = false;
-        try {
-          const testKey = '__creativeCafeTest__';
-          localStorage.setItem(testKey, testKey);
-          localStorage.removeItem(testKey);
-          storageAvailable = true;
-        } catch (error) {
-          storageAvailable = false;
-        }
-        addLog(`localStorage 是否可用: ${storageAvailable}`, 'info');
-        
-        // 检查 localStorage 的使用情况
-        let totalStorageUsed = 0;
-        for (let key in localStorage) {
-          if (localStorage.hasOwnProperty(key)) {
-            totalStorageUsed += localStorage[key].length;
-          }
-        }
-        addLog(`localStorage 已使用: ${totalStorageUsed} bytes`, 'info');
         
         // 尝试保存设置
         try {
@@ -335,6 +314,50 @@ const Settings: React.FC = () => {
               }
             } catch (setDirectoryError) {
               addLog(`更新世界书目录失败: ${setDirectoryError instanceof Error ? setDirectoryError.message : '未知错误'}`, 'error');
+            }
+          }
+          
+          // 更新用户设定目录
+          if (values.avatarPath) {
+            addLog(`更新用户设定目录: ${values.avatarPath}`, 'info');
+            try {
+              const setDirectoryResult = await window.electronAPI.avatar.setDirectory(values.avatarPath);
+              addLog(`用户设定目录更新结果: ${JSON.stringify(setDirectoryResult)}`, 'info');
+            } catch (setDirectoryError) {
+              addLog(`更新用户设定目录失败: ${setDirectoryError instanceof Error ? setDirectoryError.message : '未知错误'}`, 'error');
+            }
+          }
+          
+          // 更新记忆目录
+          if (values.memoryPath) {
+            addLog(`更新记忆目录: ${values.memoryPath}`, 'info');
+            try {
+              const setDirectoryResult = await window.electronAPI.memory.setDirectory(values.memoryPath);
+              addLog(`记忆目录更新结果: ${JSON.stringify(setDirectoryResult)}`, 'info');
+            } catch (setDirectoryError) {
+              addLog(`更新记忆目录失败: ${setDirectoryError instanceof Error ? setDirectoryError.message : '未知错误'}`, 'error');
+            }
+          }
+          
+          // 更新插件目录
+          if (values.pluginPath) {
+            addLog(`更新插件目录: ${values.pluginPath}`, 'info');
+            try {
+              const setDirectoryResult = await window.electronAPI.plugin.setDirectory(values.pluginPath);
+              addLog(`插件目录更新结果: ${JSON.stringify(setDirectoryResult)}`, 'info');
+            } catch (setDirectoryError) {
+              addLog(`更新插件目录失败: ${setDirectoryError instanceof Error ? setDirectoryError.message : '未知错误'}`, 'error');
+            }
+          }
+          
+          // 更新创意目录
+          if (values.creativePath) {
+            addLog(`更新创意目录: ${values.creativePath}`, 'info');
+            try {
+              const setDirectoryResult = await window.electronAPI.creative.setDirectory(values.creativePath);
+              addLog(`创意目录更新结果: ${JSON.stringify(setDirectoryResult)}`, 'info');
+            } catch (setDirectoryError) {
+              addLog(`更新创意目录失败: ${setDirectoryError instanceof Error ? setDirectoryError.message : '未知错误'}`, 'error');
             }
           }
           
@@ -458,7 +481,9 @@ const Settings: React.FC = () => {
         } else {
           // 添加新引擎
           addLog('添加新引擎', 'info');
+          const defaultEngine = AppSetting.defaultSetting.aiEngines[0];
           const newEngine: AIEngineSetting = {
+            ...defaultEngine,
             id: `engine_${Date.now()}`,
             name: values.name || '新引擎',
             api_url: values.api_url || 'http://127.0.0.1:5000',
@@ -466,121 +491,7 @@ const Settings: React.FC = () => {
             model_name: values.model_name || 'qwen3.5-27b-heretic-v3',
             api_mode: values.api_mode || 'text_completion',
             api_key_transmission: values.api_key_transmission || 'body',
-            prompt_template: '',
-            stop_words: '',
-            max_generation_length: 1024,
-            custom_optimization_prompt: '',
-            system_prompt: '',
-            temperature: 1,
-            max_tokens: 300,
-            streaming: true,
-            enable_chain_of_thought: false,
-            freq_pen: 0,
-            presence_pen: 0,
-            top_p: 1,
-            top_k: 0,
-            top_a: 0,
-            min_p: 0.1,
-            rep_pen: 1,
-            openai_max_context: 4095,
-            names_behavior: 0,
-            send_if_empty: '',
-            impersonation_prompt: '',
-            new_chat_prompt: '',
-            new_group_chat_prompt: '',
-            new_example_chat_prompt: '',
-            continue_nudge_prompt: '',
-            bias_preset_selected: '',
-            max_context_unlocked: false,
-            wi_format: '',
-            scenario_format: '',
-            personality_format: '',
-            group_nudge_prompt: '',
-            assistant_prefill: '',
-            assistant_impersonation: '',
-            use_sysprompt: false,
-            squash_system_messages: false,
-            media_inlining: true,
-            continue_prefill: false,
-            continue_postfix: ' ',
-            seed: -1,
-            n: 1,
-            novelai_api_key: '',
-            novelai_model: 'krake-v2',
-            novelai_sampler: 'k_dpm_2',
-            novelai_cfg_scale: 7.0,
-            ai_horde_api_key: '',
-            ai_horde_model: '',
-            ai_horde_max_wait: 60,
-            ai_horde_priority: 50,
-            temp: 2,
-            temperature_last: false,
-            tfs: 1,
-            epsilon_cutoff: 0,
-            eta_cutoff: 0,
-            typical_p: 1,
-            rep_pen_range: 0,
-            rep_pen_decay: 0,
-            rep_pen_slope: 1,
-            no_repeat_ngram_size: 0,
-            penalty_alpha: 0,
-            num_beams: 1,
-            length_penalty: 1,
-            min_length: 0,
-            encoder_rep_pen: 1,
-            skew: 0,
-            do_sample: true,
-            early_stopping: false,
-            dynatemp: false,
-            min_temp: 0,
-            max_temp: 2,
-            dynatemp_exponent: 1,
-            smoothing_factor: 0,
-            smoothing_curve: 1,
-            dry_allowed_length: 2,
-            dry_multiplier: 0,
-            dry_base: 1.75,
-            dry_sequence_breakers: '["\\n", ":", "\\"", "*"]',
-            dry_penalty_last_n: 0,
-            add_bos_token: true,
-            ban_eos_token: false,
-            skip_special_tokens: true,
-            mirostat_mode: 0,
-            mirostat_tau: 5,
-            mirostat_eta: 0.1,
-            guidance_scale: 1,
-            negative_prompt: '',
-            grammar_string: '',
-            json_schema: null,
-            json_schema_allow_empty: false,
-            banned_tokens: '',
-            sampler_priority: [],
-            samplers: [],
-            samplers_priorities: [],
-            ignore_eos_token: false,
-            spaces_between_special_tokens: true,
-            speculative_ngram: false,
-            sampler_order: [],
-            logit_bias: [],
-            xtc_threshold: 0.1,
-            xtc_probability: 0,
-            nsigma: 0,
-            min_keep: 0,
-            extensions: {},
-            adaptive_target: -0.01,
-            adaptive_decay: 0.9,
-            rep_pen_size: 0,
-            genamt: 350,
-            max_length: 8192,
-            frequency_penalty: 0.0,
-            use_function_calling: false,
-            auto_connect: true,
-            skip_status_check: false,
-            use_proxy: false,
-            proxy_url: 'http://localhost:7890',
-            proxy_port: 7890,
-            encrypt_api_key: false,
-            enable_access_control: false
+            ...values,
           };
           updatedEngines.push(newEngine);
         }

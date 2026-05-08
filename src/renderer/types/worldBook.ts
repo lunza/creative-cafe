@@ -14,7 +14,8 @@ export interface WorldBookEntry {
   uid: number | string;
   // SillyTavern 核心字段
   key: string[];                      // 触发关键词列表
-  keysecondary?: string[];            // 次要关键词列表
+  secondaryKeys?: string[];           // 次要关键词列表（内部统一命名，导出时映射为 secondary_keys）
+  keysecondary?: string[];            // 次要关键词列表（向后兼容，与 secondaryKeys 同义）
   content: string;                    // 注入的内容文本
   comment: string;                    // 用户备注
   constant: boolean;                  // 是否始终激活
@@ -26,9 +27,9 @@ export interface WorldBookEntry {
   probability?: number;               // 激活概率 0-100 (整数)
   group?: string;                     // 分组名称
   disable?: boolean;                  // 是否禁用
-  useRegex?: boolean;                 // 使用正则匹配 (导出时转为 use_regex)
+  useRegex?: boolean;                 // 使用正则匹配（内部命名，导出时映射为 use_regex）
   vectorized?: boolean;               // 使用向量检索
-  caseSensitive?: boolean;            // 区分大小写 (导出时转为 case_sensitive)
+  caseSensitive?: boolean;            // 区分大小写（内部命名，导出时映射为 case_sensitive）
   // Creative-Cafe 独有字段
   automationId?: string;
   scanDepth?: number;

@@ -230,8 +230,11 @@ ${userRequirements.trim()}`;
         if (data?.chunk) {
           const lines = data.chunk.split('\n');
           
+          // 尝试按SSE格式解析
+          let parsedAsSSE = false;
           for (const line of lines) {
             if (line.startsWith('data: ')) {
+              parsedAsSSE = true;
               const content = line.substring(6);
               if (content === '[DONE]') continue;
               try {
@@ -243,6 +246,26 @@ ${userRequirements.trim()}`;
               } catch {
                 // 忽略解析错误
               }
+            }
+          }
+
+          // 如果不是SSE格式，尝试按普通JSON解析
+          if (!parsedAsSSE) {
+            try {
+              const json = JSON.parse(data.chunk);
+              // 兼容不同的响应格式
+              if (json.choices?.[0]?.message?.content) {
+                tempContent = json.choices[0].message.content;
+                bufferedContent = json.choices[0].message.content;
+              } else if (json.choices?.[0]?.delta?.content) {
+                tempContent += json.choices[0].delta.content;
+                bufferedContent += json.choices[0].delta.content;
+              } else if (json.choices?.[0]?.text) {
+                tempContent = json.choices[0].text;
+                bufferedContent = json.choices[0].text;
+              }
+            } catch {
+              // 忽略解析错误
             }
           }
 

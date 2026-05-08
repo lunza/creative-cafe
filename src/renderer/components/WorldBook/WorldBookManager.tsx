@@ -15,7 +15,9 @@ import {
   SortAscendingOutlined,
   UpOutlined,
   DownOutlined,
-  TagOutlined
+  TagOutlined,
+  FolderOpenOutlined,
+  CopyOutlined
 } from '@ant-design/icons';
 import TagManager from './TagManager';
 import { WorldBookVectorPanel } from './WorldBookVectorPanel';
@@ -23,6 +25,7 @@ import WorldBookList from './WorldBookList';
 import WorldBookEntryList from './WorldBookEntryList';
 import WorldBookCreateModal from './WorldBookCreateModal';
 import WorldBookAddEntryModal from './WorldBookAddEntryModal';
+import { StoragePathDisplay } from '../common/StoragePathDisplay';
 import { 
   sanitizeFileName, 
   formatWorldBookToDocument, 
@@ -54,7 +57,7 @@ interface WorldBook {
 }
 
 const WorldBookManager: React.FC = () => {
-  const { worldBooks, loading, fetchWorldBooks, optimizeWorldBook } = useWorldBookStore();
+  const { worldBooks, loading, fetchWorldBooks, optimizeWorldBook, clearCurrentWorldBook } = useWorldBookStore();
   const { theme: appTheme } = useUIStore();
   const { setting, fetchSetting } = useSettingStore();
   const { addLog } = useLogStore();
@@ -168,17 +171,32 @@ const WorldBookManager: React.FC = () => {
 
   useEffect(() => {
     fetchWorldBooks();
-  }, [fetchWorldBooks]);
+    
+    return () => {
+      clearCurrentWorldBook();
+    };
+  }, [fetchWorldBooks, clearCurrentWorldBook]);
 
-  const handleOptimize = async (path: string) => {
-    addLog(`[WorldBook] 开始优化世界书: ${path}`);
+  const handleOpenFolder = async () => {
     try {
-      await optimizeWorldBook(path);
-      addLog(`[WorldBook] 优化成功: ${path}`, 'info');
-      message.success('优化成功');
+      const folderPath = setting?.worldBookPath || '__USER_DATA__/data/worldbooks';
+      const userDataPath = await window.electronAPI.app.getUserDataPath();
+      const resolvedPath = folderPath.replace('__USER_DATA__', userDataPath);
+      await window.electronAPI.file.openFolder(resolvedPath);
     } catch (error) {
-      addLog(`[WorldBook] 优化失败: ${path}`, 'error');
-      message.error('优化失败');
+      message.error('打开文件夹失败');
+    }
+  };
+
+  const handleCopyPath = async () => {
+    try {
+      const folderPath = setting?.worldBookPath || '__USER_DATA__/data/worldbooks';
+      const userDataPath = await window.electronAPI.app.getUserDataPath();
+      const resolvedPath = folderPath.replace('__USER_DATA__', userDataPath);
+      await navigator.clipboard.writeText(resolvedPath);
+      message.success('路径已复制到剪贴板');
+    } catch (error) {
+      message.error('复制路径失败');
     }
   };
 
@@ -193,55 +211,6 @@ const WorldBookManager: React.FC = () => {
       addLog(`[WorldBook] 删除失败: ${path}`, 'error');
       message.error('删除失败');
     }
-  };
-
-  const formatWorldBookToDocument = (content: any, worldBookName: string): string => {
-    let document = `# 世界书：${worldBookName}\n\n`;
-    
-    const entriesObj = content?.entries;
-    if (entriesObj && typeof entriesObj === 'object') {
-      const entryKeys = Object.keys(entriesObj).sort((a, b) => parseInt(a) - parseInt(b));
-      
-      for (const key of entryKeys) {
-        const entry = entriesObj[key];
-        if (!entry) continue;
-        
-        const entryName = entry.comment || entry.name || `条目 ${key}`;
-        document += `## ${entryName}\n\n`;
-        
-        if (entry.key && Array.isArray(entry.key) && entry.key.length > 0) {
-          document += `关键词：${entry.key.join(', ')}\n\n`;
-        }
-        
-        if (entry.keysecondary && Array.isArray(entry.keysecondary) && entry.keysecondary.length > 0) {
-          document += `次要关键词：${entry.keysecondary.join(', ')}\n\n`;
-        }
-        
-        const entryContent = entry.content || '';
-        if (entryContent) {
-          document += `${entryContent}\n\n`;
-        } else {
-          document += `（无内容）\n\n`;
-        }
-        
-        document += `---\n\n`;
-      }
-    }
-    
-    return document;
-  };
-
-  const sanitizeFileName = (name: string): string => {
-    return name
-      .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
-      .replace(/\(/g, '_')
-      .replace(/\)/g, '_')
-      .replace(/\s+/g, '_')
-      .replace(/\.+/g, '_')
-      .replace(/-+/g, '_')
-      .replace(/__+/g, '_')
-      .trim()
-      .substring(0, 100);
   };
 
   const handleVectorizeToWorldBook = async (worldBook: WorldBook) => {
@@ -3945,13 +3914,6 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
           >
             向量化
           </Button>
-          <Button
-            type="link"
-            icon={<ThunderboltOutlined />}
-            onClick={() => handleOptimize(record.path)}
-          >
-            优化
-          </Button>
           <Popconfirm
             title="确定要删除这个世界书吗？"
             onConfirm={() => handleDelete(record.path)}
@@ -4086,12 +4048,15 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
   ], [worldBookContent, viewingItem, selectedEntries, isTranslatingAll, isPolishingAll, isAISorting, addLog]);
 
   return (
-    <div className={`worldbook-manager list-container ${appTheme === 'dark' ? 'dark' : ''}`}>
+    <div className={`worldbook-manager ${appTheme === 'dark' ? 'dark' : ''}`}>
       <div className="worldbook-header list-header">
         <h2>世界书管理</h2>
-        <Text type="secondary" style={{ marginBottom: 16, display: 'block' }}>
-          世界书存储地址: {worldBookDir}
-        </Text>
+        <StoragePathDisplay
+          label="世界书存储路径"
+          path={worldBookDir}
+          onOpenFolder={handleOpenFolder}
+          onCopyPath={handleCopyPath}
+        />
         <Space>
           <Button icon={<ReloadOutlined />} onClick={fetchWorldBooks}>
             刷新
