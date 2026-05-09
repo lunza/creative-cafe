@@ -1,4 +1,3 @@
-/* 创意管理主容器样式 */
 .creative-manager-layout {
   width: 100%;
   height: 100%;
@@ -8,243 +7,40 @@
 .creative-manager-content {
   background: transparent;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .creative-manager-header {
   padding: 16px 24px;
   border-bottom: 1px solid #f0f0f0;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
   background: transparent;
 }
 
 .creative-manager-body {
   flex: 1;
   overflow: auto;
-  padding: 24px;
   background: transparent;
 }
 
-.creative-manager-sider-left {
-  border-right: 1px solid #f0f0f0;
-  overflow: hidden;
-}
-
-.creative-manager-sider-right {
-  border-left: 1px solid #f0f0f0;
-  overflow: hidden;
-  transition: width 0.2s;
-}
-
-/* 暗色主题适配 */
-.creative-manager-layout[data-theme="dark"] .creative-manager-header,
-.creative-manager-layout[data-theme="dark"] .creative-manager-header {
+.dark .creative-manager-header {
   border-bottom-color: #303030;
-  color: #f0f0f0;
 }
 
-.creative-manager-layout[data-theme="dark"] .creative-manager-sider-left,
-.creative-manager-layout[data-theme="dark"] .creative-manager-sider-right {
-  border-color: #303030;
+.dark .creative-manager-content .ant-typography-title {
+  color: #40a9ff;
 }
 
-.creative-manager-layout[data-theme="dark"] .ant-layout-sider {
-  background: #1f1f1f !important;
-}
-
-.creative-manager-layout[data-theme="dark"] .creative-manager-body {
-  background: #1f1f1f;
-}
-
-/* Ant Design 样式覆盖 */
-.creative-manager-body .ant-tabs {
-  height: 100%;
-}
-
-.creative-manager-body .ant-tabs-content-holder {
-  height: calc(100% - 40px);
-  overflow: auto;
-}
-
-.creative-manager-body .ant-tabs-tabpane {
-  height: 100%;
-}
-
-.creative-manager-content .ant-layout-content {
-  flex: 1;
-  overflow: auto;
-  background-color: inherit;
-}
-
-/* 左侧创意树样式 */
-.creative-manager-layout .ant-layout-sider:first-child {
-  background-color: inherit;
-  border-right: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-/* 响应式调整 */
-@media (max-width: 1200px) {
-  .creative-manager-layout .ant-layout-sider {
-    width: 250px !important;
-    min-width: 250px !important;
-    max-width: 250px !important;
-  }
-  
-  .creative-manager-layout .ant-layout-sider.collapsed {
-    width: 48px !important;
-    min-width: 48px !important;
-    max-width: 48px !important;
-  }
-  
-  .creative-manager-content .ant-layout-content {
-    padding: 16px;
-  }
-}
-
-@media (max-width: 768px) {
-  .creative-manager-layout .ant-layout-sider {
-    width: 200px !important;
-    min-width: 200px !important;
-    max-width: 200px !important;
-  }
-  
-  .creative-manager-layout .ant-layout-sider.collapsed {
-    width: 48px !important;
-    min-width: 48px !important;
-    max-width: 48px !important;
-  }
-  
-  .creative-manager-content .ant-layout-content {
-    padding: 12px;
-  }
-}
-
-/* 动画效果 */
-.creative-manager-layout {
-  animation: fadeIn 0.5s ease-in-out;
-}
-
-.creative-manager-content .ant-layout-content {
-  animation: slideUp 0.3s ease-out;
-}
-
-/* 暗色主题 */
-.dark-theme .creative-manager-layout {
-  background-color: #141414;
-}
-
-.dark-theme .creative-manager-layout .ant-layout-sider {
-  background-color: #1f1f1f;
-  border-color: #404040;
-}
-
-.dark-theme .creative-manager-content {
-  background-color: #141414;
-}
-
-.dark-theme .creative-manager-content .ant-layout-content {
-  background-color: #141414;
-}
-
-/* 按钮样式 */
-.creative-manager-content .ant-btn {
-  border-radius: 4px;
-  transition: all 0.3s ease;
-}
-
-.creative-manager-content .ant-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-}
-
-/* 标题样式 */
-.creative-manager-content .ant-typography-title {
-  margin: 0;
-  color: #1890ff;
-  font-weight: 600;
-}
-
-.creative-manager-content .ant-typography-secondary {
-  font-size: 14px;
-  line-height: 1.5;
-  color: #666;
-}
-
-.dark-theme .creative-manager-content .ant-typography-secondary {
+.dark .creative-manager-content .ant-typography-secondary {
   color: #aaa;
 }
 
-/* 收起/展开按钮样式 */
-.creative-manager-layout .ant-layout-sider-trigger {
-  background-color: inherit;
-  color: inherit;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  transition: all 0.3s ease;
-}
-
-.creative-manager-layout .ant-layout-sider-trigger:hover {
-  background-color: rgba(255, 255, 255, 0.05);
-  color: inherit;
-}
-
-.dark-theme .creative-manager-layout .ant-layout-sider-trigger {
-  background-color: #1f1f1f;
-  color: #aaa;
-  border-top: 1px solid #404040;
-}
-
-.dark-theme .creative-manager-layout .ant-layout-sider-trigger:hover {
-  background-color: #2c2c2c;
-  color: #fff;
-}
-
-/* 树节点样式 */
-.creative-manager-layout .ant-tree {
-  font-size: 14px;
-  color: inherit;
-}
-
-.creative-manager-layout .ant-tree-node-content-wrapper {
-  height: 32px;
-  line-height: 32px;
-  color: inherit;
-}
-
-.creative-manager-layout .ant-tree-title {
-  font-size: 14px;
-  color: inherit;
-}
-
-.dark-theme .creative-manager-layout .ant-tree {
-  color: #f0f0f0;
-}
-
-.dark-theme .creative-manager-layout .ant-tree-node-content-wrapper {
-  color: #f0f0f0;
-}
-
-.dark-theme .creative-manager-layout .ant-tree-title {
-  color: #f0f0f0;
-}
-
-/* 动画关键帧 */
 @keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 @keyframes slideUp {
-  from {
-    transform: translateY(20px);
-    opacity: 0;
-  }
-  to {
-    transform: translateY(0);
-    opacity: 1;
-  }
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
 }

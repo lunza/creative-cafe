@@ -22,6 +22,8 @@ interface ElectronAPI {
     readTags: (path: string) => Promise<any>;
     writeTags: (path: string, data: any) => Promise<any>;
     deleteTags: (path: string) => Promise<any>;
+    saveToKnowledgeBase: (data: any, fileName: string) => Promise<{ success: boolean; filePath?: string; message?: string; fileExists?: boolean; error?: string }>;
+    checkFileExists: (fileName: string) => Promise<{ success: boolean; exists: boolean; filePath?: string; error?: string }>;
     vectorize: (path: string) => Promise<{ 
       success: boolean; 
       descriptionVectorized: boolean; 

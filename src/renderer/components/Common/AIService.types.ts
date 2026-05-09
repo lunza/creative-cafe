@@ -68,6 +68,8 @@ export interface AIServiceConfig {
   defaultBaseUrl?: string;
   // 默认 API 密钥
   defaultApiKey?: string;
+  // API 密钥传输方式: 'header' = Authorization Bearer, 'body' = api_key 字段
+  defaultApiKeyTransmission?: 'header' | 'body';
   // 默认温度参数
   defaultTemperature?: number;
   // 默认最大 tokens

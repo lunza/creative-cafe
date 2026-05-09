@@ -121,11 +121,14 @@ export class AIUtils {
     // 先处理 options 中的其他属性
     const { model, baseUrl, apiKey, temperature, max_tokens, maxTokens, messages, ...restOptions } = options;
     
+    const apiKeyTransmission = options.apiKeyTransmission || config.defaultApiKeyTransmission || 'header';
+    
     return {
       ...restOptions, // 先处理其他属性，这样我们可以在后面覆盖它们
       model: model || config.defaultModel,
       baseUrl: baseUrl || config.defaultBaseUrl,
       apiKey: apiKey || config.defaultApiKey,
+      apiKeyTransmission,
       messages: processedMessages,
       temperature: temperature ?? config.defaultTemperature ?? 0.7,
       max_tokens: ensurePositiveInteger(max_tokens ?? maxTokens ?? config.defaultMaxTokens, 1000),
@@ -258,14 +261,13 @@ export class AIConfigValidator {
     return { valid: true };
   }
 
-  // 创建默认配置
   static createDefaultConfig(): AIServiceConfig {
     return {
       defaultModel: 'gpt-3.5-turbo',
-      defaultBaseUrl: 'https://api.openai.com',
+      defaultBaseUrl: 'http://127.0.0.1:5000',
       defaultApiKey: '',
       defaultTemperature: 0.7,
-      defaultMaxTokens: 1000,
+      defaultMaxTokens: 4096,
       retryAttempts: 3,
       retryDelay: 1000,
       timeout: 600000,

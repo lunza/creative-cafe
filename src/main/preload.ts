@@ -47,6 +47,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     readTags: (path: string) => ipcRenderer.invoke('worldBook:readTags', path),
     writeTags: (path: string, data: any) => ipcRenderer.invoke('worldBook:writeTags', path, data),
     deleteTags: (path: string) => ipcRenderer.invoke('worldBook:deleteTags', path),
+    saveToKnowledgeBase: (data: any, fileName: string) => ipcRenderer.invoke('worldBook:saveToKnowledgeBase', data, fileName),
+    checkFileExists: (fileName: string) => ipcRenderer.invoke('worldBook:checkFileExists', fileName),
     vectorize: (path: string) => ipcRenderer.invoke('worldBook:vectorize', path)
   },
   character: {

@@ -17,21 +17,18 @@ export class AIService {
     this.config = safeConfig;
   }
 
-  // 确保配置是安全的，添加缺失的默认值
+  // 确保配置是安全的，仅校验范围，不注入硬编码默认值
   private ensureSafeConfig(config: AIServiceConfig): AIServiceConfig {
-    const defaultConfig = AIConfigValidator.createDefaultConfig();
+    const safeMaxTokens = this.sanitizeNumber(config.defaultMaxTokens, 4096, 1);
+    const safeTemperature = this.sanitizeNumber(config.defaultTemperature, 0.7, 0, 2);
+    const safeRetryAttempts = this.sanitizeNumber(config.retryAttempts, 0, 0);
+    const safeRetryDelay = this.sanitizeNumber(config.retryDelay, 1000, 0);
+    const safeTimeout = this.sanitizeNumber(config.timeout, 600000, 1);
     
-    // 安全地获取数值参数，无效值时使用默认值
-    const safeMaxTokens = this.sanitizeNumber(config.defaultMaxTokens, defaultConfig.defaultMaxTokens, 1);
-    const safeTemperature = this.sanitizeNumber(config.defaultTemperature, defaultConfig.defaultTemperature, 0, 2);
-    const safeRetryAttempts = this.sanitizeNumber(config.retryAttempts, defaultConfig.retryAttempts, 0);
-    const safeRetryDelay = this.sanitizeNumber(config.retryDelay, defaultConfig.retryDelay, 0);
-    const safeTimeout = this.sanitizeNumber(config.timeout, defaultConfig.timeout, 1);
-    
-    const safeConfig = {
-      defaultModel: config.defaultModel || defaultConfig.defaultModel,
-      defaultBaseUrl: config.defaultBaseUrl || defaultConfig.defaultBaseUrl,
-      defaultApiKey: config.defaultApiKey || defaultConfig.defaultApiKey,
+    const safeConfig: AIServiceConfig = {
+      defaultModel: config.defaultModel,
+      defaultBaseUrl: config.defaultBaseUrl,
+      defaultApiKey: config.defaultApiKey,
       defaultTemperature: safeTemperature,
       defaultMaxTokens: safeMaxTokens,
       retryAttempts: safeRetryAttempts,
@@ -48,7 +45,7 @@ export class AIService {
     return safeConfig;
   }
 
-  // 安全地清理数值参数，无效值时返回默认值
+  // 安全地清理数值参数，仅在值超出范围时修正为边界值
   private sanitizeNumber(
     value: number | undefined, 
     defaultValue: number, 
@@ -66,11 +63,11 @@ export class AIService {
     }
     
     if (num < min) {
-      return defaultValue;
+      return min;
     }
     
     if (max !== undefined && num > max) {
-      return defaultValue;
+      return max;
     }
     
     return num;
@@ -119,10 +116,23 @@ export class AIService {
   private buildRequestBody(options: AIRequestOptions, stream: boolean = false): Record<string, any> {
     const body: Record<string, any> = {
       model: options.model,
-      messages: options.messages,
-      temperature: Number(options.temperature) || 0.7,
-      max_tokens: Number(options.max_tokens) || 4096
+      messages: options.messages
     };
+
+    if (options.temperature !== undefined && options.temperature !== null) {
+      body.temperature = Number(options.temperature);
+    }
+
+    if (options.max_tokens !== undefined && options.max_tokens !== null) {
+      body.max_tokens = Number(options.max_tokens);
+    } else if (options.maxTokens !== undefined && options.maxTokens !== null) {
+      body.max_tokens = Number(options.maxTokens);
+    }
+
+    const transmission = (options as any).apiKeyTransmission || this.config.defaultApiKeyTransmission || 'header';
+    if (transmission === 'body' && options.apiKey) {
+      body.api_key = options.apiKey;
+    }
 
     if (stream) {
       body.stream = true;
@@ -137,7 +147,11 @@ export class AIService {
     };
 
     if (options.apiKey) {
-      headers['Authorization'] = `Bearer ${options.apiKey}`;
+      const transmission = (options as any).apiKeyTransmission || this.config.defaultApiKeyTransmission || 'header';
+      if (transmission === 'header') {
+        const trimmedKey = options.apiKey.trim();
+        headers['Authorization'] = trimmedKey.startsWith('Bearer ') ? trimmedKey : `Bearer ${trimmedKey}`;
+      }
     }
 
     return headers;

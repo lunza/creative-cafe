@@ -1,0 +1,35 @@
+.creative-sub-nav {
+  background: transparent;
+  border-bottom: 1px solid #f0f0f0;
+  padding: 0 16px;
+}
+
+.creative-sub-nav .creative-sub-tabs .ant-tabs-tab {
+  transition: all 0.3s ease;
+}
+
+.creative-sub-nav .creative-sub-tabs .ant-tabs-tab-active .anticon {
+  color: #1890ff;
+}
+
+.creative-sub-nav .creative-sub-tabs .ant-tabs-tab-active span {
+  font-weight: 600;
+  color: #1890ff;
+}
+
+/* 暗色主题适配 */
+.dark .creative-sub-nav {
+  border-bottom-color: #303030;
+}
+
+.dark .creative-sub-nav .creative-sub-tabs .ant-tabs-tab-active .anticon,
+.dark .creative-sub-nav .creative-sub-tabs .ant-tabs-tab-active span {
+  color: #40a9ff;
+}
+
+/* 响应式调整 */
+@media (max-width: 768px) {
+  .creative-sub-nav {
+    padding: 0 8px;
+  }
+}

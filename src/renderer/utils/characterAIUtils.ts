@@ -7,12 +7,16 @@ function buildAIRequestOptions(
   engine: AIEngine,
   messages: { role: 'system' | 'user' | 'assistant'; content: string }[]
 ): AIRequestOptions {
+  const temperature = (typeof engine.temperature === 'number' && engine.temperature >= 0 && engine.temperature <= 2)
+    ? engine.temperature
+    : 0.7;
+
   return {
     model: engine.model_name || 'gpt-3.5-turbo',
     baseUrl: engine.api_url,
     apiKey: engine.api_key,
     messages,
-    temperature: Number(engine.temperature) ?? 0.7,
+    temperature,
     maxTokens: ensurePositiveInteger(engine.max_tokens, 4096)
   };
 }

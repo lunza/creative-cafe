@@ -1,39 +1,29 @@
 export interface CharacterCardV3 {
-  name?: string;
-  description?: string;
-  personality?: string;
-  scenario?: string;
-  first_mes?: string;
-  mes_example?: string;
-  creator_notes?: string;
-  system_prompt?: string;
-  post_history_instructions?: string;
-  tags?: string[];
-  spec?: 'chara_card_v3';
-  spec_version?: '3.0';
+  spec: 'chara_card_v3';
+  spec_version: '3.0';
   data: {
-    name?: string;
-    description?: string;
-    personality?: string;
-    scenario?: string;
-    first_mes?: string;
-    mes_example?: string;
-    creator_notes?: string;
-    system_prompt?: string;
-    post_history_instructions?: string;
-    tags?: string[];
-    creator?: string;
-    character_version?: string;
-    alternate_greetings?: string[];
+    name: string;
+    description: string;
+    personality: string;
+    scenario: string;
+    first_mes: string;
+    mes_example: string;
+    creator_notes: string;
+    system_prompt: string;
+    post_history_instructions: string;
+    tags: string[];
+    creator: string;
+    character_version: string;
+    alternate_greetings: string[];
+    extensions: Record<string, any>;
     character_book?: any;
     assets?: any;
     nickname?: string;
     creator_notes_multilingual?: any;
-    source?: string;
-    group_only_greetings?: any;
-    creation_date?: string;
-    modification_date?: string;
-    extensions: Record<string, any>;
+    source?: string[];
+    group_only_greetings: string[];
+    creation_date?: number;
+    modification_date?: number;
   };
 }
 
@@ -67,12 +57,16 @@ export function formatCharacterCardV3(characterName: string, characterContent: s
       description: parsedContent.description || '',
       personality: parsedContent.personality || '',
       scenario: parsedContent.scenario || '',
-      first_mes: parsedContent.firstMessage || '',
-      mes_example: parsedContent.messageExample || '',
-      creator_notes: parsedContent.creatorNotes || '',
-      system_prompt: parsedContent.systemPrompt || '',
-      post_history_instructions: parsedContent.postHistoryInstructions || '',
+      first_mes: parsedContent.first_mes || '',
+      mes_example: parsedContent.mes_example || '',
+      creator_notes: parsedContent.creator_notes || '',
+      system_prompt: parsedContent.system_prompt || '',
+      post_history_instructions: parsedContent.post_history_instructions || '',
       tags,
+      creator: '',
+      character_version: '',
+      alternate_greetings: [],
+      group_only_greetings: [],
       extensions: {}
     }
   };
@@ -90,20 +84,20 @@ function parseMarkdownContent(content: string): Record<string, string> {
     '角色描述': 'description',
     '角色性格': 'personality',
     '场景设定': 'scenario',
-    '第一条消息': 'firstMessage',
-    '对话示例': 'messageExample',
-    '创作者备注': 'creatorNotes',
-    '系统提示': 'systemPrompt',
-    '历史后指令': 'postHistoryInstructions',
+    '第一条消息': 'first_mes',
+    '对话示例': 'mes_example',
+    '创作者备注': 'creator_notes',
+    '系统提示': 'system_prompt',
+    '历史后指令': 'post_history_instructions',
     'name': 'name',
     'description': 'description',
     'personality': 'personality',
     'scenario': 'scenario',
-    'first_mes': 'firstMessage',
-    'mes_example': 'messageExample',
-    'creator_notes': 'creatorNotes',
-    'system_prompt': 'systemPrompt',
-    'post_history_instructions': 'postHistoryInstructions'
+    'first_mes': 'first_mes',
+    'mes_example': 'mes_example',
+    'creator_notes': 'creator_notes',
+    'system_prompt': 'system_prompt',
+    'post_history_instructions': 'post_history_instructions'
   };
 
   for (const line of lines) {
@@ -199,7 +193,7 @@ export function downloadCharacterCardPNG(characterCard: CharacterCardV3, filenam
             // 调用主进程正确处理PNG chunks（使用png-chunks-extract和encode）
             const result = await (window as any).electronAPI.character.exportCharacterCard({
               base64Image: base64Png,
-              filename: characterCard.name || 'character_card',
+              filename: characterCard.data.name || 'character_card',
               characterData: characterCard
             });
 
@@ -209,7 +203,7 @@ export function downloadCharacterCardPNG(characterCard: CharacterCardV3, filenam
               // 下载处理后的PNG
               const link = document.createElement('a');
               link.href = result.base64Png;
-              link.download = `${characterCard.name || 'character_card'}.png`;
+              link.download = `${characterCard.data.name || 'character_card'}.png`;
               document.body.appendChild(link);
               link.click();
               document.body.removeChild(link);
@@ -259,7 +253,7 @@ export function downloadCharacterCardPNG(characterCard: CharacterCardV3, filenam
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 32px Arial';
     ctx.textAlign = 'center';
-    ctx.fillText(characterCard.name || 'Character Card', canvas.width / 2, canvas.height / 2 - 20);
+    ctx.fillText(characterCard.data.name || 'Character Card', canvas.width / 2, canvas.height / 2 - 20);
     
     ctx.font = '16px Arial';
     ctx.fillStyle = '#cccccc';

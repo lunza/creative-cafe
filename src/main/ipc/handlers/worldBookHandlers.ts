@@ -1,6 +1,8 @@
 import { ipcMain } from 'electron';
 import { worldBookService } from '../../services/worldBookService';
 import { getUserDataPath } from '../../utils/appPath';
+import fs from 'fs/promises';
+import path from 'path';
 
 function resolveUserDataPlaceholder(dir: string): string {
   console.log('[resolveUserDataPlaceholder] 输入路径:', dir);
@@ -62,7 +64,46 @@ export function worldBookHandlers() {
     return await worldBookService.deleteTags(worldBookPath);
   });
 
-  // 世界书向量化处理
+  ipcMain.handle('worldBook:saveToKnowledgeBase', async (_event, data: any, fileName: string) => {
+    try {
+      const worldBookDir = worldBookService.getWorldBookDir();
+      
+      await fs.mkdir(worldBookDir, { recursive: true });
+      
+      const filePath = path.join(worldBookDir, `${fileName}.json`);
+      
+      const exists = await fs.access(filePath).then(() => true).catch(() => false);
+      
+      const content = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+      
+      await fs.writeFile(filePath, content, 'utf8');
+      
+      return { 
+        success: true, 
+        filePath, 
+        message: exists ? '文件已覆盖保存' : '文件已成功保存',
+        fileExists: exists
+      };
+    } catch (error) {
+      console.error('[worldBook:saveToKnowledgeBase] Failed:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      };
+    }
+  });
+
+  ipcMain.handle('worldBook:checkFileExists', async (_event, fileName: string) => {
+    try {
+      const worldBookDir = worldBookService.getWorldBookDir();
+      const filePath = path.join(worldBookDir, `${fileName}.json`);
+      const exists = await fs.access(filePath).then(() => true).catch(() => false);
+      return { success: true, exists, filePath };
+    } catch (error) {
+      return { success: false, exists: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  });
+
   ipcMain.handle('worldBook:vectorize', async (_event, worldBookPath: string) => {
     try {
       return await worldBookService.vectorizeWorldBook(worldBookPath);

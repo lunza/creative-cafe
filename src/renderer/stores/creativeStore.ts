@@ -40,6 +40,7 @@ interface CharacterCard {
   chatHistory: ChatMessage[];
   createdAt: number;
   updatedAt: number;
+  image?: string;
 }
 
 interface WorldBook {

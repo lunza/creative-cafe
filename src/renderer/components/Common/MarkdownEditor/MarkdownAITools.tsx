@@ -3,7 +3,7 @@ import { Button, Dropdown, Space, Tooltip, message, Modal, Input, Spin, Progress
 import type { InputRef } from 'antd';
 import { useSettingStore } from '../../../stores/settingStore';
 import { useLogStore } from '../../../stores/logStore';
-import { AIService, AIServiceConfig, AIConfigValidator } from '../AIService';
+import { AIService, AIServiceConfig } from '../AIService';
 import {
   AIToolType,
   SUPPORTED_LANGUAGES,
@@ -72,8 +72,6 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
   const getAIServiceConfig = useCallback((): { config: AIServiceConfig | null; error: string | null } => {
     addLog(`[MarkdownAI] 构建 AIService 配置...`);
     
-    const defaultConfig = AIConfigValidator.createDefaultConfig();
-    
     if (!setting) {
       addLog(`[MarkdownAI] ⚠️ 设置尚未加载，无法构建 AIService 配置`, 'warn');
       return { 
@@ -106,34 +104,35 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
     addLog(`[MarkdownAI]    API 地址: ${activeEngine.api_url}`);
     addLog(`[MarkdownAI]    模型名称: ${activeEngine.model_name || '未设置'}`);
     
-    // 安全地处理 max_tokens：0 或负数时使用默认值
     const engineMaxTokens = activeEngine.max_tokens;
     const safeMaxTokens = (typeof engineMaxTokens === 'number' && engineMaxTokens > 0) 
       ? engineMaxTokens 
-      : defaultConfig.defaultMaxTokens;
+      : 4096;
     
     if (typeof engineMaxTokens === 'number' && engineMaxTokens <= 0) {
-      addLog(`[MarkdownAI] ⚠️ 引擎 max_tokens 值无效 (${engineMaxTokens})，使用默认值 ${defaultConfig.defaultMaxTokens}`, 'warn');
+      addLog(`[MarkdownAI] ⚠️ 引擎 max_tokens 值无效 (${engineMaxTokens})，修正为 4096`, 'warn');
     }
     
-    // 安全地处理 temperature
     const engineTemp = activeEngine.temperature;
     const safeTemperature = (typeof engineTemp === 'number' && engineTemp >= 0 && engineTemp <= 2) 
       ? engineTemp 
-      : defaultConfig.defaultTemperature;
+      : 0.7;
     
     if (typeof engineTemp === 'number' && (engineTemp < 0 || engineTemp > 2)) {
-      addLog(`[MarkdownAI] ⚠️ 引擎 temperature 值无效 (${engineTemp})，使用默认值 ${defaultConfig.defaultTemperature}`, 'warn');
+      addLog(`[MarkdownAI] ⚠️ 引擎 temperature 值无效 (${engineTemp})，修正为 0.7`, 'warn');
     }
     
     return {
       config: {
-        ...defaultConfig,
-        defaultModel: activeEngine.model_name || defaultConfig.defaultModel,
+        defaultModel: activeEngine.model_name,
         defaultBaseUrl: activeEngine.api_url,
         defaultApiKey: activeEngine.api_key || '',
+        defaultApiKeyTransmission: (activeEngine.api_key_transmission as 'header' | 'body') || 'header',
         defaultTemperature: safeTemperature,
         defaultMaxTokens: safeMaxTokens,
+        retryAttempts: 0,
+        retryDelay: 1000,
+        timeout: 600000,
         systemPrompt: activeEngine.system_prompt
       },
       error: null

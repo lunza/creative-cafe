@@ -220,6 +220,17 @@ export function characterHandlers() {
     }
   });
 
+  ipcMain.handle('character:checkPNGExists', async (_event, filename: string) => {
+    try {
+      const characterDir = characterService.getCharacterDir();
+      const filePath = path.join(characterDir, `${filename}.png`);
+      const exists = await fs.access(filePath).then(() => true).catch(() => false);
+      return { success: true, exists, filePath };
+    } catch (error) {
+      return { success: false, exists: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  });
+
   // ========== 导出角色卡（使用正确的PNG chunk处理） ==========
   
   /**

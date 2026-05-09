@@ -64,20 +64,25 @@ export const useCreativeAI = (): UseCreativeAIReturn => {
       'Content-Type': 'application/json'
     };
 
+    const maxTokens = ensurePositiveInteger(engine.max_tokens, 10240);
+    const temperature = (typeof engine.temperature === 'number' && engine.temperature >= 0 && engine.temperature <= 2)
+      ? engine.temperature
+      : 0.7;
+
     let requestBody: any;
     if (apiMode === 'chat_completion') {
       requestBody = {
         model: modelName,
         messages,
-        max_tokens: ensurePositiveInteger(engine.max_tokens, 10240),
-        temperature: Number(engine.temperature) || 0.7
+        max_tokens: maxTokens,
+        temperature
       };
     } else {
       requestBody = {
         model: modelName,
         prompt: messages.map((m: any) => `${m.role}: ${m.content}`).join('\n\n'),
-        max_tokens: ensurePositiveInteger(engine.max_tokens, 10240),
-        temperature: Number(engine.temperature) || 0.7
+        max_tokens: maxTokens,
+        temperature
       };
     }
 
@@ -133,16 +138,16 @@ export const useCreativeAI = (): UseCreativeAIReturn => {
       return { success: false, error: 'AI引擎未配置' };
     }
 
-    const { type, templateId, userRequirements, streaming, onStream, onStreamComplete, customPrompt } = params;
+    const { type, templateId, userRequirements, streaming = true, onStream, onStreamComplete, customPrompt } = params;
 
     let systemPrompt = '';
     let userPrompt = '';
 
     if (customPrompt) {
-      userPrompt = customPrompt;
       systemPrompt = type === 'character'
-        ? '你是一个专业的角色卡创建助手。'
+        ? '你是一个专业的角色卡内容解析助手。'
         : '你是一个专业的世界书创建助手。';
+      userPrompt = `${customPrompt}\n\n【待解析的内容】\n\n${params.creativeContent}`;
     } else {
       // 使用模板系统构建提示词
       const template = getTemplateById(templateId);
