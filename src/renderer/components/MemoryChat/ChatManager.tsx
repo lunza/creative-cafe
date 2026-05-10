@@ -236,6 +236,7 @@ const ChatManager: React.FC = () => {
 
   const [vectorizingRecord, setVectorizingRecord] = useState<string | null>(null);
   const [deletingRecord, setDeletingRecord] = useState<string | null>(null);
+  const [pageSize, setPageSize] = useState(10);
 
   const { addLog } = useLogStore();
   const { setting, fetchSetting } = useSettingStore();
@@ -266,11 +267,11 @@ const ChatManager: React.FC = () => {
 
   useEffect(() => {
     if (window.electronAPI && window.electronAPI.on) {
-      const removeListener = window.electronAPI.on('memory:processChatProgress', (data: { current: number; total: number; message: string }) => {
+      const removeListener = window.electronAPI.on('memory:processChatProgress', (data: { current: number; total: number; message: string; percent: number }) => {
         setProgressCurrent(data.current);
         setProgressTotal(data.total);
-        const percentage = Math.round((data.current / data.total) * 100);
-        setProcessingProgress(percentage);
+        // 直接使用后端传递的百分比值，避免前端计算错误
+        setProcessingProgress(data.percent ?? Math.round((data.current / data.total) * 100));
         setProcessingStatus(data.message || `处理消息 ${data.current}/${data.total}...`);
         setProcessingDetails(prev => [...prev, `${data.message || `处理消息 ${data.current}/${data.total}`}`]);
       });
@@ -661,10 +662,24 @@ const ChatManager: React.FC = () => {
       }
 
       setProcessingConfig(aiConfig);
-      console.log('使用 AI 配置 (逐条处理):', aiConfig);
+      console.log('使用 AI 配置:', restart ? '(完全整理)' : '(实时整理)', aiConfig);
       addLog(`使用 AI 引擎: ${activeEngine?.name || '默认'}, 模型: ${aiConfig.modelName}`, 'info');
 
-      const result = await window.electronAPI.memory.processChatProgressive(record.characterCardName, selectedTemplate, aiConfig, restart);
+      let result;
+      if (restart) {
+        // 使用完全整理 API
+        addLog('[Full Reorganize] 开始完全整理...', 'info');
+        result = await window.electronAPI.memory.processChatFull(record.characterCardName, selectedTemplate, aiConfig);
+      } else {
+        // 使用实时整理 API（增量更新）
+        addLog('[Auto Organize] 开始实时整理...', 'info');
+        result = await window.electronAPI.memory.processChatProgressive(
+          record.characterCardName,
+          selectedTemplate,
+          aiConfig,
+          { continueFromLast: true, minInterval: 3000 }
+        );
+      }
 
       if (result.success) {
         setProcessingStatus('处理完成');
@@ -973,7 +988,7 @@ const ChatManager: React.FC = () => {
           columns={columns}
           dataSource={records}
           rowKey="filePath"
-          pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 条记录` }}
+          pagination={{ pageSize, showSizeChanger: true, showTotal: (total) => `共 ${total} 条记录`, onChange: (page, size) => { setPageSize(size); } }}
         />
       )}
 

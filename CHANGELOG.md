@@ -1,5 +1,171 @@
 # Changelog
 
+## [0.0.26] - 2026-05-10
+
+### Improved
+- **增强提示词区域分隔标记**：为system prompt中拼接的不同区域（背景知识、记忆表格、异步整理指令）添加了更清晰的分隔标记，帮助AI在长提示词场景下更准确区分不同区域，避免内容混淆。(1)使用Unicode双线框字符`═══════`作为区域分隔线，视觉区分度更高；(2)每个区域添加【区域 N：XXX】标题和【区域 N 结束】尾部标记，明确区域边界；(3)标题中附带说明文字，如"仅供参考，不是对话的一部分"、"以下为系统指令，不是对话内容"，帮助AI理解数据性质；涉及文件：PromptBuilder.ts
+
+## [0.0.25] - 2026-05-10
+
+### Improved
+- **【重点标记】异步整理指令架构优化**：将完整的表格整理指令从user消息迁移回system提示词，提高AI生成tableEdit标签的稳定性。(1)**system prompt**：通过`buildFinalSystemPrompt`追加完整的`buildAsyncTableOrganizeInstructions`指令，包含表格模板结构、分类判断规则、增量更新策略等全部内容；(2)**user message**：仅拼接固定简短命令`\n\n然后进行表格整理`，作为触发AI执行整理的信号。这样AI在system prompt中看到完整指令，在user message中收到明确任务信号，双重保障tableEdit标签的生成稳定性。涉及文件：PromptBuilder.ts、CharacterDialogueChat.hooks.ts
+
+## [0.0.24] - 2026-05-10
+
+### Added
+- **预览表格支持编辑和清空功能**：在表格预览弹窗中新增三项核心功能，满足用户自行修改或重新整理的需求。(1)**单元格内联编辑**：点击任意单元格即可进入编辑模式，支持回车确认或失焦自动保存；(2)**保存修改**：将当前表格的编辑结果持久化到JSON文件；(3)**清空当前表格**：清空当前选中表格的所有数据（带二次确认）；(4)**清空所有表格**：清空所有表格的数据（带二次确认，红色危险按钮）；涉及文件：TablePreviewModal.tsx
+
+## [0.0.23] - 2026-05-10
+
+### Improved
+- **增强异步整理提示说明**：在参数面板的异步整理Tooltip中新增"延时"说明，明确告知用户"整理触发延时一回合（即第5条对话整理的是第3条对话的信息）"，帮助用户理解异步整理的工作机制——AI实际整理的是发送指令前的一条文本，而非后续生成的文本。涉及文件：MemoryTablePanel.tsx
+
+## [0.0.22] - 2026-05-10
+
+### Improved
+- **增强所有表格的分类判断规则**：为时空表格、社交表格、事件表格添加明确的分类判断标准和关键示例，帮助AI正确区分实体类型并放入对应表格。具体改进：(1)时空表格：明确只记录时间/地点，不包括角色行为或物品，添加日期/地点示例；(2)社交表格：区分日常互动与重大事件，添加互动/汇报示例；(3)事件表格：区分重大事件与日常社交，添加犯罪/案件/日常活动对比示例；(4)统一使用"分类判断"格式和关键示例格式，与角色表格、物品表格保持一致。涉及文件：PromptBuilder.ts
+
+## [0.0.21] - 2026-05-10
+
+### Fixed
+- **【重点标记】修复隐藏的tableEdit标签露出问题**：异步整理模式下tableEdit标签未被正确从显示内容中移除，导致用户在对话界面中看到技术标签。根本原因：使用indexOf进行精确字符串匹配定位标签位置失败（因AI生成的空白字符变体导致），备用正则方案也不够全面。修复方案：(1)移除不可靠的indexOf匹配定位逻辑；(2)直接使用连续正则替换移除所有可能的标签格式；(3)简化代码流程，避免分支逻辑导致的遗漏。涉及文件：CharacterDialogueChat.hooks.ts
+
+## [0.0.20] - 2026-05-10
+
+### Fixed
+- **【重点标记】修复异步整理模式缺少表格模板结构信息问题**：异步整理模式下AI只收到当前表格数据，没有表格模板结构（表头定义），导致无法正确理解要提取哪些字段。修复方案：(1)修改buildFinalSystemPrompt、buildSystemPrompt接受tableStructure参数；(2)修改buildAsyncTableOrganizeInstructions使用tableStructure生成【表格模板结构】段落，包含每个表格的名称、字段结构和需要提取的字段；(3)在CharacterDialogueChat.hooks.ts中从tableResult提取sheets和headers结构传递给异步指令；(4)如果模板为空则发送默认模板结构（时空/角色/社交/物品/事件五个表格）作为备用。涉及文件：PromptBuilder.ts、usePromptBuilder.ts、CharacterDialogueChat.hooks.ts
+- **【重点标记】修复异步整理模式表格描述缺失导致信息分类错误问题**：AI无法区分各表格用途，将物品错误放入角色表格。修复方案：(1)修改getTableData返回sheetDescriptions字段（从关联模板提取各表格description）；(2)tableStructure新增descriptions字段；(3)在PromptBuilder.ts中生成表格模板结构时追加"表格用途"行；(4)默认模板备用方案也追加用途描述。涉及文件：chatLogService.ts、CharacterDialogueChat.hooks.ts、PromptBuilder.ts、usePromptBuilder.ts
+
+## [0.0.19] - 2026-05-10
+
+### Fixed
+- **【重点标记】修复异步整理模式AI生成错误表格格式问题**：异步整理指令buildAsyncTableOrganizeInstructions()过于简略，AI缺少表格格式、增量更新策略和唯一ID策略等关键规则约束，导致生成扁平化数据而非标准tableEdit命令。修复方案：将异步整理指令替换为与同步模式buildAIPromptForProgressive()完全一致的详细规则，包括：(1)详细的tableEdit命令格式说明和参数解释；(2)完整的增量更新决策流程；(3)唯一ID策略与变体称呼识别规则；(4)错误格式示例（绝对禁止）；(5)输出要求清单。涉及文件：PromptBuilder.ts
+
+## [0.0.18] - 2026-05-10
+
+### Fixed
+- **【重点标记】修复异步整理模式表格文件不存在导致命令执行失败问题**：异步模式下executeTableEditCommands方法执行前表格JSON文件可能尚未创建，导致insertRowToTable/readJsonFile返回null。修复方案：(1)在executeTableEditCommands开头添加文件存在性检查；(2)使用与tableTemplateService完全一致的safeChatId计算方法（统一替换规则：/\s+/g, /@/g, /-/g等12种特殊字符）；(3)文件不存在时优先使用关联模板创建初始文件，若无关联模板则使用默认模板；(4)修复memoryHandlers.ts中缺失的tableEditParser导入。涉及文件：chatLogService.ts、memoryHandlers.ts
+
+## [0.0.17] - 2026-05-10
+
+### Added
+- **动态tableEdit指令拼接机制**：根据用户选择的整理模式（sync/async）在任务说明中动态拼接tableEdit相关指令。参考用户成功做法（在任务说明中直接告知AI需要生成tableEdit），实现：(1)修改buildDialoguePrompt和buildContinuationPrompt支持organizeMode参数；(2)异步模式提示"系统将在提示词末尾提供详细的表格整理指令"；(3)同步模式提示"请在回复最后生成tableEdit标签，格式为<!-- <tableEdit> ... </tableEdit> -->"；(4)未选择整理模式时不拼接任何tableEdit指令，保持纯净的角色扮演提示词。涉及文件：PromptBuilder.ts、usePromptBuilder.ts
+
+## [0.0.16] - 2026-05-10
+
+### Fixed
+- **【重点标记】修复异步整理功能AI未返回tableEdit指令问题**：增强异步整理指令的约束力，在PromptBuilder.ts的buildAsyncTableOrganizeInstructions()函数中添加：(1)开头新增【强制要求-MANDATORY】段落，强调必须生成tableEdit标签；(2)在输出顺序中增加第3步"最终确认"要求AI检查是否已包含标签；(3)在指令末尾添加【最终提醒】强制要求生成标签。通过多重强调提高AI遵守指令的概率。涉及文件：PromptBuilder.ts
+
+## [0.0.15] - 2026-05-10
+
+### Added
+- **仪表盘使用技巧内容更新**：基于系统技术文档（01-09模块文档）编写了10条完整的系统使用指南，覆盖系统导航说明、AI引擎配置、世界书编辑、角色卡创作测试闭环、对话测试技巧、知识库语义检索、用户人设管理、效率提升技巧、数据安全说明、典型工作流推荐。Tips存储在 `data/tips.json`，通过 `file:readJson` IPC读取并在仪表盘Carousel组件中轮播展示。涉及文件：data/tips.json、doc/01-dashboard-module.md
+
+## [0.0.14] - 2026-05-10
+
+### Fixed
+- **【重点标记】修复异步整理竞态条件**：将内容清理逻辑从setState之后移至之前执行，统一使用displayContent作为最终显示内容，避免带标签内容被保存到localStorage的竞态风险。涉及文件：CharacterDialogueChat.hooks.ts
+
+### Improved
+- **增强正则表达式兼容性**：支持3种tableEdit标签格式匹配（标准HTML注释+标签、纯标签、注释分隔格式），提升对AI变体输出的容错能力。涉及文件：CharacterDialogueChat.hooks.ts
+- **增强IPC调用诊断**：添加chatId非空验证、解析错误详情输出、执行结果统计信息记录，便于问题排查。涉及文件：CharacterDialogueChat.hooks.ts
+- **异步整理后自动刷新表格数据**：命令执行成功后主动调用getTableData刷新memoryTableDataRef，确保后续对话使用最新表格上下文。涉及文件：CharacterDialogueChat.hooks.ts
+
+## [0.0.13] - 2026-05-10
+
+### Improved
+- **【重点标记】优化异步整理提示词 - Token减少20-30%且功能完整**：重构了异步整理指令的提示词结构，新建 `buildAsyncTableOrganizeInstructions()` 函数，在保持与同步整理相同功能覆盖的前提下，精简token消耗。关键优化点：(1)合并重复说明，去除冗余描述；(2)精简示例输出，保留核心格式约束；(3)突出输出顺序要求，明确标签必须位于回复文本最后；(4)保留核心策略：增量更新、唯一ID、变体称呼识别、重复检测；(5)明确标签格式 `<!--  <tableEdit>` 开头、`</tableEdit> -->` 结尾。涉及文件：PromptBuilder.ts
+
+## [0.0.12] - 2026-05-10
+
+### Fixed
+- **【重点标记】修复异步整理功能提示词未正确拼接问题**：修复了当表格数据为空时，异步整理指令不会被追加到提示词末尾的问题。将 `PromptBuilder.ts` 中异步整理指令的追加条件从 `organizeMode === 'async' && memoryTableData && memoryTableData.trim()` 修改为仅依赖 `organizeMode === 'async'`，并在表格数据为空时提示AI创建新表格。涉及文件：PromptBuilder.ts
+- **增强异步整理日志记录**：在 `CharacterDialogueChat.hooks.ts` 中增加了详细的日志记录，包括进入异步整理模式、正则匹配结果、解析结果等，便于追踪问题。涉及文件：CharacterDialogueChat.hooks.ts
+
+## [0.0.11] - 2026-05-10
+
+### Added
+- **【重点标记】实时整理表格功能增强 - 异步整理模式**：在"开启实时整理表格"按钮下方新增"同步整理"和"异步整理"两个互斥选项，实现AI在回复对话内容后隐式包裹tableEdit命令，系统自动解析执行而不影响用户可见的对话内容。
+  - **UI交互优化**：在MemoryTablePanel.tsx中新增Radio.Group组件，提供同步/异步整理模式切换，默认选中"同步整理"，关闭实时整理时自动重置为同步模式。涉及文件：MemoryTablePanel.tsx
+  - **提示词注入逻辑**：在PromptBuilder.ts的buildFinalSystemPrompt方法中，当organizeMode='async'时追加异步整理指令，明确要求AI使用`<!--  <tableEdit>`开头、`</tableEdit> -->`结尾的隐式标签包裹tableEdit命令。涉及文件：PromptBuilder.ts
+  - **回复解析执行**：在CharacterDialogueChat.hooks.ts的onComplete回调中，使用正则表达式`/<!--\s*<tableEdit>([\s\S]*?)<\/tableEdit>\s*-->/gi`检测并提取标签内容，使用IIFE包裹异步解析逻辑避免回调中使用await，解析后自动执行表格命令并清理对话内容。涉及文件：CharacterDialogueChat.hooks.ts
+  - **IPC通信扩展**：在memoryHandlers.ts中新增`memory:parseTableEdit` handler暴露表格解析功能，在preload.ts中新增`parseTableEdit`方法供渲染进程调用。涉及文件：memoryHandlers.ts、preload.ts
+  - **技术实现要点**：(1)标签格式严格遵循`<!--  <tableEdit>`开头（含两个空格），`</tableEdit> -->`结尾；(2)解析器期望标准格式`<tableEdit><!-- commands --></tableEdit>`，因此提取后需重新包装；(3)对话内容清理后确保用户界面不显示标签部分；(4)完善的错误处理和日志记录。
+
+## [0.0.10] - 2026-05-10
+
+### Changed
+- **【重点标记】表格整理功能重构 - 实时整理与完全整理拆分**：将当前单一的表格整理功能拆分为两个独立模块，解决了重复触发、功能混杂、缺乏防抖等问题。
+  - **新增整理锁机制**：在chatLogService.ts中新增organizingLocks Map，实现canStartOrganize、setOrganizingLock、releaseOrganizingLock方法，防止并发整理和重复触发。涉及文件：chatLogService.ts
+  - **重构实时整理方法**：修改processChatProgressive方法，添加防抖检查（默认3000ms最小间隔），仅处理新增消息（增量更新），日志标识改为[Auto Organize]。涉及文件：chatLogService.ts
+  - **新增完全整理方法**：新增processChatFull方法，清空表格数据并重新处理所有消息，带有完整的错误处理和回滚机制，日志标识改为[Full Reorganize]。涉及文件：chatLogService.ts
+  - **新增IPC Handler**：在memoryHandlers.ts中新增memory:processChatFull IPC handler，修改memory:processChatProgressive使用新的options参数。涉及文件：memoryHandlers.ts
+  - **更新Preload API**：在preload.ts中更新processChatProgressive API签名，新增processChatFull API暴露给渲染进程。涉及文件：preload.ts
+  - **增强前端防抖**：在CharacterDialogueChat.hooks.ts中将实时整理的防抖延迟从500ms增加到2000ms，并使用新的options参数。涉及文件：CharacterDialogueChat.hooks.ts
+  - **拆分前端调用逻辑**：在ChatManager.tsx中，当restart=true时使用processChatFull API进行完全整理，否则使用processChatProgressive API进行实时整理。涉及文件：ChatManager.tsx
+  - **新增OrganizeOptions接口**：定义整理选项接口，包含continueFromLast（是否从上次位置继续）和minInterval（最小间隔时间）参数。涉及文件：chatLogService.ts
+
+## [0.0.9] - 2026-05-10
+
+### Changed
+- **【重点标记】强化提示词和去重机制 - 消除表格重复记录**：针对物品表格等内容管理中出现的重复记录问题，全面优化了AI提示词和后端去重逻辑，确保所有表格数据更新操作的准确性和有效性。
+  - **增强表格上下文唯一ID索引**：在buildTableContext方法中新增"唯一ID快速查找索引"，为AI提供唯一ID到行号的快速映射，便于AI快速定位需要更新的记录。涉及文件：chatLogService.ts（buildTableContext方法）
+  - **强化AI提示词重复检测策略**：在buildAIPromptForProgressive方法中新增"强制重复性检查"流程，包含4步检查法；新增"名称相似度匹配"规则，明确物品名/角色名/描述内容高度相似时也应使用updateRow；新增"重复检测特殊场景处理"段落，提供3个具体的重复记录合并示例。涉及文件：chatLogService.ts（buildAIPromptForProgressive方法）
+  - **增强输出要求**：新增3条输出要求，包括重复检测、合并重复记录、操作结果确认，要求AI在生成命令后说明每个操作的目的。涉及文件：chatLogService.ts（buildAIPromptForProgressive方法）
+  - **实现名称相似度去重算法**：在executeTableEditCommands方法中新增基于Levenshtein编辑距离的名称相似度检测，当检测到名称相似（相似度>70%）的记录时，自动将insertRow转换为updateRow。新增isSimilarName和levenshteinDistance两个辅助方法。涉及文件：chatLogService.ts（executeTableEditCommands方法、isSimilarName方法、levenshteinDistance方法）
+  - **双重去重保障**：现在系统具有双重去重机制：(1) AI层面的提示词引导去重；(2) 后端执行时的唯一ID匹配+名称相似度匹配去重。确保即使在AI误判的情况下，后端也能自动纠正并避免重复插入。
+
+## [0.0.8] - 2026-05-10
+
+### Changed
+- **【重点标记】修复角色对话实时整理表格功能 - 实现真正的增量更新**：修复了实时整理表格功能中存在的重复插入、上下文不清晰、缺乏去重保护等问题。现在表格整理功能通过对比当前表格内容与最新信息，执行精确的增删改操作，确保表格数据准确反映最新状态。
+  - **优化表格上下文格式**：将buildTableContext方法生成的表格数据从JSON格式改为清晰的"行N: 字段=值"格式，添加表格索引和行索引标识，便于AI理解现有数据结构并生成正确的updateRow/deleteRow命令。涉及文件：chatLogService.ts（buildTableContext方法）
+  - **增强AI提示词增量更新策略**：在buildAIPromptForProgressive方法中新增"增量更新策略"段落，明确说明这是增量更新而非从头整理，添加去重检查规则和增量更新决策流程，强调已存在实体必须使用updateRow而非insertRow。涉及文件：chatLogService.ts（buildAIPromptForProgressive方法）
+  - **添加命令执行前去重检查**：在executeTableEditCommands方法中，执行insertRow命令前先读取当前表格数据，检查唯一ID是否已存在。如果已存在则自动转换为updateRow操作，避免重复插入。涉及文件：chatLogService.ts（executeTableEditCommands方法）
+  - **实现操作回滚机制**：在processChatProgressive方法中，处理开始前备份当前表格数据，出现严重错误时自动回滚到备份状态，保持表格数据一致性。涉及文件：chatLogService.ts（processChatProgressive方法）
+  - **修复行索引显示问题**：修正了日志输出中行索引的显示，确保显示1-based的人类可读行号（rowIndex + 1）。
+
+## [0.0.7] - 2026-05-10
+
+### Added
+- **【重点标记】记忆表格支持功能**：在角色对话配置面板中新增"记忆表格设置"板块，位于"向量化设置"与"AI参数配置"之间。包含两个开关："是否启用"（启用后在对话提示词中整合记忆管理模块的表格数据）和"是否实时整理表格"（启用后每次对话完成后自动触发表格整理操作）。新增组件：MemoryTablePanel.tsx。类型扩展：CharacterSessionConfig 新增 memoryTableEnabled 和 memoryTableAutoOrganize 字段，新增 MemoryTableConfig、MemoryTableSheet、MemoryTableData 接口。PromptBuilder.ts 支持将格式化的表格数据追加到系统提示词中。配置支持持久化保存。涉及文件：CharacterDialogueChat.types.ts（新增类型）、MemoryTablePanel.tsx（新建）、ConfigPanel.tsx（集成新面板）、ConfigPanel.css（新增样式）、CharacterDialogueChat.hooks.ts（表格数据获取、自动整理触发）、PromptBuilder.ts（整合表格数据）、CharacterDialogueChat.tsx（主组件集成）
+
+### Changed
+- **【重点标记】AI请求日志打印完整提示词入参**：修复了 `console.debug` 打印请求体时 DevTools 以 `... more characters` 形式截断长字符串的问题。改为逐条打印 messages 数组的 role 和内容预览（前200字符），同时将完整 JSON 写入日志文件。涉及文件：aiHandlers.ts（优化请求体日志输出）
+- **【重点标记】修复记忆表格数据结构读取错误**：修正了 `CharacterDialogueChat.hooks.ts` 中读取 `memory.getTableData` 返回数据的逻辑。原代码错误地将 `sheets`（string[]）当作对象数组遍历（访问 `sheet.sheetName` 等），导致记忆表格数据始终为空。同时移除了50行输出限制。涉及文件：CharacterDialogueChat.hooks.ts（修复两处数据读取逻辑）
+- **【重点标记】修复记忆表格数据路径不匹配问题**：表格整理功能使用 `characterCardName`（如"狼人杀助手2.0"）保存文件，但 hooks 使用 `characterCardId`（完整图片路径）读取文件，导致文件找不到。现在统一使用 `characterCardName` 进行读取。涉及文件：CharacterDialogueChat.hooks.ts（修复 requestAIResponse 和 fetchMemoryTableData 两处）
+- **【重点标记】修复记忆表格数据读取映射错误**：表格数据在 JSON 文件中使用数字索引（"0", "1", "2"等）存储，但前端错误地尝试使用列标题（"流水号", "角色名"等）访问。现已修正为使用数字索引映射（headers[0] → row["0"], headers[1] → row["1"]等）。涉及文件：CharacterDialogueChat.hooks.ts
+- **【重点标记】修复实时整理表格路径错误**：实时整理表格功能同样使用了错误的 `characterCardId`（完整图片路径）而非 `characterCardName`（角色卡名称），导致找不到聊天记录文件。现已修正。涉及文件：CharacterDialogueChat.hooks.ts（修复 onComplete 回调）
+- **【重点标记】修复表格整理断点续传进度计算错误**：断点续传模式下（如从第4条消息开始处理9条消息），进度百分比错误地按绝对位置计算（显示44%而非实际的1/6=17%）。修复后进度百分比基于"已处理数/当前批次待处理总数"计算，处理详情仍保留绝对消息编号（4/9）。涉及文件：chatLogService.ts（processChatProgressive 方法）
+- **【重点标记】修复 memory:getTableData IPC handler 日志输出**：优化了 `memoryHandlers.ts` 中 `memory:getTableData` 的日志输出，详细记录返回的数据结构摘要（sheets、headersKeys、dataKeys），便于调试表格数据传递问题。涉及文件：memoryHandlers.ts
+- **【重点标记】增强全链路诊断日志**：在 CharacterDialogueChat.hooks.ts 的 requestAIResponse 和 fetchMemoryTableData 中添加了详细的调试日志（console.log），追踪 memoryTableEnabled 状态、使用的 chatId、tableResult 内容等。涉及文件：CharacterDialogueChat.hooks.ts
+
+## [0.0.6] - 2026-05-09
+
+### Added
+- **【重点标记】世界书关键词匹配引擎**：实现基于关键词匹配的世界书条目激活功能。支持主关键词（key）、次关键词（keysecondary）、备用关键词（keys、secondary_keys）。支持 selective 模式（主+次关键词同时匹配）、概率过滤（probability）、完整单词匹配、不区分大小写、group 排序权重等完整 SillyTavern 兼容特性。对话时同时执行向量检索和关键词匹配，两种结果合并注入提示词。涉及文件：WorldBookKeywordMatcher.ts（新建）、worldBookService.ts（新增matchKeywords）、ContextManager.ts（新增retrieveContextWithKeywords）、preload.ts（新增worldbook IPC）、electron.d.ts（新增类型定义）、CharacterDialogueChat.hooks.ts（改用综合检索API）
+
+## [0.0.5] - 2026-05-09
+
+### Changed
+- **【重点标记】对话系统提示词拼接逻辑重构——统一由PromptBuilder管理**：将对话系统中的提示词拼接逻辑完全统一由PromptBuilder模块管理。hooks中移除了手动的提示词拼接代码，改为调用usePromptBuilder Hook提供的buildCompleteSystemPrompt方法。PromptBuilder.ts中为每个拼接步骤添加了明确的注释（第一步→第六步），标明每个步骤的数据来源。涉及文件：PromptBuilder.ts（重构注释）、usePromptBuilder.ts（新增buildCompleteSystemPrompt）、CharacterDialogueChat.hooks.ts（简化拼接逻辑）
+
+## [0.0.4] - 2026-05-09
+
+### Changed
+- **【重点标记】对话系统界面优化——向量化设置重构**：将知识库绑定功能从独立面板收纳到"向量化设置"区域中。"向量化设置"与"AI参数配置"同级排列。向量化面板支持折叠/展开切换，知识库绑定作为其内部内容展示。涉及文件：VectorizationPanel.tsx（新建）、KnowledgeBaseBindingPanel.tsx（移除自身折叠逻辑）、ConfigPanel.tsx（更新布局）、ConfigPanel.css（新增向量化面板样式）
+
+## [0.0.3] - 2026-05-09
+
+### Changed
+- **【重点标记】对话系统界面优化——可折叠面板**：右侧配置栏的"知识库绑定设置"和"AI参数配置"模块重构为可折叠式组件。默认展开状态，点击标题栏切换折叠/展开。折叠时仅显示标题栏，展开时完整显示设置项。折叠状态通过localStorage持久化记忆。涉及文件：KnowledgeBaseBindingPanel.tsx、ParameterPanel.tsx、ConfigPanel.css
+- **【重点标记】对话系统提示词构建逻辑重构**：将对话功能中的提示词构建过程提取为独立的逻辑文件。创建PromptBuilder.ts作为核心提示词构建模块，包含buildDialoguePrompt、buildContinuationPrompt、buildCharacterContext、buildPersonaSection等函数。创建usePromptBuilder.ts作为React Hook封装层，提供buildDialoguePrompt、buildContinuationPrompt、buildFinalPrompt等方法。CharacterDialogueChat.hooks.ts简化为调用usePromptBuilder，CharacterDialogueChat.utils.ts改为从PromptBuilder重新导出以保持向后兼容。涉及文件：PromptBuilder.ts（新建）、usePromptBuilder.ts（新建）、CharacterDialogueChat.hooks.ts、CharacterDialogueChat.utils.ts
+
+### Added
+- 可折叠面板折叠/展开指示图标（▼/▶）
+- AI参数配置模块折叠时的自定义参数指示器（紫色小圆点）
+- 知识库绑定数量标签显示
+
 ## [0.0.2] - 2026-05-02
 
 ### Fixed

@@ -55,3 +55,1103 @@
   background: var(--bg-color);
   color: var(--text-color);
 }
+
+/* ==========================================================================
+   全局模态框暗色主题 - Global Modal Dark Theme
+   ========================================================================== */
+
+.dark .ant-modal-content {
+  background-color: var(--bg-container);
+}
+
+.dark .ant-modal-header {
+  background-color: var(--bg-container);
+}
+
+.dark .ant-modal-title {
+  color: var(--text-heading);
+}
+
+.dark .ant-modal-footer {
+  border-top-color: var(--border-base);
+}
+
+.dark .ant-modal-close-x {
+  color: var(--text-secondary);
+}
+
+.dark .ant-modal-close-x:hover {
+  color: var(--text-primary);
+}
+
+/* ==========================================================================
+   全局表格暗色主题 - Global Table Dark Theme
+   ========================================================================== */
+
+.dark .ant-table {
+  background-color: var(--bg-container);
+  color: var(--text-primary);
+}
+
+.dark .ant-table-container {
+  background-color: var(--bg-container);
+}
+
+.dark .ant-table-thead > tr > th {
+  background-color: var(--bg-elevated);
+  color: var(--text-heading);
+  border-bottom-color: var(--border-base);
+}
+
+.dark .ant-table-tbody > tr > td {
+  background-color: var(--bg-container);
+  color: var(--text-primary);
+  border-bottom-color: var(--border-base);
+}
+
+.dark .ant-table-tbody > tr:hover > td {
+  background-color: var(--bg-hover);
+}
+
+.dark .ant-table-thead th {
+  background-color: var(--bg-elevated);
+}
+
+.dark .ant-table-row-expand-icon {
+  background-color: var(--bg-container);
+  border-color: var(--border-base);
+  color: var(--text-primary);
+}
+
+.dark .ant-table-row-expand-icon:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.dark .ant-table-empty .ant-table-cell {
+  color: var(--text-secondary);
+}
+
+/* ==========================================================================
+   全局卡片暗色主题 - Global Card Dark Theme
+   ========================================================================== */
+
+.dark .ant-card {
+  background-color: var(--bg-container);
+  border-color: var(--border-base);
+}
+
+.dark .ant-card-head {
+  border-bottom-color: var(--border-base);
+}
+
+.dark .ant-card-head-title {
+  color: var(--text-heading);
+}
+
+.dark .ant-card-extra {
+  color: var(--text-secondary);
+}
+
+.dark .ant-card-body {
+  background-color: var(--bg-container);
+  color: var(--text-primary);
+}
+
+.dark .ant-card-meta-title {
+  color: var(--text-heading);
+}
+
+.dark .ant-card-meta-description {
+  color: var(--text-secondary);
+}
+
+/* ==========================================================================
+   全局表单暗色主题 - Global Form Dark Theme
+   ========================================================================== */
+
+.dark .ant-form-item-label > label {
+  color: var(--text-primary);
+}
+
+.dark .ant-form-item-explain {
+  color: var(--text-secondary);
+}
+
+/* ==========================================================================
+   全局按钮暗色主题 - Global Button Dark Theme
+   ========================================================================== */
+
+.dark .ant-btn-default {
+  background-color: var(--bg-container);
+  border-color: var(--border-base);
+  color: var(--text-primary);
+}
+
+.dark .ant-btn-default:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.dark .ant-btn-text {
+  color: var(--text-primary);
+}
+
+.dark .ant-btn-text:hover {
+  background-color: var(--bg-hover);
+  color: var(--color-primary);
+}
+
+/* ==========================================================================
+   全局标签暗色主题 - Global Tag Dark Theme
+   ========================================================================== */
+
+.dark .ant-tag {
+  color: var(--text-primary);
+  border-color: var(--border-base);
+}
+
+/* ==========================================================================
+   全局选择器暗色主题 - Global Select Dark Theme
+   ========================================================================== */
+
+.dark .ant-select-dropdown {
+  background-color: var(--bg-elevated);
+}
+
+.dark .ant-select-item {
+  color: var(--text-primary);
+}
+
+.dark .ant-select-item-option-active {
+  background-color: var(--bg-hover);
+}
+
+.dark .ant-select-item-option-selected {
+  background-color: var(--bg-active);
+  color: var(--color-primary);
+}
+
+/* ==========================================================================
+   全局输入框暗色主题 - Global Input Dark Theme
+   ========================================================================== */
+
+.dark .ant-input {
+  background-color: var(--bg-input);
+  border-color: var(--border-base);
+  color: var(--text-primary);
+}
+
+.dark .ant-input:hover {
+  border-color: var(--border-secondary);
+}
+
+.dark .ant-input:focus {
+  border-color: var(--border-focus);
+}
+
+.dark .ant-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+/* ==========================================================================
+   全局分页暗色主题 - Global Pagination Dark Theme
+   ========================================================================== */
+
+.dark .ant-pagination-item {
+  background-color: var(--bg-container);
+  border-color: var(--border-base);
+}
+
+.dark .ant-pagination-item a {
+  color: var(--text-primary);
+}
+
+.dark .ant-pagination-item-active {
+  border-color: var(--color-primary);
+}
+
+.dark .ant-pagination-item-active a {
+  color: var(--color-primary);
+}
+
+.dark .ant-pagination-prev,
+.dark .ant-pagination-next {
+  color: var(--text-primary);
+}
+
+.dark .ant-pagination-prev:hover,
+.dark .ant-pagination-next:hover {
+  color: var(--color-primary);
+}
+
+/* ==========================================================================
+   全局选项卡暗色主题 - Global Tabs Dark Theme
+   ========================================================================== */
+
+.dark .ant-tabs-tab {
+  color: var(--text-secondary);
+}
+
+.dark .ant-tabs-tab:hover {
+  color: var(--color-primary);
+}
+
+.dark .ant-tabs-tab-active {
+  color: var(--color-primary);
+}
+
+.dark .ant-tabs-ink-bar {
+  background-color: var(--color-primary);
+}
+
+.dark .ant-tabs-content {
+  color: var(--text-primary);
+}
+
+/* ==========================================================================
+   全局下拉菜单暗色主题 - Global Dropdown Dark Theme
+   ========================================================================== */
+
+.dark .ant-dropdown-menu {
+  background-color: var(--bg-elevated);
+}
+
+.dark .ant-dropdown-menu-item {
+  color: var(--text-primary);
+}
+
+.dark .ant-dropdown-menu-item:hover {
+  background-color: var(--bg-hover);
+}
+
+/* ==========================================================================
+   全局消息提示暗色主题 - Global Message/Notification Dark Theme
+   ========================================================================== */
+
+.dark .ant-message-notice-content {
+  background-color: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border-base);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
+}
+
+.dark .ant-message-notice-content .anticon {
+  color: var(--text-primary);
+}
+
+.dark .ant-message-notice-content .ant-message-custom-content {
+  color: var(--text-primary);
+}
+
+.dark .ant-message-notice-content .ant-message-success {
+  color: var(--color-success);
+}
+
+.dark .ant-message-notice-content .ant-message-error {
+  color: var(--color-error);
+}
+
+.dark .ant-message-notice-content .ant-message-warning {
+  color: var(--color-warning);
+}
+
+.dark .ant-message-notice-content .ant-message-info {
+  color: var(--color-info);
+}
+
+/* Notification */
+.dark .ant-notification-notice {
+  background-color: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border-base);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
+}
+
+.dark .ant-notification-notice-message {
+  color: var(--text-heading);
+}
+
+.dark .ant-notification-notice-description {
+  color: var(--text-secondary);
+}
+
+.dark .ant-notification-notice-icon {
+  color: var(--text-primary);
+}
+
+.dark .ant-notification-notice-icon-success {
+  color: var(--color-success);
+}
+
+.dark .ant-notification-notice-icon-error {
+  color: var(--color-error);
+}
+
+.dark .ant-notification-notice-icon-warning {
+  color: var(--color-warning);
+}
+
+.dark .ant-notification-notice-icon-info {
+  color: var(--color-info);
+}
+
+.dark .ant-notification-notice-close {
+  color: var(--text-secondary);
+}
+
+.dark .ant-notification-notice-close:hover {
+  color: var(--text-primary);
+}
+
+/* Confirm Modal */
+.dark .ant-modal-confirm-body {
+  color: var(--text-primary);
+}
+
+.dark .ant-modal-confirm-title {
+  color: var(--text-heading);
+}
+
+.dark .ant-modal-confirm-content {
+  color: var(--text-primary);
+}
+
+.dark .ant-modal-confirm-body .anticon {
+  color: var(--color-info);
+}
+
+.dark .ant-modal-confirm-body .anticon-info {
+  color: var(--color-info);
+}
+
+.dark .ant-modal-confirm-body .anticon-success {
+  color: var(--color-success);
+}
+
+.dark .ant-modal-confirm-body .anticon-warning {
+  color: var(--color-warning);
+}
+
+.dark .ant-modal-confirm-body .anticon-error {
+  color: var(--color-error);
+}
+
+/* Popconfirm */
+.dark .ant-popconfirm-message {
+  color: var(--text-primary);
+}
+
+.dark .ant-popconfirm-message-icon {
+  color: var(--color-warning);
+}
+
+.dark .ant-popconfirm-message-text {
+  color: var(--text-primary);
+}
+
+/* Popconfirm buttons */
+.dark .ant-popconfirm-buttons .ant-btn {
+  color: var(--text-primary);
+}
+
+/* ==========================================================================
+   全局分割线暗色主题 - Global Divider Dark Theme
+   ========================================================================== */
+
+.dark .ant-divider {
+  border-color: var(--border-base);
+}
+
+.dark .ant-divider-inner-text {
+  color: var(--text-secondary);
+}
+
+/* ==========================================================================
+   全局描述列表暗色主题 - Global Descriptions Dark Theme
+   ========================================================================== */
+
+.dark .ant-descriptions-item-label {
+  color: var(--text-secondary);
+}
+
+.dark .ant-descriptions-item-content {
+  color: var(--text-primary);
+}
+
+/* ==========================================================================
+   全局空状态暗色主题 - Global Empty Dark Theme
+   ========================================================================== */
+
+.dark .ant-empty-description {
+  color: var(--text-secondary);
+}
+
+/* ==========================================================================
+   全局加载暗色主题 - Global Spin Dark Theme
+   ========================================================================== */
+
+.dark .ant-spin-dot-item {
+  background-color: var(--color-primary);
+}
+
+/* ==========================================================================
+   全局工具提示暗色主题 - Global Tooltip Dark Theme
+   ========================================================================== */
+
+.dark .ant-tooltip-inner {
+  background-color: var(--bg-tooltip);
+  color: var(--text-primary);
+}
+
+.dark .ant-tooltip-arrow-content {
+  background-color: var(--bg-tooltip);
+}
+
+/* ==========================================================================
+   全局气泡卡片暗色主题 - Global Popover Dark Theme
+   ========================================================================== */
+
+.dark .ant-popover-inner {
+  background-color: var(--bg-elevated);
+}
+
+.dark .ant-popover-title {
+  color: var(--text-heading);
+}
+
+.dark .ant-popover-inner-content {
+  color: var(--text-primary);
+}
+
+.dark .ant-popover-arrow-content {
+  background-color: var(--bg-elevated);
+}
+
+/* ==========================================================================
+   全局单选框暗色主题 - Global Radio Dark Theme
+   ========================================================================== */
+
+.dark .ant-radio-wrapper {
+  color: var(--text-primary);
+}
+
+.dark .ant-radio-inner {
+  background-color: var(--bg-container);
+  border-color: var(--border-base);
+}
+
+.dark .ant-radio-checked .ant-radio-inner {
+  border-color: var(--color-primary);
+  background-color: var(--color-primary);
+}
+
+/* ==========================================================================
+   全局复选框暗色主题 - Global Checkbox Dark Theme
+   ========================================================================== */
+
+.dark .ant-checkbox-wrapper {
+  color: var(--text-primary);
+}
+
+.dark .ant-checkbox-inner {
+  background-color: var(--bg-container);
+  border-color: var(--border-base);
+}
+
+.dark .ant-checkbox-checked .ant-checkbox-inner {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+/* ==========================================================================
+   全局开关暗色主题 - Global Switch Dark Theme
+   ========================================================================== */
+
+.dark .ant-switch {
+  background-color: var(--border-base);
+}
+
+.dark .ant-switch-checked {
+  background-color: var(--color-primary);
+}
+
+/* ==========================================================================
+   全局滑块暗色主题 - Global Slider Dark Theme
+   ========================================================================== */
+
+.dark .ant-slider-rail {
+  background-color: var(--border-base);
+}
+
+.dark .ant-slider-track {
+  background-color: var(--color-primary);
+}
+
+.dark .ant-slider-handle {
+  background-color: var(--bg-container);
+  border-color: var(--color-primary);
+}
+
+/* ==========================================================================
+   全局日期选择器暗色主题 - Global DatePicker Dark Theme
+   ========================================================================== */
+
+.dark .ant-picker {
+  background-color: var(--bg-input);
+  border-color: var(--border-base);
+}
+
+.dark .ant-picker:hover {
+  border-color: var(--border-secondary);
+}
+
+.dark .ant-picker-focused {
+  border-color: var(--border-focus);
+}
+
+.dark .ant-picker-input > input {
+  color: var(--text-primary);
+}
+
+.dark .ant-picker-input > input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.dark .ant-picker-panel {
+  background-color: var(--bg-elevated);
+}
+
+.dark .ant-picker-header {
+  border-bottom-color: var(--border-base);
+}
+
+.dark .ant-picker-content th {
+  color: var(--text-secondary);
+}
+
+.dark .ant-picker-cell {
+  color: var(--text-primary);
+}
+
+.dark .ant-picker-cell-in-view {
+  color: var(--text-primary);
+}
+
+.dark .ant-picker-cell-disabled {
+  color: var(--text-disabled);
+}
+
+.dark .ant-picker-footer {
+  border-top-color: var(--border-base);
+}
+
+/* ==========================================================================
+   全局时间选择器暗色主题 - Global TimePicker Dark Theme
+   ========================================================================== */
+
+.dark .ant-picker-time-panel {
+  background-color: var(--bg-elevated);
+}
+
+.dark .ant-picker-time-panel-column > li {
+  color: var(--text-primary);
+}
+
+.dark .ant-picker-time-panel-column > li.ant-picker-time-panel-cell-selected {
+  background-color: var(--bg-active);
+  color: var(--color-primary);
+}
+
+/* ==========================================================================
+   全局穿梭框暗色主题 - Global Transfer Dark Theme
+   ========================================================================== */
+
+.dark .ant-transfer-list {
+  background-color: var(--bg-container);
+  border-color: var(--border-base);
+}
+
+.dark .ant-transfer-list-header {
+  background-color: var(--bg-elevated);
+  border-bottom-color: var(--border-base);
+  color: var(--text-heading);
+}
+
+.dark .ant-transfer-list-content-item {
+  color: var(--text-primary);
+}
+
+.dark .ant-transfer-list-content-item:hover {
+  background-color: var(--bg-hover);
+}
+
+/* ==========================================================================
+   全局树形控件暗色主题 - Global Tree Dark Theme
+   ========================================================================== */
+
+.dark .ant-tree {
+  background-color: var(--bg-container);
+  color: var(--text-primary);
+}
+
+.dark .ant-tree-node-content-wrapper {
+  color: var(--text-primary);
+}
+
+.dark .ant-tree-node-content-wrapper:hover {
+  background-color: var(--bg-hover);
+}
+
+.dark .ant-tree-node-selected .ant-tree-node-content-wrapper {
+  background-color: var(--bg-selected);
+}
+
+.dark .ant-tree-node-content-wrapper.ant-tree-node-selected {
+  color: var(--color-primary);
+}
+
+/* ==========================================================================
+   全局面包屑暗色主题 - Global Breadcrumb Dark Theme
+   ========================================================================== */
+
+.dark .ant-breadcrumb a {
+  color: var(--text-secondary);
+}
+
+.dark .ant-breadcrumb a:hover {
+  color: var(--color-primary);
+}
+
+.dark .ant-breadcrumb-separator {
+  color: var(--text-tertiary);
+}
+
+.dark .ant-breadcrumb > span:last-child {
+  color: var(--text-primary);
+}
+
+/* ==========================================================================
+   全局步骤条暗色主题 - Global Steps Dark Theme
+   ========================================================================== */
+
+.dark .ant-steps-item-title {
+  color: var(--text-primary);
+}
+
+.dark .ant-steps-item-description {
+  color: var(--text-secondary);
+}
+
+.dark .ant-steps-item-icon {
+  background-color: var(--bg-container);
+  border-color: var(--border-base);
+}
+
+.dark .ant-steps-item-finish .ant-steps-item-icon {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.dark .ant-steps-item-process .ant-steps-item-icon {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+/* ==========================================================================
+   全局结果暗色主题 - Global Result Dark Theme
+   ========================================================================== */
+
+.dark .ant-result-title {
+  color: var(--text-heading);
+}
+
+.dark .ant-result-subtitle {
+  color: var(--text-secondary);
+}
+
+.dark .ant-result-content {
+  color: var(--text-primary);
+}
+
+/* ==========================================================================
+   全局骨架屏暗色主题 - Global Skeleton Dark Theme
+   ========================================================================== */
+
+.dark .ant-skeleton-title {
+  background-color: var(--bg-elevated);
+}
+
+.dark .ant-skeleton-paragraph > li {
+  background-color: var(--bg-elevated);
+}
+
+.dark .ant-skeleton-avatar {
+  background-color: var(--bg-elevated);
+}
+
+.dark .ant-skeleton-button {
+  background-color: var(--bg-elevated);
+}
+
+.dark .ant-skeleton-input {
+  background-color: var(--bg-elevated);
+}
+
+/* ==========================================================================
+   全局头像暗色主题 - Global Avatar Dark Theme
+   ========================================================================== */
+
+.dark .ant-avatar {
+  background-color: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+/* ==========================================================================
+   全局徽章暗色主题 - Global Badge Dark Theme
+   ========================================================================== */
+
+.dark .ant-badge-count {
+  background-color: var(--color-error);
+}
+
+.dark .ant-badge-status-dot {
+  background-color: var(--color-primary);
+}
+
+.dark .ant-badge-status-text {
+  color: var(--text-primary);
+}
+
+/* ==========================================================================
+   全局日历暗色主题 - Global Calendar Dark Theme
+   ========================================================================== */
+
+.dark .ant-picker-calendar {
+  background-color: var(--bg-container);
+}
+
+.dark .ant-picker-calendar-full .ant-picker-panel {
+  background-color: var(--bg-container);
+}
+
+.dark .ant-picker-calendar-full .ant-picker-panel .ant-picker-cell-selected .ant-picker-calendar-date {
+  background-color: var(--bg-selected);
+}
+
+.dark .ant-picker-calendar-full .ant-picker-panel .ant-picker-calendar-date {
+  border-top-color: var(--border-base);
+}
+
+.dark .ant-picker-calendar-full .ant-picker-panel .ant-picker-calendar-date-today {
+  background-color: var(--bg-hover);
+}
+
+.dark .ant-picker-calendar-full .ant-picker-panel .ant-picker-calendar-date-content {
+  color: var(--text-primary);
+}
+
+/* ==========================================================================
+   全局图片暗色主题 - Global Image Dark Theme
+   ========================================================================== */
+
+.dark .ant-image-mask-info {
+  color: var(--text-primary);
+}
+
+.dark .ant-image-mask-info .anticon {
+  color: var(--text-primary);
+}
+
+/* ==========================================================================
+   全局列表暗色主题 - Global List Dark Theme
+   ========================================================================== */
+
+.dark .ant-list-item {
+  border-bottom-color: var(--border-base);
+}
+
+.dark .ant-list-item-meta-title {
+  color: var(--text-heading);
+}
+
+.dark .ant-list-item-meta-description {
+  color: var(--text-secondary);
+}
+
+.dark .ant-list-item-action > li {
+  color: var(--text-secondary);
+}
+
+.dark .ant-list-split .ant-list-header {
+  border-bottom-color: var(--border-base);
+}
+
+.dark .ant-list-empty-text {
+  color: var(--text-secondary);
+}
+
+/* ==========================================================================
+   全局统计数值暗色主题 - Global Statistic Dark Theme
+   ========================================================================== */
+
+.dark .ant-statistic-title {
+  color: var(--text-secondary);
+}
+
+.dark .ant-statistic-content {
+  color: var(--text-primary);
+}
+
+/* ==========================================================================
+   全局走马灯暗色主题 - Global Carousel Dark Theme
+   ========================================================================== */
+
+.dark .ant-carousel .slick-dots li button {
+  background-color: var(--border-base);
+}
+
+.dark .ant-carousel .slick-dots li.slick-active button {
+  background-color: var(--color-primary);
+}
+
+/* ==========================================================================
+   全局折叠面板暗色主题 - Global Collapse Dark Theme
+   ========================================================================== */
+
+.dark .ant-collapse {
+  background-color: var(--bg-container);
+  border-color: var(--border-base);
+}
+
+.dark .ant-collapse-header {
+  background-color: var(--bg-elevated);
+  color: var(--text-heading);
+  border-bottom-color: var(--border-base);
+}
+
+.dark .ant-collapse-header:hover {
+  color: var(--color-primary);
+}
+
+.dark .ant-collapse-content {
+  background-color: var(--bg-container);
+  border-top-color: var(--border-base);
+}
+
+.dark .ant-collapse-content-box {
+  color: var(--text-primary);
+}
+
+/* ==========================================================================
+   全局锚点暗色主题 - Global Anchor Dark Theme
+   ========================================================================== */
+
+.dark .ant-anchor-link-title {
+  color: var(--text-primary);
+}
+
+.dark .ant-anchor-link-title:hover {
+  color: var(--color-primary);
+}
+
+.dark .ant-anchor-link-active > .ant-anchor-link-title {
+  color: var(--color-primary);
+}
+
+.dark .ant-anchor-badge {
+  color: var(--color-primary);
+}
+
+/* ==========================================================================
+   全局自动完成暗色主题 - Global AutoComplete Dark Theme
+   ========================================================================== */
+
+.dark .ant-auto-complete-dropdown {
+  background-color: var(--bg-elevated);
+}
+
+.dark .ant-select-dropdown-menu-item {
+  color: var(--text-primary);
+}
+
+.dark .ant-select-dropdown-menu-item:hover {
+  background-color: var(--bg-hover);
+}
+
+.dark .ant-select-dropdown-menu-item-active {
+  background-color: var(--bg-hover);
+}
+
+.dark .ant-select-dropdown-menu-item-selected {
+  background-color: var(--bg-active);
+  color: var(--color-primary);
+}
+
+/* ==========================================================================
+   全局级联选择暗色主题 - Global Cascader Dark Theme
+   ========================================================================== */
+
+.dark .ant-cascader-menu {
+  background-color: var(--bg-elevated);
+}
+
+.dark .ant-cascader-menu-item {
+  color: var(--text-primary);
+}
+
+.dark .ant-cascader-menu-item:hover {
+  background-color: var(--bg-hover);
+}
+
+.dark .ant-cascader-menu-item-active {
+  background-color: var(--bg-active);
+  color: var(--color-primary);
+}
+
+/* ==========================================================================
+   全局提及暗色主题 - Global Mention Dark Theme
+   ========================================================================== */
+
+.dark .ant-mentions-dropdown {
+  background-color: var(--bg-elevated);
+}
+
+.dark .ant-mentions-dropdown-menu-item {
+  color: var(--text-primary);
+}
+
+.dark .ant-mentions-dropdown-menu-item:hover {
+  background-color: var(--bg-hover);
+}
+
+.dark .ant-mentions-dropdown-menu-item-active {
+  background-color: var(--bg-hover);
+}
+
+/* ==========================================================================
+   全局全局搜索暗色主题 - Global Select Search Dark Theme
+   ========================================================================== */
+
+.dark .ant-select-selection-search-input {
+  color: var(--text-primary);
+}
+
+.dark .ant-select-selection-item {
+  color: var(--text-primary);
+}
+
+.dark .ant-select-selection-placeholder {
+  color: var(--text-tertiary);
+}
+
+/* ==========================================================================
+   全局上传暗色主题 - Global Upload Dark Theme
+   ========================================================================== */
+
+.dark .ant-upload {
+  background-color: var(--bg-container);
+  border-color: var(--border-base);
+}
+
+.dark .ant-upload:hover {
+  border-color: var(--color-primary);
+}
+
+.dark .ant-upload-text {
+  color: var(--text-primary);
+}
+
+.dark .ant-upload-hint {
+  color: var(--text-secondary);
+}
+
+.dark .ant-upload-list-item {
+  color: var(--text-primary);
+}
+
+.dark .ant-upload-list-item-name {
+  color: var(--text-primary);
+}
+
+.dark .ant-upload-list-item-error {
+  color: var(--color-error);
+}
+
+/* ==========================================================================
+   全局进度条暗色主题 - Global Progress Dark Theme
+   ========================================================================== */
+
+.dark .ant-progress-text {
+  color: var(--text-primary);
+}
+
+.dark .ant-progress-inner {
+  background-color: var(--bg-elevated);
+}
+
+.dark .ant-progress-success-bg {
+  background-color: var(--color-success);
+}
+
+.dark .ant-progress-bg {
+  background-color: var(--color-primary);
+}
+
+/* ==========================================================================
+   全局警告提示暗色主题 - Global Alert Dark Theme
+   ========================================================================== */
+
+.dark .ant-alert {
+  background-color: var(--bg-container);
+  border-color: var(--border-base);
+}
+
+.dark .ant-alert-message {
+  color: var(--text-heading);
+}
+
+.dark .ant-alert-description {
+  color: var(--text-secondary);
+}
+
+.dark .ant-alert-icon {
+  color: var(--color-primary);
+}
+
+.dark .ant-alert-success {
+  border-color: var(--color-success);
+  background-color: var(--color-success-light-bg);
+}
+
+.dark .ant-alert-success .ant-alert-icon {
+  color: var(--color-success);
+}
+
+.dark .ant-alert-warning {
+  border-color: var(--color-warning);
+  background-color: var(--color-warning-light-bg);
+}
+
+.dark .ant-alert-warning .ant-alert-icon {
+  color: var(--color-warning);
+}
+
+.dark .ant-alert-error {
+  border-color: var(--color-error);
+  background-color: var(--color-error-light-bg);
+}
+
+.dark .ant-alert-error .ant-alert-icon {
+  color: var(--color-error);
+}
+
+.dark .ant-alert-info {
+  border-color: var(--color-info);
+  background-color: var(--color-info-light-bg);
+}
+
+.dark .ant-alert-info .ant-alert-icon {
+  color: var(--color-info);
+}
+

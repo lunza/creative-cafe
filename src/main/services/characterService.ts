@@ -148,13 +148,6 @@ class CharacterService {
       const card = await CharacterCard.from_file(fileBuffer);
       const specV3 = card.toSpecV3();
       
-      console.log(`Read character card from image: ${filePath}`);
-      console.log('CharacterCard spec:', card.spec);
-      console.log('CharacterCard spec_version:', card.spec_version);
-      console.log('SpecV3 object:', specV3);
-      console.log('SpecV3 data:', specV3.data);
-      console.log('All fields in data:', Object.keys(specV3.data));
-      
       return specV3;
     } catch (error) {
       console.error('Failed to read character:', error);
@@ -404,18 +397,12 @@ export const characterService = new CharacterService();
 
 (async () => {
   try {
-    console.log('Testing v2 character card...');
     const testCardPath = path.join(process.cwd(), 'test-character.png');
     if (fsSync.existsSync(testCardPath)) {
       await characterService.testReadCharacter(testCardPath);
-    } else {
-      console.log('Test character card not found, skipping test');
     }
-    console.log('Testing v3 character card...');
     if (fsSync.existsSync(testCardPath)) {
       await characterService.testReadCharacter(testCardPath);
-    } else {
-      console.log('Test character card not found, skipping test');
     }
   } catch (error) {
     console.error('Failed to test character cards:', error);

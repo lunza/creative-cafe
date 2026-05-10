@@ -22,6 +22,7 @@ const WorldBookListPage: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [form] = Form.useForm();
   const [editingWorldBook, setEditingWorldBook] = useState<{ creativeId: string; worldBook: WorldBook } | null>(null);
+  const [pageSize, setPageSize] = useState(10);
 
   useEffect(() => {
     loadCreatives();
@@ -141,13 +142,22 @@ const WorldBookListPage: React.FC = () => {
         </Button>
       </div>
 
-      <Table
-        columns={columns}
-        dataSource={worldBookList}
-        rowKey="key"
-        locale={{ emptyText: '暂无世界书，请先在创意中创建世界书' }}
-        pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 条` }}
-      />
+      <div className="table-container">
+        <Table
+          columns={columns}
+          dataSource={worldBookList}
+          rowKey="key"
+          bordered
+          locale={{ emptyText: '暂无世界书，请先在创意中创建世界书' }}
+          pagination={{
+            pageSize,
+            showSizeChanger: true,
+            showTotal: (total) => `共 ${total} 条`,
+            className: 'table-pagination-wrapper',
+            onChange: (page, size) => { setPageSize(size); },
+          }}
+        />
+      </div>
 
       <Modal
         title={editingWorldBook ? '编辑世界书' : '新建世界书'}

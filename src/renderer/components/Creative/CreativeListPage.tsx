@@ -28,7 +28,9 @@ const CreativeListPage: React.FC = () => {
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [form] = Form.useForm();
   const [renameModalVisible, setRenameModalVisible] = useState(false);
+  const [renameForm] = Form.useForm();
   const [renamingCreativeId, setRenamingCreativeId] = useState<string | null>(null);
+  const [pageSize, setPageSize] = useState(10);
 
   useEffect(() => {
     loadCreatives();
@@ -198,9 +200,10 @@ const CreativeListPage: React.FC = () => {
         dataSource={creatives}
         rowKey="id"
         pagination={{
-          pageSize: 10,
+          pageSize,
           showSizeChanger: true,
-          pageSizeOptions: ['10', '20', '50']
+          pageSizeOptions: ['10', '20', '50'],
+          onChange: (page, size) => { setPageSize(size); }
         }}
       />
 

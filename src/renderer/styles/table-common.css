@@ -1,0 +1,603 @@
+/*
+ * Table Common Styles - 统一的表格样式规范
+ * 基于 ui-variables.css 中的CSS变量系统
+ * 适用于所有 Ant Design Table 组件
+ */
+
+/* ==========================================================================
+   统一表格容器样式 - Unified Table Container
+   ========================================================================== */
+
+.table-container {
+  background-color: var(--bg-container);
+  border-radius: var(--radius-base);
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+  border: var(--border-width) solid var(--border-base);
+}
+
+/* ==========================================================================
+   Ant Design Table 统一样式覆盖 - Ant Design Table Override
+   ========================================================================== */
+
+/* 表格主体样式 */
+.ant-table-wrapper {
+  .ant-table {
+    background-color: var(--bg-container);
+    border-radius: var(--radius-base);
+    overflow: hidden;
+    
+    /* 表头样式 */
+    .ant-table-thead > tr > th {
+      background-color: var(--bg-elevated);
+      color: var(--text-heading);
+      font-weight: var(--font-weight-semibold);
+      font-size: var(--font-size-base);
+      border-bottom: var(--border-width-thick) solid var(--border-base);
+      white-space: nowrap;
+      padding: var(--spacing-sm) var(--spacing-md);
+      
+      &:hover {
+        background-color: var(--bg-hover);
+      }
+    }
+    
+    /* 表格主体行样式 */
+    .ant-table-tbody > tr > td {
+      border-bottom: var(--border-width) solid var(--border-light);
+      padding: var(--spacing-sm) var(--spacing-md);
+      color: var(--text-primary);
+      background-color: var(--bg-container);
+      transition: background-color var(--duration-normal) var(--ease-default);
+    }
+    
+    /* 行悬停效果 */
+    .ant-table-tbody > tr:hover > td {
+      background-color: var(--bg-hover) !important;
+    }
+    
+    /* 最后一行底部边框 */
+    .ant-table-tbody > tr:last-child > td {
+      border-bottom: none;
+    }
+    
+    /* 空数据样式 */
+    .ant-table-placeholder {
+      .ant-table-cell {
+        color: var(--text-secondary);
+        background-color: var(--bg-container);
+      }
+    }
+    
+    /* 表格边框模式 */
+    &.ant-table-bordered {
+      border: var(--border-width) solid var(--border-base);
+      border-radius: var(--radius-base);
+      
+      .ant-table-container {
+        border: none;
+        border-radius: var(--radius-base);
+      }
+      
+      .ant-table-thead > tr > th,
+      .ant-table-tbody > tr > td {
+        border-right: var(--border-width) solid var(--border-light);
+        
+        &:last-child {
+          border-right: none;
+        }
+      }
+    }
+    
+    /* 小尺寸表格 */
+    &.ant-table-small {
+      .ant-table-thead > tr > th,
+      .ant-table-tbody > tr > td {
+        padding: var(--spacing-xs) var(--spacing-sm);
+        font-size: var(--font-size-sm);
+      }
+    }
+    
+    /* 大尺寸表格 */
+    &.ant-table-large {
+      .ant-table-thead > tr > th,
+      .ant-table-tbody > tr > td {
+        padding: var(--spacing-md) var(--spacing-lg);
+        font-size: var(--font-size-lg);
+      }
+    }
+  }
+  
+  /* 表格内容区域 */
+  .ant-table-container {
+    border-radius: var(--radius-base);
+    overflow: hidden;
+  }
+  
+  /* 表格滚动容器 */
+  .ant-table-body {
+    overflow-x: auto;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb-bg) var(--scrollbar-track-bg);
+    
+    &::-webkit-scrollbar {
+      width: var(--scrollbar-size);
+      height: var(--scrollbar-size);
+    }
+    
+    &::-webkit-scrollbar-track {
+      background: var(--scrollbar-track-bg);
+      border-radius: var(--radius-sm);
+    }
+    
+    &::-webkit-scrollbar-thumb {
+      background: var(--scrollbar-thumb-bg);
+      border-radius: var(--radius-sm);
+      
+      &:hover {
+        background: var(--scrollbar-thumb-bg-hover);
+      }
+    }
+  }
+  
+  /* 固定列样式 */
+  .ant-table-cell-fix-left,
+  .ant-table-cell-fix-right {
+    background-color: var(--bg-container) !important;
+    
+    &::after {
+      background-color: var(--border-base);
+    }
+  }
+  
+  .ant-table-thead > tr > th.ant-table-cell-fix-left,
+  .ant-table-thead > tr > th.ant-table-cell-fix-right {
+    background-color: var(--bg-elevated) !important;
+  }
+  
+  /* 操作列样式 - 确保按钮不溢出 */
+  .ant-table-cell-operation {
+    white-space: nowrap;
+    overflow: visible !important;
+    
+    .ant-space {
+      flex-wrap: nowrap;
+      gap: var(--spacing-xs);
+      
+      .ant-btn {
+        white-space: nowrap;
+        min-width: auto;
+      }
+    }
+  }
+  
+  /* 操作列按钮间距 */
+  .action-buttons {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    flex-wrap: nowrap;
+    white-space: nowrap;
+    
+    .ant-btn {
+      white-space: nowrap;
+    }
+  }
+  
+  /* 表格展开行 */
+  .ant-table-expanded-row {
+    > td {
+      background-color: var(--bg-hover);
+      
+      &:hover {
+        background-color: var(--bg-hover) !important;
+      }
+    }
+  }
+  
+  /* 选中行样式 */
+  .ant-table-tbody > tr.ant-table-row-selected > td {
+    background-color: var(--color-primary-light-bg);
+  }
+}
+
+/* ==========================================================================
+   分页样式统一 - Pagination Styles
+   ========================================================================== */
+
+.table-pagination-wrapper {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--spacing-md) var(--spacing-lg);
+  background-color: var(--bg-container);
+  border-top: var(--border-width) solid var(--border-light);
+  border-radius: 0 0 var(--radius-base) var(--radius-base);
+}
+
+.ant-pagination {
+  .ant-pagination-item {
+    border-radius: var(--radius-sm);
+    border-color: var(--border-base);
+    background-color: var(--bg-container);
+    
+    a {
+      color: var(--text-primary);
+    }
+    
+    &:hover {
+      border-color: var(--color-primary);
+      
+      a {
+        color: var(--color-primary);
+      }
+    }
+    
+    &.ant-pagination-item-active {
+      border-color: var(--color-primary);
+      background-color: var(--color-primary);
+      
+      a {
+        color: var(--text-inverse);
+      }
+      
+      &:hover {
+        border-color: var(--color-primary-hover);
+        background-color: var(--color-primary-hover);
+      }
+    }
+  }
+  
+  .ant-pagination-prev,
+  .ant-pagination-next,
+  .ant-pagination-jump-prev,
+  .ant-pagination-jump-next {
+    .ant-pagination-item-link {
+      border-radius: var(--radius-sm);
+      border-color: var(--border-base);
+      background-color: var(--bg-container);
+      color: var(--text-primary);
+      
+      &:hover {
+        border-color: var(--color-primary);
+        color: var(--color-primary);
+      }
+      
+      &:disabled {
+        border-color: var(--border-base);
+        color: var(--text-disabled);
+        background-color: var(--bg-disabled);
+      }
+    }
+  }
+  
+  .ant-pagination-options {
+    .ant-select {
+      .ant-select-selector {
+        border-radius: var(--radius-sm);
+        border-color: var(--border-base);
+        background-color: var(--bg-container);
+        color: var(--text-primary);
+        
+        &:hover {
+          border-color: var(--color-primary);
+        }
+      }
+    }
+  }
+  
+  .ant-pagination-total-text {
+    color: var(--text-secondary);
+  }
+  
+  /* 小尺寸分页 */
+  &.ant-pagination-small {
+    .ant-pagination-item {
+      border-radius: var(--radius-xs);
+    }
+    
+    .ant-pagination-prev,
+    .ant-pagination-next {
+      .ant-pagination-item-link {
+        border-radius: var(--radius-xs);
+      }
+    }
+  }
+}
+
+/* ==========================================================================
+   表格工具栏 - Table Toolbar
+   ========================================================================== */
+
+.table-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-md) var(--spacing-lg);
+  background-color: var(--bg-container);
+  border-bottom: var(--border-width) solid var(--border-light);
+  border-radius: var(--radius-base) var(--radius-base) 0 0;
+  
+  .table-toolbar-left {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+  }
+  
+  .table-toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+  }
+  
+  .table-title {
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-heading);
+  }
+  
+  .table-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+  }
+}
+
+/* ==========================================================================
+   暗色主题样式 - Dark Theme
+   ========================================================================== */
+
+.dark {
+  .table-container {
+    background-color: var(--bg-container);
+    border-color: var(--border-secondary);
+    box-shadow: var(--shadow-card);
+  }
+  
+  .ant-table-wrapper {
+    .ant-table {
+      background-color: var(--bg-container);
+      
+      /* 表头样式 */
+      .ant-table-thead > tr > th {
+        background-color: var(--bg-elevated);
+        color: var(--text-heading);
+        border-bottom-color: var(--border-secondary);
+        
+        &:hover {
+          background-color: var(--bg-hover);
+        }
+      }
+      
+      /* 表格主体行样式 */
+      .ant-table-tbody > tr > td {
+        border-bottom-color: var(--border-secondary);
+        color: var(--text-primary);
+        background-color: var(--bg-container);
+      }
+      
+      /* 行悬停效果 */
+      .ant-table-tbody > tr:hover > td {
+        background-color: var(--bg-hover) !important;
+      }
+      
+      /* 空数据样式 */
+      .ant-table-placeholder {
+        .ant-table-cell {
+          color: var(--text-secondary);
+          background-color: var(--bg-container);
+        }
+      }
+      
+      /* 表格边框模式 */
+      &.ant-table-bordered {
+        border-color: var(--border-secondary);
+        
+        .ant-table-thead > tr > th,
+        .ant-table-tbody > tr > td {
+          border-right-color: var(--border-secondary);
+        }
+      }
+    }
+    
+    /* 固定列样式 */
+    .ant-table-cell-fix-left,
+    .ant-table-cell-fix-right {
+      background-color: var(--bg-container) !important;
+      
+      &::after {
+        background-color: var(--border-secondary);
+      }
+    }
+    
+    .ant-table-thead > tr > th.ant-table-cell-fix-left,
+    .ant-table-thead > tr > th.ant-table-cell-fix-right {
+      background-color: var(--bg-elevated) !important;
+    }
+  }
+  
+  /* 分页样式 */
+  .table-pagination-wrapper {
+    background-color: var(--bg-container);
+    border-top-color: var(--border-secondary);
+  }
+  
+  .ant-pagination {
+    .ant-pagination-item {
+      border-color: var(--border-secondary);
+      background-color: var(--bg-container);
+      
+      a {
+        color: var(--text-primary);
+      }
+      
+      &:hover {
+        border-color: var(--color-primary);
+        
+        a {
+          color: var(--color-primary);
+        }
+      }
+      
+      &.ant-pagination-item-active {
+        border-color: var(--color-primary);
+        background-color: var(--color-primary);
+        
+        a {
+          color: var(--text-inverse);
+        }
+      }
+    }
+    
+    .ant-pagination-prev,
+    .ant-pagination-next,
+    .ant-pagination-jump-prev,
+    .ant-pagination-jump-next {
+      .ant-pagination-item-link {
+        border-color: var(--border-secondary);
+        background-color: var(--bg-container);
+        color: var(--text-primary);
+        
+        &:hover {
+          border-color: var(--color-primary);
+          color: var(--color-primary);
+        }
+        
+        &:disabled {
+          border-color: var(--border-secondary);
+          color: var(--text-disabled);
+          background-color: var(--bg-disabled);
+        }
+      }
+    }
+    
+    .ant-pagination-options {
+      .ant-select {
+        .ant-select-selector {
+          border-color: var(--border-secondary);
+          background-color: var(--bg-container);
+          color: var(--text-primary);
+          
+          &:hover {
+            border-color: var(--color-primary);
+          }
+        }
+      }
+    }
+    
+    .ant-pagination-total-text {
+      color: var(--text-secondary);
+    }
+  }
+  
+  /* 表格工具栏 */
+  .table-toolbar {
+    background-color: var(--bg-container);
+    border-bottom-color: var(--border-secondary);
+    
+    .table-title {
+      color: var(--text-heading);
+    }
+  }
+  
+  /* 选中行样式 */
+  .ant-table-tbody > tr.ant-table-row-selected > td {
+    background-color: var(--color-primary-light-bg);
+  }
+}
+
+/* ==========================================================================
+   响应式设计 - Responsive Design
+   ========================================================================== */
+
+@media (max-width: 768px) {
+  .table-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacing-sm);
+    
+    .table-toolbar-left,
+    .table-toolbar-right {
+      width: 100%;
+    }
+  }
+  
+  .table-pagination-wrapper {
+    justify-content: center;
+  }
+  
+  .ant-table-wrapper {
+    .ant-table {
+      .ant-table-thead > tr > th,
+      .ant-table-tbody > tr > td {
+        padding: var(--spacing-xs) var(--spacing-sm);
+        font-size: var(--font-size-sm);
+      }
+    }
+  }
+  
+  .action-buttons {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacing-xxs);
+  }
+}
+
+/* ==========================================================================
+   特殊表格样式变体 - Special Table Variants
+   ========================================================================== */
+
+/* 无边框表格 */
+.table-borderless {
+  .ant-table-wrapper {
+    .ant-table {
+      border: none;
+      box-shadow: none;
+      
+      .ant-table-thead > tr > th {
+        border-bottom: var(--border-width-thick) solid var(--border-base);
+      }
+      
+      .ant-table-tbody > tr > td {
+        border-bottom: none;
+      }
+    }
+  }
+}
+
+/* 斑马纹表格 */
+.table-striped {
+  .ant-table-wrapper {
+    .ant-table-tbody > tr:nth-child(even) > td {
+      background-color: var(--bg-hover);
+      
+      &:hover {
+        background-color: var(--bg-active) !important;
+      }
+    }
+  }
+  
+  &.dark {
+    .ant-table-wrapper {
+      .ant-table-tbody > tr:nth-child(even) > td {
+        background-color: var(--bg-hover);
+        
+        &:hover {
+          background-color: var(--bg-active) !important;
+        }
+      }
+    }
+  }
+}
+
+/* 紧凑型表格 */
+.table-compact {
+  .ant-table-wrapper {
+    .ant-table {
+      .ant-table-thead > tr > th,
+      .ant-table-tbody > tr > td {
+        padding: var(--spacing-xs) var(--spacing-sm);
+      }
+    }
+  }
+}

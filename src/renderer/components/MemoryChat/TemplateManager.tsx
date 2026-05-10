@@ -503,13 +503,16 @@ const MemoryTemplateManager: React.FC = () => {
           </Space>
         </div>
 
-        <Table
-          columns={columns}
-          dataSource={filteredTemplates}
-          loading={loading}
-          rowKey="id"
-          pagination={{ pageSize: 10 }}
-        />
+        <div className="table-container">
+          <Table
+            columns={columns}
+            dataSource={filteredTemplates}
+            loading={loading}
+            rowKey="id"
+            bordered
+            pagination={{ pageSize: 10, className: 'table-pagination-wrapper' }}
+          />
+        </div>
 
         <Modal
           title={editingTemplate ? '编辑模板' : '新建模板'}

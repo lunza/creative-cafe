@@ -33,6 +33,7 @@ import { WorldBookRelationPanel } from './WorldBookRelationPanel';
 import { useWorldBookStore } from '../../stores/worldBookStore';
 import { FieldEditor } from './FieldEditor';
 import { StoragePathDisplay } from '../common/StoragePathDisplay';
+import '../../styles/list-common.css';
 import './CharacterManager.css';
 
 const { Text } = Typography;
@@ -318,6 +319,7 @@ const setGeneratingField = (field: string | null) => {
   const [polishRequirements, setPolishRequirements] = useState<string>('');
   const [isPolishModalOpen, setIsPolishModalOpen] = useState<boolean>(false);
   const [worldBookRelations, setWorldBookRelations] = useState<any[]>([]);
+  const [pageSize, setPageSize] = useState(10);
 
   // 获取当前激活的AI引擎配置
   const getActiveEngineConfig = () => {
@@ -1193,10 +1195,13 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
     {
       title: '操作',
       key: 'action',
+      width: 220,
+      fixed: 'right' as const,
       render: (_, record) => (
-        <Space size="middle">
+        <Space size="small">
           <Button
             type="link"
+            size="small"
             icon={<EditOutlined />}
             onClick={() => handleEdit(record)}
           >
@@ -1204,6 +1209,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
           </Button>
           <Button
             type="link"
+            size="small"
             icon={<MessageOutlined />}
             onClick={() => handleTestCharacter(record)}
           >
@@ -1215,7 +1221,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
             okText="确定"
             cancelText="取消"
           >
-            <Button type="link" danger icon={<DeleteOutlined />}>
+            <Button type="link" size="small" danger icon={<DeleteOutlined />}>
               删除
             </Button>
           </Popconfirm>
@@ -1225,8 +1231,8 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
   ];
 
   return (
-    <div className="character-manager">
-      <div className="character-header">
+    <div className={`character-manager list-container ${appTheme === 'dark' ? 'dark' : ''}`}>
+      <div className="character-header list-header">
         <h2>角色卡管理</h2>
         <StoragePathDisplay
           label="角色卡存储路径"
@@ -1253,16 +1259,19 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
         </Space>
       </div>
 
-      <Card>
+      <Card className="table-container">
         <Table
           columns={columns}
           dataSource={characters}
           rowKey="path"
           loading={loading}
+          bordered
           pagination={{
-            pageSize: 10,
+            pageSize,
             showSizeChanger: true,
-            showTotal: (total) => `共 ${total} 条`
+            showTotal: (total) => `共 ${total} 条`,
+            className: 'table-pagination-wrapper',
+            onChange: (page, size) => { setPageSize(size); },
           }}
         />
       </Card>

@@ -1,110 +1,253 @@
-/* 通用列表容器样式 - 以角色卡模块为标准 */
-.list-container {
-  padding: 20px;
+/* 通用列表容器样式 - 覆盖所有列表类型 */
+.list-container,
+.character-manager,
+.plugin-manager,
+.memory-chat-manager-container,
+.memory-template-manager,
+.worldbook-manager {
+  padding: var(--spacing-lg, 24px);
 }
 
 /* 通用头部样式 */
-.list-header {
-  margin-bottom: 20px;
+.list-header,
+.character-header,
+.plugin-header,
+.template-manager-header,
+.worldbook-manager .worldbook-header {
+  margin-bottom: var(--spacing-lg, 24px);
 }
 
-.list-header h2 {
-  margin-bottom: 8px;
-  font-size: 20px;
-  font-weight: 600;
+.list-header h2,
+.character-header h2,
+.plugin-header h2,
+.template-manager-header h2,
+.worldbook-manager .worldbook-header h2 {
+  margin-bottom: var(--spacing-xs, 8px);
+  font-size: var(--font-size-xxl, 20px);
+  font-weight: var(--font-weight-semibold, 600);
 }
 
-.list-header .ant-space {
-  margin-top: 16px;
+.list-header .ant-space,
+.character-header .ant-space,
+.plugin-header .ant-space,
+.template-manager-header .ant-space,
+.worldbook-manager .worldbook-header .ant-space {
+  margin-top: var(--spacing-md, 16px);
 }
 
 /* 通用卡片样式 */
-.list-container .ant-card {
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+.list-container .ant-card,
+.character-manager .ant-card,
+.plugin-manager .ant-card,
+.memory-chat-manager-container .ant-card,
+.memory-template-manager .ant-card,
+.worldbook-manager .ant-card {
+  border-radius: var(--radius-card, 8px);
+  box-shadow: var(--shadow-card, 0 2px 8px rgba(0, 0, 0, 0.05));
 }
 
 /* 通用表格样式 */
-.list-container .ant-table {
-  border-radius: 8px;
+.list-container .ant-table,
+.character-manager .ant-table,
+.plugin-manager .ant-table,
+.memory-chat-manager-container .ant-table,
+.memory-template-manager .ant-table,
+.worldbook-manager .ant-table {
+  border-radius: var(--radius-card, 8px);
+  overflow-x: var(--table-overflow-x, auto);
+  overflow-y: var(--table-overflow-y, visible);
 }
 
-.list-container .ant-table th {
+.list-container .ant-table th,
+.character-manager .ant-table th,
+.plugin-manager .ant-table th,
+.memory-chat-manager-container .ant-table th,
+.memory-template-manager .ant-table th,
+.worldbook-manager .ant-table th {
   background-color: #f5f5f5;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold, 600);
+  white-space: nowrap;
+}
+
+.list-container .ant-table td,
+.character-manager .ant-table td,
+.plugin-manager .ant-table td,
+.memory-chat-manager-container .ant-table td,
+.memory-template-manager .ant-table td,
+.worldbook-manager .ant-table td {
+  overflow: var(--table-cell-overflow, hidden);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 操作列样式 */
+.list-container .ant-table-cell-operation,
+.character-manager .ant-table-cell-operation,
+.plugin-manager .ant-table-cell-operation,
+.memory-chat-manager-container .ant-table-cell-operation,
+.memory-template-manager .ant-table-cell-operation,
+.worldbook-manager .ant-table-cell-operation {
+  white-space: nowrap;
+  overflow: visible !important;
+}
+
+.list-container .ant-table .action-buttons,
+.character-manager .ant-table .action-buttons,
+.plugin-manager .ant-table .action-buttons,
+.memory-chat-manager-container .ant-table .action-buttons,
+.memory-template-manager .ant-table .action-buttons,
+.worldbook-manager .ant-table .action-buttons {
+  overflow: visible;
+  white-space: nowrap;
+}
+
+.list-container .ant-table .action-buttons .ant-btn,
+.character-manager .ant-table .action-buttons .ant-btn,
+.plugin-manager .ant-table .action-buttons .ant-btn,
+.memory-chat-manager-container .ant-table .action-buttons .ant-btn,
+.memory-template-manager .ant-table .action-buttons .ant-btn,
+.worldbook-manager .ant-table .action-buttons .ant-btn {
+  white-space: nowrap;
 }
 
 /* 通用模态框样式 */
-.list-container .ant-modal-content {
-  border-radius: 8px;
+.list-container .ant-modal-content,
+.character-manager .ant-modal-content,
+.plugin-manager .ant-modal-content,
+.memory-chat-manager-container .ant-modal-content,
+.memory-template-manager .ant-modal-content,
+.worldbook-manager .ant-modal-content {
+  border-radius: var(--radius-modal, 12px);
 }
 
-.list-container .ant-modal-header {
-  border-bottom: 1px solid #f0f0f0;
-  border-radius: 8px 8px 0 0;
+.list-container .ant-modal-header,
+.character-manager .ant-modal-header,
+.plugin-manager .ant-modal-header,
+.memory-chat-manager-container .ant-modal-header,
+.memory-template-manager .ant-modal-header,
+.worldbook-manager .ant-modal-header {
+  border-bottom: var(--border-width, 1px) solid var(--border-base, #f0f0f0);
+  border-radius: var(--radius-modal, 12px) var(--radius-modal, 12px) 0 0;
 }
 
-.list-container .ant-modal-footer {
-  border-top: 1px solid #f0f0f0;
-  border-radius: 0 0 8px 8px;
+.list-container .ant-modal-footer,
+.character-manager .ant-modal-footer,
+.plugin-manager .ant-modal-footer,
+.memory-chat-manager-container .ant-modal-footer,
+.memory-template-manager .ant-modal-footer,
+.worldbook-manager .ant-modal-footer {
+  border-top: var(--border-width, 1px) solid var(--border-base, #f0f0f0);
+  border-radius: 0 0 var(--radius-modal, 12px) var(--radius-modal, 12px);
 }
 
 /* 响应式设计 */
 @media (max-width: 768px) {
-  .list-container {
-    padding: 10px;
+  .list-container,
+  .character-manager,
+  .plugin-manager,
+  .memory-chat-manager-container,
+  .memory-template-manager,
+  .worldbook-manager {
+    padding: var(--spacing-xs, 10px);
   }
 
-  .list-header h2 {
-    font-size: 18px;
+  .list-header h2,
+  .character-header h2,
+  .plugin-header h2,
+  .template-manager-header h2,
+  .worldbook-manager .worldbook-header h2 {
+    font-size: var(--font-size-xl, 18px);
   }
 
-  .list-header .ant-space {
+  .list-header .ant-space,
+  .character-header .ant-space,
+  .plugin-header .ant-space,
+  .template-manager-header .ant-space,
+  .worldbook-manager .worldbook-header .ant-space {
     flex-direction: column;
     align-items: flex-start;
   }
 
-  .list-header .ant-space > * {
-    margin-bottom: 8px;
+  .list-header .ant-space > *,
+  .character-header .ant-space > *,
+  .plugin-header .ant-space > *,
+  .template-manager-header .ant-space > *,
+  .worldbook-manager .worldbook-header .ant-space > * {
+    margin-bottom: var(--spacing-xs, 8px);
   }
 }
 
 /* 深色模式 */
-.list-container.dark {
-  background-color: #1f1f1f;
-  color: #ffffff;
+.list-container.dark,
+.character-manager.dark,
+.plugin-manager.dark,
+.memory-chat-manager-container.dark,
+.memory-template-manager.dark,
+.worldbook-manager.dark {
+  background-color: var(--bg-container, #1f1f1f);
+  color: var(--text-primary, #ffffff);
 }
 
-.list-container.dark .ant-card {
-  background-color: #2f2f2f;
-  color: #ffffff;
-  border: 1px solid #4f4f4f;
+.list-container.dark .ant-card,
+.character-manager.dark .ant-card,
+.plugin-manager.dark .ant-card,
+.memory-chat-manager-container.dark .ant-card,
+.memory-template-manager.dark .ant-card,
+.worldbook-manager.dark .ant-card {
+  background-color: var(--bg-elevated, #2f2f2f);
+  color: var(--text-primary, #ffffff);
+  border: var(--border-width, 1px) solid var(--border-secondary, #4f4f4f);
 }
 
-.list-container.dark .ant-table th {
-  background-color: #3f3f3f;
-  color: #ffffff;
+.list-container.dark .ant-table th,
+.character-manager.dark .ant-table th,
+.plugin-manager.dark .ant-table th,
+.memory-chat-manager-container.dark .ant-table th,
+.memory-template-manager.dark .ant-table th,
+.worldbook-manager.dark .ant-table th {
+  background-color: var(--bg-hover, #3f3f3f);
+  color: var(--text-primary, #ffffff);
 }
 
-.list-container.dark .ant-table td {
-  background-color: #2f2f2f;
-  color: #ffffff;
-  border-bottom: 1px solid #4f4f4f;
+.list-container.dark .ant-table td,
+.character-manager.dark .ant-table td,
+.plugin-manager.dark .ant-table td,
+.memory-chat-manager-container.dark .ant-table td,
+.memory-template-manager.dark .ant-table td,
+.worldbook-manager.dark .ant-table td {
+  background-color: var(--bg-elevated, #2f2f2f);
+  color: var(--text-primary, #ffffff);
+  border-bottom: var(--border-width, 1px) solid var(--border-secondary, #4f4f4f);
 }
 
-.list-container.dark .ant-modal-content {
-  background-color: #2f2f2f;
-  color: #ffffff;
-  border: 1px solid #4f4f4f;
+.list-container.dark .ant-modal-content,
+.character-manager.dark .ant-modal-content,
+.plugin-manager.dark .ant-modal-content,
+.memory-chat-manager-container.dark .ant-modal-content,
+.memory-template-manager.dark .ant-modal-content,
+.worldbook-manager.dark .ant-modal-content {
+  background-color: var(--bg-elevated, #2f2f2f);
+  color: var(--text-primary, #ffffff);
+  border: var(--border-width, 1px) solid var(--border-secondary, #4f4f4f);
 }
 
-.list-container.dark .ant-modal-header {
-  background-color: #3f3f3f;
-  color: #ffffff;
-  border-bottom: 1px solid #4f4f4f;
+.list-container.dark .ant-modal-header,
+.character-manager.dark .ant-modal-header,
+.plugin-manager.dark .ant-modal-header,
+.memory-chat-manager-container.dark .ant-modal-header,
+.memory-template-manager.dark .ant-modal-header,
+.worldbook-manager.dark .ant-modal-header {
+  background-color: var(--bg-hover, #3f3f3f);
+  color: var(--text-primary, #ffffff);
+  border-bottom: var(--border-width, 1px) solid var(--border-secondary, #4f4f4f);
 }
 
-.list-container.dark .ant-modal-footer {
-  background-color: #2f2f2f;
-  border-top: 1px solid #4f4f4f;
+.list-container.dark .ant-modal-footer,
+.character-manager.dark .ant-modal-footer,
+.plugin-manager.dark .ant-modal-footer,
+.memory-chat-manager-container.dark .ant-modal-footer,
+.memory-template-manager.dark .ant-modal-footer,
+.worldbook-manager.dark .ant-modal-footer {
+  background-color: var(--bg-elevated, #2f2f2f);
+  border-top: var(--border-width, 1px) solid var(--border-secondary, #4f4f4f);
 }

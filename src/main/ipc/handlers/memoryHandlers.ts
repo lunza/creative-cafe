@@ -8,6 +8,7 @@ import path from 'path';
 import { getUserDataPath } from '../../utils/appPath';
 import { getStorageService } from '../../services/storageService';
 import { tableTemplateService } from '../../services/memory/tableTemplateService';
+import { tableEditParser } from '../../services/memory/tableEditParser';
 import { chatLogService } from '../../services/memory/chatLogService';
 import { characterChatRecordService } from '../../services/memory/characterChatRecordService';
 import { chatVectorizationService } from '../../services/ChatVectorizationService';
@@ -302,29 +303,89 @@ export function registerMemoryHandlers() {
   });
 
   /**
-   * 处理聊天记录（逐条处理模式）
+   * 处理聊天记录（逐条处理模式 - 实时整理/增量更新）
    */
   ipcMain.handle('memory:processChatProgressive', async (
     event: IpcMainInvokeEvent,
     chatId: string,
     templateId: string,
     config?: { apiKey: string; apiUrl: string; modelName: string; apiMode: string },
-    restart: boolean = false
+    options?: { continueFromLast?: boolean; minInterval?: number }
   ): Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[]; resumed: boolean }> => {
     try {
-      console.log('逐条处理聊天记录:', { chatId, templateId, config, restart });
+      const { continueFromLast = true, minInterval = 3000 } = options || {};
+      console.log('实时整理聊天记录:', { chatId, templateId, config, continueFromLast, minInterval });
 
       // 进度回调函数，通过事件发送到渲染进程
-      const onProgress = (current: number, total: number, message: string) => {
-        event.sender.send('memory:processChatProgress', { current, total, message });
+      const onProgress = (current: number, total: number, message: string, percent?: number) => {
+        event.sender.send('memory:processChatProgress', { current, total, message, percent });
       };
 
-      const result = await chatLogService.processChatProgressive(chatId, templateId, config, onProgress, restart);
-      console.log('逐条处理完成:', result);
+      const result = await chatLogService.processChatProgressive(chatId, templateId, config, onProgress, { continueFromLast, minInterval });
+      console.log('实时整理完成:', result);
       return result;
     } catch (error) {
-      console.error('逐条处理聊天记录失败:', error);
+      console.error('实时整理聊天记录失败:', error);
       throw error;
+    }
+  });
+
+  /**
+   * 完全整理聊天记录（清空数据重新处理）
+   */
+  ipcMain.handle('memory:processChatFull', async (
+    event: IpcMainInvokeEvent,
+    chatId: string,
+    templateId: string,
+    config?: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }
+  ): Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[] }> => {
+    try {
+      console.log('完全整理聊天记录:', { chatId, templateId, config });
+
+      // 进度回调函数，通过事件发送到渲染进程
+      const onProgress = (current: number, total: number, message: string, percent?: number) => {
+        event.sender.send('memory:processChatProgress', { current, total, message, percent });
+      };
+
+      const result = await chatLogService.processChatFull(chatId, templateId, config, onProgress);
+      console.log('完全整理完成:', result);
+      return result;
+    } catch (error) {
+      console.error('完全整理聊天记录失败:', error);
+      throw error;
+    }
+  });
+
+  /**
+   * 直接执行tableEdit命令（用于异步整理模式）
+   */
+  ipcMain.handle('memory:executeTableEditCommands', async (
+    _event: IpcMainInvokeEvent,
+    chatId: string,
+    commands: any[]
+  ): Promise<{ success: boolean; executed: number; errors: string[] }> => {
+    try {
+      console.log('[IPC] 执行tableEdit命令:', { chatId, commandCount: commands.length });
+      return chatLogService.executeTableEditCommands(chatId, commands);
+    } catch (error) {
+      console.error('[IPC] 执行tableEdit命令失败:', error);
+      return { success: false, executed: 0, errors: [error instanceof Error ? error.message : String(error)] };
+    }
+  });
+
+  /**
+   * 解析tableEdit命令（用于异步整理模式）
+   */
+  ipcMain.handle('memory:parseTableEdit', async (
+    _event: IpcMainInvokeEvent,
+    content: string
+  ): Promise<{ success: boolean; commands: any[]; errors: string[] }> => {
+    try {
+      console.log('[IPC] 解析tableEdit命令:', { contentLength: content.length });
+      return tableEditParser.parse(content);
+    } catch (error) {
+      console.error('[IPC] 解析tableEdit命令失败:', error);
+      return { success: false, commands: [], errors: [error instanceof Error ? error.message : String(error)] };
     }
   });
 
@@ -414,8 +475,15 @@ export function registerMemoryHandlers() {
    * 获取表格数据
    */
   ipcMain.handle('memory:getTableData', async (event: IpcMainInvokeEvent, chatId: string): Promise<any> => {
-    console.log('获取表格数据:', chatId);
-    return chatLogService.getTableData(chatId);
+    console.log('[IPC] memory:getTableData 请求, chatId:', chatId);
+    const result = chatLogService.getTableData(chatId);
+    console.log('[IPC] memory:getTableData 返回结果:', JSON.stringify({
+      sheets: result?.sheets,
+      headersKeys: result?.headers ? Object.keys(result.headers) : [],
+      dataKeys: result?.data ? Object.keys(result.data) : [],
+      dataSummary: result?.data ? Object.fromEntries(Object.entries(result.data).map(([k, v]) => [k, Array.isArray(v) ? v.length : typeof v])) : {}
+    }, null, 2));
+    return result;
   });
 
   /**

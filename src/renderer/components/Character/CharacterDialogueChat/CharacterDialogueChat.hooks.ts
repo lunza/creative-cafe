@@ -8,9 +8,8 @@ import { useLogStore } from '../../../stores/logStore';
 import { ChatMessage, CharacterInfo, ChatState, UserPersona, EffectiveAIParams } from './CharacterDialogueChat.types';
 import { ChatEngineFactory } from '../../Common/ChatEngine/ChatEngine.factory';
 import { AIEngineConfig, AIResponse } from '../../Common/ChatEngine/ChatEngine.types';
-import { replaceTemplates, buildCharacterContext, buildPersonaSection } from './CharacterDialogueChat.utils';
-
-const DEFAULT_USER_NAME = 'User';
+import { usePromptBuilder } from './usePromptBuilder';
+import { buildAsyncTableOrganizeInstructions } from './PromptBuilder';
 
 // ==================== 角色配置 Hook ====================
 
@@ -231,6 +230,13 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
   const initialContentRef = useRef('');
   const streamContentRef = useRef('');
   const targetMessageIdRef = useRef('');
+  const isSavingRef = useRef(false);
+  const memoryTableEnabledRef = useRef(false);
+  const memoryTableAutoOrganizeRef = useRef(false);
+  const memoryTableOrganizeModeRef = useRef<'sync' | 'async'>('sync');
+  const memoryTableDataRef = useRef<string>('');
+  const isOrganizingRef = useRef(false);
+  const [isOrganizing, setIsOrganizing] = useState(false);
 
   const selectedPersonaId = characterConfig?.selectedPersonaId;
   const selectedPersona = useMemo(() => {
@@ -239,7 +245,11 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
   }, [selectedPersonaId, personas]);
 
   const saveChatToStore = useCallback(async (messages: ChatMessage[]) => {
+    if (isSavingRef.current) {
+      return;
+    }
     try {
+      isSavingRef.current = true;
       await saveTestChat(
         characterInfo.creativeId,
         characterInfo.characterCardId,
@@ -248,6 +258,8 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       );
     } catch (error) {
       addLog(`[CharacterDialogueChat] Failed to save chat: ${error}`, 'error');
+    } finally {
+      isSavingRef.current = false;
     }
   }, [characterInfo, saveTestChat, addLog]);
 
@@ -359,6 +371,12 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     messagesRef.current = state.messages;
   }, [state.messages]);
 
+  useEffect(() => {
+    memoryTableEnabledRef.current = characterConfig?.memoryTableEnabled ?? false;
+    memoryTableAutoOrganizeRef.current = characterConfig?.memoryTableAutoOrganize ?? false;
+    memoryTableOrganizeModeRef.current = characterConfig?.memoryTableOrganizeMode ?? 'sync';
+  }, [characterConfig?.memoryTableEnabled, characterConfig?.memoryTableAutoOrganize, characterConfig?.memoryTableOrganizeMode]);
+
   const getActiveEngineConfig = useCallback((): AIEngineConfig | null => {
     if (!setting || !setting.aiEngines || setting.aiEngines.length === 0) {
       return null;
@@ -370,100 +388,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     return setting.aiEngines[0];
   }, [setting]);
 
-  const buildPromptCore = useCallback((): { characterContext: string; personaSection: string; charName: string } => {
-    const charName = characterInfo.characterCardName || 'Character';
-    const characterContext = buildCharacterContext({
-      name: charName,
-      personality: characterInfo.personality,
-      description: characterInfo.characterCardContent,
-      scenario: characterInfo.scenario,
-      mes_example: characterInfo.mes_example,
-      system_prompt: characterInfo.system_prompt,
-      creator_notes: characterInfo.creator_notes,
-    }, DEFAULT_USER_NAME);
-
-    const personaSection = buildPersonaSection(selectedPersona);
-
-    return { characterContext, personaSection, charName };
-  }, [
-    characterInfo.characterCardName,
-    characterInfo.personality,
-    characterInfo.characterCardContent,
-    characterInfo.scenario,
-    characterInfo.mes_example,
-    characterInfo.system_prompt,
-    characterInfo.creator_notes,
-    selectedPersona,
-  ]);
-
-  const buildDialoguePrompt = useCallback((): string => {
-    const { characterContext, personaSection, charName } = buildPromptCore();
-
-    return `【任务类型：角色扮演对话】
-
-【角色信息】
-${characterContext}
-${personaSection}【对话任务说明】
-你正在扮演 {{char}} 这个角色，与 ${selectedPersona?.name || DEFAULT_USER_NAME} 进行角色扮演对话。   
-在提示词中，{{char}} 代表 ${charName}，${selectedPersona?.name || DEFAULT_USER_NAME} 代表当前对话用户。
-你需要完全代入角色，以角色的身份与用户进行自然的交流。
-
-【对话约束规则】
-1. 你就是 ${charName} 这个角色本人，不是AI助手，不是翻译工具，不是任何系统
-2. 以角色的口吻、性格特点和语言习惯与用户交流
-3. 积极回应用户的问题和行为，推动对话自然发展
-4. 根据对话上下文和情境调整语气和态度
-5. 使用符合角色身份的语言风格
-6. 在回复中使用 ${charName} 代替 {{char}}，使用 ${selectedPersona?.name || DEFAULT_USER_NAME} 代替 {{user}}
-7. 【强制要求】角色直接说出的对话内容必须用标准英文双引号（" "）完整包裹，确保引号准确包裹对话文本的起始与结束位置
-
-【严格禁止】
-- 禁止输出任何格式标记、标签或前缀（如"Plain:"、"Article:"、"Terminate:"、"System:"等）
-- 禁止输出任何元信息、系统说明或格式说明
-- 禁止输出技术术语、模型名称（如"Transformers"、"Oracle"等）
-- 禁止输出与角色扮演无关的任何内容
-- 禁止打破角色设定或承认自己是AI
-- 禁止输出任何随机字符或无意义字符串
-- 禁止在输出中包含 {{char}} 或 {{user}} 等模板变量，必须替换为实际名称
-- 禁止在角色对话中使用其他引号格式（如中文引号"「」"、"『』'等），必须使用英文双引号
-
-【输出格式】
-直接输出角色的对话和行动描写，像真实的人在说话一样。不要添加任何额外的标记或说明。`;
-  }, [buildPromptCore, selectedPersona]);
-
-  const buildContinuationPrompt = useCallback((): string => {
-    const { characterContext, personaSection, charName } = buildPromptCore();
-
-    return `【任务类型：内容续写】
-
-【角色信息】
-${characterContext}
-${personaSection}【续写任务说明】
-你需要续写以下角色的叙述内容。请仔细阅读前文，然后自然地继续写下去，保持风格和上下文的连贯性。      
-在提示词中，{{char}} 代表 ${charName}，${selectedPersona?.name || DEFAULT_USER_NAME} 代表当前对话用户。
-
-【续写约束规则】
-1. 自然地从已有内容继续，不要重复已写过的部分
-2. 保持与原文相同的叙述风格、语气和节奏
-3. 确保续写内容与前面的情节逻辑衔接
-4. 严格遵守角色设定，不偏离角色性格
-5. 像小说作者一样续写，直接输出故事内容
-6. 在回复中使用 ${charName} 代替 {{char}}，使用 ${selectedPersona?.name || DEFAULT_USER_NAME} 代替 {{user}}
-7. 【强制要求】角色直接说出的对话内容必须用标准英文双引号（" "）完整包裹，确保引号准确包裹对话文本的起始与结束位置
-
-【严格禁止】
-- 禁止添加任何标签、前缀或格式标记（如"Plain:"、"Article:"、"Terminate:"等）
-- 禁止输出任何元说明文字（如"续写"、"继续"、"接下来"等）
-- 禁止输出技术术语、模型名称
-- 禁止输出与故事无关的任何内容
-- 禁止解释、评论或总结已写内容
-- 禁止输出任何随机字符或无意义字符串
-- 禁止在输出中包含 {{char}} 或 {{user}} 等模板变量
-- 禁止在角色对话中使用其他引号格式（如中文引号"「」"、"『』'等），必须使用英文双引号
-
-【输出格式】
-只输出纯粹的续写内容，不要有任何开场白、结束语或其他多余文字。直接从故事断点处继续叙述，保持原文的视角和时态。`;
-  }, [buildPromptCore, selectedPersona]);
+  const { buildCompleteSystemPrompt, buildDialoguePrompt, buildContinuationPrompt } = usePromptBuilder(characterInfo, selectedPersona || undefined);
 
   const requestAIResponse = useCallback(async (
     contextMessages: ChatMessage[],
@@ -471,6 +396,11 @@ ${personaSection}【续写任务说明】
     initialContent: string = '',
     promptType: 'dialogue' | 'continuation' = 'dialogue'
   ) => {
+    console.log('========================================');
+    console.log('[DEBUG] requestAIResponse CALLED');
+    console.log('[DEBUG] promptType:', promptType);
+    console.log('[DEBUG] contextMessages count:', contextMessages.length);
+    console.log('========================================');
     const activeEngine = getActiveEngineConfig();
     if (!activeEngine) {
       message.warning('请先在设置中配置AI引擎');
@@ -490,15 +420,17 @@ ${personaSection}【续写任务说明】
     const effectiveParams = getEffectiveParams();
     let streamTimeout: NodeJS.Timeout | null = null;
 
-    const clearTimeout = () => {
+    const clearStreamTimeout = () => {
       if (streamTimeout) {
         clearTimeout(streamTimeout);
         streamTimeout = null;
       }
     };
 
+    const streamTimeoutMs = activeEngine.max_tokens && Number(activeEngine.max_tokens) > 8192 ? 300000 : 120000;
+
     streamTimeout = setTimeout(() => {
-      addLog('[CharacterDialogueChat] Stream timeout reached (120s)', 'warn');
+      addLog(`[CharacterDialogueChat] Stream timeout reached (${streamTimeoutMs / 1000}s)`, 'warn');
       engine.cancelRequest();
       setState(prev => ({
         ...prev,
@@ -513,7 +445,7 @@ ${personaSection}【续写任务说明】
       }));
       message.error('响应超时，请重试');
       initialContentRef.current = '';
-    }, 120000);
+    }, streamTimeoutMs);
     
     console.log(`[CharacterDialogueChat] === Request Assembly ===`);
     console.log(`[CharacterDialogueChat] activeEngine.max_tokens:`, activeEngine.max_tokens);
@@ -552,38 +484,149 @@ ${personaSection}【续写任务说明】
     streamContentRef.current = initialContent;
     targetMessageIdRef.current = targetMessageId;
 
-    let vectorContextSection = '';
+    // 步骤A：向量知识库检索 + 关键词匹配（限定在已绑定的知识库范围内）
+    let vectorContextItems: Array<{ source: string; score: number; content: string }> = [];
     try {
       const boundKnowledgeBaseIds = characterConfig?.boundKnowledgeBaseIds || [];
       const lastUserMessage = [...contextMessages].reverse().find(m => m.role === 'user');
       if (lastUserMessage && lastUserMessage.content) {
-        const contextResult = await window.electronAPI.context.retrieve(
-          [...contextMessages.slice(-20), { role: 'user', content: lastUserMessage.content }],      
-          { topK: 5, minScore: 0.3, sources: ['worldbook', 'knowledge', 'memory'], scopeIds: boundKnowledgeBaseIds.length > 0 ? boundKnowledgeBaseIds : undefined }
+        // 使用综合检索 API：同时执行向量检索和关键词匹配
+        addLog(`[CharacterDialogueChat] Calling retrieveWithKeywords with scopeIds: ${JSON.stringify(boundKnowledgeBaseIds)}`, 'info');
+
+        // 安全的序列化全局扫描数据，避免循环引用导致 Maximum call stack size exceeded
+        // 注意：不包含 characterDescription/personality/depthPrompt，因为角色卡片中嵌入了完整的
+        // 世界书条目表格，会导致所有关键词都产生假阳性匹配
+        const safeGlobalScanData = {
+          personaDescription: typeof characterConfig?.personaDescription === 'string' ? characterConfig.personaDescription : undefined,
+          scenario: typeof characterConfig?.scenario === 'string' ? characterConfig.scenario : undefined,
+          creatorNotes: typeof characterConfig?.creatorNotes === 'string' ? characterConfig.creatorNotes : undefined,
+        };
+
+        const contextResult = await window.electronAPI.context.retrieveWithKeywords(
+          [...contextMessages.slice(-20), { role: 'user', content: lastUserMessage.content }],
+          { topK: 5, minScore: 0.3, sources: ['worldbook', 'knowledge', 'memory'], scopeIds: boundKnowledgeBaseIds.length > 0 ? boundKnowledgeBaseIds : undefined },
+          true,  // 启用关键词匹配
+          4,     // 扫描深度：最近4条消息
+          safeGlobalScanData
         );
 
-        if (contextResult.success && contextResult.items && contextResult.items.length > 0) {       
-          vectorContextSection = contextResult.items
-            .map((item: any, index: number) => {
-              return `[相关上下文 ${index + 1}] (来源: ${item.source}, 相关性: ${(item.score * 100).toFixed(1)}%)\n${item.content}`;
-            })
-            .join('\n\n');
-          addLog(`[CharacterDialogueChat] Retrieved ${contextResult.items.length} vector context items`, 'info');
+        if (contextResult.success && contextResult.items && contextResult.items.length > 0) {
+          vectorContextItems = contextResult.items.map((item: any) => ({
+            source: item.source,
+            score: item.score,
+            content: item.content,
+            metadata: item.metadata,  // 保留 metadata 用于世界书条目格式化
+          }));
+          const vectorCount = contextResult.vectorItems?.length || 0;
+          const keywordCount = contextResult.keywordItems?.length || 0;
+          addLog(`[CharacterDialogueChat] Retrieved ${vectorContextItems.length} context items (vector: ${vectorCount}, keyword: ${keywordCount})`, 'info');
+          if (keywordCount > 0) {
+            addLog(`[CharacterDialogueChat] Keyword matches: ${JSON.stringify(contextResult.keywordItems.map((item: any) => ({ name: item.metadata?.entryName, keys: item.metadata?.matchedKeys })))}`, 'info');
+          }
+        } else {
+          addLog(`[CharacterDialogueChat] retrieveWithKeywords returned no items`, 'info');
         }
       }
     } catch (error) {
-      addLog(`[CharacterDialogueChat] Vector context retrieval failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'warn');
+      addLog(`[CharacterDialogueChat] Context retrieval failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'warn');
+      console.error('[CharacterDialogueChat] Context retrieval error:', error);
     }
 
-    const systemPrompt = promptType === 'continuation'
-      ? buildContinuationPrompt()
-      : buildDialoguePrompt();
+    // ========== 记忆表格数据获取 ==========
+    console.log('[DEBUG-MEMORY-TABLE] Step 1: Checking memory table enable status');
+    console.log('[DEBUG-MEMORY-TABLE] memoryTableEnabledRef.current =', memoryTableEnabledRef.current);
+    console.log('[DEBUG-MEMORY-TABLE] characterConfig.memoryTableEnabled =', characterConfig?.memoryTableEnabled);
+    
+    addLog(`[CharacterDialogueChat] memoryTableEnabledRef.current = ${memoryTableEnabledRef.current}, characterConfig.memoryTableEnabled = ${characterConfig?.memoryTableEnabled}`, 'info');
+    
+    let memoryTableData = '';
+    let tableStructure: { sheets: string[]; headers: Record<string, string[]>; descriptions: Record<string, string> } | undefined;
+    if (memoryTableEnabledRef.current) {
+      console.log('[DEBUG-MEMORY-TABLE] Step 2: Memory table is ENABLED, fetching data...');
+      try {
+        addLog('[CharacterDialogueChat] Memory table enabled, fetching data...', 'info');
+        const chatId = characterInfo.characterCardName || characterInfo.characterCardId;
+        addLog(`[CharacterDialogueChat] Requesting table data for chatId: ${chatId}`, 'info');
+        console.log('[DEBUG-MEMORY-TABLE] Using chatId:', chatId);
+        const tableResult = await window.electronAPI.memory.getTableData(chatId);
+        console.log('[DEBUG-MEMORY-TABLE] tableResult:', tableResult);
+        console.log('[DEBUG-MEMORY-TABLE] tableResult.data:', tableResult?.data);
+        console.log('[DEBUG-MEMORY-TABLE] tableResult.data type:', typeof tableResult?.data);
+        console.log('[DEBUG-MEMORY-TABLE] tableResult.data keys:', tableResult?.data ? Object.keys(tableResult.data) : 'N/A');
+        addLog(`[CharacterDialogueChat] tableResult received: ${JSON.stringify({ hasResult: !!tableResult, sheets: tableResult?.sheets, hasHeaders: !!tableResult?.headers, hasData: !!tableResult?.data, hasDescriptions: !!tableResult?.sheetDescriptions }, null, 2)}`, 'info');
+        
+        // 提取表格结构信息（供异步整理模式使用，包含描述）
+        if (tableResult && tableResult.sheets && tableResult.sheets.length > 0 && tableResult.headers) {
+          tableStructure = {
+            sheets: [...tableResult.sheets],
+            headers: { ...tableResult.headers },
+            descriptions: { ...(tableResult.sheetDescriptions || {}) }
+          };
+          addLog(`[CharacterDialogueChat] 表格结构信息已提取: ${tableStructure.sheets.join(', ')}`, 'info');
+          if (tableStructure.descriptions && Object.keys(tableStructure.descriptions).length > 0) {
+            addLog(`[CharacterDialogueChat] 表格描述信息已提取: ${JSON.stringify(tableStructure.descriptions)}`, 'info');
+          }
+        }
+        
+        if (tableResult && tableResult.sheets && tableResult.sheets.length > 0 && tableResult.data) {
+          memoryTableData = '# 记忆表格数据\n\n';
+          for (const sheetName of tableResult.sheets) {
+            const sheetHeaders = tableResult.headers?.[sheetName] || [];
+            const sheetRows = tableResult.data?.[sheetName] || [];
+            console.log(`[DEBUG-MEMORY-TABLE] Sheet "${sheetName}":`, {
+              headers: sheetHeaders,
+              rows: sheetRows,
+              rawRowData: tableResult.data?.[sheetName],
+              rowDataType: typeof tableResult.data?.[sheetName],
+              isArray: Array.isArray(tableResult.data?.[sheetName])
+            });
+            memoryTableData += `## 表格: ${sheetName}\n\n`;
+            if (sheetHeaders.length > 0) {
+              memoryTableData += '| ' + sheetHeaders.join(' | ') + ' |\n';
+              memoryTableData += '| ' + sheetHeaders.map(() => '---').join(' | ') + ' |\n';
+            }
+            if (sheetRows.length > 0) {
+              for (const row of sheetRows) {
+                console.log(`[DEBUG-MEMORY-TABLE] Row data for sheet "${sheetName}":`, JSON.stringify(row));
+                console.log(`[DEBUG-MEMORY-TABLE] Row keys:`, Object.keys(row));
+                
+                const cells = sheetHeaders.map((h, columnIndex) => {
+                  // Access data by numeric index (0, 1, 2, etc.) since that's how it's stored in JSON
+                  const val = row[columnIndex.toString()];
+                  console.log(`[DEBUG-MEMORY-TABLE]   Header "${h}" (column ${columnIndex}) value:`, val, `(type: ${typeof val})`);
+                  return val !== undefined && val !== null ? String(val) : '';
+                });
+                
+                console.log(`[DEBUG-MEMORY-TABLE] Generated cells:`, cells);
+                memoryTableData += '| ' + cells.join(' | ') + ' |\n';
+              }
+            }
+            memoryTableData += '\n';
+          }
+          const totalRows = tableResult.sheets.reduce((sum: number, sn: string) => sum + (tableResult.data?.[sn]?.length || 0), 0);
+          addLog(`[CharacterDialogueChat] Memory table data included: ${tableResult.sheets.length} sheets, ${totalRows} rows, final data length: ${memoryTableData.length}`, 'info');
+        } else {
+          addLog(`[CharacterDialogueChat] Memory table data is empty or invalid: sheets=${tableResult?.sheets?.length || 0}, hasData=${!!tableResult?.data}`, 'warn');
+        }
+      } catch (error) {
+        addLog(`[CharacterDialogueChat] Failed to load memory table data: ${error}`, 'error');
+      }
+    } else {
+      addLog('[CharacterDialogueChat] Memory table is disabled, skipping data fetch', 'info');
+    }
 
-    const finalSystemPrompt = vectorContextSection
-      ? `${systemPrompt}\n\n--- 相关背景知识 ---\n\n${vectorContextSection}\n\n--- 请结合以上背景知识进行回应 ---`
-      : systemPrompt;
+    // 构建完整的 system prompt
+    const finalSystemPrompt = buildCompleteSystemPrompt(
+      promptType,
+      vectorContextItems,
+      memoryTableData,
+      memoryTableOrganizeModeRef.current,
+      tableStructure
+    );
 
-    addLog(`[CharacterDialogueChat] Using ${promptType} prompt with params: temp=${effectiveParams.temperature}`, 'info');
+    // Debug: 显示提示词末尾（背景知识注入位置）
+    const promptTail = finalSystemPrompt.substring(Math.max(0, finalSystemPrompt.length - 500));
+    addLog(`[CharacterDialogueChat] System prompt length: ${finalSystemPrompt.length}, tail: ...${promptTail}`, 'info');
 
     const engine = ChatEngineFactory.getInstance().getOrCreateDefaultEngine(engineConfigWithParams);
 
@@ -612,7 +655,7 @@ ${personaSection}【续写任务说明】
     });
 
     engine.onComplete((response: AIResponse) => {
-      clearTimeout();
+      clearStreamTimeout();
       const accumulatedContent = streamContentRef.current;
       const serverContent = response?.content || '';
       const hasInitialContent = initialContentRef.current.length > 0;
@@ -649,6 +692,102 @@ ${personaSection}【续写任务说明】
         return;
       }
 
+      // ===== 异步整理模式：检测并执行tableEdit命令（保留原始内容，HTML注释对用户不可见） =====
+      let displayContent = finalContent;
+      let hasAsyncCommands = false;
+
+      if (memoryTableAutoOrganizeRef.current && memoryTableOrganizeModeRef.current === 'async') {
+        addLog('[CharacterDialogueChat] 进入异步整理模式，开始检测tableEdit标签...', 'info');
+
+        // 多种正则模式按优先级匹配，兼容AI可能的变体输出
+        const tableEditPatterns = [
+          { regex: /<!--\s*<tableEdit>([\s\S]*?)<\/tableEdit>\s*-->/gi, name: '标准格式(HTML注释+标签)' },
+          { regex: /<tableEdit>([\s\S]*?)<\/tableEdit>/gi, name: '无注释格式(纯标签)' },
+          { regex: /<!--\s*tableEdit\s*-->([\s\S]*?)<!--\s*\/tableEdit\s*-->/gi, name: '注释分隔格式' },
+        ];
+
+        let match: RegExpExecArray | null = null;
+        let matchedPatternName = '';
+        for (const pattern of tableEditPatterns) {
+          pattern.regex.lastIndex = 0;
+          const m = pattern.regex.exec(finalContent);
+          if (m) {
+            match = m;
+            matchedPatternName = pattern.name;
+            break;
+          }
+        }
+
+        if (match) {
+          addLog(`[CharacterDialogueChat] 正则匹配成功 [${matchedPatternName}]，匹配到的命令文本: ${match[1].substring(0, 200)}...`, 'info');
+          hasAsyncCommands = true;
+          const rawCommandsText = match[1];
+          // 从显示内容中移除tableEdit标签（用户不可见）
+          // 直接使用正则替换移除，更可靠且兼容各种格式变体
+          const beforeLength = finalContent.length;
+          displayContent = finalContent
+            // 尝试移除所有可能存在的tableEdit标签格式
+            .replace(/<!--\s*<tableEdit>[\s\S]*?<\/tableEdit>\s*-->/gi, '')
+            .replace(/<tableEdit>[\s\S]*?<\/tableEdit>/gi, '')
+            .replace(/<!--\s*tableEdit\s*-->[\s\S]*?<!--\s*\/tableEdit\s*-->/gi, '')
+            // 清理残留的空行和多余空格
+            .replace(/\n{3,}/g, '\n\n')
+            .replace(/\s+$/g, '')
+            .trim();
+          
+          addLog(`[CharacterDialogueChat] tableEdit标签已从显示内容移除，原始长度: ${beforeLength}, 显示长度: ${displayContent.length}, 移除长度: ${beforeLength - displayContent.length}`, 'info');
+
+          // 异步解析和执行（不阻塞UI更新）
+          (async () => {
+            try {
+              const chatId = characterInfo.characterCardName || characterInfo.characterCardId;
+              if (!chatId) {
+                addLog('[CharacterDialogueChat] 异步整理失败: chatId为空', 'error');
+                return;
+              }
+
+              // 重新包装为标准格式供解析器处理
+              const wrappedContent = `<tableEdit><!--\n${rawCommandsText}\n--></tableEdit>`;
+              addLog(`[CharacterDialogueChat] 调用parseTableEdit, 包装后长度: ${wrappedContent.length}`, 'info');
+              const parseResult = await window.electronAPI.memory.parseTableEdit(wrappedContent);
+              addLog(`[CharacterDialogueChat] parseTableEdit结果: 成功=${parseResult.success}, 命令数=${parseResult.commands.length}, 错误数=${parseResult.errors.length}`, 'info');
+
+              if (parseResult.errors.length > 0) {
+                addLog(`[CharacterDialogueChat] 解析错误详情: ${parseResult.errors.join('; ')}`, 'warn');
+              }
+
+              if (parseResult.commands.length > 0) {
+                addLog(`[CharacterDialogueChat] 解析到 ${parseResult.commands.length} 个tableEdit命令，chatId=${chatId}，开始执行...`, 'info');
+                const execResult = await window.electronAPI.memory.executeTableEditCommands(chatId, parseResult.commands);
+                if (execResult.success) {
+                  addLog(`[CharacterDialogueChat] 异步整理完成: 成功执行 ${execResult.executed} 个命令`, 'info');
+
+                  // 刷新表格数据，确保后续对话使用最新上下文
+                  try {
+                    const refreshedData = await window.electronAPI.memory.getTableData(chatId);
+                    if (refreshedData?.data) {
+                      memoryTableDataRef.current = refreshedData.data;
+                      addLog('[CharacterDialogueChat] 表格数据已刷新，后续对话将使用最新上下文', 'info');
+                    }
+                  } catch (refreshError) {
+                    addLog(`[CharacterDialogueChat] 刷新表格数据失败: ${refreshError}`, 'warn');
+                  }
+                } else {
+                  addLog(`[CharacterDialogueChat] 异步整理有错误: ${execResult.errors?.join('; ') || '未知错误'}`, 'warn');
+                }
+              } else {
+                addLog('[CharacterDialogueChat] 未解析到有效的tableEdit命令（AI可能未生成整理指令）', 'info');
+              }
+            } catch (error) {
+              const errorMsg = error instanceof Error ? error.message : String(error);
+              addLog(`[CharacterDialogueChat] 异步整理异常: ${errorMsg}`, 'error');
+            }
+          })();
+        } else {
+          addLog('[CharacterDialogueChat] 未检测到tableEdit标签（任何格式），跳过异步整理', 'warn');
+        }
+      }
+
       setState(prev => {
         const targetMessage = prev.messages.find(msg => msg.id === targetMessageId);
         if (!targetMessage) {
@@ -657,16 +796,35 @@ ${personaSection}【续写任务说明】
         }
 
         const existingContent = targetMessage.content;
-        if (existingContent.length > 0 && finalContent.length < existingContent.length) {
-          addLog(`[CharacterDialogueChat] Content protection: preventing content loss (${existingContent.length} -> ${finalContent.length})`, 'error');
+        // 异步模式下，tableEdit标签从显示内容中移除导致内容变短，需要跳过内容保护检查
+        const isAsyncMode = memoryTableAutoOrganizeRef.current && memoryTableOrganizeModeRef.current === 'async' && hasAsyncCommands;
+        if (!isAsyncMode && existingContent.length > 0 && displayContent.length < existingContent.length) {
+          addLog(`[CharacterDialogueChat] Content protection: preventing content loss (${existingContent.length} -> ${displayContent.length})`, 'error');
           return prev;
         }
 
         const finalMessages = prev.messages.map(msg =>
-          msg.id === targetMessageId ? { ...msg, content: finalContent, status: 'sent' as const } : msg
+          msg.id === targetMessageId ? { ...msg, content: displayContent, status: 'sent' as const } : msg
         );
 
-        saveChatToStore(finalMessages);
+        // 保存聊天记录 - 注意：不在 setState 内部调用异步函数，避免 React 状态管理产生循环引用
+        // 使用 clean 副本避免 IPC 序列化错误
+        const messagesToSave = finalMessages.map(msg => ({
+          id: msg.id,
+          role: msg.role,
+          content: msg.content,
+          timestamp: msg.timestamp,
+          status: msg.status,
+          speakerName: msg.speakerName,
+          speakerAvatar: msg.speakerAvatar,
+        }));
+        
+        // 使用 setTimeout 延迟保存，避免在 setState 回调中执行异步操作
+        setTimeout(() => {
+          saveChatToStore(messagesToSave).catch(err => {
+            addLog(`[CharacterDialogueChat] Failed to save chat: ${err instanceof Error ? err.message : 'Unknown error'}`, 'error');
+          });
+        }, 0);
 
         return {
           ...prev,
@@ -676,12 +834,42 @@ ${personaSection}【续写任务说明】
         };
       });
 
+      if (memoryTableAutoOrganizeRef.current && memoryTableOrganizeModeRef.current === 'sync' && !isOrganizingRef.current) {
+        addLog('[CharacterDialogueChat] Auto-organize triggered for memory table (sync mode)', 'info');
+        // 防抖：延迟 2000ms 触发，避免高频请求
+        setTimeout(async () => {
+          try {
+            isOrganizingRef.current = true;
+            setIsOrganizing(true);
+            const chatId = characterInfo.characterCardName || characterInfo.characterCardId;
+            const activeEngine = getActiveEngineConfig();
+            if (activeEngine) {
+              // 使用新的 options 参数，继续从上次位置处理，最小间隔 3000ms
+              await window.electronAPI.memory.processChatProgressive(chatId, '', {
+                apiKey: activeEngine.api_key || '',
+                apiUrl: activeEngine.api_url || '',
+                modelName: activeEngine.model_name || '',
+                apiMode: activeEngine.api_mode || 'chat_completion'
+              }, { continueFromLast: true, minInterval: 3000 });
+              addLog('[CharacterDialogueChat] Memory table auto-organization completed', 'info');
+            } else {
+              addLog('[CharacterDialogueChat] Skip auto-organize: no active engine configured', 'warn');
+            }
+          } catch (error) {
+            addLog(`[CharacterDialogueChat] Memory table auto-organization failed: ${error}`, 'error');
+          } finally {
+            isOrganizingRef.current = false;
+            setIsOrganizing(false);
+          }
+        }, 2000);
+      }
+
       initialContentRef.current = '';
       targetMessageIdRef.current = '';
     });
 
     engine.onError((error) => {
-      clearTimeout();
+      clearStreamTimeout();
       setState(prev => ({
         ...prev,
         messages: prev.messages.map(msg =>
@@ -697,8 +885,39 @@ ${personaSection}【续写任务说明】
       initialContentRef.current = '';
     });
 
+    // 准备发送给 AI 的上下文消息（不修改 messages state，仅修改发送给 AI 的内容）
+    let messagesToSend = [...contextMessages];
+
+    // 异步整理模式：在用户消息末尾拼接简短的整理指令
+    if (memoryTableAutoOrganizeRef.current && memoryTableOrganizeModeRef.current === 'async') {
+      addLog('[CharacterDialogueChat] 异步整理模式：在用户消息末尾拼接固定整理指令', 'info');
+
+      // 找到最后一条用户消息的索引
+      let lastUserMsgIndex = -1;
+      for (let i = messagesToSend.length - 1; i >= 0; i--) {
+        if (messagesToSend[i].role === 'user') {
+          lastUserMsgIndex = i;
+          break;
+        }
+      }
+
+      if (lastUserMsgIndex >= 0) {
+        const lastMsg = messagesToSend[lastUserMsgIndex];
+        const fixedCommand = `\n\n然后进行表格整理`;
+
+        messagesToSend[lastUserMsgIndex] = {
+          ...lastMsg,
+          content: lastMsg.content + fixedCommand
+        };
+
+        addLog(`[CharacterDialogueChat] 固定指令已拼接到用户消息，长度: ${lastMsg.content.length} -> ${messagesToSend[lastUserMsgIndex].content.length}`, 'info');
+      } else {
+        addLog('[CharacterDialogueChat] 警告：未找到用户消息，跳过指令拼接', 'warn');
+      }
+    }
+
     try {
-      await engine.sendMessage(contextMessages, finalSystemPrompt, engineConfigWithParams);
+      await engine.sendMessage(messagesToSend, finalSystemPrompt, engineConfigWithParams);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to send message';       
       setState(prev => ({
@@ -874,6 +1093,69 @@ ${personaSection}【续写任务说明】
     });
   }, [saveChatToStore, addLog]);
 
+  const memoryTableEnabled = characterConfig?.memoryTableEnabled ?? false;
+  const memoryTableAutoOrganize = characterConfig?.memoryTableAutoOrganize ?? false;
+  const memoryTableOrganizeMode = (characterConfig?.memoryTableOrganizeMode ?? 'sync') as 'sync' | 'async';
+
+  const fetchMemoryTableData = useCallback(async () => {
+    if (!memoryTableEnabled) {
+      memoryTableDataRef.current = '';
+      return;
+    }
+    try {
+      // 使用 characterCardName 而不是 characterCardId，因为表格整理功能使用 characterCardName 保存文件
+      const chatId = characterInfo.characterCardName || characterInfo.characterCardId;
+      console.log('[DEBUG-MEMORY-TABLE] fetchMemoryTableData using chatId:', chatId);
+      const tableResult = await window.electronAPI.memory.getTableData(chatId);
+      if (tableResult && tableResult.sheets && tableResult.sheets.length > 0 && tableResult.data) {
+        let formattedData = '# 记忆表格数据\n\n';
+        for (const sheetName of tableResult.sheets) {
+          const sheetHeaders = tableResult.headers?.[sheetName] || [];
+          const sheetRows = tableResult.data?.[sheetName] || [];
+          formattedData += `## 表格: ${sheetName}\n\n`;
+          if (sheetHeaders.length > 0) {
+            formattedData += '| ' + sheetHeaders.join(' | ') + ' |\n';
+            formattedData += '| ' + sheetHeaders.map(() => '---').join(' | ') + ' |\n';
+          }
+          if (sheetRows.length > 0) {
+            for (const row of sheetRows) {
+              const cells = sheetHeaders.map(h => {
+                const val = row[h];
+                return val !== undefined && val !== null ? String(val) : '';
+              });
+              formattedData += '| ' + cells.join(' | ') + ' |\n';
+            }
+          }
+          formattedData += '\n';
+        }
+        memoryTableDataRef.current = formattedData;
+        const totalRows = tableResult.sheets.reduce((sum: number, sn: string) => sum + (tableResult.data?.[sn]?.length || 0), 0);
+        addLog(`[CharacterDialogueChat] Memory table data loaded: ${tableResult.sheets.length} sheets, ${totalRows} rows`, 'info');
+      } else {
+        memoryTableDataRef.current = '';
+        addLog('[CharacterDialogueChat] No memory table data found', 'info');
+      }
+    } catch (error) {
+      memoryTableDataRef.current = '';
+      addLog(`[CharacterDialogueChat] Failed to load memory table data: ${error}`, 'warn');
+    }
+  }, [memoryTableEnabled, characterInfo.characterCardId, addLog]);
+
+  const handleMemoryTableToggle = useCallback((enabled: boolean) => {
+    updateConfig({ memoryTableEnabled: enabled });
+    addLog(`[CharacterDialogueChat] Memory table ${enabled ? 'enabled' : 'disabled'}`, 'info');
+  }, [updateConfig, addLog]);
+
+  const handleMemoryTableAutoOrganizeToggle = useCallback((enabled: boolean) => {
+    updateConfig({ memoryTableAutoOrganize: enabled });
+    addLog(`[CharacterDialogueChat] Memory table auto-organize ${enabled ? 'enabled' : 'disabled'}`, 'info');
+  }, [updateConfig, addLog]);
+
+  const handleMemoryTableOrganizeModeChange = useCallback((mode: 'sync' | 'async') => {
+    updateConfig({ memoryTableOrganizeMode: mode });
+    addLog(`[CharacterDialogueChat] Memory table organize mode changed to ${mode === 'sync' ? '同步整理' : '异步整理'}`, 'info');
+  }, [updateConfig, addLog]);
+
   return {
     state,
     sendMessage,
@@ -892,5 +1174,14 @@ ${personaSection}【续写任务说明】
     getActiveEngineConfig,
     bindKnowledgeBase,
     unbindKnowledgeBase,
+    memoryTableEnabled,
+    memoryTableAutoOrganize,
+    memoryTableOrganizeMode,
+    isOrganizing,
+    fetchMemoryTableData,
+    handleMemoryTableToggle,
+    handleMemoryTableAutoOrganizeToggle,
+    handleMemoryTableOrganizeModeChange,
+    getMemoryTableData: () => memoryTableDataRef.current,
   };
 }

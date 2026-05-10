@@ -154,7 +154,7 @@
 .parameter-panel {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 0;
 }
 
 .parameter-panel-header {
@@ -163,13 +163,72 @@
   justify-content: space-between;
   padding-bottom: 8px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  user-select: none;
+  transition: background-color 0.2s ease;
+  position: relative;
+}
+
+.parameter-panel-header:hover {
+  background-color: rgba(255, 255, 255, 0.02);
+  border-radius: 4px;
+}
+
+.parameter-collapse-icon {
+  font-size: 12px;
+  color: #8b5cf6;
+  width: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .parameter-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 14px;
   font-weight: 600;
   color: #e2e8f0;
   margin: 0;
+}
+
+.parameter-panel-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.parameter-custom-badge-mini {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 12px;
+  font-weight: bold;
+  color: #a855f7;
+  background: linear-gradient(135deg, #8b5cf6 0%, #a855f7 100%);
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(139, 92, 246, 0.4);
+}
+
+.parameter-panel-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: 1000px;
+  opacity: 1;
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.2s ease;
+}
+
+.parameter-panel-content.collapsed {
+  max-height: 0;
+  opacity: 0;
 }
 
 .parameter-custom-badge {
@@ -292,13 +351,72 @@
   cursor: not-allowed;
 }
 
-/* 知识库绑定面板样式 */
+/* 向量化设置面板样式 */
+.vectorization-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.vectorization-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  user-select: none;
+  transition: background-color 0.2s ease;
+  position: relative;
+}
+
+.vectorization-panel-header:hover {
+  background-color: rgba(255, 255, 255, 0.02);
+  border-radius: 4px;
+}
+
+.vectorization-collapse-icon {
+  font-size: 12px;
+  color: #8b5cf6;
+  width: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vectorization-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2e8f0;
+  margin: 0;
+}
+
+.vectorization-icon {
+  font-size: 16px;
+  color: #3b82f6;
+}
+
+.vectorization-panel-content {
+  max-height: 1000px;
+  opacity: 1;
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.2s ease;
+}
+
+.vectorization-panel-content.collapsed {
+  max-height: 0;
+  opacity: 0;
+}
+
+/* 知识库绑定面板样式（作为向量化面板的内部内容） */
 .knowledge-base-panel {
   display: flex;
   flex-direction: column;
   gap: 12px;
   padding: 12px;
-  border-radius: 12px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.05);
 }
@@ -309,6 +427,13 @@
   justify-content: space-between;
   padding-bottom: 8px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.knowledge-base-count-tag {
+  font-size: 10px !important;
+  padding: 0 6px !important;
+  height: 18px !important;
+  line-height: 16px !important;
 }
 
 .knowledge-base-panel-title {
@@ -560,6 +685,110 @@
 .config-save-btn:active {
   transform: translateY(0) !important;
   box-shadow: 0 2px 4px rgba(139, 92, 246, 0.3) !important;
+}
+
+/* 记忆表格面板样式 */
+.memory-table-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0;
+}
+
+.memory-table-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: background-color 0.2s ease;
+  user-select: none;
+}
+
+.memory-table-panel-header:hover {
+  background-color: rgba(255, 255, 255, 0.04);
+}
+
+.memory-table-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2e8f0;
+  margin: 0;
+}
+
+.memory-table-collapse-icon {
+  font-size: 12px;
+  color: #10b981;
+  width: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.memory-table-icon {
+  font-size: 16px;
+  color: #10b981;
+}
+
+.memory-table-panel-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 1000px;
+  opacity: 1;
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.2s ease;
+}
+
+.memory-table-panel-content.collapsed {
+  max-height: 0;
+  opacity: 0;
+}
+
+.memory-table-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.memory-table-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.memory-table-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #cbd5e1;
+  font-weight: 500;
+}
+
+.memory-table-tooltip-icon {
+  font-size: 12px;
+  color: #94a3b8;
+  cursor: help;
+  transition: color 0.2s ease;
+}
+
+.memory-table-tooltip-icon:hover {
+  color: #10b981;
+}
+
+.memory-table-switch {
+  flex-shrink: 0;
 }
 
 @media (max-width: 768px) {

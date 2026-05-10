@@ -1005,26 +1005,31 @@ export const KnowledgeBaseManager: React.FC = () => {
             style={{ marginBottom: 16 }}
             closable
           />
-          <Table
-            columns={treeColumns}
-            dataSource={treeData}
-            loading={treeLoading}
-            size="small"
-            scroll={{ y: 500 }}
-            rowKey="key"
-            expandable={{
-              onExpand: handleExpand,
-              defaultExpandAllRows: false,
-              expandIconColumnIndex: 0,
-            }}
-            pagination={{
-              pageSize: 20,
-              showSizeChanger: true,
-              showQuickJumper: true,
-              showTotal: (total) => `共 ${total} 个文档`,
-              pageSizeOptions: ['10', '20', '50'],
-            }}
-          />
+          <div className="table-container">
+            <Table
+              columns={treeColumns}
+              dataSource={treeData}
+              loading={treeLoading}
+              size="small"
+              bordered
+              scroll={{ y: 500 }}
+              rowKey="key"
+              expandable={{
+                onExpand: handleExpand,
+                defaultExpandAllRows: false,
+                expandIconColumnIndex: 0,
+              }}
+              pagination={{
+                pageSize,
+                showSizeChanger: true,
+                showQuickJumper: true,
+                showTotal: (total) => `共 ${total} 个文档`,
+                pageSizeOptions: ['10', '20', '50'],
+                className: 'table-pagination-wrapper',
+                onChange: (page, size) => { setPageSize(size); },
+              }}
+            />
+          </div>
         </>
       )
     },
@@ -1095,23 +1100,28 @@ export const KnowledgeBaseManager: React.FC = () => {
             }
           >
             {processedDocuments.length > 0 ? (
-              <Table
-                columns={documentColumns}
-                dataSource={processedDocuments}
-                rowKey="documentId"
-                pagination={{
-                  pageSize: 10,
-                  showSizeChanger: true,
-                  showQuickJumper: true,
-                  showTotal: (total) => `共 ${total} 条`,
-                  pageSizeOptions: ['10', '20', '50'],
-                }}
-                size="small"
-                rowSelection={{
-                  selectedRowKeys: selectedDocKeys,
-                  onChange: (keys) => setSelectedDocKeys(keys),
-                }}
-              />
+              <div className="table-container">
+                <Table
+                  columns={documentColumns}
+                  dataSource={processedDocuments}
+                  rowKey="documentId"
+                  bordered
+                  pagination={{
+                    pageSize,
+                    showSizeChanger: true,
+                    showQuickJumper: true,
+                    showTotal: (total) => `共 ${total} 条`,
+                    pageSizeOptions: ['10', '20', '50'],
+                    className: 'table-pagination-wrapper',
+                    onChange: (page, size) => { setPageSize(size); },
+                  }}
+                  size="small"
+                  rowSelection={{
+                    selectedRowKeys: selectedDocKeys,
+                    onChange: (keys) => setSelectedDocKeys(keys),
+                  }}
+                />
+              </div>
             ) : (
               <Alert message="暂无已处理的文档" type="info" showIcon />
             )}
@@ -1431,44 +1441,47 @@ export const KnowledgeBaseManager: React.FC = () => {
             <div style={{ marginTop: 16, color: '#8c8c8c' }}>加载分块数据中...</div>
           </div>
         ) : docChunks.length > 0 ? (
-          <Table
-            columns={[
-              {
-                title: '分块 #',
-                dataIndex: 'index',
-                key: 'index',
-                width: 80,
-                render: (idx: number) => <Tag color="blue">{idx}</Tag>,
-              },
-              {
-                title: '文本内容',
-                dataIndex: 'text',
-                key: 'text',
-                render: (text: string) => (
-                  <div style={{
-                    maxHeight: 120,
-                    overflow: 'auto',
-                    whiteSpace: 'pre-wrap',
-                    fontSize: 13,
-                    lineHeight: '1.5',
-                  }}>
-                    {text}
-                  </div>
-                ),
-              },
-              {
-                title: '长度',
-                dataIndex: 'text',
-                key: 'length',
-                width: 80,
-                render: (text: string) => <Text type="secondary">{text.length} 字符</Text>,
-              },
-            ]}
-            dataSource={docChunks}
-            rowKey="index"
-            size="small"
-            pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 条` }}
-          />
+              <div className="table-container">
+                <Table
+                  columns={[
+                    {
+                      title: '分块 #',
+                      dataIndex: 'index',
+                      key: 'index',
+                      width: 80,
+                      render: (idx: number) => <Tag color="blue">{idx}</Tag>,
+                    },
+                    {
+                      title: '文本内容',
+                      dataIndex: 'text',
+                      key: 'text',
+                      render: (text: string) => (
+                        <div style={{
+                          maxHeight: 120,
+                          overflow: 'auto',
+                          whiteSpace: 'pre-wrap',
+                          fontSize: 13,
+                          lineHeight: '1.5',
+                        }}>
+                          {text}
+                        </div>
+                      ),
+                    },
+                    {
+                      title: '长度',
+                      dataIndex: 'text',
+                      key: 'length',
+                      width: 80,
+                      render: (text: string) => <Text type="secondary">{text.length} 字符</Text>,
+                    },
+                  ]}
+                  dataSource={docChunks}
+                  rowKey="index"
+                  bordered
+                  size="small"
+                  pagination={{ pageSize, showSizeChanger: true, showTotal: (total) => `共 ${total} 条`, className: 'table-pagination-wrapper', onChange: (page, size) => { setPageSize(size); } }}
+                />
+              </div>
         ) : (
           <Alert message="暂无分块数据" description="请从文档列表点击「分片」按钮查看分块详情" type="info" showIcon />
         )}

@@ -8,6 +8,7 @@ import { vectorStoreService } from './VectorStoreService';
 import { vectorRegistryService } from './VectorRegistryService';
 import { getStorageService } from './storageService';
 import { VectorSourceType, VectorSourceTypeStorageConfig } from '../types/vectorConfig';
+import { WorldBookKeywordMatcher, matchWorldBookKeywords, formatKeywordMatchResults, type KeywordMatchResult } from './WorldBookKeywordMatcher';
 
 class WorldBookService {
   private worldBookDir: string;
@@ -42,9 +43,7 @@ class WorldBookService {
       const worldBooks = await Promise.all(
         files
           .filter(f => {
-            // Exclude .tags.json files (tag data files)
             if (f.endsWith('.tags.json')) return false;
-            // Only include .json and .json5 files
             return f.endsWith('.json') || f.endsWith('.json5');
           })
           .map(async file => {
@@ -65,15 +64,11 @@ class WorldBookService {
     }
   }
 
-  /**
-   * 标准化世界书内容 - 确保符合 SillyTavern 规范
-   */
   private standardizeWorldBookContent(data: any): any {
     if (!data) return data;
     
     const standardized = { ...data };
     
-    // 1. 添加缺失的根级字段
     if (standardized.is_creation === undefined) standardized.is_creation = false;
     if (standardized.scan_depth === undefined) standardized.scan_depth = 50;
     if (standardized.token_budget === undefined) standardized.token_budget = 1082;
@@ -90,47 +85,33 @@ class WorldBookService {
       };
     }
     
-    // 2. 修复 entries
     if (standardized.entries) {
       const entries = standardized.entries;
       const fixedEntries: any = {};
       let newIndex = 1;
       
-      // 按原始索引排序
       const sortedKeys = Object.keys(entries).sort((a, b) => parseInt(a) - parseInt(b));
       
       for (const oldKey of sortedKeys) {
         const entry = entries[oldKey];
-        
-        // 调用 migrateEntry 处理字段迁移和兼容性
         const migratedEntry = this.migrateEntry(entry);
-        
-        // 标准化每个条目，覆盖索引相关字段
         const fixedEntry = {
           ...migratedEntry,
-          // 修正索引
           uid: newIndex,
           id: newIndex,
           name: migratedEntry.name || `Entry ${newIndex}`
         };
-        
         fixedEntries[newIndex.toString()] = fixedEntry;
         newIndex++;
       }
-      
       standardized.entries = fixedEntries;
     }
-    
     return standardized;
   }
 
-  /**
-   * 迁移单个世界书条目为 SillyTavern 兼容格式
-   */
   private migrateEntry(entry: any): any {
     if (!entry) return entry;
     
-    // 统一 secondary_keys 命名：支持 keysecondary（旧版）和 secondaryKeys（新版）
     const secondaryKeys = Array.isArray(entry.secondaryKeys) 
       ? entry.secondaryKeys 
       : Array.isArray(entry.keysecondary) 
@@ -139,36 +120,27 @@ class WorldBookService {
     
     return {
       ...entry,
-      // 迁移 key 为数组 (string → string[])
       key: Array.isArray(entry.key) 
         ? entry.key 
         : (typeof entry.key === 'string' && entry.key.trim() !== '' ? [entry.key] : []),
-      // 统一使用 secondaryKeys 内部命名
       secondaryKeys,
-      // 兼容旧版字段名，避免破坏现有数据
       keysecondary: secondaryKeys,
-      // 确保数组字段存在
       tags: Array.isArray(entry.tags) ? entry.tags : [],
       triggers: Array.isArray(entry.triggers) ? entry.triggers : [],
-      // 确保 characterFilter 存在
       characterFilter: entry.characterFilter || {
         isExclude: false,
         names: [],
         tags: []
       },
-      // SillyTavern 标准字段默认值
       order: entry.order !== undefined ? entry.order : 100,
-      // position 字段：SillyTavern 使用数字类型 (0=before_char, 1=after_char, 2=before_example, 3=at_depth)
       position: typeof entry.position === 'number' ? entry.position : 1,
       depth: entry.depth !== undefined ? entry.depth : 4,
       probability: entry.probability !== undefined ? entry.probability : 100,
       group: entry.group || '',
       disable: entry.disable !== undefined ? entry.disable : false,
-      // 兼容两种命名方式，内部统一使用 useRegex
       useRegex: entry.useRegex !== undefined ? entry.useRegex : (entry.use_regex || false),
       vectorized: entry.vectorized !== undefined ? entry.vectorized : false,
       caseSensitive: entry.caseSensitive !== undefined ? entry.caseSensitive : (entry.case_sensitive || false),
-      // 确保其他必需字段
       id: entry.id || entry.uid,
       name: entry.name || entry.comment || `Entry ${entry.uid}`,
       priority: entry.priority !== undefined ? entry.priority : (entry.order || 100),
@@ -206,9 +178,6 @@ class WorldBookService {
     };
   }
 
-  /**
-   * 将 Creative-Cafe 内部格式导出为 SillyTavern 兼容格式
-   */
   private exportToSillyTavernFormat(data: any): any {
     if (!data || !data.entries) return data;
     
@@ -218,12 +187,10 @@ class WorldBookService {
       const e = entry as any;
       exportedEntries[key] = {
         ...e,
-        // 导出时使用 SillyTavern 的字段名
         secondary_keys: e.secondaryKeys || e.keysecondary || [],
         use_regex: e.useRegex || false,
         case_sensitive: e.caseSensitive || false,
       };
-      // 移除内部字段名
       delete exportedEntries[key].secondaryKeys;
       delete exportedEntries[key].keysecondary;
       delete exportedEntries[key].useRegex;
@@ -240,10 +207,7 @@ class WorldBookService {
     try {
       const content = await fs.readFile(filePath, 'utf-8');
       const data = JSON5.parse(content);
-      
-      // 标准化世界书内容
       const standardizedData = this.standardizeWorldBookContent(data);
-      
       return standardizedData;
     } catch (error) {
       console.error('Failed to read world book:', error);
@@ -253,12 +217,8 @@ class WorldBookService {
 
   async writeWorldBook(filePath: string, data: any) {
     try {
-      // 标准化数据以确保符合 SillyTavern 规范
       const standardizedData = this.standardizeWorldBookContent(data);
-      
-      // 导出时转换为 SillyTavern 兼容格式
       const exportData = this.exportToSillyTavernFormat(standardizedData);
-      
       await fs.writeFile(filePath, JSON.stringify(exportData, null, 2), 'utf-8');
       return { success: true };
     } catch (error) {
@@ -270,12 +230,9 @@ class WorldBookService {
   async deleteWorldBook(filePath: string) {
     try {
       console.log(`[WorldBookService] deleteWorldBook: starting deletion for ${filePath}`);
-      
-      // Extract worldbook name from file path (e.g., "狼人杀1.0_修复版" from path)
       const worldBookName = path.basename(filePath).replace(/\.(json|json5)$/, '');
       console.log(`[WorldBookService] deleteWorldBook: worldBookName=${worldBookName}`);
       
-      // Step 1: Delete vectorized data from vecstore
       const registryEntries = await vectorRegistryService.getVectorFilesBySourceId(worldBookName);
       console.log(`[WorldBookService] deleteWorldBook: found ${registryEntries.length} registry entries`);
       
@@ -290,13 +247,10 @@ class WorldBookService {
           totalDeleted += deleted;
           console.log(`[WorldBookService] deleteWorldBook: deleted ${deleted} vectors`);
           
-          // Update or remove registry entry and delete vecstore files
           const remainingCount = await vectorStoreService.countByPrefix(`wb_${worldBookName}_`);
           if (remainingCount === 0) {
             console.log(`[WorldBookService] deleteWorldBook: removing registry entry ${entry.id} and deleting vecstore files`);
             await vectorRegistryService.deleteVectorFile(entry.id);
-            
-            // Delete vecstore files
             try {
               const store = vectorStoreService.getVecstoreStoreForSource(entry.sourceType, entry.sourceId);
               if (store) {
@@ -313,20 +267,15 @@ class WorldBookService {
           }
         }
       } else {
-        // Fallback: global delete without specific store targeting
         console.log(`[WorldBookService] deleteWorldBook: no registry entries, falling back to global delete`);
         totalDeleted = await vectorStoreService.deleteByPrefix(`wb_${worldBookName}_`);
         console.log(`[WorldBookService] deleteWorldBook: deleted ${totalDeleted} vectors from all stores`);
       }
       
-      // Step 2: Delete the worldbook JSON file
       await fs.unlink(filePath);
       console.log(`[WorldBookService] deleteWorldBook: deleted worldbook file`);
-      
-      // Step 3: Delete tags
       await this.deleteTags(filePath);
       console.log(`[WorldBookService] deleteWorldBook: deleted tags`);
-      
       console.log(`[WorldBookService] deleteWorldBook: completed, totalDeleted=${totalDeleted}`);
       return { success: true, deletedVectors: totalDeleted };
     } catch (error) {
@@ -351,10 +300,8 @@ class WorldBookService {
     try {
       const data = await this.readWorldBook(filePath);
       if (!data) return { success: false, error: 'Failed to read world book' };
-
       const optimized = await optimizerService.optimizeWorldBook(data);
       await this.writeWorldBook(filePath, optimized);
-
       return { success: true, optimized };
     } catch (error) {
       console.error('Failed to optimize world book:', error);
@@ -440,20 +387,16 @@ class WorldBookService {
       const storageService = getStorageService();
       const settings = storageService.get<any>('settings');
       const vectorConfig = settings?.vector;
-
       if (!vectorConfig || !vectorConfig.autoVectorizeWorldBook) {
         return { success: false, error: '自动向量化未启用' };
       }
-
       if (!entryContent || entryContent.trim().length === 0) {
         return { success: false, error: '条目内容为空' };
       }
-
       const embedResult = await embeddingService.generateEmbedding(entryContent);
       if (!embedResult.success || !embedResult.vector) {
         return { success: false, error: embedResult.error || '向量化失败' };
       }
-
       const vectorId = `wb_${path.basename(worldBookPath, path.extname(worldBookPath))}_${entryUid}`;
       await vectorStoreService.add(vectorId, embedResult.vector, {
         text: entryContent,
@@ -465,11 +408,8 @@ class WorldBookService {
         createdAt: Date.now(),
         updatedAt: Date.now()
       });
-
-      // 关键修复：向量化完成后立即执行持久化，确保数据不丢失
       await vectorStoreService.persist();
       console.log(`[WorldBookService] vectorizeEntry: persisted ${vectorId} after vectorization`);
-
       return { success: true };
     } catch (error) {
       console.error('Failed to vectorize entry:', error);
@@ -480,7 +420,6 @@ class WorldBookService {
   async vectorizeAllEntries(worldBookPath: string, entries: Record<string, any>): Promise<{ success: boolean; processed: number; failed: number }> {
     let processed = 0;
     let failed = 0;
-
     for (const [key, entry] of Object.entries(entries)) {
       const e = entry as any;
       if (e.content && e.enabled !== false) {
@@ -492,7 +431,6 @@ class WorldBookService {
         }
       }
     }
-
     return { success: true, processed, failed };
   }
 
@@ -502,12 +440,10 @@ class WorldBookService {
       if (!embedResult.success || !embedResult.vector) {
         return [];
       }
-
       const results = await vectorStoreService.search(embedResult.vector, topK, {
         source: VectorSourceType.WORLDBOOK,
         worldBookPath: worldBookPath
       });
-
       return results;
     } catch (error) {
       console.error('Failed to search world book entries:', error);
@@ -515,13 +451,6 @@ class WorldBookService {
     }
   }
 
-  /**
-   * 世界书完整向量化处理 - 新的分片规则
-   * 分片0: 世界书的 name + description
-   * 分片1,2,3...: entries 按顺序编号，内容为 key+keysecondary+keys+secondary_keys+comment+content
-   * @param worldBookPath 世界书文件路径
-   * @returns 向量化处理结果
-   */
   async vectorizeWorldBook(worldBookPath: string): Promise<{ 
     success: boolean; 
     entriesVectorized: number;
@@ -531,13 +460,10 @@ class WorldBookService {
   }> {
     try {
       console.log(`[WorldBookService] vectorizeWorldBook: starting for ${worldBookPath}`);
-      
-      // 读取世界书内容
       const worldBookData = await this.readWorldBook(worldBookPath);
       if (!worldBookData) {
         return { success: false, entriesVectorized: 0, entriesFailed: 0, error: '读取世界书失败', entryVectorIds: [] };
       }
-
       const worldBookName = path.basename(worldBookPath, path.extname(worldBookPath));
       const result = {
         success: true,
@@ -545,13 +471,10 @@ class WorldBookService {
         entriesFailed: 0,
         entryVectorIds: [] as string[]
       };
-
-      // 分片0: 世界书的 name + description
       if (worldBookData.description || worldBookName) {
         console.log(`[WorldBookService] vectorizeWorldBook: creating chunk 0 (name + description)`);
         const chunk0Text = `世界书名称: ${worldBookName}\n描述: ${worldBookData.description || ''}`;
         const chunk0Id = `wb_${worldBookName}_0`;
-        
         try {
           const chunk0EmbedResult = await embeddingService.generateEmbedding(chunk0Text);
           if (chunk0EmbedResult.success && chunk0EmbedResult.vector) {
@@ -582,23 +505,16 @@ class WorldBookService {
           console.error(`[WorldBookService] vectorizeWorldBook: chunk 0 vectorization error:`, error);
         }
       }
-
-      // 分片1,2,3...: entries 按顺序编号
       if (worldBookData.entries && Object.keys(worldBookData.entries).length > 0) {
         console.log(`[WorldBookService] vectorizeWorldBook: vectorizing ${Object.keys(worldBookData.entries).length} entries as chunks 1,2,3...`);
-        
         let chunkIndex = 1;
         for (const [key, entry] of Object.entries(worldBookData.entries)) {
           const e = entry as any;
           const entryUid = e.uid || key;
-          
-          // 跳过被禁用的条目
           if (e.disable || e.enabled === false) {
             console.log(`[WorldBookService] vectorizeWorldBook: skipping disabled entry ${entryUid}`);
             continue;
           }
-
-          // 构建向量化文本：key+keysecondary+keys+secondary_keys+comment+content
           const vectorizeText = [
             ...(e.key || []),
             ...(e.keysecondary || []),
@@ -611,14 +527,10 @@ class WorldBookService {
             console.log(`[WorldBookService] vectorizeWorldBook: skipping empty entry ${entryUid}`);
             continue;
           }
-
           const entryVectorId = `wb_${worldBookName}_${chunkIndex}`;
-          
           try {
             console.log(`[WorldBookService] vectorizeWorldBook: vectorizing chunk ${chunkIndex} (uid: ${entryUid})`);
-            
             const entryEmbedResult = await embeddingService.generateEmbedding(vectorizeText);
-            
             if (entryEmbedResult.success && entryEmbedResult.vector) {
               const entryMetadata: Record<string, any> = {
                 text: vectorizeText,
@@ -651,7 +563,6 @@ class WorldBookService {
                 createdAt: Date.now(),
                 updatedAt: Date.now()
               };
-
               await vectorStoreService.add(entryVectorId, entryEmbedResult.vector, entryMetadata);
               result.entriesVectorized++;
               result.entryVectorIds.push(entryVectorId);
@@ -664,16 +575,12 @@ class WorldBookService {
             result.entriesFailed++;
             console.error(`[WorldBookService] vectorizeWorldBook: chunk ${chunkIndex} (uid: ${entryUid}) vectorization error:`, error);
           }
-          
           chunkIndex++;
         }
       } else {
         console.log(`[WorldBookService] vectorizeWorldBook: no entries to vectorize`);
       }
-
       console.log(`[WorldBookService] vectorizeWorldBook: completed - entriesVectorized=${result.entriesVectorized}, entriesFailed=${result.entriesFailed}`);
-      
-      // 注册到向量注册表
       if (result.entriesVectorized > 0) {
         try {
           await vectorRegistryService.registerVectorFile({
@@ -696,9 +603,7 @@ class WorldBookService {
           console.error('[WorldBookService] vectorizeWorldBook: failed to register to registry:', error);
         }
       }
-      
       return result;
-
     } catch (error) {
       console.error('[WorldBookService] vectorizeWorldBook: fatal error:', error);
       return { 
@@ -709,6 +614,192 @@ class WorldBookService {
         entryVectorIds: []
       };
     }
+  }
+
+  /**
+   * 将注册表ID解析为世界书文件路径
+   * @param scopeIds 注册表ID或文件路径的混合数组
+   * @returns 解析后的世界书文件路径数组
+   */
+  private async resolveWorldBookPaths(scopeIds: string[]): Promise<string[]> {
+    const resolvedPaths: string[] = [];
+    const allWorldBooks = await this.listWorldBooks();
+    
+    for (const scopeId of scopeIds) {
+      // 检查是否是实际文件路径
+      if (scopeId.includes(path.sep) || scopeId.includes('/') || scopeId.includes('\\')) {
+        // 可能是文件路径，检查是否实际存在
+        const exists = allWorldBooks.some(wb => wb.path === scopeId);
+        if (exists) {
+          resolvedPaths.push(scopeId);
+          continue;
+        }
+      }
+      
+      // 尝试作为注册表ID解析
+      try {
+        const entry = await vectorRegistryService.getVectorFileById(scopeId);
+        if (entry && entry.sourceType === 'worldbook') {
+          // 注册表中的 sourceId 是 worldBookName（文件名不含扩展名）
+          const worldBookName = entry.sourceId || entry.vectorFileId || entry.sourceName;
+          if (worldBookName) {
+            // 查找对应的世界书文件
+            const matchedBook = allWorldBooks.find(wb => {
+              const wbName = path.basename(wb.path, path.extname(wb.path));
+              return wbName === worldBookName;
+            });
+            if (matchedBook) {
+              resolvedPaths.push(matchedBook.path);
+              console.log(`[WorldBookService] Resolved registry ID ${scopeId} to file path: ${matchedBook.path}`);
+              continue;
+            }
+          }
+        }
+      } catch (error) {
+        console.warn(`[WorldBookService] Failed to resolve registry ID ${scopeId}:`, error);
+      }
+      
+      console.warn(`[WorldBookService] Could not resolve scopeId: ${scopeId}`);
+    }
+    
+    return resolvedPaths;
+  }
+
+  /**
+   * 关键词匹配 - 基于关键词匹配的世界书条目激活
+   */
+  async matchKeywords(
+    text: string,
+    worldBookPaths?: string[],
+    options?: {
+      caseSensitive?: boolean;
+      matchWholeWords?: boolean;
+      useGroupScoring?: boolean;
+      maxResults?: number;
+    }
+  ): Promise<{
+    success: boolean;
+    matches: Array<{
+      entry: any;
+      matchedKeys: string[];
+      matchType: 'primary' | 'secondary' | 'both';
+      matchScore: number;
+      content: string;
+      comment?: string;
+      name?: string;
+    }>;
+    count: number;
+    error?: string;
+  }> {
+    try {
+      if (!text || !text.trim()) {
+        return { success: false, matches: [], count: 0, error: '匹配文本为空' };
+      }
+      
+      console.log(`[WorldBookService] matchKeywords: called with text="${text.substring(0, 50)}", worldBookPaths=${JSON.stringify(worldBookPaths)}`);
+      
+      let allEntries: any[] = [];
+      if (worldBookPaths && worldBookPaths.length > 0) {
+        // 解析注册表ID到实际文件路径
+        const resolvedPaths = await this.resolveWorldBookPaths(worldBookPaths);
+        console.log(`[WorldBookService] matchKeywords: resolved ${worldBookPaths.length} scopeIds to ${resolvedPaths.length} file paths:`, resolvedPaths);
+        
+        if (resolvedPaths.length === 0) {
+          console.warn(`[WorldBookService] matchKeywords: no world book files found for scopeIds: ${JSON.stringify(worldBookPaths)}`);
+          return { success: true, matches: [], count: 0 };
+        }
+        
+        for (const worldBookPath of resolvedPaths) {
+          const data = await this.readWorldBook(worldBookPath);
+          if (data && data.entries) {
+            const entries = Object.values(data.entries);
+            console.log(`[WorldBookService] matchKeywords: loaded ${entries.length} entries from ${worldBookPath}`);
+            allEntries = allEntries.concat(entries);
+          } else {
+            console.warn(`[WorldBookService] matchKeywords: no entries found in ${worldBookPath}`);
+          }
+        }
+      } else {
+        console.log(`[WorldBookService] matchKeywords: no worldBookPaths provided, searching all world books`);
+        const worldBooks = await this.listWorldBooks();
+        for (const book of worldBooks) {
+          const data = await this.readWorldBook(book.path);
+          if (data && data.entries) {
+            const entries = Object.values(data.entries);
+            allEntries = allEntries.concat(entries);
+          }
+        }
+      }
+      if (allEntries.length === 0) {
+        console.log(`[WorldBookService] matchKeywords: no entries available for matching`);
+        return { success: true, matches: [], count: 0 };
+      }
+      console.log(`[WorldBookService] matchKeywords: total ${allEntries.length} entries to match`);
+      console.log(`[WorldBookService] matchKeywords: 文本="${text.substring(0, 300)}"`);
+      console.log(`[WorldBookService] matchKeywords: options=${JSON.stringify(options)}`);
+      
+      const results = matchWorldBookKeywords(allEntries, text, {
+        caseSensitive: options?.caseSensitive,
+        matchWholeWords: options?.matchWholeWords,
+        useGroupScoring: options?.useGroupScoring,
+      });
+      console.log(`[WorldBookService] matchKeywords: found ${results.length} matches before filtering`);
+      
+      const maxResults = options?.maxResults || 10;
+      const limitedResults = results.slice(0, maxResults);
+      const matches = limitedResults.map(result => ({
+        entry: result.entry,
+        matchedKeys: result.matchedKeys,
+        matchType: result.matchType,
+        matchScore: result.matchScore,
+        content: result.entry.content || '',
+        comment: result.entry.comment || result.entry.name || '',
+        name: result.entry.name || '',
+      }));
+      
+      if (matches.length > 0) {
+        console.log(`[WorldBookService] matchKeywords: returning ${matches.length} matches`);
+        matches.forEach((m, i) => {
+          console.log(`  [关键词匹配 ${i+1}] ${m.comment || m.name} (匹配度: ${m.matchScore}, 关键词: ${m.matchedKeys.join(', ')})`);
+        });
+      }
+      
+      return {
+        success: true,
+        matches,
+        count: matches.length,
+      };
+    } catch (error) {
+      console.error('[WorldBookService] matchKeywords failed:', error);
+      return {
+        success: false,
+        matches: [],
+        count: 0,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
+  /**
+   * 格式化关键词匹配结果为可注入的文本
+   */
+  formatKeywordMatchesForInjection(results: Array<{
+    entry: any;
+    matchedKeys: string[];
+    matchType: string;
+    matchScore: number;
+    content: string;
+    comment?: string;
+    name?: string;
+  }>): string {
+    if (!results || results.length === 0) return '';
+    return results
+      .map((result, index) => {
+        const header = `[关键词匹配 ${index + 1}] ${result.comment || result.name || '未命名条目'} (${result.matchType === 'both' ? '主+次关键词' : result.matchType === 'primary' ? '主关键词' : '次关键词'}, 匹配度: ${result.matchScore})`;
+        const keys = `触发关键词: ${result.matchedKeys.join(', ')}`;
+        return `${header}\n${keys}\n${result.content}`;
+      })
+      .join('\n\n---\n\n');
   }
 }
 

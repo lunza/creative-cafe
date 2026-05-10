@@ -117,7 +117,7 @@ export const useCreativeAI = (): UseCreativeAIReturn => {
       method: 'POST',
       headers: requestHeaders,
       body: requestBody,
-      timeout: 600000,
+      timeout: 0, // 无超时限制
       streaming
     });
 

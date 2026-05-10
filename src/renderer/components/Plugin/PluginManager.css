@@ -1,77 +1,69 @@
-.plugin-manager {
-  padding: 20px;
-}
-
-.plugin-header {
-  margin-bottom: 20px;
-}
-
-.plugin-header h2 {
-  margin-bottom: 8px;
-  font-size: 20px;
-  font-weight: 600;
-}
+/*
+ * PluginManager Styles
+ * All common list styles have been moved to list-common.css
+ * This file contains plugin-specific custom styles only
+ */
 
 .plugin-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
   flex-wrap: wrap;
-  gap: 16px;
-  margin-top: 16px;
+  gap: var(--gap-md, 16px);
+  margin-top: var(--spacing-md, 16px);
 }
 
 .plugin-tabs-card {
-  border-radius: 8px;
+  border-radius: var(--radius-base, 8px);
 }
 
 .plugin-card {
   height: 100%;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition: transform var(--duration-normal, 0.2s) var(--ease-default), box-shadow var(--duration-normal, 0.2s) var(--ease-default);
 }
 
 .plugin-card:hover {
   transform: translateY(-4px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-2, 0 4px 12px rgba(0, 0, 0, 0.08));
 }
 
 .plugin-card-content {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--spacing-xs, 12px);
 }
 
 .plugin-card-header {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--spacing-xs, 12px);
 }
 
 .plugin-avatar {
   width: 48px;
   height: 48px;
-  border-radius: 12px;
+  border-radius: var(--radius-lg, 12px);
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   display: flex;
   align-items: center;
   justify-content: center;
   color: white;
-  font-size: 20px;
-  font-weight: 600;
+  font-size: var(--font-size-xl, 20px);
+  font-weight: var(--font-weight-semibold, 600);
   flex-shrink: 0;
 }
 
 .plugin-detail-avatar {
   width: 80px;
   height: 80px;
-  border-radius: 16px;
+  border-radius: var(--radius-xl, 16px);
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   display: flex;
   align-items: center;
   justify-content: center;
   color: white;
-  font-size: 32px;
-  font-weight: 600;
+  font-size: var(--font-size-xxxl, 32px);
+  font-weight: var(--font-weight-semibold, 600);
   flex-shrink: 0;
 }
 
@@ -81,7 +73,7 @@
 }
 
 .plugin-name {
-  font-size: 14px;
+  font-size: var(--font-size-base, 14px);
   display: block;
   white-space: nowrap;
   overflow: hidden;
@@ -89,7 +81,7 @@
 }
 
 .plugin-version {
-  font-size: 12px;
+  font-size: var(--font-size-xs, 12px);
 }
 
 .plugin-card-body {
@@ -97,14 +89,14 @@
 }
 
 .plugin-description {
-  font-size: 13px;
-  color: #666;
-  line-height: 1.5;
+  font-size: var(--font-size-sm, 13px);
+  color: var(--text-secondary, #666);
+  line-height: var(--line-height-base, 1.5);
 }
 
 .plugin-card-footer {
-  padding-top: 8px;
-  border-top: 1px solid #f0f0f0;
+  padding-top: var(--spacing-xs, 8px);
+  border-top: var(--border-width, 1px) solid var(--border-base, #f0f0f0);
 }
 
 .plugin-loading {
@@ -117,14 +109,6 @@
 
 /* 响应式设计 */
 @media (max-width: 768px) {
-  .plugin-manager {
-    padding: 10px;
-  }
-
-  .plugin-header h2 {
-    font-size: 18px;
-  }
-
   .plugin-toolbar {
     flex-direction: column;
     align-items: flex-start;
@@ -140,27 +124,33 @@
 }
 
 /* 深色模式 */
-.plugin-manager.dark {
-  background-color: #1f1f1f;
-  color: #ffffff;
+.dark .plugin-manager {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
 }
 
-.plugin-manager.dark .plugin-tabs-card {
-  background-color: #2f2f2f;
-  color: #ffffff;
-  border: 1px solid #4f4f4f;
+.dark .plugin-tabs-card {
+  background-color: var(--bg-container);
+  border-color: var(--border-secondary);
 }
 
-.plugin-manager.dark .plugin-card {
-  background-color: #2f2f2f;
-  color: #ffffff;
-  border: 1px solid #4f4f4f;
+.dark .plugin-card {
+  background-color: var(--bg-container);
+  border-color: var(--border-secondary);
 }
 
-.plugin-manager.dark .plugin-description {
-  color: #aaa;
+.dark .plugin-name {
+  color: var(--text-primary);
 }
 
-.plugin-manager.dark .plugin-card-footer {
-  border-top-color: #4f4f4f;
+.dark .plugin-version {
+  color: var(--text-secondary);
+}
+
+.dark .plugin-description {
+  color: var(--text-secondary);
+}
+
+.dark .plugin-card-footer {
+  border-top-color: var(--border-secondary);
 }

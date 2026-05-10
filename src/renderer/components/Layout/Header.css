@@ -3,11 +3,11 @@
   justify-content: space-between;
   align-items: center;
   padding: 0 24px;
-  background: #fff;
-  border-bottom: 1px solid #f0f0f0;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-  height: 64px;
-  line-height: 64px;
+  background: var(--bg-layout);
+  border-bottom: 1px solid var(--border-base);
+  box-shadow: var(--shadow-1);
+  height: var(--header-height);
+  line-height: var(--header-height);
 }
 
 .header-left {
@@ -38,10 +38,10 @@
 .app-title {
   font-size: 20px;
   font-weight: 700;
-  color: #262626;
+  color: var(--text-heading);
   margin: 0;
   line-height: 1.2;
-  background: linear-gradient(135deg, #8B5E3C 0%, #D4A574 100%);
+  background: var(--color-brand-gradient);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -49,37 +49,36 @@
 
 .app-subtitle {
   font-size: 11px;
-  color: #8c8c8c;
+  color: var(--text-secondary);
   font-weight: 400;
   letter-spacing: 0.5px;
   line-height: 1;
 }
 
-/* 暗色模式样式 */
-.app-layout.dark .app-header {
-  background: #1f1f1f;
-  border-bottom: 1px solid #333;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+.dark .app-header {
+  background: var(--bg-layout);
+  border-bottom: 1px solid var(--border-base);
+  box-shadow: var(--shadow-1);
 }
 
-.app-layout.dark .app-title {
-  background: linear-gradient(135deg, #D4A574 0%, #F5E6D3 100%);
+.dark .app-title {
+  background: var(--color-brand-gradient);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
-.app-layout.dark .app-subtitle {
-  color: #666;
+.dark .app-subtitle {
+  color: var(--text-secondary);
 }
 
-.app-layout.dark .header-right .ant-btn {
-  color: #f0f0f0;
+.dark .header-right .ant-btn {
+  color: var(--text-primary);
 }
 
-.app-layout.dark .header-right .ant-btn:hover {
-  color: #D4A574;
-  background-color: rgba(212, 165, 116, 0.1);
+.dark .header-right .ant-btn:hover {
+  color: var(--color-brand-secondary);
+  background-color: var(--bg-hover);
 }
 
 .header-right {

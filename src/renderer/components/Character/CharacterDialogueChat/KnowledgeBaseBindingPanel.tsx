@@ -3,6 +3,8 @@ import { Button, Select, Empty, Tag, Tooltip, Spin, Space } from 'antd';
 import { DatabaseOutlined, InfoCircleOutlined, ReloadOutlined } from '@ant-design/icons';
 import './ConfigPanel.css';
 
+const { Option } = Select;
+
 export interface KnowledgeBaseItem {
   id: string;
   documentId: string;
@@ -19,8 +21,6 @@ interface KnowledgeBaseBindingPanelProps {
   onUnbindKnowledgeBase: (documentId: string) => void;
 }
 
-const { Option } = Select;
-
 const KnowledgeBaseBindingPanel: React.FC<KnowledgeBaseBindingPanelProps> = ({
   characterCardId,
   boundKnowledgeBaseIds,
@@ -35,21 +35,15 @@ const KnowledgeBaseBindingPanel: React.FC<KnowledgeBaseBindingPanelProps> = ({
     try {
       setLoading(true);
       setError(null);
+
       const result = await window.electronAPI.vector.getAvailableScopes();
-      console.log('Fetched vector scopes result:', result);
+      console.log('Fetched scopes result:', result);
       
-      // API 返回格式为 { success: boolean, scopes: Array }
-      if (!result || !result.success || !Array.isArray(result.scopes)) {
-        setKnowledgeBases([]);
-        setError('获取到的数据格式不正确');
-        return;
+      const scopes = result?.scopes || result || [];
+      if (!Array.isArray(scopes)) {
+        throw new Error('获取到的知识库数据格式不正确');
       }
       
-      const scopes = result.scopes;
-      console.log('Available scopes:', scopes);
-      
-      // 过滤出所有可绑定的知识库类型
-      // 支持的类型: knowledge(上传文件), manual_knowledge(手动知识), worldbook(世界书), character_chat(对话记录)
       const bindableTypes = ['knowledge', 'manual_knowledge', 'worldbook', 'character_chat'];
       const knowledgeBaseScopes = scopes.filter(scope => 
         bindableTypes.includes(scope.sourceType)
@@ -77,65 +71,83 @@ const KnowledgeBaseBindingPanel: React.FC<KnowledgeBaseBindingPanelProps> = ({
 
   useEffect(() => {
     fetchKnowledgeBases();
-  }, [characterCardId, fetchKnowledgeBases]);
+  }, [fetchKnowledgeBases]);
 
-  const getSourceTypeTagColor = (sourceType: string): string => {
-    const colors: Record<string, string> = {
-      knowledge: 'green',
-      document: 'cyan',
-      worldbook: 'blue',
-      manual_knowledge: 'purple',
-      character_chat: 'orange',
-    };
-    return colors[sourceType] || 'default';
-  };
-
-  const getSourceTypeName = (sourceType: string): string => {
-    const typeNames: Record<string, string> = {
-      knowledge: '知识文档',
-      document: '文档',
-      worldbook: '世界书',
-      manual_knowledge: '手动知识',
-      character_chat: '对话记录',
-    };
-    return typeNames[sourceType] || sourceType;
-  };
-
-  const handleSelectChange = useCallback((selectedIds: string[]) => {
-    // 计算需要绑定的和需要解绑的
-    const currentBoundSet = new Set(boundKnowledgeBaseIds);
-    const selectedSet = new Set(selectedIds);
+  useEffect(() => {
+    if (!characterCardId) return;
     
-    // 需要绑定的（在选中的但不在已绑定的中）
-    const toBind = selectedIds.filter(id => !currentBoundSet.has(id));
-    // 需要解绑的（在已绑定的但不在选中的中）
-    const toUnbind = boundKnowledgeBaseIds.filter(id => !selectedSet.has(id));
+    const loadSavedBindings = async () => {
+      try {
+        const saved = await window.electronAPI.characterConfig.load(characterCardId);
+        if (saved && saved.boundKnowledgeBaseIds) {
+          const validIds = saved.boundKnowledgeBaseIds.filter(id => 
+            knowledgeBases.some(kb => kb.id === id)
+          );
+          if (validIds.length !== saved.boundKnowledgeBaseIds.length) {
+            console.log('Some saved knowledge base IDs are no longer valid, filtering them out');
+          }
+          validIds.forEach(id => {
+            if (!boundKnowledgeBaseIds.includes(id)) {
+              onBindKnowledgeBase(id);
+            }
+          });
+        }
+      } catch (error) {
+        console.error('Failed to load saved knowledge base bindings:', error);
+      }
+    };
+
+    if (knowledgeBases.length > 0) {
+      loadSavedBindings();
+    }
+  }, [characterCardId, knowledgeBases, boundKnowledgeBaseIds, onBindKnowledgeBase]);
+
+  const handleSelectChange = useCallback((values: string[]) => {
+    const currentIds = new Set(boundKnowledgeBaseIds);
+    const newIds = new Set(values);
     
-    // 执行绑定
+    const toBind = values.filter(id => !currentIds.has(id));
+    const toUnbind = boundKnowledgeBaseIds.filter(id => !newIds.has(id));
+    
     toBind.forEach(id => onBindKnowledgeBase(id));
-    // 执行解绑
     toUnbind.forEach(id => onUnbindKnowledgeBase(id));
   }, [boundKnowledgeBaseIds, onBindKnowledgeBase, onUnbindKnowledgeBase]);
 
-  const getSelectedNames = (): string[] => {
+  const getSelectedNames = useCallback(() => {
     return knowledgeBases
-      .filter(item => boundKnowledgeBaseIds.includes(item.id))
-      .map(item => item.documentName);
+      .filter(kb => boundKnowledgeBaseIds.includes(kb.id))
+      .map(kb => kb.documentName);
+  }, [knowledgeBases, boundKnowledgeBaseIds]);
+
+  const getSourceTypeLabel = (type: string): string => {
+    const labels: Record<string, string> = {
+      worldbook: '世界书',
+      knowledge: '知识库',
+      manual_knowledge: '手动知识库',
+      character_chat: '角色对话',
+    };
+    return labels[type] || type;
   };
 
-  const renderOptionLabel = (item: KnowledgeBaseItem): React.ReactNode => {
-    const sourceTypeName = getSourceTypeName(item.sourceType);
-    const sourceTypeColor = getSourceTypeTagColor(item.sourceType);
-    return (
-      <div className="kb-select-option">
-        <span className="kb-option-name">{item.documentName}</span>
-        <Space size="small">
-          <Tag size="small" color={sourceTypeColor}>{sourceTypeName}</Tag>
-          <span className="kb-option-count">{item.vectorCount}条</span>
-        </Space>
-      </div>
-    );
+  const getSourceTypeColor = (type: string): string => {
+    const colors: Record<string, string> = {
+      worldbook: '#a855f7',
+      knowledge: '#3b82f6',
+      manual_knowledge: '#22c55e',
+      character_chat: '#f59e0b',
+    };
+    return colors[type] || '#94a3b8';
   };
+
+  const renderOptionLabel = (item: KnowledgeBaseItem) => (
+    <Space className="kb-select-option">
+      <span className="kb-option-name">{item.documentName}</span>
+      <span className="kb-option-count">{item.vectorCount} 向量</span>
+      <Tag color={getSourceTypeColor(item.sourceType)} style={{ fontSize: '10px', padding: '0 4px' }}>
+        {getSourceTypeLabel(item.sourceType)}
+      </Tag>
+    </Space>
+  );
 
   return (
     <div className="knowledge-base-panel">
@@ -143,6 +155,11 @@ const KnowledgeBaseBindingPanel: React.FC<KnowledgeBaseBindingPanelProps> = ({
         <div className="knowledge-base-panel-title">
           <DatabaseOutlined className="knowledge-base-icon" />
           <span>知识库绑定</span>
+          {boundKnowledgeBaseIds.length > 0 && (
+            <Tag color="success" className="knowledge-base-count-tag">
+              {boundKnowledgeBaseIds.length}
+            </Tag>
+          )}
         </div>
         <div className="knowledge-base-panel-actions">
           <Tooltip

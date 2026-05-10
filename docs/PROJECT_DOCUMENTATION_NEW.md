@@ -220,6 +220,12 @@ Creative-Cafe/
 │   │   │   ├── rendererEmbeddingService.ts
 │   │   │   └── vectorTestService.ts
 │   │   ├── styles/                   # 全局样式
+│   │   │   ├── ui-variables.css      # CSS变量系统
+│   │   │   ├── global.css            # 全局基础样式
+│   │   │   ├── animations.css        # 动画关键帧和过渡效果
+│   │   │   ├── App.css               # 应用特定样式
+│   │   │   ├── compact.css           # 紧凑模式样式
+│   │   │   └── list-common.css       # 列表类组件统一样式
 │   │   ├── types/                    # 类型定义 (10个文件)
 │   │   ├── utils/                    # 工具函数 (10个文件)
 │   │   └── hooks/                    # 自定义 Hooks
@@ -265,15 +271,228 @@ Creative-Cafe/
 
 > `activeTab` 类型定义: `'dashboard' | 'creative' | 'prompt-optimizer' | 'worldbook' | 'avatar' | 'character' | 'plugin' | 'memory' | 'knowledge' | 'settings' | 'test' | 'test-vector' | 'test-markdown' | 'document-vector'`
 
+### 4.1 页面切换动画
+
+应用使用 `<PageTransition>` 组件实现统一的页面切换动画，该组件包裹在 `App.tsx` 的内容区域:
+
+```tsx
+<PageTransition activeKey={activeTab}>
+  {renderContent()}
+</PageTransition>
+```
+
+**工作原理**:
+- 监听 `activeKey` 变化，先应用 `page-exit` 动画（200ms）
+- 动画结束后替换内容并应用 `page-enter` 动画（400ms）
+- 支持动画开关控制（通过 `setting.animationEnabled`）
+- 使用 CSS 变量控制动画时长和缓动函数
+
+**动画效果**:
+- `pageEnter`: 从下方淡入并上移（opacity: 0→1, translateY: 12px→0）
+- `pageExit`: 向上淡出并上移（opacity: 1→0, translateY: 0→-12px）
+
 ---
 
-## 5. IPC 通信
+## 5. 动画与过渡系统
 
-### 5.1 架构
+### 5.1 CSS 动画变量系统
+
+所有动画使用 [ui-variables.css](file:///g:/AI/creative-cafe/src/renderer/styles/ui-variables.css) 中定义的 CSS 变量:
+
+| 变量名 | 值 | 用途 |
+|--------|-----|------|
+| `--duration-fast` | 0.1s | 快速交互反馈 |
+| `--duration-normal` | 0.2s | 常规过渡效果 |
+| `--duration-slow` | 0.3s | 慢速动画 |
+| `--duration-slower` | 0.4s | 页面切换/模态框 |
+| `--duration-slowest` | 0.5s | 入场动画 |
+| `--ease-default` | cubic-bezier(0.2, 0, 0.3, 1) | 默认缓动 |
+| `--ease-in` | cubic-bezier(0.5, 0, 1, 1) | 进入缓动 |
+| `--ease-out` | cubic-bezier(0, 0, 0.6, 1) | 退出缓动 |
+| `--ease-in-out` | cubic-bezier(0.2, 0, 0.8, 1) | 双向缓动 |
+
+### 5.2 动画工具类
+
+[animations.css](file:///g:/AI/creative-cafe/src/renderer/styles/animations.css) 提供以下动画工具类:
+
+#### 入场动画
+| CSS 类 | 动画效果 | 时长 |
+|--------|---------|------|
+| `.animate-fade-in` | 淡入 | 0.4s |
+| `.animate-fade-in-up` | 从下方淡入 | 0.5s |
+| `.animate-fade-in-down` | 从上方淡入 | 0.5s |
+| `.animate-slide-in-left` | 从左侧滑入 | 0.5s |
+| `.animate-slide-in-right` | 从右侧滑入 | 0.5s |
+| `.animate-scale-in` | 缩放进入 | 0.4s |
+| `.animate-slide-up` | 从底部滑入 | 0.3s |
+
+#### 循环动画
+| CSS 类 | 动画效果 |
+|--------|---------|
+| `.animate-bounce` | 弹跳效果 (1s) |
+| `.animate-pulse` | 脉冲效果 (2s) |
+
+#### 延迟类
+| CSS 类 | 延迟时间 |
+|--------|---------|
+| `.animate-delay-100` | 0.1s |
+| `.animate-delay-200` | 0.2s |
+| `.animate-delay-300` | 0.3s |
+| `.animate-delay-400` | 0.4s |
+| `.animate-delay-500` | 0.5s |
+
+#### 过渡效果
+| CSS 类 | 过渡属性 |
+|--------|---------|
+| `.transition-all` | 所有属性 |
+| `.transition-transform` | 仅 transform |
+| `.transition-opacity` | 仅 opacity |
+| `.transition-color` | 仅 color |
+| `.transition-background` | 仅 background-color |
+| `.transition-border` | 仅 border-color |
+| `.transition-shadow` | 仅 box-shadow |
+
+#### 悬停效果
+| CSS 类 | 效果 |
+|--------|------|
+| `.hover-scale` | 缩放至 1.02 |
+| `.hover-lift` | 上移 2px + 阴影 |
+| `.hover-glow` | 光晕效果 |
+
+### 5.3 按钮动画
+
+按钮使用统一的动画类 [btn-animated](file:///g:/AI/creative-cafe/src/renderer/styles/animations.css#L285-L312):
+
+```css
+.btn-animated {
+  transition: var(--transition-base);
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-animated:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-button);
+}
+
+.btn-animated:active {
+  transform: translateY(0);
+}
+```
+
+**特性**:
+- 悬停时轻微上移并显示阴影
+- 点击时产生涟漪效果（使用 `::after` 伪元素）
+- 使用 CSS 变量确保一致性
+
+**变体**:
+- `.btn-primary-hover`: 主要按钮悬停效果
+- `.btn-secondary-hover`: 次要按钮悬停效果
+
+### 5.4 卡片动画
+
+卡片使用统一的动画类 [card-animated](file:///g:/AI/creative-cafe/src/renderer/styles/animations.css#L336-L343):
+
+```css
+.card-animated {
+  transition: var(--transition-base);
+  border-radius: var(--radius-card);
+}
+
+.card-animated:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-3);
+}
+```
+
+**特性**:
+- 悬停时上移 4px 并增强阴影
+- 使用 CSS 变量确保响应式设计
+
+**变体**:
+- `.card-hover-enhanced`: 增强悬停效果（边框颜色变化）
+- `.card-glow`: 光晕悬停效果
+
+### 5.5 模态框动画
+
+模态框使用专用的关键帧动画:
+
+```css
+@keyframes modalFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modalSlideIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9) translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+```
+
+**动画效果**:
+- 遮罩层: 淡入动画 (0.2s)
+- 内容区: 缩放 + 滑入动画 (0.4s)
+- 关闭按钮: 悬停缩放至 1.05，点击缩放至 0.95
+
+### 5.6 动画工具函数
+
+项目提供 [animation.ts](file:///g:/AI/creative-cafe/src/renderer/utils/animation.ts) 工具文件，包含预定义的动画类名常量:
+
+```typescript
+import { ANIMATIONS, ANIMATION_DELAYS, TRANSITIONS, HOVER_EFFECTS, BUTTON_ANIMATIONS, CARD_ANIMATIONS } from '../../utils/animation';
+
+// 使用示例
+<div className={`${ANIMATIONS.fadeIn} ${ANIMATION_DELAYS['200']}`}>
+  内容
+</div>
+```
+
+### 5.7 动画开关
+
+用户可以通过设置页面控制动画启用/禁用:
+
+- 设置路径: `Settings > 外观 > 动画开关`
+- 存储位置: `localStorage` (`ui-storage` -> `animationEnabled`)
+- 默认值: `true`（启用动画）
+
+当动画禁用时:
+- 页面切换立即完成，无过渡效果
+- 所有组件保持静态样式
+- 保留 CSS 中的 `@media (prefers-reduced-motion: reduce)` 支持
+
+### 5.8 无障碍支持
+
+动画系统遵循 `prefers-reduced-motion` 媒体查询:
+
+```css
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+```
+
+这确保了对动画敏感的用户仍能正常使用应用。
+
+---
+
+## 6. IPC 通信
+
+### 6.1 架构
 
 Electron 安全模型: `contextIsolation: true`, `nodeIntegration: false`。渲染进程通过 `preload.ts` 中 `contextBridge.exposeInMainWorld` 暴露的 `window.electronAPI` 调用主进程服务，主进程通过 `ipcMain.handle` 注册的 handler 响应。
 
-### 5.2 Preload API (`window.electronAPI`)
+### 6.2 Preload API (`window.electronAPI`)
 
 完整的 `preload.ts` 暴露了以下 API 命名空间：
 
@@ -466,9 +685,9 @@ Electron 安全模型: `contextIsolation: true`, `nodeIntegration: false`。渲�
 
 ---
 
-## 6. 数据存储
+## 7. 数据存储
 
-### 6.1 多层次存储架构
+### 7.1 多层次存储架构
 
 项目使用了**三套并行的存储机制**，分别服务于不同层次的数据：
 
@@ -478,7 +697,7 @@ Electron 安全模型: `contextIsolation: true`, `nodeIntegration: false`。渲�
 | **业务数据文件** | 直接文件系统 (fs) | 世界书 JSON/JSON5、角色卡 PNG、人设 JSON、对话 JSON | 可配置路径 (支持 `__USER_DATA__` 宏) |
 | **向量数据** | VecstoreVectorStore (WASM) | 知识库向量、世界书向量、对话向量 | `vecstore.json` + `vecstore_metadata.json` |
 
-### 6.2 electron-store 模块枚举 (`storage.types.ts`)
+### 7.2 electron-store 模块枚举 (`storage.types.ts`)
 
 ```typescript
 export enum StorageModule {
@@ -491,7 +710,7 @@ export enum StorageModule {
 }
 ```
 
-### 6.3 业务文件存储路径
+### 7.3 业务文件存储路径
 
 所有业务数据文件存储于可配置的目录路径，默认位置均为 `{userData}/data/` 下：
 
@@ -506,7 +725,7 @@ export enum StorageModule {
 
 > `__USER_DATA__` 是一个路径占位符宏，在运行时解析为用户数据目录的绝对路径 (Windows: `%APPDATA%`)。
 
-### 6.4 向量存储架构
+### 7.4 向量存储架构
 
 ```
 VecstoreVectorStore (WASM) ← 384维向量
@@ -526,7 +745,7 @@ VectorRegistryService (注册表)
 ● **VectorCache**: L1 内存 LRU Cache + L2 磁盘持久化缓存  
 ● **VectorRegistryService**: 追踪向量文件与来源的映射关系  
 
-### 6.5 向量配置 (在 `settings.vector` 中)
+### 7.5 向量配置 (在 `settings.vector` 中)
 
 ```typescript
 {
@@ -547,9 +766,9 @@ VectorRegistryService (注册表)
 
 ---
 
-## 7. 核心功能模块
+## 8. 核心功能模块
 
-### 7.1 仪表盘 (Dashboard)
+### 8.1 仪表盘 (Dashboard)
 - 系统首页，展示数据统计概览 (世界书/角色卡/人设/插件数量)
 - 自定义背景图片 (Base64 存储，响应式适配)
 - 使用技巧轮播 (文件系统 tips.json)

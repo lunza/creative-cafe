@@ -1,5 +1,7 @@
 .avatar-manager {
   padding: 24px;
+  background-color: var(--bg-base);
+  color: var(--text-primary);
 }
 
 .avatar-header {
@@ -10,11 +12,13 @@
   margin: 0 0 8px 0;
   font-size: 20px;
   font-weight: 600;
+  color: var(--text-heading);
 }
 
 .avatar-header .ant-typography-secondary {
   margin-bottom: 16px;
   display: block;
+  color: var(--text-secondary);
 }
 
 .profile-detail-card {
@@ -37,13 +41,15 @@
 
 .avatar-card {
   height: 100%;
-  transition: all 0.3s;
+  transition: all var(--duration-slow);
   cursor: pointer;
+  background-color: var(--bg-container);
+  border-color: var(--border-base);
 }
 
 .avatar-card:hover {
   transform: translateY(-4px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-2);
 }
 
 .avatar-card-cover {
@@ -51,10 +57,32 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: var(--color-brand-gradient);
   padding: 24px;
 }
 
 .avatar-card-cover .ant-avatar {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-3);
+}
+
+.dark .avatar-manager {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+}
+
+.dark .avatar-header h2 {
+  color: var(--text-heading);
+}
+
+.dark .avatar-header .ant-typography-secondary {
+  color: var(--text-secondary);
+}
+
+.dark .avatar-card {
+  background-color: var(--bg-container);
+  border-color: var(--border-base);
+}
+
+.dark .avatar-card-cover {
+  background: var(--color-brand-gradient);
 }

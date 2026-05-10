@@ -14,25 +14,39 @@
   margin-bottom: 24px;
   font-size: 24px;
   font-weight: 600;
-  color: #262626;
+  color: var(--text-heading);
 }
 
 .settings .ant-card {
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  border-radius: var(--radius-base);
+  box-shadow: var(--shadow-card);
   margin-bottom: 16px;
+  background-color: var(--bg-container);
+  border-color: var(--border-base);
 }
 
 .settings .ant-form-item {
   margin-bottom: 12px;
 }
 
-/* 确保卡片内容紧凑，避免过多空白 */
 .settings .ant-card-body {
-  padding: 16px;
+  padding: var(--spacing-md);
 }
 
-/* 调整最后一个表单字段的底部边距，避免卡片底部出现过多空白 */
 .settings .ant-form-item:last-child {
   margin-bottom: 0;
+}
+
+.dark .settings h2 {
+  color: var(--text-heading);
+}
+
+.dark .settings .ant-card {
+  background-color: var(--bg-container);
+  border-color: var(--border-base);
+  box-shadow: var(--shadow-card);
+}
+
+.dark .settings .ant-card-body {
+  background-color: var(--bg-container);
 }

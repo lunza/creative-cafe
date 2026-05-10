@@ -1,55 +1,63 @@
 .sidebar {
   height: 100vh;
-  border-right: 1px solid #f0f0f0;
+  border-right: 1px solid var(--border-base);
   overflow-y: auto;
+  overflow-x: hidden;
   position: relative;
-  background-color: #ffffff;
+  background-color: var(--bg-layout);
 }
 
 .sidebar-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px;
-  border-bottom: 1px solid #f0f0f0;
-  min-height: 64px;
-  background-color: #ffffff;
+  padding: var(--spacing-md);
+  border-bottom: 1px solid var(--border-base);
+  min-height: var(--header-height);
+  background-color: var(--bg-layout);
+  overflow: hidden;
 }
 
 .sidebar-logo {
   flex: 1;
   text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sidebar-logo h2 {
   font-size: 20px;
   font-weight: 600;
-  color: #1890ff;
+  color: var(--color-primary);
   margin-bottom: 4px;
   margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sidebar-logo p {
   font-size: 12px;
-  color: #8c8c8c;
+  color: var(--text-secondary);
   margin: 0;
 }
 
 .sidebar-toggle-btn {
   padding: 4px 8px;
   font-size: 16px;
-  color: #666;
-  transition: all 0.3s ease;
+  color: var(--text-secondary);
+  transition: all var(--duration-slow) ease;
 }
 
 .sidebar-toggle-btn:hover {
-  color: #1890ff;
-  background-color: #e6f7ff;
+  color: var(--color-primary);
+  background-color: var(--color-primary-light);
 }
 
 .sidebar-menu {
   border-right: none;
-  background-color: #ffffff;
+  background-color: var(--bg-layout);
 }
 
 /* 折叠状态下的样式 */
@@ -62,75 +70,68 @@
   margin: 0;
 }
 
-/* 深色模式适配 */
-@media (prefers-color-scheme: dark) {
-  .sidebar {
-    border-right-color: #333;
-    background-color: #141414;
-  }
-
-  .sidebar-header {
-    border-bottom-color: #333;
-    background-color: #141414;
-  }
-
-  .sidebar-logo h2 {
-    color: #40a9ff;
-  }
-
-  .sidebar-logo p {
-    color: #888;
-  }
-
-  .sidebar-toggle-btn {
-    color: #aaa;
-  }
-
-  .sidebar-toggle-btn:hover {
-    color: #40a9ff;
-    background-color: #1f1f1f;
-  }
-
-  .sidebar-menu {
-    background-color: #141414;
-  }
+.dark .sidebar {
+  border-right-color: var(--border-base);
+  background-color: var(--bg-layout);
 }
 
-/* 开发中菜单徽章样式 */
+.dark .sidebar-header {
+  border-bottom-color: var(--border-base);
+  background-color: var(--bg-layout);
+}
+
+.dark .sidebar-logo h2 {
+  color: var(--color-primary);
+}
+
+.dark .sidebar-logo p {
+  color: var(--text-secondary);
+}
+
+.dark .sidebar-toggle-btn {
+  color: var(--text-secondary);
+}
+
+.dark .sidebar-toggle-btn:hover {
+  color: var(--color-primary);
+  background-color: var(--bg-hover);
+}
+
+.dark .sidebar-menu {
+  background-color: var(--bg-layout);
+}
+
 .dev-menu-badge {
   display: inline-block;
   font-size: 10px;
   padding: 1px 4px;
-  background: #faad14;
-  color: #fff;
-  border-radius: 2px;
-  font-weight: 500;
+  background: var(--color-warning);
+  color: var(--text-inverse);
+  border-radius: var(--radius-xs);
+  font-weight: var(--font-weight-medium);
   line-height: 1.4;
   vertical-align: middle;
-  transition: all 0.2s ease;
+  transition: all var(--duration-normal) ease;
 }
 
 .sidebar-menu .ant-menu-item:hover .dev-menu-badge {
-  background: #ffc53d;
+  background: var(--color-warning-hover);
 }
 
 .sidebar-menu .ant-menu-item-selected .dev-menu-badge {
-  background: #fff;
-  color: #faad14;
+  background: var(--bg-container);
+  color: var(--color-warning);
 }
 
-/* 深色模式下的徽章样式 */
-@media (prefers-color-scheme: dark) {
-  .dev-menu-badge {
-    background: #fa8c16;
-  }
-  
-  .sidebar-menu .ant-menu-item:hover .dev-menu-badge {
-    background: #ffa940;
-  }
-  
-  .sidebar-menu .ant-menu-item-selected .dev-menu-badge {
-    background: #faad14;
-    color: #141414;
-  }
+.dark .dev-menu-badge {
+  background: var(--color-warning);
+}
+
+.dark .sidebar-menu .ant-menu-item:hover .dev-menu-badge {
+  background: var(--color-warning-hover);
+}
+
+.dark .sidebar-menu .ant-menu-item-selected .dev-menu-badge {
+  background: var(--color-warning);
+  color: var(--bg-layout);
 }

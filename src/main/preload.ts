@@ -108,13 +108,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getPlatform: () => ipcRenderer.invoke('app:getPlatform'),
     openPath: (path: string) => ipcRenderer.invoke('app:openPath', path),
     getUserDataPath: () => ipcRenderer.invoke('app:getUserDataPath'),
+    getUserDataSize: () => ipcRenderer.invoke('app:getUserDataSize'),
     getRootPath: () => ipcRenderer.invoke('app:getRootPath'),
     openConfigFile: () => ipcRenderer.invoke('app:openConfigFile')
   },
   update: {
     check: () => ipcRenderer.invoke('update:check'),
-    download: (latestVersion: string) => ipcRenderer.invoke('update:download', latestVersion),
-    install: (downloadPath: string) => ipcRenderer.invoke('update:install', downloadPath)
+    pull: () => ipcRenderer.invoke('update:pull')
   },
   // 日志事件监听
   // 记忆插件 API
@@ -145,7 +145,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     deleteChatSession: (chatId: string) => ipcRenderer.invoke('memory:deleteChatSession', chatId),
     associateTemplate: (chatId: string, templateId: string) => ipcRenderer.invoke('memory:associateTemplate', chatId, templateId),
     processChat: (chatId: string, templateId: string, selectedMessageIds: string[], config: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }) => ipcRenderer.invoke('memory:processChat', chatId, templateId, selectedMessageIds, config),
-    processChatProgressive: (chatId: string, templateId: string, config: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }, restart: boolean) => ipcRenderer.invoke('memory:processChatProgressive', chatId, templateId, config, restart),
+    processChatProgressive: (chatId: string, templateId: string, config: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }, options?: { continueFromLast?: boolean; minInterval?: number }) => ipcRenderer.invoke('memory:processChatProgressive', chatId, templateId, config, options),
+    processChatFull: (chatId: string, templateId: string, config: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }) => ipcRenderer.invoke('memory:processChatFull', chatId, templateId, config),
+    executeTableEditCommands: (chatId: string, commands: any[]) => ipcRenderer.invoke('memory:executeTableEditCommands', chatId, commands),
+    parseTableEdit: (content: string) => ipcRenderer.invoke('memory:parseTableEdit', content),
     getOrganizingProgress: (chatId: string) => ipcRenderer.invoke('memory:getOrganizingProgress', chatId),
     clearOrganizingProgress: (chatId: string) => ipcRenderer.invoke('memory:clearOrganizingProgress', chatId),
     clearTableData: (chatId: string) => ipcRenderer.invoke('memory:clearTableData', chatId),
@@ -174,7 +177,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // AI 请求 API
   ai: {
     request: (config: { url: string; method: string; headers: Record<string, string>; body: any; timeout?: number; streaming?: boolean }) => 
-      ipcRenderer.invoke('ai:request', config)
+      ipcRenderer.invoke('ai:request', config),
+    cancel: () => ipcRenderer.invoke('ai:cancel')
   },
   // 创意数据 API
   creative: {
@@ -228,6 +232,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     count: () => ipcRenderer.invoke('vector:count'),
     rebuildIndex: () => ipcRenderer.invoke('vector:rebuildIndex'),
     testStorage: (scopeIds?: string[]) => ipcRenderer.invoke('vector:testStorage', { scopeIds }),
+    getStorePath: () => ipcRenderer.invoke('vector:getStorePath'),
     testEmbedding: () => ipcRenderer.invoke('vector:testEmbedding'),
     testAll: () => ipcRenderer.invoke('vector:testAll'),
     getAvailableScopes: () => ipcRenderer.invoke('vector:getAvailableScopes')
@@ -262,8 +267,33 @@ contextBridge.exposeInMainWorld('electronAPI', {
   context: {
     retrieve: (conversation: any[], options: any) =>
       ipcRenderer.invoke('context:retrieve', { conversation, options }),
+    retrieveWithKeywords: (
+      conversation: any[], 
+      options: any, 
+      enableKeywordMatch?: boolean,
+      scanDepth?: number,
+      globalScanData?: {
+        personaDescription?: string;
+        characterDescription?: string;
+        characterPersonality?: string;
+        characterDepthPrompt?: string;
+        scenario?: string;
+        creatorNotes?: string;
+      }
+    ) =>
+      ipcRenderer.invoke('context:retrieveWithKeywords', { 
+        conversation, 
+        options, 
+        enableKeywordMatch,
+        scanDepth,
+        globalScanData 
+      }),
     compress: (items: any[], maxTokens: number) =>
       ipcRenderer.invoke('context:compress', { items, maxTokens })
+  },
+  worldbook: {
+    matchKeywords: (text: string, worldBookPaths?: string[], options?: any) =>
+      ipcRenderer.invoke('worldbook:matchKeywords', { text, worldBookPaths, options })
   },
   model: {
     download: (modelName: string) => ipcRenderer.invoke('model:download', { modelName }),

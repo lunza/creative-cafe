@@ -99,11 +99,36 @@ export const useCharacterChatStore = create<CharacterChatStore>((set, get) => ({
   saveTestChat: async (creativeId: string, characterCardId: string, characterCardName: string, messages: ChatMessage[]) => {
     try {
       if (window.electronAPI && window.electronAPI.characterChat) {
-        // 安全转换消息内容
-        const safeMessages = messages.map(msg => ({
-          ...msg,
-          content: String(msg.content || '')
-        }));
+        // 安全转换消息内容 - 避免循环引用导致 Maximum call stack size exceeded
+        const safeMessages = messages.map(msg => {
+          // 只提取纯数据字段，避免 React 对象或循环引用
+          const cleanMsg = {
+            id: String(msg.id || ''),
+            role: String(msg.role || ''),
+            content: String(msg.content || ''),
+            timestamp: typeof msg.timestamp === 'number' ? msg.timestamp : Date.now(),
+            status: String(msg.status || 'sent'),
+            speakerName: msg.speakerName ? String(msg.speakerName) : undefined,
+            speakerAvatar: msg.speakerAvatar ? String(msg.speakerAvatar) : undefined,
+          };
+          
+          // 使用 JSON 序列化来检测循环引用
+          try {
+            JSON.stringify(cleanMsg);
+          } catch (error) {
+            console.warn('[characterChatStore] Detected circular reference in message, cleaning:', error);
+            // 如果仍有循环引用，只保留最基本字段
+            return {
+              id: cleanMsg.id,
+              role: cleanMsg.role,
+              content: cleanMsg.content,
+              timestamp: cleanMsg.timestamp,
+              status: cleanMsg.status,
+            };
+          }
+          
+          return cleanMsg;
+        });
         
         const chat = await window.electronAPI.characterChat.saveTestChat(
           creativeId,

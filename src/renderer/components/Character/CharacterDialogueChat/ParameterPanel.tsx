@@ -1,6 +1,6 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Tooltip, Button, Slider } from 'antd';
-import { QuestionCircleOutlined, ReloadOutlined } from '@ant-design/icons';
+import { QuestionCircleOutlined, ReloadOutlined, DownOutlined, RightOutlined } from '@ant-design/icons';
 import { AIParameterConfig, EffectiveAIParams } from './CharacterDialogueChat.types';
 import './ConfigPanel.css';
 
@@ -75,9 +75,17 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
   onParameterChange,
   onResetParameters,
 }) => {
+  const [collapsed, setCollapsed] = useState(() => {
+    const saved = localStorage.getItem('param-panel-collapsed');
+    return saved === 'true';
+  });
   const [localValues, setLocalValues] = useState<AIParameterConfig>(
     customParameters || {}
   );
+
+  useEffect(() => {
+    localStorage.setItem('param-panel-collapsed', String(collapsed));
+  }, [collapsed]);
 
   const handleSliderChange = useCallback((key: keyof AIParameterConfig, value: number) => {
     setLocalValues(prev => ({ ...prev, [key]: value }));
@@ -113,57 +121,71 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
 
   return (
     <div className="parameter-panel">
-      <div className="parameter-panel-header">
-        <div className="parameter-panel-title">AI 参数配置</div>
-        {isCustomized && (
-          <Tooltip title="已使用自定义参数">
-            <span className="parameter-custom-badge">自定义</span>
-          </Tooltip>
+      <div className="parameter-panel-header" onClick={() => setCollapsed(!collapsed)} style={{ cursor: 'pointer' }}>
+        <div className="parameter-panel-title">
+          <div className="parameter-collapse-icon">
+            {collapsed ? <RightOutlined /> : <DownOutlined />}
+          </div>
+          <span>AI 参数配置</span>
+        </div>
+        {!collapsed && (
+          <div className="parameter-panel-header-right">
+            {isCustomized && (
+              <Tooltip title="已使用自定义参数">
+                <span className="parameter-custom-badge">自定义</span>
+              </Tooltip>
+            )}
+          </div>
+        )}
+        {collapsed && isCustomized && (
+          <span className="parameter-custom-badge-mini">!</span>
         )}
       </div>
 
-      <div className="parameter-list">
-        {PARAMETER_CONFIGS.map(config => {
-          const currentValue = localValues[config.key] ?? effectiveParams[config.key] ?? config.defaultValue;
-          const isModified = localValues[config.key] !== undefined;
+      <div className={`parameter-panel-content ${collapsed ? 'collapsed' : ''}`}>
+        <div className="parameter-list">
+          {PARAMETER_CONFIGS.map(config => {
+            const currentValue = localValues[config.key] ?? effectiveParams[config.key] ?? config.defaultValue;
+            const isModified = localValues[config.key] !== undefined;
 
-          return (
-            <div key={config.key} className="parameter-item">
-              <div className="parameter-header">
-                <div className="parameter-label-group">
-                  <span className="parameter-label">{config.label}</span>
-                  <Tooltip title={config.tooltip}>
-                    <QuestionCircleOutlined className="parameter-tooltip-icon" />
-                  </Tooltip>
+            return (
+              <div key={config.key} className="parameter-item">
+                <div className="parameter-header">
+                  <div className="parameter-label-group">
+                    <span className="parameter-label">{config.label}</span>
+                    <Tooltip title={config.tooltip}>
+                      <QuestionCircleOutlined className="parameter-tooltip-icon" />
+                    </Tooltip>
+                  </div>
+                  <span className={`parameter-value ${isModified ? 'modified' : ''}`}>
+                    {config.key === 'max_tokens' ? Math.round(currentValue).toString() : currentValue.toFixed(2)}
+                  </span>
                 </div>
-                <span className={`parameter-value ${isModified ? 'modified' : ''}`}>
-                  {config.key === 'max_tokens' ? Math.round(currentValue).toString() : currentValue.toFixed(2)}
-                </span>
+                <Slider
+                  min={config.min}
+                  max={config.max}
+                  step={config.step}
+                  value={currentValue}
+                  onChange={(value) => handleSliderChange(config.key, value)}
+                  onAfterChange={(value) => handleSliderAfterChange(config.key, value as number)}
+                  className="parameter-slider"
+                />
               </div>
-              <Slider
-                min={config.min}
-                max={config.max}
-                step={config.step}
-                value={currentValue}
-                onChange={(value) => handleSliderChange(config.key, value)}
-                onAfterChange={(value) => handleSliderAfterChange(config.key, value as number)}
-                className="parameter-slider"
-              />
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
 
-      <div className="parameter-actions">
-        <Button
-          type="default"
-          icon={<ReloadOutlined />}
-          onClick={handleReset}
-          disabled={!isCustomized}
-          className="parameter-reset-btn"
-        >
-          重置为默认值
-        </Button>
+        <div className="parameter-actions">
+          <Button
+            type="default"
+            icon={<ReloadOutlined />}
+            onClick={handleReset}
+            disabled={!isCustomized}
+            className="parameter-reset-btn"
+          >
+            重置为默认值
+          </Button>
+        </div>
       </div>
     </div>
   );

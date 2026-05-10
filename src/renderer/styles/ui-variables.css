@@ -1,0 +1,625 @@
+/*
+ * UI Variables - Unified CSS Variable System
+ * 统一的CSS变量系统，包含颜色、间距、边框、字体等
+ */
+
+/* ==========================================================================
+   亮色主题变量 (Light Theme)
+   ========================================================================== */
+
+:root {
+  /* -------------------------------------------------------------------------
+     颜色系统 - Color System
+     ------------------------------------------------------------------------- */
+
+  /* 主色 - Primary Colors */
+  --color-primary: #1890ff;
+  --color-primary-hover: #40a9ff;
+  --color-primary-active: #096dd9;
+  --color-primary-light: #e6f7ff;
+  --color-primary-light-bg: rgba(24, 144, 255, 0.1);
+  --color-primary-shadow: rgba(24, 144, 255, 0.3);
+
+  /* 品牌色 - Brand Colors (Creative Cafe) */
+  --color-brand-primary: #8B5E3C;
+  --color-brand-secondary: #D4A574;
+  --color-brand-light: #F5E6D3;
+  --color-brand-gradient: linear-gradient(135deg, #8B5E3C 0%, #D4A574 100%);
+
+  /* 功能色 - Functional Colors */
+  --color-success: #52c41a;
+  --color-success-hover: #73d13d;
+  --color-success-light: #f6ffed;
+  --color-success-light-bg: rgba(82, 196, 26, 0.1);
+  --color-warning: #faad14;
+  --color-warning-hover: #ffc53d;
+  --color-warning-light: #fffbe6;
+  --color-warning-light-bg: rgba(250, 173, 20, 0.1);
+  --color-error: #ff4d4f;
+  --color-error-hover: #ff7875;
+  --color-error-light: #fff2f0;
+  --color-error-light-bg: rgba(255, 77, 79, 0.1);
+  --color-info: #1890ff;
+  --color-info-light: #e6f7ff;
+  --color-info-light-bg: rgba(24, 144, 255, 0.1);
+
+  /* 背景色 - Background Colors */
+  --bg-base: #f0f2f5;
+  --bg-container: #ffffff;
+  --bg-layout: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-mask: rgba(0, 0, 0, 0.45);
+  --bg-hover: rgba(0, 0, 0, 0.04);
+  --bg-active: rgba(0, 0, 0, 0.06);
+  --bg-disabled: rgba(0, 0, 0, 0.04);
+
+  /* 文字色 - Text Colors */
+  --text-primary: #000000;
+  --text-secondary: #8c8c8c;
+  --text-tertiary: #bfbfbf;
+  --text-quaternary: #d9d9d9;
+  --text-heading: #262626;
+  --text-link: #1890ff;
+  --text-link-hover: #40a9ff;
+  --text-disabled: rgba(0, 0, 0, 0.25);
+  --text-inverse: #ffffff;
+
+  /* 边框色 - Border Colors */
+  --border-base: #f0f0f0;
+  --border-light: #f0f0f0;
+  --border-secondary: #d9d9d9;
+  --border-strong: #bfbfbf;
+  --border-divider: #f0f0f0;
+  --border-focus: #1890ff;
+
+  /* 阴影 - Shadows */
+  --shadow-1: 0 2px 8px rgba(0, 0, 0, 0.05);
+  --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --shadow-3: 0 6px 16px rgba(0, 0, 0, 0.12);
+  --shadow-4: 0 8px 24px rgba(0, 0, 0, 0.15);
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.05);
+  --shadow-button: 0 4px 12px rgba(24, 144, 255, 0.3);
+
+  /* 特殊背景色 - Special Background Colors */
+  --bg-code: #f5f5f5;
+  --bg-log: #f5f5f5;
+  --bg-input: #ffffff;
+  --bg-selected: #e6f7ff;
+  --bg-tooltip: rgba(0, 0, 0, 0.75);
+
+  /* 滚动条 - Scrollbar */
+  --scrollbar-size: 8px;
+  --scrollbar-track-bg: var(--bg-base);
+  --scrollbar-thumb-bg: var(--border-strong);
+  --scrollbar-thumb-bg-hover: var(--text-tertiary);
+  --scrollbar-thumb-bg-active: var(--text-secondary);
+  --scrollbar-corner-bg: var(--bg-base);
+
+  /* -------------------------------------------------------------------------
+     间距系统 - Spacing System
+     ------------------------------------------------------------------------- */
+  --spacing-xxs: 4px;
+  --spacing-xs: 8px;
+  --spacing-sm: 12px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  --spacing-xxl: 48px;
+  --spacing-xxxl: 64px;
+
+  /* 语义化间距 - Semantic Spacing */
+  --spacing-card: var(--spacing-lg);
+  --spacing-content: var(--spacing-lg);
+  --spacing-section: var(--spacing-xl);
+  --spacing-element: var(--spacing-xs);
+  --spacing-group: var(--spacing-md);
+
+  /* Gap */
+  --gap-xs: 8px;
+  --gap-sm: 12px;
+  --gap-md: 16px;
+  --gap-lg: 24px;
+  --gap-xl: 32px;
+
+  /* 内边距 - Padding */
+  --padding-xs: 4px;
+  --padding-sm: 8px;
+  --padding-md: 12px;
+  --padding-base: 16px;
+  --padding-lg: 24px;
+  --padding-xl: 32px;
+
+  /* 外边距 - Margin */
+  --margin-xs: 4px;
+  --margin-sm: 8px;
+  --margin-md: 12px;
+  --margin-base: 16px;
+  --margin-lg: 24px;
+  --margin-xl: 32px;
+
+  /* -------------------------------------------------------------------------
+     边框和圆角 - Border & Radius
+     ------------------------------------------------------------------------- */
+  --border-width: 1px;
+  --border-width-thick: 2px;
+  --border-style: solid;
+
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-base: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-xxl: 24px;
+  --radius-full: 50%;
+
+  /* 语义化圆角 - Semantic Radius */
+  --radius-button: var(--radius-base);
+  --radius-card: var(--radius-base);
+  --radius-input: var(--radius-base);
+  --radius-modal: var(--radius-lg);
+  --radius-tag: var(--radius-xs);
+  --radius-avatar: var(--radius-full);
+
+  /* -------------------------------------------------------------------------
+     字体系统 - Typography
+     ------------------------------------------------------------------------- */
+
+  /* 字体族 - Font Family */
+  --font-family-base: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  --font-family-code: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
+  --font-family-heading: var(--font-family-base);
+
+  /* 字体大小 - Font Size */
+  --font-size-xs: 12px;
+  --font-size-sm: 13px;
+  --font-size-base: 14px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 18px;
+  --font-size-xxl: 20px;
+  --font-size-xxxl: 24px;
+  --font-size-title: 30px;
+  --font-size-heading-1: 38px;
+  --font-size-heading-2: 30px;
+  --font-size-heading-3: 24px;
+  --font-size-heading-4: 20px;
+  --font-size-heading-5: 16px;
+
+  /* 字重 - Font Weight */
+  --font-weight-light: 300;
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* 行高 - Line Height */
+  --line-height-sm: 1.2;
+  --line-height-base: 1.5;
+  --line-height-lg: 1.8;
+  --line-height-heading: 1.2;
+  --line-height-paragraph: 1.5715;
+
+  /* 字间距 - Letter Spacing */
+  --letter-spacing-tight: -0.5px;
+  --letter-spacing-normal: 0;
+  --letter-spacing-wide: 0.5px;
+  --letter-spacing-wider: 1px;
+
+  /* -------------------------------------------------------------------------
+     组件尺寸 - Component Sizes
+     ------------------------------------------------------------------------- */
+  --header-height: 64px;
+  --header-height-sm: 56px;
+  --sidebar-width: 200px;
+  --sidebar-collapsed-width: 80px;
+
+  --btn-height-xs: 24px;
+  --btn-height-sm: 30px;
+  --btn-height-md: 32px;
+  --btn-height-base: 32px;
+  --btn-height-lg: 40px;
+  --btn-height-xl: 48px;
+
+  --input-height-sm: 24px;
+  --input-height-md: 32px;
+  --input-height-lg: 40px;
+
+  /* -------------------------------------------------------------------------
+     动画和过渡 - Animations & Transitions
+     ------------------------------------------------------------------------- */
+  --duration-fast: 0.1s;
+  --duration-normal: 0.2s;
+  --duration-slow: 0.3s;
+  --duration-slower: 0.4s;
+  --duration-slowest: 0.5s;
+
+  --ease-default: cubic-bezier(0.2, 0, 0.3, 1);
+  --ease-in: cubic-bezier(0.5, 0, 1, 1);
+  --ease-out: cubic-bezier(0, 0, 0.6, 1);
+  --ease-in-out: cubic-bezier(0.2, 0, 0.8, 1);
+
+  /* -------------------------------------------------------------------------
+     溢出处理 - Overflow Handling
+     ------------------------------------------------------------------------- */
+  --overflow-default: visible;
+  --overflow-hidden: hidden;
+  --overflow-scroll: scroll;
+  --overflow-auto: auto;
+  
+  --overflow-x-hidden: hidden;
+  --overflow-x-auto: auto;
+  --overflow-x-scroll: scroll;
+  
+  --overflow-y-hidden: hidden;
+  --overflow-y-auto: auto;
+  --overflow-y-scroll: scroll;
+  
+  /* 文本溢出处理 */
+  --text-overflow-ellipsis: ellipsis;
+  --text-overflow-clip: clip;
+  
+  /* 表格溢出处理 */
+  --table-overflow-x: auto;
+  --table-overflow-y: visible;
+  --table-cell-overflow: hidden;
+  
+  /* 按钮容器溢出处理 */
+  --button-group-overflow: visible;
+  --table-action-overflow: hidden;
+
+  /* -------------------------------------------------------------------------
+     Z-Index 层级
+     ------------------------------------------------------------------------- */
+  --z-index-base: 0;
+  --z-index-dropdown: 1050;
+  --z-index-modal: 1000;
+  --z-index-popover: 1030;
+  --z-index-tooltip: 1070;
+  --z-index-notification: 1010;
+  --z-index-floating-button: 100;
+
+  /* -------------------------------------------------------------------------
+     响应式断点 - Responsive Breakpoints
+     ------------------------------------------------------------------------- */
+  --breakpoint-xs: 480px;
+  --breakpoint-sm: 576px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 992px;
+  --breakpoint-xl: 1200px;
+  --breakpoint-xxl: 1600px;
+
+  /* 响应式布局变量 - Responsive Layout Variables */
+  --sidebar-width-mobile: 0px;
+  --sidebar-width-tablet: 200px;
+  --sidebar-width-desktop: 240px;
+  --sidebar-collapsed-width: 80px;
+
+  --container-max-width: 1400px;
+  --container-narrow: 800px;
+  --container-wide: 1200px;
+
+  /* 移动端优化变量 - Mobile Optimized Variables */
+  --header-height-mobile: 56px;
+  --header-height-tablet: 60px;
+  --header-height: 64px;
+  --header-height-sm: 56px;
+
+  --font-size-mobile: 13px;
+  --font-size-tablet: 14px;
+  --padding-mobile: 12px;
+  --padding-tablet: 16px;
+
+  --card-padding-mobile: 12px;
+  --card-padding-tablet: 16px;
+  --card-padding: 20px;
+
+  /* 表格响应式变量 - Responsive Table Variables */
+  --table-font-size-mobile: 12px;
+  --table-cell-padding-mobile: 8px;
+  --table-cell-padding-tablet: 12px;
+
+  /* 网格系统变量 - Grid System Variables */
+  --grid-columns: 12;
+  --grid-gutter: var(--spacing-md);
+  --grid-gutter-mobile: var(--spacing-sm);
+
+  /* 其他 - Others */
+  --logo-size: 32px;
+  --logo-size-sm: 28px;
+  --logo-size-xs: 24px;
+  --avatar-size: 32px;
+  --avatar-size-lg: 40px;
+  --avatar-size-sm: 24px;
+}
+
+/* ==========================================================================
+   暗色主题变量 (Dark Theme)
+   ========================================================================== */
+
+.dark {
+  /* -------------------------------------------------------------------------
+     颜色系统 - Color System
+     ------------------------------------------------------------------------- */
+
+  /* 主色 - Primary Colors */
+  --color-primary: #1890ff;
+  --color-primary-hover: #40a9ff;
+  --color-primary-active: #096dd9;
+  --color-primary-light: #111d2c;
+  --color-primary-light-bg: rgba(24, 144, 255, 0.15);
+  --color-primary-shadow: rgba(24, 144, 255, 0.2);
+
+  /* 品牌色 - Brand Colors (Creative Cafe) */
+  --color-brand-primary: #D4A574;
+  --color-brand-secondary: #F5E6D3;
+  --color-brand-light: #8B5E3C;
+  --color-brand-gradient: linear-gradient(135deg, #D4A574 0%, #F5E6D3 100%);
+
+  /* 功能色 - Functional Colors */
+  --color-success: #52c41a;
+  --color-success-hover: #73d13d;
+  --color-success-light: #162312;
+  --color-success-light-bg: rgba(82, 196, 26, 0.15);
+  --color-warning: #faad14;
+  --color-warning-hover: #ffc53d;
+  --color-warning-light: #2b2111;
+  --color-warning-light-bg: rgba(250, 173, 20, 0.15);
+  --color-error: #ff4d4f;
+  --color-error-hover: #ff7875;
+  --color-error-light: #2a1215;
+  --color-error-light-bg: rgba(255, 77, 79, 0.15);
+  --color-info: #1890ff;
+  --color-info-light: #111d2c;
+  --color-info-light-bg: rgba(24, 144, 255, 0.15);
+
+  /* 背景色 - Background Colors */
+  --bg-base: #141414;
+  --bg-container: #1f1f1f;
+  --bg-layout: #141414;
+  --bg-elevated: #1f1f1f;
+  --bg-mask: rgba(0, 0, 0, 0.65);
+  --bg-hover: rgba(255, 255, 255, 0.08);
+  --bg-active: rgba(255, 255, 255, 0.12);
+  --bg-disabled: rgba(255, 255, 255, 0.08);
+
+  /* 文字色 - Text Colors */
+  --text-primary: #ffffff;
+  --text-secondary: #a0a0a0;
+  --text-tertiary: #666666;
+  --text-quaternary: #434343;
+  --text-heading: #f0f0f0;
+  --text-link: #40a9ff;
+  --text-link-hover: #69c0ff;
+  --text-disabled: rgba(255, 255, 255, 0.25);
+  --text-inverse: #000000;
+
+  /* 边框色 - Border Colors */
+  --border-base: #333333;
+  --border-light: #303030;
+  --border-secondary: #434343;
+  --border-strong: #666666;
+  --border-divider: #303030;
+  --border-focus: #1890ff;
+
+  /* 阴影 - Shadows */
+  --shadow-1: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.35);
+  --shadow-3: 0 6px 16px rgba(0, 0, 0, 0.4);
+  --shadow-4: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-button: 0 4px 12px rgba(0, 0, 0, 0.3);
+
+  /* 特殊背景色 - Special Background Colors */
+  --bg-code: #0d0d0d;
+  --bg-log: #0d0d0d;
+  --bg-input: #1f1f1f;
+  --bg-selected: #111d2c;
+  --bg-tooltip: rgba(51, 51, 51, 0.9);
+
+  /* 滚动条 - Scrollbar */
+  --scrollbar-track-bg: var(--bg-base);
+  --scrollbar-thumb-bg: var(--border-secondary);
+  --scrollbar-thumb-bg-hover: var(--border-strong);
+  --scrollbar-thumb-bg-active: var(--text-tertiary);
+  --scrollbar-corner-bg: var(--bg-base);
+
+  /* -------------------------------------------------------------------------
+     间距系统 - Spacing System (继承亮色主题)
+     ------------------------------------------------------------------------- */
+  --spacing-xxs: 4px;
+  --spacing-xs: 8px;
+  --spacing-sm: 12px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  --spacing-xxl: 48px;
+  --spacing-xxxl: 64px;
+
+  --spacing-card: var(--spacing-lg);
+  --spacing-content: var(--spacing-lg);
+  --spacing-section: var(--spacing-xl);
+  --spacing-element: var(--spacing-xs);
+  --spacing-group: var(--spacing-md);
+
+  --gap-xs: 8px;
+  --gap-sm: 12px;
+  --gap-md: 16px;
+  --gap-lg: 24px;
+  --gap-xl: 32px;
+
+  --padding-xs: 4px;
+  --padding-sm: 8px;
+  --padding-md: 12px;
+  --padding-base: 16px;
+  --padding-lg: 24px;
+  --padding-xl: 32px;
+
+  --margin-xs: 4px;
+  --margin-sm: 8px;
+  --margin-md: 12px;
+  --margin-base: 16px;
+  --margin-lg: 24px;
+  --margin-xl: 32px;
+
+  /* -------------------------------------------------------------------------
+     边框和圆角 - Border & Radius (继承亮色主题)
+     ------------------------------------------------------------------------- */
+  --border-width: 1px;
+  --border-width-thick: 2px;
+  --border-style: solid;
+
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-base: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-xxl: 24px;
+  --radius-full: 50%;
+
+  --radius-button: var(--radius-base);
+  --radius-card: var(--radius-base);
+  --radius-input: var(--radius-base);
+  --radius-modal: var(--radius-lg);
+  --radius-tag: var(--radius-xs);
+  --radius-avatar: var(--radius-full);
+
+  /* -------------------------------------------------------------------------
+     字体系统 - Typography (继承亮色主题)
+     ------------------------------------------------------------------------- */
+  --font-family-base: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  --font-family-code: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
+  --font-family-heading: var(--font-family-base);
+
+  --font-size-xs: 12px;
+  --font-size-sm: 13px;
+  --font-size-base: 14px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 18px;
+  --font-size-xxl: 20px;
+  --font-size-xxxl: 24px;
+  --font-size-title: 30px;
+  --font-size-heading-1: 38px;
+  --font-size-heading-2: 30px;
+  --font-size-heading-3: 24px;
+  --font-size-heading-4: 20px;
+  --font-size-heading-5: 16px;
+
+  --font-weight-light: 300;
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --line-height-sm: 1.2;
+  --line-height-base: 1.5;
+  --line-height-lg: 1.8;
+  --line-height-heading: 1.2;
+  --line-height-paragraph: 1.5715;
+
+  --letter-spacing-tight: -0.5px;
+  --letter-spacing-normal: 0;
+  --letter-spacing-wide: 0.5px;
+  --letter-spacing-wider: 1px;
+
+  /* -------------------------------------------------------------------------
+     组件尺寸 - Component Sizes (继承亮色主题)
+     ------------------------------------------------------------------------- */
+  --header-height: 64px;
+  --header-height-sm: 56px;
+  --sidebar-width: 200px;
+  --sidebar-collapsed-width: 80px;
+
+  --btn-height-xs: 24px;
+  --btn-height-sm: 30px;
+  --btn-height-md: 32px;
+  --btn-height-base: 32px;
+  --btn-height-lg: 40px;
+  --btn-height-xl: 48px;
+
+  --input-height-sm: 24px;
+  --input-height-md: 32px;
+  --input-height-lg: 40px;
+
+  /* -------------------------------------------------------------------------
+     动画和过渡 - Animations & Transitions (继承亮色主题)
+     ------------------------------------------------------------------------- */
+  --duration-fast: 0.1s;
+  --duration-normal: 0.2s;
+  --duration-slow: 0.3s;
+  --duration-slower: 0.4s;
+  --duration-slowest: 0.5s;
+
+  --ease-default: cubic-bezier(0.2, 0, 0.3, 1);
+  --ease-in: cubic-bezier(0.5, 0, 1, 1);
+  --ease-out: cubic-bezier(0, 0, 0.6, 1);
+  --ease-in-out: cubic-bezier(0.2, 0, 0.8, 1);
+
+  /* -------------------------------------------------------------------------
+     Z-Index 层级 (继承亮色主题)
+     ------------------------------------------------------------------------- */
+  --z-index-base: 0;
+  --z-index-dropdown: 1050;
+  --z-index-modal: 1000;
+  --z-index-popover: 1030;
+  --z-index-tooltip: 1070;
+  --z-index-notification: 1010;
+  --z-index-floating-button: 100;
+
+  /* -------------------------------------------------------------------------
+     响应式断点 - Responsive Breakpoints
+     ------------------------------------------------------------------------- */
+  --breakpoint-xs: 480px;
+  --breakpoint-sm: 576px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 992px;
+  --breakpoint-xl: 1200px;
+  --breakpoint-xxl: 1600px;
+
+  /* 响应式布局变量 - Responsive Layout Variables */
+  --sidebar-width-mobile: 0px;
+  --sidebar-width-tablet: 200px;
+  --sidebar-width-desktop: 240px;
+  --sidebar-collapsed-width: 80px;
+
+  --container-max-width: 1400px;
+  --container-narrow: 800px;
+  --container-wide: 1200px;
+
+  /* 移动端优化变量 - Mobile Optimized Variables */
+  --header-height-mobile: 56px;
+  --header-height-tablet: 60px;
+  --header-height: 64px;
+  --header-height-sm: 56px;
+
+  --font-size-mobile: 13px;
+  --font-size-tablet: 14px;
+  --padding-mobile: 12px;
+  --padding-tablet: 16px;
+
+  --card-padding-mobile: 12px;
+  --card-padding-tablet: 16px;
+  --card-padding: 20px;
+
+  /* 表格响应式变量 - Responsive Table Variables */
+  --table-font-size-mobile: 12px;
+  --table-cell-padding-mobile: 8px;
+  --table-cell-padding-tablet: 12px;
+
+  /* 网格系统变量 - Grid System Variables */
+  --grid-columns: 12;
+  --grid-gutter: var(--spacing-md);
+  --grid-gutter-mobile: var(--spacing-sm);
+
+  /* 其他 - Others */
+  --logo-size: 32px;
+  --logo-size-sm: 28px;
+  --logo-size-xs: 24px;
+  --avatar-size: 32px;
+  --avatar-size-lg: 40px;
+  --avatar-size-sm: 24px;
+}

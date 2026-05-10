@@ -12,8 +12,8 @@
 }
 
 .creative-manager-header {
-  padding: 16px 24px;
-  border-bottom: 1px solid #f0f0f0;
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-bottom: 1px solid var(--border-base);
   background: transparent;
 }
 
@@ -24,15 +24,15 @@
 }
 
 .dark .creative-manager-header {
-  border-bottom-color: #303030;
+  border-bottom-color: var(--border-base);
 }
 
 .dark .creative-manager-content .ant-typography-title {
-  color: #40a9ff;
+  color: var(--color-primary);
 }
 
 .dark .creative-manager-content .ant-typography-secondary {
-  color: #aaa;
+  color: var(--text-secondary);
 }
 
 @keyframes fadeIn {

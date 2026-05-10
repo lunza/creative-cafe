@@ -14,6 +14,7 @@ import {
 import MemoryTemplateManager from './TemplateManager';
 import ChatManager from './ChatManager';
 import { StoragePathDisplay } from '../common/StoragePathDisplay';
+import { useUIStore } from '../../stores/uiStore';
 import '../../styles/list-common.css';
 import './MemoryChatManager.css';
 
@@ -22,6 +23,7 @@ const { Text, Title } = Typography;
 const MemoryChatManager: React.FC = () => {
   const [activeTab, setActiveTab] = useState('templates');
   const [memoryDir, setMemoryDir] = useState<string>('');
+  const { theme: appTheme } = useUIStore();
 
   useEffect(() => {
     loadMemoryDir();
@@ -71,7 +73,7 @@ const MemoryChatManager: React.FC = () => {
   ];
 
   return (
-    <div className="memory-chat-manager-container list-container">
+    <div className={`memory-chat-manager-container list-container ${appTheme === 'dark' ? 'dark' : ''}`}>
       <h2>记忆管理</h2>
       {memoryDir && (
         <StoragePathDisplay

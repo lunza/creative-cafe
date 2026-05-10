@@ -1,52 +1,54 @@
-.worldbook-manager {
-  padding: 20px;
-}
+/*
+ * WorldBookManager Styles
+ * All common list styles have been moved to list-common.css
+ * This file is kept for worldbook-specific custom styles if needed
+ */
 
 .dark .ant-modal-content {
-  background-color: var(--bg-color, #141414) !important;
-  color: var(--text-color, #ffffff) !important;
-  border: 1px solid var(--border-color, #333333) !important;
+  background-color: var(--bg-container);
+  color: var(--text-primary);
+  border: var(--border-width) solid var(--border-base);
 }
 
 .dark .ant-modal-header {
-  background-color: var(--bg-color, #141414) !important;
-  color: var(--text-color, #ffffff) !important;
-  border-bottom: 1px solid var(--border-color, #333333) !important;
+  background-color: var(--bg-container);
+  color: var(--text-heading);
+  border-bottom: var(--border-width) solid var(--border-base);
 }
 
 .dark .ant-modal-title {
-  color: var(--text-color, #ffffff) !important;
+  color: var(--text-heading);
 }
 
 .dark .ant-modal-footer {
-  background-color: var(--bg-color, #141414) !important;
-  color: var(--text-color, #ffffff) !important;
-  border-top: 1px solid var(--border-color, #333333) !important;
+  background-color: var(--bg-container);
+  border-top: var(--border-width) solid var(--border-base);
 }
 
 .dark .ant-card {
-  background-color: var(--card-bg-color, #1f1f1f) !important;
-  color: var(--text-color, #ffffff) !important;
-  border: 1px solid var(--border-color, #333333) !important;
+  background-color: var(--bg-container);
+  color: var(--text-primary);
+  border: var(--border-width) solid var(--border-base);
 }
 
 .dark .ant-card-meta-title {
-  color: var(--text-color, #ffffff) !important;
+  color: var(--text-heading);
 }
 
 .dark .ant-card-meta-description {
-  color: var(--text-color, #ffffff) !important;
+  color: var(--text-secondary);
 }
 
 .dark .ant-btn {
-  color: var(--text-color, #ffffff) !important;
+  color: var(--text-primary);
 }
 
 .dark .ant-btn-primary {
-  background-color: var(--primary-color, #1890ff) !important;
-  border-color: var(--primary-color, #1890ff) !important;
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--text-inverse);
 }
 
 .dark .ant-tag {
-  color: var(--text-color, #ffffff) !important;
+  color: var(--text-primary);
 }

@@ -1,10 +1,12 @@
 import React, { useEffect } from 'react';
 import { Layout, ConfigProvider, theme } from 'antd';
 import { useUIStore } from './stores/uiStore';
+import { useSettingStore } from './stores/settingStore';
 import Sidebar from './components/Layout/Sidebar';
 import Header from './components/Layout/Header';
 import FloatingLogButton from './components/Layout/FloatingLogButton';
 import GlobalLogPanel from './components/Layout/GlobalLogPanel';
+import PageTransition from './components/Layout/PageTransition';
 import Dashboard from './components/Dashboard/Dashboard';
 
 import PromptOptimizer from './components/PromptOptimizer/PromptOptimizer';
@@ -19,6 +21,7 @@ import TestPage from './components/Test/TestPage';
 import VectorTestPage from './components/Test/VectorTestPage';
 import DocumentVectorPage from './components/Test/DocumentVectorPage';
 import { KnowledgeBaseManager } from './components/KnowledgeBase/KnowledgeBaseManager';
+import './styles/ui-variables.css';
 import './styles/App.css';
 import './styles/animations.css';
 import './styles/compact.css';
@@ -26,7 +29,8 @@ import './styles/compact.css';
 const { Content } = Layout;
 
 function App() {
-  const { activeTab, theme: appTheme, compactMode } = useUIStore();
+  const { activeTab, theme: appTheme, compactMode, animationEnabled } = useUIStore();
+  const { setting } = useSettingStore();
 
   useEffect(() => {
     if (appTheme === 'dark') {
@@ -43,6 +47,14 @@ function App() {
       document.body.classList.remove('compact-mode');
     }
   }, [compactMode]);
+
+  useEffect(() => {
+    if (!animationEnabled) {
+      document.getElementById('root')?.classList.add('animation-disabled');
+    } else {
+      document.getElementById('root')?.classList.remove('animation-disabled');
+    }
+  }, [animationEnabled]);
 
   const renderContent = () => {
     switch (activeTab) {
@@ -90,7 +102,9 @@ function App() {
         <Layout>
           <Header />
           <Content className={`app-content ${appTheme === 'dark' ? 'dark' : ''}`}>
-            {renderContent()}
+            <PageTransition activeKey={activeTab}>
+              {renderContent()}
+            </PageTransition>
           </Content>
         </Layout>
         

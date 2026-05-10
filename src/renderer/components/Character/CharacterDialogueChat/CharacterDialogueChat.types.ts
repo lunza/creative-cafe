@@ -90,7 +90,30 @@ export interface CharacterSessionConfig {
   customParameters?: AIParameterConfig;
   boundKnowledgeBaseIds?: string[];
   knowledgeBaseBindings?: KnowledgeBaseBinding[];
+  memoryTableEnabled?: boolean;
+  memoryTableAutoOrganize?: boolean;
+  memoryTableOrganizeMode?: 'sync' | 'async'; // 新增：整理模式，默认'sync'
   lastUpdated: number;
+}
+
+// 记忆表格配置
+export interface MemoryTableConfig {
+  enabled: boolean;
+  autoOrganize: boolean;
+  organizeMode: 'sync' | 'async'; // 新增：整理模式
+}
+
+// 记忆表格数据结构
+export interface MemoryTableSheet {
+  sheetName: string;
+  headers: string[];
+  rows: Record<string, any>[];
+}
+
+// 记忆表格数据（完整结构）
+export interface MemoryTableData {
+  chatId: string;
+  sheets: MemoryTableSheet[];
 }
 
 // 完整AI参数（合并后的最终参数）

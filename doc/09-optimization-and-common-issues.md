@@ -2,7 +2,7 @@
 
 > 来源: 7 模块文档补充审查 (`doc/08-module-audit-report.md`)
 > 目标读者: 开发团队（用于后续迭代规划和重构参考）
-> 最后更新: 2026-05-08 (完成P1-4/P1-6/P1-9/P2-6/P2-7修复 + 统一存储路径显示组件)
+> 最后更新: 2026-05-10 (完成SSE超时动态化/聊天记录并发保存保护/IPC序列化安全单元测试 + P1-11死代码清理/P1-12超时修复验证)
 
 ---
 
@@ -1745,3 +1745,89 @@ const [aiOperation, setAiOperation] = useState<AIOperationState | null>(null);
 | L1 Chat Cache | ChatStorageService.ts | ❌ 无限制 | ✅ 60s | save/delete 时主动清除 |
 | shared L2 | VectorCache | ✅ 配置控制 | ✅ 配置控制 | ✅ 配置控制 |
 | VecStore WASM | VecstoreVectorStore | ✅ 磁盘限制 | N/A | persist() 手动调用 |
+
+---
+
+## 单元测试文件
+
+### UT-001: 流式超时保护 (streamTimeoutGuard.test.ts)
+
+**文件路径**: `src/renderer/components/Character/CharacterDialogueChat/__tests__/streamTimeoutGuard.test.ts`
+
+**覆盖范围**:
+- `clearStreamTimeout` 函数不会 shadow 全局 `clearTimeout`
+- 基于 `max_tokens` 的动态超时计算: `>8192` → 300s, `≤8192` → 120s
+- 超时清理场景: complete、error、cancel
+
+**测试用例数**: 16
+**状态**: ✅ 全部通过
+
+**关键测试点**:
+1. 使用 `vi.useFakeTimers()` 模拟时间推进
+2. 多次调用 `clearStreamTimeout` 不会抛出异常
+3. 超时定时器不影响其他无关定时器
+4. `max_tokens` 边界值测试: 8192 → 120s, 8193 → 300s
+5. 字符串类型的 `max_tokens` 通过 `Number()` 正确转换
+
+**源文件对应**: [CharacterDialogueChat.hooks.ts:L402-L430](file:///g:/AI/creative-cafe/src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.hooks.ts#L402-L430)
+
+---
+
+### UT-002: 聊天记录保存保护 (characterChatStore.saveGuard.test.ts)
+
+**文件路径**: `src/renderer/stores/__tests__/characterChatStore.saveGuard.test.ts`
+
+**覆盖范围**:
+- `saveTestChat` 并发保存保护 (`isSavingRef` 守卫)
+- IPC 消息序列化安全 (clean messages 无循环引用)
+
+**测试用例数**: 15
+**状态**: ✅ 全部通过
+
+**关键测试点**:
+1. 并发保存时第二个请求被跳过 (`isSavingRef` 为 true)
+2. 保存完成后 `isSavingRef` 正确重置为 false
+3. 保存失败时 finally 块仍会重置 `isSavingRef`
+4. 循环引用消息被正确清理为纯数据对象
+5. React 元素对象 (`$$typeof`, `_owner`) 被安全过滤
+6. 深层嵌套循环引用不会导致 `JSON.stringify` 抛出
+7. 可选字段 (speakerName, speakerAvatar) 在序列化时被正确省略
+
+**源文件对应**: [CharacterDialogueChat.hooks.ts:L240-L257](file:///g:/AI/creative-cafe/src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.hooks.ts#L240-L257), [characterChatStore.ts:L99-L169](file:///g:/AI/creative-cafe/src/renderer/stores/characterChatStore.ts#L99-L169)
+
+---
+
+## 已修复问题记录 (续)
+
+### [P1-12-R] SSE 流式超时动态化 —— **✅ 已验证 + 单元测试覆盖**
+
+**原始问题**: 固定 120s 超时不适用于 `max_tokens > 8192` 的长输出场景。
+
+**修复验证**:
+- ✅ [CharacterDialogueChat.hooks.ts:L412](file:///g:/AI/creative-cafe/src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.hooks.ts#L412) 已实现动态超时: `activeEngine.max_tokens && Number(activeEngine.max_tokens) > 8192 ? 300000 : 120000`
+- ✅ 单元测试 UT-001 覆盖边界值 (8192 → 120s, 8193 → 300s)
+- ✅ `clearStreamTimeout` 在 `onComplete` 和 `onError` 中被正确调用
+
+**涉及文件**:
+- `src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.hooks.ts` (L402-L430, L550-L637)
+- `src/renderer/components/Character/CharacterDialogueChat/__tests__/streamTimeoutGuard.test.ts` (新建)
+
+**修复日期**: 2026-05-08 | **测试日期**: 2026-05-10
+
+---
+
+### [P1-11-R] 聊天记录并发保存保护 —— **✅ 已验证 + 单元测试覆盖**
+
+**原始问题**: `saveChatToStore` 在 `onComplete` 回调中通过 `setTimeout(0)` 触发，如果多次快速触发可能导致并发保存冲突。
+
+**修复验证**:
+- ✅ [CharacterDialogueChat.hooks.ts:L240-L257](file:///g:/AI/creative-cafe/src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.hooks.ts#L240-L257) 已实现 `isSavingRef` 守卫
+- ✅ [characterChatStore.ts:L103-L131](file:///g:/AI/creative-cafe/src/renderer/stores/characterChatStore.ts#L103-L131) 已实现消息序列化安全清理
+- ✅ 单元测试 UT-002 覆盖并发保护场景和循环引用检测
+
+**涉及文件**:
+- `src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.hooks.ts` (L240-L257)
+- `src/renderer/stores/characterChatStore.ts` (L99-L169)
+- `src/renderer/stores/__tests__/characterChatStore.saveGuard.test.ts` (新建)
+
+**修复日期**: 2026-05-08 | **测试日期**: 2026-05-10

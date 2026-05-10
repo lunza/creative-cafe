@@ -27,6 +27,36 @@ function resolveSettingPath(key: string, defaultModule: string): string {
   return customPath || pathService.getDefaultPath(defaultModule);
 }
 
+function getDirectorySize(dirPath: string): number {
+  let totalSize = 0;
+  try {
+    const items = fs.readdirSync(dirPath, { withFileTypes: true });
+    for (const item of items) {
+      const fullPath = path.join(dirPath, item.name);
+      if (item.isDirectory()) {
+        totalSize += getDirectorySize(fullPath);
+      } else {
+        try {
+          totalSize += fs.statSync(fullPath).size;
+        } catch {
+          // skip files we can't read
+        }
+      }
+    }
+  } catch {
+    // skip directories we can't read
+  }
+  return totalSize;
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  const size = bytes / Math.pow(1024, i);
+  return `${size.toFixed(i === 0 ? 0 : 2)} ${units[i]}`;
+}
+
 export function fileHandlers() {
   ipcMain.handle('file:selectDirectory', async () => {
     const result = await dialog.showOpenDialog({
@@ -177,6 +207,16 @@ export function fileHandlers() {
         success: false, 
         error: error instanceof Error ? error.message : 'Unknown error' 
       };
+    }
+  });
+
+  ipcMain.handle('app:getUserDataSize', async () => {
+    try {
+      const userDataPath = app.getPath('userData');
+      const size = getDirectorySize(userDataPath);
+      return { success: true, size, formattedSize: formatFileSize(size) };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : '未知错误' };
     }
   });
 }

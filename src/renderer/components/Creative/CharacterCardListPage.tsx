@@ -22,6 +22,7 @@ const CharacterCardListPage: React.FC = () => {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalForm] = Form.useForm();
+  const [pageSize, setPageSize] = useState(10);
 
   useEffect(() => {
     loadCreatives();
@@ -142,17 +143,22 @@ const CharacterCardListPage: React.FC = () => {
         </Button>
       </div>
 
-      <Table
-        columns={columns}
-        dataSource={rows}
-        rowKey="cardId"
-        pagination={{
-          pageSize: 10,
-          showSizeChanger: true,
-          pageSizeOptions: ['10', '20', '50'],
-          showTotal: (total) => `共 ${total} 条`,
-        }}
-      />
+      <div className="table-container">
+        <Table
+          columns={columns}
+          dataSource={rows}
+          rowKey="cardId"
+          bordered
+          pagination={{
+            pageSize,
+            showSizeChanger: true,
+            pageSizeOptions: ['10', '20', '50'],
+            showTotal: (total) => `共 ${total} 条`,
+            className: 'table-pagination-wrapper',
+            onChange: (page, size) => { setPageSize(size); },
+          }}
+        />
+      </div>
 
       <Modal
         title="新建角色卡"

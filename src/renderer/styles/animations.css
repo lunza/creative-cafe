@@ -1,4 +1,7 @@
-/* 动画关键帧 */
+/* ==========================================================================
+   动画关键帧 - Animation Keyframes
+   ========================================================================== */
+
 @keyframes fadeIn {
   from {
     opacity: 0;
@@ -101,41 +104,117 @@
   }
 }
 
+@keyframes pageEnter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pageExit {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
+}
+
+@keyframes modalFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modalSlideIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9) translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes buttonPulse {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.02);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
 /* 动画类 */
 .animate-fade-in {
-  animation: fadeIn 0.4s ease-out;
+  animation: fadeIn var(--duration-slower) var(--ease-out);
 }
 
 .animate-fade-in-up {
-  animation: fadeInUp 0.5s ease-out;
+  animation: fadeInUp var(--duration-slowest) var(--ease-out);
 }
 
 .animate-fade-in-down {
-  animation: fadeInDown 0.5s ease-out;
+  animation: fadeInDown var(--duration-slowest) var(--ease-out);
 }
 
 .animate-slide-in-left {
-  animation: slideInLeft 0.5s ease-out;
+  animation: slideInLeft var(--duration-slowest) var(--ease-out);
 }
 
 .animate-slide-in-right {
-  animation: slideInRight 0.5s ease-out;
+  animation: slideInRight var(--duration-slowest) var(--ease-out);
 }
 
 .animate-bounce {
-  animation: bounce 1s ease;
+  animation: bounce 1s var(--ease-default);
 }
 
 .animate-pulse {
-  animation: pulse 2s ease-in-out infinite;
+  animation: pulse 2s var(--ease-in-out) infinite;
 }
 
 .animate-scale-in {
-  animation: scaleIn 0.4s ease-out;
+  animation: scaleIn var(--duration-slower) var(--ease-out);
 }
 
 .animate-slide-up {
-  animation: slideUp 0.3s ease;
+  animation: slideUp var(--duration-slow) var(--ease-out);
+}
+
+/* 页面切换动画 */
+.page-transition-wrapper {
+  animation: pageEnter var(--duration-slower) var(--ease-out);
+}
+
+.page-transition-wrapper.page-enter {
+  animation: pageEnter var(--duration-slower) var(--ease-out);
+}
+
+.page-transition-wrapper.page-exit {
+  animation: pageExit var(--duration-normal) var(--ease-in);
+}
+
+/* 模态框动画 */
+.modal-enter {
+  animation: modalFadeIn var(--duration-normal) var(--ease-out);
+}
+
+.modal-content-enter {
+  animation: modalSlideIn var(--duration-slower) var(--ease-out);
 }
 
 /* 动画延迟类 */
@@ -161,15 +240,31 @@
 
 /* 过渡效果 */
 .transition-all {
-  transition: all 0.3s ease;
+  transition: var(--transition-base);
 }
 
 .transition-transform {
-  transition: transform 0.3s ease;
+  transition: var(--transition-transform);
 }
 
 .transition-opacity {
-  transition: opacity 0.3s ease;
+  transition: var(--transition-opacity);
+}
+
+.transition-color {
+  transition: var(--transition-color);
+}
+
+.transition-background {
+  transition: var(--transition-background);
+}
+
+.transition-border {
+  transition: var(--transition-border);
+}
+
+.transition-shadow {
+  transition: var(--transition-shadow);
 }
 
 /* 悬停效果 */
@@ -179,30 +274,94 @@
 
 .hover-lift:hover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-2);
+}
+
+.hover-glow:hover {
+  box-shadow: 0 0 12px var(--color-primary-light-bg);
 }
 
 /* 按钮动画 */
 .btn-animated {
-  transition: all 0.2s ease;
+  transition: var(--transition-base);
+  position: relative;
+  overflow: hidden;
 }
 
 .btn-animated:hover {
   transform: translateY(-1px);
+  box-shadow: var(--shadow-button);
 }
 
 .btn-animated:active {
   transform: translateY(0);
 }
 
+.btn-animated::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.3);
+  transform: translate(-50%, -50%);
+  transition: width 0.6s ease, height 0.6s ease;
+}
+
+.btn-animated:active::after {
+  width: 200px;
+  height: 200px;
+}
+
+/* 主要按钮悬停效果 */
+.btn-primary-hover:hover {
+  background-color: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-button);
+}
+
+.btn-primary-hover:active {
+  background-color: var(--color-primary-active);
+  border-color: var(--color-primary-active);
+  transform: translateY(0);
+}
+
+/* 次要按钮悬停效果 */
+.btn-secondary-hover:hover {
+  background-color: var(--bg-hover);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
 /* 卡片动画 */
 .card-animated {
-  transition: all 0.3s ease;
+  transition: var(--transition-base);
+  border-radius: var(--radius-card);
 }
 
 .card-animated:hover {
   transform: translateY(-4px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--shadow-3);
+}
+
+/* 卡片悬停效果增强 */
+.card-hover-enhanced {
+  transition: var(--transition-base);
+  border: var(--border-width) solid var(--border-light);
+}
+
+.card-hover-enhanced:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-3);
+  border-color: var(--color-primary-light-bg);
+}
+
+/* 卡片光晕效果 */
+.card-glow:hover {
+  box-shadow: 0 0 20px var(--color-primary-light-bg);
 }
 
 /* 响应式动画优化 */

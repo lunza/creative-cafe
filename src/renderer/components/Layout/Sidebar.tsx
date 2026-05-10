@@ -179,7 +179,8 @@ const Sidebar: React.FC = () => {
           <div className="sidebar-logo" style={{ cursor: 'pointer' }}>
             {!sidebarCollapsed && (
               <>
-                <h2 style={{ color: isDark ? '#40a9ff' : '#1890ff' }}>Creative-Cafe</h2>
+                <h2 style={{ color: isDark ? '#40a9ff' : '#1890ff', marginBottom: 0 }}>Creative-Cafe</h2>
+                <span style={{ fontSize: 11, color: isDark ? '#888' : '#999', fontWeight: 400, marginLeft: 4 }}>v{AppSetting.version}</span>
               </>
             )}
           </div>

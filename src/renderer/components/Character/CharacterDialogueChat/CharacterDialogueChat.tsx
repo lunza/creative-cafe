@@ -40,6 +40,14 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
     getEffectiveParams,
     bindKnowledgeBase,
     unbindKnowledgeBase,
+    memoryTableEnabled,
+    memoryTableAutoOrganize,
+    memoryTableOrganizeMode,
+    isOrganizing,
+    fetchMemoryTableData,
+    handleMemoryTableToggle,
+    handleMemoryTableAutoOrganizeToggle,
+    handleMemoryTableOrganizeModeChange,
   } = useCharacterDialogueChat(characterInfo);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -417,28 +425,58 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
           )}
         </div>
 
+        {isOrganizing && (
+          <div style={{
+            padding: '8px 16px',
+            background: 'linear-gradient(135deg, rgba(251, 191, 36, 0.1) 0%, rgba(245, 158, 11, 0.1) 100%)',
+            borderBottom: '1px solid rgba(251, 191, 36, 0.3)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            fontSize: '13px',
+            color: '#fbbf24',
+          }}>
+            <span style={{
+              display: 'inline-block',
+              width: '8px',
+              height: '8px',
+              borderRadius: '50%',
+              background: '#fbbf24',
+              animation: 'pulse 1.5s infinite',
+            }} />
+            <span>正在整理记忆表格，请稍候...</span>
+          </div>
+        )}
+
         <ChatInputBar
           onSend={sendMessage}
           onCancel={cancelRequest}
-          disabled={false}
+          disabled={isOrganizing}
           isStreaming={state.isStreaming}
-          placeholder={`Message ${characterInfo.characterCardName}...`}
+          placeholder={isOrganizing ? '表格整理中，请稍候...' : `Message ${characterInfo.characterCardName}...`}
         />
       </div>
 
       <ConfigPanel
         characterCardId={characterInfo.characterCardId}
+        characterCardName={characterInfo.characterCardName}
         selectedPersonaId={characterConfig?.selectedPersonaId}
         effectiveParams={effectiveParams}
         customParameters={characterConfig?.customParameters}
         personas={personas}
         personasLoading={personasLoading}
         boundKnowledgeBaseIds={characterConfig?.boundKnowledgeBaseIds || []}
+        memoryTableEnabled={memoryTableEnabled}
+        memoryTableAutoOrganize={memoryTableAutoOrganize}
+        memoryTableOrganizeMode={memoryTableOrganizeMode}
         onPersonaChange={handlePersonaChange}
         onParameterChange={handleParameterChange}
         onResetParameters={handleResetParameters}
         onBindKnowledgeBase={bindKnowledgeBase}
         onUnbindKnowledgeBase={unbindKnowledgeBase}
+        onMemoryTableToggle={handleMemoryTableToggle}
+        onMemoryTableAutoOrganizeToggle={handleMemoryTableAutoOrganizeToggle}
+        onMemoryTableOrganizeModeChange={handleMemoryTableOrganizeModeChange}
         onSaveConfig={saveConfig}
       />
     </Modal>

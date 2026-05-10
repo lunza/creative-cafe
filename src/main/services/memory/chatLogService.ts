@@ -54,6 +54,13 @@ export interface AIProcessingResult {
   preview: string;
 }
 
+// 整理选项接口
+export interface OrganizeOptions {
+  continueFromLast?: boolean; // 是否从上次位置继续（实时整理）
+  restart?: boolean; // 是否重新开始（完全整理）
+  minInterval?: number; // 最小间隔时间（毫秒），用于防抖
+}
+
 // 定义 SillyTavern 消息接口
 interface SillyTavernMessage {
   name: string;
@@ -82,6 +89,9 @@ interface SillyTavernChatMetadata {
 class ChatLogService {
   private chatsDir: string;
   private chatlogDir: string;
+  
+  // 整理锁机制，防止并发整理
+  private organizingLocks: Map<string, { isOrganizing: boolean; lastOrganizeTime: number; organizeType: 'auto' | 'manual' }> = new Map();
 
   constructor() {
     // 使用 getUserDataPath 获取用户数据目录
@@ -108,6 +118,65 @@ class ChatLogService {
       console.log('创建聊天记录表格存储目录:', this.chatlogDir);
     } else {
       console.log('聊天记录表格存储目录存在');
+    }
+  }
+
+  /**
+   * 检查是否可以开始整理（防抖和并发控制）
+   * @param chatId 聊天ID
+   * @param minInterval 最小间隔时间（毫秒），默认3000ms
+   * @returns 是否可以开始整理
+   */
+  private canStartOrganize(chatId: string, minInterval: number = 3000): boolean {
+    const lock = this.organizingLocks.get(chatId);
+    
+    if (!lock) {
+      return true; // 没有锁记录，可以开始
+    }
+    
+    if (lock.isOrganizing) {
+      addLog(`[${chatId}] 整理任务正在执行中，跳过本次请求`, 'warn');
+      return false; // 正在整理中
+    }
+    
+    const now = Date.now();
+    const timeSinceLastOrganize = now - lock.lastOrganizeTime;
+    
+    if (timeSinceLastOrganize < minInterval) {
+      addLog(`[${chatId}] 整理间隔过短（${timeSinceLastOrganize}ms < ${minInterval}ms），跳过本次整理`, 'warn');
+      return false; // 间隔过短
+    }
+    
+    return true;
+  }
+
+  /**
+   * 设置整理锁
+   * @param chatId 聊天ID
+   * @param organizeType 整理类型
+   */
+  private setOrganizingLock(chatId: string, organizeType: 'auto' | 'manual' = 'auto'): void {
+    this.organizingLocks.set(chatId, {
+      isOrganizing: true,
+      lastOrganizeTime: Date.now(),
+      organizeType
+    });
+    addLog(`[${chatId}] 设置整理锁 (${organizeType === 'auto' ? '实时整理' : '完全整理'})`, 'debug');
+  }
+
+  /**
+   * 释放整理锁
+   * @param chatId 聊天ID
+   */
+  private releaseOrganizingLock(chatId: string): void {
+    const lock = this.organizingLocks.get(chatId);
+    if (lock) {
+      this.organizingLocks.set(chatId, {
+        isOrganizing: false,
+        lastOrganizeTime: Date.now(),
+        organizeType: lock.organizeType
+      });
+      addLog(`[${chatId}] 释放整理锁`, 'debug');
     }
   }
 
@@ -832,6 +901,51 @@ deleteRow(表格索引, 行索引)
 - deleteRow(2, 3)
   → 删除第2个表格的第3条数据
 
+【增量更新策略 - 重中之重】
+这是增量更新操作，不是从头整理！你必须遵循以下规则：
+
+1. **强制重复性检查**：在生成任何insertRow命令前，必须执行以下检查流程：
+   - 步骤1：查看当前消息中的实体（物品名、角色名、地点等）
+   - 步骤2：在"当前已有数据"中搜索相同或高度相似的实体
+   - 步骤3：使用"唯一ID快速查找索引"确认该实体的唯一ID是否已存在
+   - 步骤4：如果已存在 → 使用updateRow；如果不存在 → 使用insertRow
+
+2. **唯一ID匹配规则**：如果现有数据中已有相同唯一ID的记录，必须使用updateRow而非insertRow
+
+3. **名称相似度匹配**（关键！）：即使唯一ID不完全相同，如果出现以下情况也必须使用updateRow：
+   - 物品名相同或高度相似（如"电子面罩"和"电子面具"）
+   - 角色名相同或高度相似（如"朱迪"和"朱迪·霍普斯"）
+   - 描述内容高度一致（如"典狱长使用的电子面罩"和"典狱长使用的电子面具"）
+   - 类型和关键属性相同
+
+4. **避免重复插入**：绝不要为已存在的实体生成新的insertRow命令，这是最严重的错误！
+
+5. **只更新变化部分**：使用updateRow时，只更新发生变化的字段，不要重复填写未变化的字段
+
+增量更新决策流程：
+1. 从当前消息中识别实体（角色、物品、地点、事件等）
+2. 检查表格中是否已有该实体（通过唯一ID或关键特征匹配）
+   a. 首先在"唯一ID快速查找索引"中查找
+   b. 如果没找到，在"当前已有数据"中通过名称相似度查找
+3. 如果存在 → 使用updateRow(表格索引, 行索引, {变化的字段})更新该实体信息
+4. 如果不存在 → 使用insertRow(表格索引, {新实体字段})创建新记录
+5. 如果实体不再相关 → 使用deleteRow(表格索引, 行索引)删除（谨慎使用）
+
+正确示例：
+- 现有数据：行1: 唯一ID=zhudi_001, 角色名=朱迪·霍普斯, 身份=警官
+- 当前消息："朱迪说她今天升官了"
+- 正确操作：updateRow(2, 1, {"4":"警长"})  ← 只更新身份字段（假设角色表格是表格2，身份是字段4）
+- 错误操作：insertRow(2, {"2":"zhudi_001","3":"朱迪·霍普斯","4":"警长"})  ← 重复插入，绝对禁止！
+
+重复检测特殊场景处理：
+- 场景1：消息中提到"电子面罩"，但表格中已有"电子面罩"(mask_001)和"电子面罩"(electronic_mask_001)
+  处理：这两条记录很可能是同一物品，应合并为一条，使用updateRow更新其中一条，并删除另一条
+- 场景2：消息中提到"万能房卡"，表格中已有"万能房卡"(universal_room_card_001)和"万能房卡"(card_001)
+  处理：检查描述是否一致，如果一致则合并；如果不一致则保留两条但确保唯一ID不同
+- 场景3：消息中提到"神经刺激遥控器"，表格中已有"神经刺激遥控器"(remote_001)和"神经刺激遥控器"(nerve_stimulator_001)
+  处理：这两条记录很可能是同一物品，应合并为一条
+
+
 【核心任务：唯一ID策略与变体称呼识别】
 这是你的首要任务！请认真遵循以下准则：
 
@@ -885,20 +999,162 @@ ${template.sheets.map((sheet: any) => {
 6. 参考现有表格数据，避免重复添加相同信息
 7. 识别变体称呼，使用唯一ID保持一致性
 8. 只提取当前消息中明确提到的信息，不要臆造
+9. 【最重要】增量更新：已存在的实体必须使用updateRow，禁止使用insertRow重复插入！
+10. 重复检测：在生成insertRow前，必须先在"唯一ID快速查找索引"中查找，并在"当前已有数据"中通过名称相似度查找
+11. 合并重复记录：如果发现表格中存在多个相同或高度相似的记录，应使用updateRow更新其中一条，并使用deleteRow删除其他重复记录
+12. 操作结果确认：在生成tableEdit命令后，简要说明每个操作的目的（如："updateRow行3：更新电子面罩的状态为待使用"）
 
-【示例输出】
-分析消息："朱迪说她在中央公园捡到了100元钱"
+【示例输出 - 精确格式约束】
+
+假设当前对话场景如下：
+- 消息："朱迪说她昨天在中央公园遇到了尼克，尼克给她展示了一枚金色徽章。另外，之前提到的电子面罩已经被典狱长收回了。"
+- 现有表格数据：
+  【角色表格】(表格索引: 2)
+  行1: 唯一id=zhudi_001, 角色名=朱迪·霍普斯, 身份=警官, 关系=主角
+  行2: 唯一id=nick_001, 角色名=尼克·王尔德, 身份=狐狸, 关系=配角
+  【物品表格】(表格索引: 4)
+  行1: 唯一id=mask_001, 物品名=电子面罩, 类型=装备, 状态=使用中, 备注/持有人=典狱长
+  行3: 唯一id=card_001, 物品名=万能房卡, 类型=钥匙, 状态=可用, 备注/持有人=朱迪
+
+正确输出格式：
 
 <tableEdit>
 <!-- 
-insertRow(1, {"3":"今天","4":"中央公园","5":"朱迪在中央公园","6":""})
-insertRow(5, {"2":"money_001","3":"100元钱","4":"现金","5":"朱迪在中央公园捡到的100元钱","6":"已拾取","7":""})
-updateRow(2, 1, {"4":"朱迪","7":"兔子警官"})
+=== 新增操作 ===
+insertRow(2, {"2":"badge_001","3":"金色徽章","4":"物品","5":"尼克展示给朱迪的金色徽章","6":"已发现","7":"尼克"})
+说明：在角色表格(索引2)中新增一行，添加"金色徽章"物品记录
+  字段2(唯一id): badge_001 - 语义化命名，badge表示徽章，001表示序号
+  字段3(物品名): 金色徽章
+  字段4(类型): 物品
+  字段5(描述): 尼克展示给朱迪的金色徽章
+  字段6(状态): 已发现
+  字段7(备注/持有人): 尼克
+
+=== 更新操作 ===
+updateRow(2, 2, {"6":"已见面","7":"狐狸骗子"})
+说明：更新角色表格(索引2)中第2行(尼克·王尔德)的信息
+  行2对应的是唯一id=nick_001的记录
+  只更新变化的字段：字段6(关系)从"配角"改为"已见面"，字段7(特征)更新为"狐狸骗子"
+  不要重复填写未变化的字段(唯一id、角色名、身份)
+
+updateRow(4, 1, {"6":"已收回"})
+说明：更新物品表格(索引4)中第1行(电子面罩)的状态
+  行1对应的是唯一id=mask_001的记录
+  只更新字段6(状态)从"使用中"改为"已收回"
+
+=== 删除操作 ===
+deleteRow(4, 1)
+说明：删除物品表格(索引4)中第1行(电子面罩)
+  行1对应的是唯一id=mask_001的记录
+  仅在确认该物品已不再相关时使用删除操作
 -->
 </tableEdit>
 
+【格式规范总结】
+
+1. insertRow(表格索引, {字段数据对象})
+   - 表格索引：数字，从1开始，对应模板页签顺序
+   - 字段数据对象：JSON格式，键为字段索引(字符串)，值为字段内容(字符串)
+   - 示例：insertRow(2, {"2":"zhudi_001","3":"朱迪·霍普斯","4":"警官"})
+   - 注意：字段索引2(唯一id)必须填写，字段1(流水号)由系统自动生成无需填写
+   - 注意：所有值必须是字符串类型，用双引号包裹
+
+2. updateRow(表格索引, 行索引, {字段数据对象})
+   - 表格索引：数字，从1开始
+   - 行索引：数字，从1开始，对应当前表格中的数据行号
+   - 字段数据对象：JSON格式，只包含需要更新的字段
+   - 示例：updateRow(2, 1, {"4":"警长"})
+   - 注意：只更新变化的字段，不要重复填写未变化的字段
+   - 注意：行索引必须在当前表格数据范围内(参考"唯一ID快速查找索引")
+
+3. deleteRow(表格索引, 行索引)
+   - 表格索引：数字，从1开始
+   - 行索引：数字，从1开始
+   - 示例：deleteRow(4, 1)
+   - 注意：删除操作需谨慎，仅在确认记录不再相关时使用
+   - 注意：合并重复记录时，应先updateRow保留的记录，再deleteRow删除重复的记录
+
+【错误格式示例 - 绝对禁止】
+
+✗ insertRow(2, {"2":"zhudi_001","3":"朱迪·霍普斯","4":"警长"}) 
+  错误原因：如果唯一id=zhudi_001已存在，应使用updateRow而非insertRow
+
+✗ updateRow(2, 1, {"2":"zhudi_001","3":"朱迪·霍普斯","4":"警长","5":"兔子"})
+  错误原因：重复填写了未变化的字段(唯一id、角色名)，只更新变化的字段即可
+
+✗ insertRow("2", {"2":"badge_001","3":"金色徽章"})
+  错误原因：表格索引必须是数字，不是字符串
+
+✗ updateRow(2, "1", {"4":"警长"})
+  错误原因：行索引必须是数字，不是字符串
+
 【现在开始处理】
-请分析上述消息，参考现有表格数据，提取关键信息并生成tableEdit命令。`;
+请分析上述消息，参考现有表格数据，提取关键信息并生成tableEdit命令。记住：这是增量更新，不要重复插入已存在的实体！`;
+  }
+
+  /**
+   * 检测两个名称是否相似（用于重复检测）
+   * @param name1 名称1
+   * @param name2 名称2
+   * @returns 是否相似
+   */
+  private isSimilarName(name1: string, name2: string): boolean {
+    if (!name1 || !name2) return false;
+    
+    const n1 = name1.trim().toLowerCase();
+    const n2 = name2.trim().toLowerCase();
+    
+    // 完全相同
+    if (n1 === n2) return true;
+    
+    // 一个包含另一个（长度差异不能太大）
+    if (n1.includes(n2) || n2.includes(n1)) {
+      const lengthRatio = Math.min(n1.length, n2.length) / Math.max(n1.length, n2.length);
+      if (lengthRatio > 0.5) return true; // 长度比例大于50%认为是相似
+    }
+    
+    // 计算编辑距离（Levenshtein distance）
+    const distance = this.levenshteinDistance(n1, n2);
+    const maxLength = Math.max(n1.length, n2.length);
+    const similarity = 1 - distance / maxLength;
+    
+    // 相似度大于70%认为是相似的
+    return similarity > 0.7;
+  }
+
+  /**
+   * 计算两个字符串的Levenshtein编辑距离
+   * @param s1 字符串1
+   * @param s2 字符串2
+   * @returns 编辑距离
+   */
+  private levenshteinDistance(s1: string, s2: string): number {
+    const m = s1.length;
+    const n = s2.length;
+    
+    // 创建二维数组
+    const dp: number[][] = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0));
+    
+    // 初始化
+    for (let i = 0; i <= m; i++) dp[i][0] = i;
+    for (let j = 0; j <= n; j++) dp[0][j] = j;
+    
+    // 动态规划计算编辑距离
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        if (s1[i - 1] === s2[j - 1]) {
+          dp[i][j] = dp[i - 1][j - 1];
+        } else {
+          dp[i][j] = Math.min(
+            dp[i - 1][j] + 1,     // 删除
+            dp[i][j - 1] + 1,     // 插入
+            dp[i - 1][j - 1] + 1  // 替换
+          );
+        }
+      }
+    }
+    
+    return dp[m][n];
   }
 
   /**
@@ -917,6 +1173,51 @@ updateRow(2, 1, {"4":"朱迪","7":"兔子警官"})
 
     addLog(`开始执行 ${commands.length} 个tableEdit命令`, 'info');
 
+    // 确保表格JSON文件存在（创建初始空文件）
+    // 这是异步模式与同步模式的关键差异：同步模式在processChatProgressive中创建，异步模式需要在这里创建
+    try {
+      // 使用与 tableTemplateService 相同的 safeChatId 计算方法
+      const safeChatId = chatId
+        .replace(/\//g, '_')
+        .replace(/\\/g, '_')
+        .replace(/\s+/g, '_')
+        .replace(/@/g, '_')
+        .replace(/-/g, '_')
+        .replace(/:/g, '_')
+        .replace(/\*/g, '_')
+        .replace(/\?/g, '_')
+        .replace(/"/g, '_')
+        .replace(/</g, '_')
+        .replace(/>/g, '_')
+        .replace(/\|/g, '_');
+      
+      const tableFilePath = path.join(this.chatlogDir, `${safeChatId}.json`);
+      
+      if (!fs.existsSync(tableFilePath)) {
+        const currentTemplateId = this.getAssociatedTemplate(chatId);
+        if (currentTemplateId) {
+          addLog('[Async Execute] 表格文件不存在，使用关联模板创建初始文件', 'info');
+          tableTemplateService.createTableFile(chatId, currentTemplateId, safeChatId);
+          addLog(`[Async Execute] 表格文件已创建: ${tableFilePath}`, 'info');
+        } else {
+          addLog('[Async Execute] 未找到关联的模板，尝试使用默认模板创建文件', 'warn');
+          const defaultTemplates = tableTemplateService.getAllTemplates();
+          if (defaultTemplates && defaultTemplates.length > 0) {
+            const defaultTemplateId = defaultTemplates[0].id;
+            addLog(`[Async Execute] 使用默认模板 ${defaultTemplateId} 创建初始文件`, 'info');
+            tableTemplateService.createTableFile(chatId, defaultTemplateId, safeChatId);
+            addLog(`[Async Execute] 表格文件已创建: ${tableFilePath}`, 'info');
+          } else {
+            addLog('[Async Execute] 没有可用的模板，无法创建表格文件', 'error');
+            return { success: false, executed: 0, errors: ['没有可用的表格模板，请先在表格模板管理中创建模板'] };
+          }
+        }
+      }
+    } catch (createError) {
+      addLog(`[Async Execute] 创建表格文件失败: ${createError}`, 'error');
+      // 不阻断执行，继续尝试执行命令（可能文件已存在但路径有问题）
+    }
+
     commands.forEach((command, index) => {
       try {
         const { type, tableIndex, rowIndex, data } = command;
@@ -927,11 +1228,64 @@ updateRow(2, 1, {"4":"朱迪","7":"兔子警官"})
 
         switch (type) {
           case 'insertRow':
-            success = tableTemplateService.insertRowToTable(chatId, tableIndex, data || {});
-            if (success) {
-              addLog(`insertRow 执行成功: 表格${tableIndex}`, 'info');
+            // 去重检查：读取当前表格数据，检查是否已存在相同唯一ID或相似名称的记录
+            const existingTable = tableTemplateService.getTableByIndex(chatId, tableIndex);
+            if (existingTable && existingTable.data && Array.isArray(existingTable.data)) {
+              const uniqueId = data['1']; // 字段索引1是唯一id（0-based，AI的字段2转换后为1）
+              const itemName = data['2'] || ''; // 字段索引2是物品名/角色名等（0-based）
+              
+              // 1. 首先检查唯一ID是否重复
+              const isDuplicateById = uniqueId && existingTable.data.some((row: any) => row['1'] === uniqueId);
+              
+              // 2. 如果唯一ID不重复，检查名称是否相似（物品名、角色名等）
+              let isDuplicateByName = false;
+              let similarRowIndex = -1;
+              if (!isDuplicateById && itemName) {
+                for (let i = 0; i < existingTable.data.length; i++) {
+                  const existingName = existingTable.data[i]['2'] || ''; // 字段索引2是名称
+                  if (existingName && this.isSimilarName(itemName, existingName)) {
+                    isDuplicateByName = true;
+                    similarRowIndex = i;
+                    addLog(`检测到名称相似重复(新名称="${itemName}", 现有名称="${existingName}")，行索引=${i + 1}`, 'warn');
+                    break;
+                  }
+                }
+              }
+              
+              if (isDuplicateById) {
+                addLog(`检测到重复插入(唯一id=${uniqueId})，转换为更新操作`, 'warn');
+                // 找到已存在记录的行索引（0-based）
+                const existingRowIndex = existingTable.data.findIndex((row: any) => row['1'] === uniqueId);
+                if (existingRowIndex >= 0) {
+                  // 转换为updateRow命令
+                  success = tableTemplateService.updateRowInTable(chatId, tableIndex, existingRowIndex, data);
+                  if (success) {
+                    addLog(`insertRow转updateRow执行成功: 表格${tableIndex},行${existingRowIndex + 1}`, 'info');
+                  } else {
+                    result.errors.push(`insertRow转updateRow失败: 表格${tableIndex},行${existingRowIndex + 1}`);
+                  }
+                } else {
+                  success = tableTemplateService.insertRowToTable(chatId, tableIndex, data || {});
+                }
+              } else if (isDuplicateByName && similarRowIndex >= 0) {
+                addLog(`检测到名称相似重复，转换为更新操作(行${similarRowIndex + 1})`, 'warn');
+                // 名称相似，转换为updateRow
+                success = tableTemplateService.updateRowInTable(chatId, tableIndex, similarRowIndex, data);
+                if (success) {
+                  addLog(`insertRow转updateRow(名称相似)执行成功: 表格${tableIndex},行${similarRowIndex + 1}`, 'info');
+                } else {
+                  result.errors.push(`insertRow转updateRow(名称相似)失败: 表格${tableIndex},行${similarRowIndex + 1}`);
+                }
+              } else {
+                success = tableTemplateService.insertRowToTable(chatId, tableIndex, data || {});
+                if (success) {
+                  addLog(`insertRow 执行成功: 表格${tableIndex}`, 'info');
+                } else {
+                  result.errors.push(`insertRow 失败: 表格${tableIndex}`);
+                }
+              }
             } else {
-              result.errors.push(`insertRow 失败: 表格${tableIndex}`);
+              success = tableTemplateService.insertRowToTable(chatId, tableIndex, data || {});
             }
             break;
 
@@ -942,9 +1296,9 @@ updateRow(2, 1, {"4":"朱迪","7":"兔子警官"})
             } else {
               success = tableTemplateService.updateRowInTable(chatId, tableIndex, rowIndex, data || {});
               if (success) {
-                addLog(`updateRow 执行成功: 表格${tableIndex},行${rowIndex}`, 'info');
+                addLog(`updateRow 执行成功: 表格${tableIndex},行${rowIndex + 1}`, 'info');
               } else {
-                result.errors.push(`updateRow 失败: 表格${tableIndex},行${rowIndex}`);
+                result.errors.push(`updateRow 失败: 表格${tableIndex},行${rowIndex + 1}`);
               }
             }
             break;
@@ -956,9 +1310,9 @@ updateRow(2, 1, {"4":"朱迪","7":"兔子警官"})
             } else {
               success = tableTemplateService.deleteRowFromTable(chatId, tableIndex, rowIndex);
               if (success) {
-                addLog(`deleteRow 执行成功: 表格${tableIndex},行${rowIndex}`, 'info');
+                addLog(`deleteRow 执行成功: 表格${tableIndex},行${rowIndex + 1}`, 'info');
               } else {
-                result.errors.push(`deleteRow 失败: 表格${tableIndex},行${rowIndex}`);
+                result.errors.push(`deleteRow 失败: 表格${tableIndex},行${rowIndex + 1}`);
               }
             }
             break;
@@ -1036,22 +1390,58 @@ updateRow(2, 1, {"4":"朱迪","7":"兔子警官"})
       addLog(`读取表格数据文件失败: ${error}`, 'error');
     }
 
-    // 构建表格上下文
-    let context = '【当前表格数据状态】\n';
+    // 构建表格上下文 - 使用清晰的行格式，便于AI理解
+    let context = '【当前表格数据状态 - 已存在的数据，请勿重复插入】\n';
 
     template.sheets.forEach((sheet: any, sheetIndex: number) => {
-      context += `\n=== ${sheet.name} ===\n`;
+      const tableIndex = sheetIndex + 1;
+      context += `\n=== ${sheet.name} (表格索引: ${tableIndex}) ===\n`;
       context += `表格用途：${sheet.description || '暂无描述'}\n`;
-      context += `表头：[${sheet.headers.join(', ')}]\n`;
+      context += `表头结构：[1:流水号, 2:唯一id`;
+      sheet.headers.filter((h: string) => h !== '流水号' && h !== '唯一id').forEach((h: string, i: number) => {
+        context += `, ${i + 3}:${h}`;
+      });
+      context += ']\n';
 
       // 检查是否有数据
       if (jsonData && jsonData.data && jsonData.data[sheet.name]) {
         const sheetData = jsonData.data[sheet.name];
         if (Array.isArray(sheetData) && sheetData.length > 0) {
-          context += `当前数据（共${sheetData.length}条）：\n`;
-          sheetData.forEach((row: any) => {
-            context += `  - ${JSON.stringify(row)}\n`;
+          context += `当前已有数据（共${sheetData.length}条）：\n`;
+          
+          // 构建唯一ID索引，便于AI快速查找
+          const uniqueIdIndex: Map<string, number> = new Map();
+          
+          sheetData.forEach((row: any, rowIndex: number) => {
+            const rowDisplay = rowIndex + 1;
+            const uniqueId = row['1']; // 0-based索引，字段2(唯一id)对应索引1
+            
+            // 记录唯一ID与行号的映射
+            if (uniqueId) {
+              uniqueIdIndex.set(uniqueId, rowDisplay);
+            }
+            
+            const fields = Object.entries(row)
+              .filter(([key]) => key !== '0')
+              .map(([key, value]) => {
+                const headerIndex = parseInt(key) + 1;
+                const headerName = sheet.headers[parseInt(key) - 2] || `字段${headerIndex}`;
+                return `${headerName}=${value}`;
+              })
+              .join(', ');
+            context += `  行${rowDisplay}: ${fields}\n`;
           });
+          
+          // 添加唯一ID快速查找索引
+          if (uniqueIdIndex.size > 0) {
+            context += `\n【唯一ID快速查找索引】\n`;
+            uniqueIdIndex.forEach((rowNum, uniqueId) => {
+              context += `  ${uniqueId} → 行${rowNum}\n`;
+            });
+            context += '\n使用指南：当需要更新某实体时，先在此索引中查找唯一ID，找到对应行号后使用updateRow(表格索引, 行号, {更新的字段})\n';
+          }
+          
+          context += '\n【重要警告】上述数据已存在，如需修改请使用updateRow(表格索引, 行索引, {...})，绝对不要使用insertRow重复插入！\n';
         } else {
           context += '当前数据：暂无数据\n';
         }
@@ -2042,28 +2432,40 @@ updateRow(2, 1, {"4":"朱迪","7":"兔子警官"})
   }
 
   /**
-   * 逐条处理聊天记录，提取信息到表格（支持tableEdit命令格式）
+   * 实时整理：逐条处理聊天记录，仅处理新增消息（增量更新）
    * @param chatId 聊天ID
    * @param templateId 模板ID
    * @param config AI配置
-   * @param onProgress 进度回调函数 (current: number, total: number, message: string)
-   * @returns 处理结果
+   * @param onProgress 进度回调
+   * @param options 整理选项
+   * @returns 整理结果
    */
   public async processChatProgressive(
     chatId: string,
     templateId: string,
     config?: { apiKey: string; apiUrl: string; modelName: string; apiMode: string },
-    onProgress?: (current: number, total: number, message: string) => void,
-    restart: boolean = false
+    onProgress?: (current: number, total: number, message: string, percent?: number) => void,
+    options?: OrganizeOptions
   ): Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[]; resumed: boolean }> {
     const result = { success: true, processedCount: 0, errorCount: 0, errors: [] as string[], resumed: false };
+    const { continueFromLast = true, minInterval = 3000 } = options || {};
 
-    addLog(`开始逐条处理聊天记录: ${chatId}`, 'info');
-    addLog(`使用模板: ${templateId}`, 'info');
+    addLog(`[Auto Organize] 开始实时整理: ${chatId}`, 'info');
+
+    // 防抖检查
+    if (!this.canStartOrganize(chatId, minInterval)) {
+      return { success: false, processedCount: 0, errorCount: 0, errors: ['整理间隔过短，已跳过'], resumed: false };
+    }
+
+    // 设置整理锁
+    this.setOrganizingLock(chatId, 'auto');
+
+    let tableDataBackup: string | null = null;
+    let tableFilePath = '';
 
     try {
       // 1. 读取聊天记录（支持两种格式）
-      addLog('步骤 1/5: 读取聊天记录', 'debug');
+      addLog('[Auto Organize] 步骤 1/5: 读取聊天记录', 'debug');
       const allMessages = this.getChatMessages(chatId).messages;
 
       // 如果 .jsonl 格式没读到，尝试从 .json 格式（角色卡聊天记录）读取
@@ -2071,59 +2473,78 @@ updateRow(2, 1, {"4":"朱迪","7":"兔子警官"})
       if (allMessages.length === 0) {
         const jsonMessages = this.readCharacterChatMessages(chatId);
         if (jsonMessages.length > 0) {
-          addLog(`从角色卡聊天记录格式读取到 ${jsonMessages.length} 条消息`, 'debug');
+          addLog(`[Auto Organize] 从角色卡聊天记录格式读取到 ${jsonMessages.length} 条消息`, 'debug');
           messages = jsonMessages;
         }
       }
 
-      addLog(`共读取 ${messages.length} 条消息`, 'debug');
+      addLog(`[Auto Organize] 共读取 ${messages.length} 条消息`, 'debug');
 
       if (messages.length === 0) {
         throw new Error('没有聊天记录可处理');
       }
 
       // 2. 过滤消息（仅处理user和assistant消息）
-      addLog('步骤 2/5: 过滤消息', 'debug');
+      addLog('[Auto Organize] 步骤 2/5: 过滤消息', 'debug');
       const targetMessages = messages.filter(msg => msg.role === 'user' || msg.role === 'assistant');
-      addLog(`过滤后剩余 ${targetMessages.length} 条消息（排除system消息）`, 'debug');
+      addLog(`[Auto Organize] 过滤后剩余 ${targetMessages.length} 条消息（排除system消息）`, 'debug');
 
       if (targetMessages.length === 0) {
         throw new Error('没有可处理的消息（user或assistant）');
       }
 
       // 3. 按时间顺序排序
-      addLog('步骤 3/5: 按时间排序', 'debug');
+      addLog('[Auto Organize] 步骤 3/5: 按时间排序', 'debug');
       targetMessages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
       // 检查断点续传
       let startIndex = 0;
       const existingProgress = this.getOrganizingProgress(chatId);
-      if (!restart && existingProgress && existingProgress.processedCount > 0 && existingProgress.totalMessages === targetMessages.length) {
+      if (continueFromLast && existingProgress && existingProgress.processedCount > 0 && existingProgress.totalMessages === targetMessages.length) {
         startIndex = existingProgress.processedCount;
-        addLog(`检测到断点续传记录: 已处理 ${startIndex}/${targetMessages.length} 条消息`, 'info');
+        addLog(`[Auto Organize] 检测到断点续传记录: 已处理 ${startIndex}/${targetMessages.length} 条消息`, 'info');
         if (startIndex >= targetMessages.length) {
-          addLog('所有消息已处理完成', 'info');
+          addLog('[Auto Organize] 所有消息已处理完成，无需重复整理', 'info');
           result.resumed = true;
           result.processedCount = startIndex;
           return result;
         }
         result.resumed = true;
       } else if (existingProgress && existingProgress.totalMessages !== targetMessages.length) {
-        addLog(`消息数量变化 (${existingProgress.totalMessages} -> ${targetMessages.length})，重新从头处理`, 'info');
-        startIndex = 0;
+        addLog(`[Auto Organize] 消息数量变化 (${existingProgress.totalMessages} -> ${targetMessages.length})，仅处理新增消息`, 'info');
+        // 如果消息数量变化，计算新增消息的起始位置
+        if (existingProgress.totalMessages < targetMessages.length) {
+          startIndex = existingProgress.totalMessages;
+          addLog(`[Auto Organize] 检测到新增 ${targetMessages.length - existingProgress.totalMessages} 条消息，从第 ${startIndex + 1} 条开始处理`, 'info');
+        }
       }
+
+      addLog(`[Auto Organize] 待处理消息: ${startIndex + 1} ~ ${targetMessages.length} (共 ${targetMessages.length - startIndex} 条)`, 'info');
 
       // 4. 获取模板信息
-      addLog('步骤 4/5: 获取模板信息', 'debug');
-      const template = tableTemplateService.getTemplate(templateId);
-      if (!template) {
-        throw new Error(`模板 ${templateId} 不存在`);
+      addLog('[Auto Organize] 步骤 4/5: 获取模板信息', 'debug');
+      // 如果模板ID为空，使用默认模板
+      let effectiveTemplateId = templateId;
+      if (!effectiveTemplateId || effectiveTemplateId.trim() === '') {
+        addLog('[Auto Organize] 模板ID为空，自动使用默认模板', 'info');
+        // 获取默认模板列表中的第一个
+        const defaultTemplates = tableTemplateService.getAllTemplates();
+        if (defaultTemplates && defaultTemplates.length > 0) {
+          effectiveTemplateId = defaultTemplates[0].id;
+          addLog(`[Auto Organize] 使用默认模板: ${effectiveTemplateId} (${defaultTemplates[0].name})`, 'info');
+        } else {
+          throw new Error('没有可用的表格模板，请先在表格模板管理中创建模板');
+        }
       }
-      addLog(`模板名称: ${template.name}`, 'debug');
-      addLog(`模板包含 ${template.sheets?.length || 0} 个页签`, 'debug');
+      const template = tableTemplateService.getTemplate(effectiveTemplateId);
+      if (!template) {
+        throw new Error(`模板 ${effectiveTemplateId} 不存在`);
+      }
+      addLog(`[Auto Organize] 模板名称: ${template.name}`, 'debug');
+      addLog(`[Auto Organize] 模板包含 ${template.sheets?.length || 0} 个页签`, 'debug');
 
       // 5. 确定AI配置
-      addLog('步骤 5/5: 配置AI参数', 'debug');
+      addLog('[Auto Organize] 步骤 5/5: 配置AI参数', 'debug');
       const aiConfig = {
         apiKey: config?.apiKey || '',
         apiUrl: config?.apiUrl || 'http://127.0.0.1:5000',
@@ -2142,9 +2563,9 @@ updateRow(2, 1, {"4":"朱迪","7":"兔子警官"})
           apiEndpoint += '/v1/chat/completions';
         }
       }
-      addLog(`最终API端点: ${apiEndpoint}`, 'debug');
+      addLog(`[Auto Organize] 最终API端点: ${apiEndpoint}`, 'debug');
 
-      addLog('使用AI配置:', 'debug');
+      addLog('[Auto Organize] 使用AI配置:', 'debug');
       addLog(`  API密钥: ${aiConfig.apiKey ? '已设置' : '未设置'}`, 'debug');
       addLog(`  API地址: ${apiEndpoint}`, 'debug');
       addLog(`  模型名称: ${aiConfig.modelName}`, 'debug');
@@ -2153,128 +2574,158 @@ updateRow(2, 1, {"4":"朱迪","7":"兔子警官"})
       // 保存关联关系（如果还没有的话）
       const currentTemplateId = this.getAssociatedTemplate(chatId);
       if (!currentTemplateId) {
-        this.saveAssociation(chatId, templateId);
+        this.saveAssociation(chatId, effectiveTemplateId);
       }
 
       // 确保表格JSON文件存在（创建初始空文件）
-      const tableFilePath = path.join(this.chatlogDir, `${chatId.replace(/[\/\\]/g, '_').replace(/[\s@\-:*?"<>|]/g, '_')}.json`);
+      // 使用与 tableTemplateService 相同的 safeChatId 计算方法
+      const safeChatId = chatId
+        .replace(/\//g, '_')
+        .replace(/\\/g, '_')
+        .replace(/\s+/g, '_')
+        .replace(/@/g, '_')
+        .replace(/-/g, '_')
+        .replace(/:/g, '_')
+        .replace(/\*/g, '_')
+        .replace(/\?/g, '_')
+        .replace(/"/g, '_')
+        .replace(/</g, '_')
+        .replace(/>/g, '_')
+        .replace(/\|/g, '_');
+      tableFilePath = path.join(this.chatlogDir, `${safeChatId}.json`);
       if (!fs.existsSync(tableFilePath)) {
-        addLog('创建初始表格数据文件', 'info');
-        tableTemplateService.createTableFile(chatId, templateId);
-        addLog(`表格文件已创建: ${tableFilePath}`, 'info');
+        addLog('[Auto Organize] 创建初始表格数据文件', 'info');
+        tableTemplateService.createTableFile(chatId, effectiveTemplateId, safeChatId);
+        addLog(`[Auto Organize] 表格文件已创建: ${tableFilePath}`, 'info');
       } else {
-        addLog(`表格文件已存在: ${tableFilePath}`, 'debug');
+        addLog(`[Auto Organize] 表格文件已存在: ${tableFilePath}`, 'debug');
+      }
+
+      // 备份当前表格数据（用于错误回滚）
+      try {
+        if (fs.existsSync(tableFilePath)) {
+          tableDataBackup = fs.readFileSync(tableFilePath, 'utf-8');
+          addLog('[Auto Organize] 表格数据备份完成', 'debug');
+        }
+      } catch (backupError) {
+        addLog(`[Auto Organize] 备份表格数据失败: ${backupError}`, 'warn');
       }
 
       // 开始逐条处理
       const totalMessages = targetMessages.length;
-      addLog(`开始逐条处理 ${totalMessages} 条消息${startIndex > 0 ? ` (从第 ${startIndex + 1} 条开始)` : ''}`, 'info');
+      const messagesToProcess = totalMessages - startIndex;
+      addLog(`[Auto Organize] 开始增量处理 ${messagesToProcess} 条新消息${startIndex > 0 ? ` (从第 ${startIndex + 1} 条开始)` : ''}`, 'info');
 
       // 初始化进度
       this.saveOrganizingProgress(chatId, startIndex, totalMessages);
 
       for (let i = startIndex; i < totalMessages; i++) {
         const message = targetMessages[i];
-        const currentProgress = i + 1;
-        const absoluteProgress = currentProgress;
+        const absoluteMessageIndex = i + 1;
+        const processedCount = i - startIndex + 1;
 
-        addLog(`处理消息 ${currentProgress}/${totalMessages}: ${message.role}`, 'info');
+        addLog(`[Auto Organize] 处理消息 ${absoluteMessageIndex}/${totalMessages}: ${message.role}`, 'info');
 
-        // 进度回调
+        // 进度回调：传递绝对消息位置用于前端显示，同时传递计算好的百分比
         if (onProgress) {
-          onProgress(absoluteProgress, totalMessages, `处理消息 ${currentProgress}/${totalMessages}...`);
+          // 计算正确的进度百分比（基于相对进度：已处理数/当前批次待处理总数）
+          const progressPercent = Math.round((processedCount / messagesToProcess) * 100);
+          
+          // 前端需要显示绝对进度（如 4/5），所以传递 absoluteMessageIndex 和 totalMessages
+          // 同时传递计算好的百分比值，避免前端计算错误
+          onProgress(absoluteMessageIndex, totalMessages, `处理消息 ${absoluteMessageIndex}/${totalMessages}...`, progressPercent);
         }
 
         // 发送实时更新
         if (global.sendLogToRenderer) {
-          global.sendLogToRenderer(`表格整理: 处理消息 ${currentProgress}/${totalMessages} (${message.role})`, 'info');
+          global.sendLogToRenderer(`[Auto Organize] 处理消息 ${absoluteMessageIndex}/${totalMessages} (${message.role})`, 'info');
         }
 
         try {
           // 构建表格数据上下文
-          addLog(`构建表格上下文 (消息 ${currentProgress}/${totalMessages})`, 'debug');
-          const tableContext = this.buildTableContext(chatId, templateId);
+          addLog(`[Auto Organize] 构建表格上下文 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'debug');
+          const tableContext = this.buildTableContext(chatId, effectiveTemplateId);
 
           // 构建提示词
-          addLog(`构建AI提示词 (消息 ${currentProgress}/${totalMessages})`, 'debug');
+          addLog(`[Auto Organize] 构建AI提示词 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'debug');
           const prompt = this.buildAIPromptForProgressive(message, template, chatId, tableContext);
 
           // 调用AI API
-          addLog(`调用AI API (消息 ${currentProgress}/${totalMessages})`, 'info');
+          addLog(`[Auto Organize] 调用AI API (消息 ${absoluteMessageIndex}/${totalMessages})`, 'info');
           const aiResponse = await this.callAIAPIWithRetry(prompt, aiConfig.apiKey, apiEndpoint, aiConfig.modelName);
 
           if (!aiResponse || aiResponse.trim() === '') {
-            addLog(`AI未返回有效响应 (消息 ${currentProgress}/${totalMessages})`, 'warn');
-            result.errors.push(`消息 ${currentProgress}: AI未返回有效响应`);
+            addLog(`[Auto Organize] AI未返回有效响应 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'warn');
+            result.errors.push(`消息 ${absoluteMessageIndex}: AI未返回有效响应`);
             result.errorCount++;
             // 保存进度（即使AI没有返回有效响应，这条消息也算处理过了）
-            this.saveOrganizingProgress(chatId, currentProgress, totalMessages);
+            this.saveOrganizingProgress(chatId, absoluteMessageIndex, totalMessages);
             continue;
           }
 
-          addLog(`AI响应长度: ${aiResponse.length} 字符 (消息 ${currentProgress}/${totalMessages})`, 'debug');
+          addLog(`[Auto Organize] AI响应长度: ${aiResponse.length} 字符 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'debug');
 
           // 解析tableEdit命令
-          addLog(`解析tableEdit命令 (消息 ${currentProgress}/${totalMessages})`, 'debug');
+          addLog(`[Auto Organize] 解析tableEdit命令 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'debug');
           const parseResult = tableEditParser.parse(aiResponse);
 
           if (!parseResult.success && parseResult.commands.length === 0) {
-            addLog(`未解析到tableEdit命令 (消息 ${currentProgress}/${totalMessages})`, 'warn');
+            addLog(`[Auto Organize] 未解析到tableEdit命令 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'warn');
             if (parseResult.errors.length > 0) {
-              addLog(`解析错误: ${parseResult.errors.join('; ')}`, 'warn');
+              addLog(`[Auto Organize] 解析错误: ${parseResult.errors.join('; ')}`, 'warn');
             }
             // 不视为错误，可能消息中没有可提取的信息
             result.processedCount++;
-            this.saveOrganizingProgress(chatId, currentProgress, totalMessages);
+            this.saveOrganizingProgress(chatId, absoluteMessageIndex, totalMessages);
             continue;
           }
 
           if (parseResult.errors.length > 0) {
-            addLog(`解析警告: ${parseResult.errors.join('; ')} (消息 ${currentProgress}/${totalMessages})`, 'warn');
+            addLog(`[Auto Organize] 解析警告: ${parseResult.errors.join('; ')} (消息 ${absoluteMessageIndex}/${totalMessages})`, 'warn');
           }
 
           // 执行tableEdit命令
           if (parseResult.commands.length > 0) {
-            addLog(`执行 ${parseResult.commands.length} 个tableEdit命令 (消息 ${currentProgress}/${totalMessages})`, 'info');
+            addLog(`[Auto Organize] 执行 ${parseResult.commands.length} 个tableEdit命令 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'info');
             const execResult = this.executeTableEditCommands(chatId, parseResult.commands);
 
             if (execResult.errors.length > 0) {
-              addLog(`命令执行错误: ${execResult.errors.join('; ')} (消息 ${currentProgress}/${totalMessages})`, 'warn');
-              result.errors.push(`消息 ${currentProgress}: ${execResult.errors.join('; ')}`);
+              addLog(`[Auto Organize] 命令执行错误: ${execResult.errors.join('; ')} (消息 ${absoluteMessageIndex}/${totalMessages})`, 'warn');
+              result.errors.push(`消息 ${absoluteMessageIndex}: ${execResult.errors.join('; ')}`);
             }
 
-            addLog(`成功执行 ${execResult.executed} 个命令 (消息 ${currentProgress}/${totalMessages})`, 'info');
+            addLog(`[Auto Organize] 成功执行 ${execResult.executed} 个命令 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'info');
           }
 
           result.processedCount++;
           // 每处理一条消息就保存进度
-          this.saveOrganizingProgress(chatId, currentProgress, totalMessages);
-          addLog(`消息 ${currentProgress}/${totalMessages} 处理完成`, 'info');
+          this.saveOrganizingProgress(chatId, absoluteMessageIndex, totalMessages);
+          addLog(`[Auto Organize] 消息 ${absoluteMessageIndex}/${totalMessages} 处理完成`, 'info');
 
         } catch (error) {
-          const errorMsg = `处理消息 ${currentProgress} 失败: ${error instanceof Error ? error.message : String(error)}`;
+          const errorMsg = `[Auto Organize] 处理消息 ${absoluteMessageIndex} 失败: ${error instanceof Error ? error.message : String(error)}`;
           addLog(errorMsg, 'error');
           if (error instanceof Error && error.stack) {
-            addLog(`错误堆栈: ${error.stack}`, 'debug');
+            addLog(`[Auto Organize] 错误堆栈: ${error.stack}`, 'debug');
           }
           result.errors.push(errorMsg);
           result.errorCount++;
           // 单条消息处理失败不影响后续处理
-          addLog(`跳过消息 ${currentProgress}，继续处理下一条`, 'info');
+          addLog(`[Auto Organize] 跳过消息 ${absoluteMessageIndex}，继续处理下一条`, 'info');
         }
       }
 
       // 处理完成
-      addLog(`逐条处理完成: 成功 ${result.processedCount}, 失败 ${result.errorCount}`, 'info');
+      addLog(`[Auto Organize] 增量处理完成: 成功 ${result.processedCount}, 失败 ${result.errorCount}`, 'info');
 
       if (result.errorCount > 0) {
-        addLog(`处理过程中有 ${result.errorCount} 条消息处理失败`, 'warn');
+        addLog(`[Auto Organize] 处理过程中有 ${result.errorCount} 条消息处理失败`, 'warn');
         result.success = result.processedCount > 0; // 只要有成功的消息就认为整体成功
       }
 
       // 发送完成通知
       if (global.sendLogToRenderer) {
-        global.sendLogToRenderer(`表格整理完成: 成功 ${result.processedCount}, 失败 ${result.errorCount}`, result.success ? 'info' : 'warn');
+        global.sendLogToRenderer(`[Auto Organize] 实时整理完成: 成功 ${result.processedCount}, 失败 ${result.errorCount}`, result.success ? 'info' : 'warn');
       }
 
       // 标记会话为已处理
@@ -2283,19 +2734,333 @@ updateRow(2, 1, {"4":"朱迪","7":"兔子警官"})
       return result;
 
     } catch (error) {
-      addLog(`逐条处理聊天记录失败: ${error}`, 'error');
+      addLog(`[Auto Organize] 实时整理失败: ${error}`, 'error');
       if (error instanceof Error) {
-        addLog(`错误堆栈: ${error.stack}`, 'error');
+        addLog(`[Auto Organize] 错误堆栈: ${error.stack}`, 'error');
+      }
+
+      // 发生严重错误时回滚表格数据
+      if (tableDataBackup && tableFilePath && fs.existsSync(tableFilePath)) {
+        try {
+          addLog('[Auto Organize] 检测到严重错误，正在回滚表格数据到备份状态...', 'error');
+          fs.writeFileSync(tableFilePath, tableDataBackup, 'utf-8');
+          addLog('[Auto Organize] 表格数据已回滚到处理前的状态', 'info');
+        } catch (rollbackError) {
+          addLog(`[Auto Organize] 回滚表格数据失败: ${rollbackError}`, 'error');
+        }
       }
 
       // 发送失败通知
       if (global.sendLogToRenderer) {
-        global.sendLogToRenderer(`表格整理失败: ${error}`, 'error');
+        global.sendLogToRenderer(`[Auto Organize] 实时整理失败: ${error}`, 'error');
       }
 
       result.success = false;
       result.errors.push(error instanceof Error ? error.message : String(error));
       throw error;
+    } finally {
+      // 释放整理锁
+      this.releaseOrganizingLock(chatId);
+    }
+  }
+
+  /**
+   * 完全整理：清空表格数据，重新处理所有消息
+   * @param chatId 聊天ID
+   * @param templateId 模板ID
+   * @param config AI配置
+   * @param onProgress 进度回调
+   * @returns 整理结果
+   */
+  public async processChatFull(
+    chatId: string,
+    templateId: string,
+    config?: { apiKey: string; apiUrl: string; modelName: string; apiMode: string },
+    onProgress?: (current: number, total: number, message: string, percent?: number) => void
+  ): Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[] }> {
+    const result = { success: true, processedCount: 0, errorCount: 0, errors: [] as string[] };
+
+    addLog(`[Full Reorganize] 开始完全整理: ${chatId}`, 'info');
+
+    // 检查是否可以开始整理（不允许并发）
+    if (!this.canStartOrganize(chatId, 0)) {
+      return { success: false, processedCount: 0, errorCount: 0, errors: ['已有整理任务在执行中'] };
+    }
+
+    // 设置整理锁
+    this.setOrganizingLock(chatId, 'manual');
+
+    let tableDataBackup: string | null = null;
+    let tableFilePath = '';
+
+    try {
+      // 1. 备份当前表格数据
+      // 使用与 tableTemplateService 相同的 safeChatId 计算方法
+      const safeChatId = chatId
+        .replace(/\//g, '_')
+        .replace(/\\/g, '_')
+        .replace(/\s+/g, '_')
+        .replace(/@/g, '_')
+        .replace(/-/g, '_')
+        .replace(/:/g, '_')
+        .replace(/\*/g, '_')
+        .replace(/\?/g, '_')
+        .replace(/"/g, '_')
+        .replace(/</g, '_')
+        .replace(/>/g, '_')
+        .replace(/\|/g, '_');
+      tableFilePath = path.join(this.chatlogDir, `${safeChatId}.json`);
+      try {
+        if (fs.existsSync(tableFilePath)) {
+          tableDataBackup = fs.readFileSync(tableFilePath, 'utf-8');
+          addLog('[Full Reorganize] 表格数据备份完成', 'debug');
+        }
+      } catch (backupError) {
+        addLog(`[Full Reorganize] 备份表格数据失败: ${backupError}`, 'warn');
+      }
+
+      // 2. 读取聊天记录（支持两种格式）
+      addLog('[Full Reorganize] 步骤 1/5: 读取聊天记录', 'debug');
+      const allMessages = this.getChatMessages(chatId).messages;
+
+      // 如果 .jsonl 格式没读到，尝试从 .json 格式（角色卡聊天记录）读取
+      let messages: ChatMessage[] = allMessages;
+      if (allMessages.length === 0) {
+        const jsonMessages = this.readCharacterChatMessages(chatId);
+        if (jsonMessages.length > 0) {
+          addLog(`[Full Reorganize] 从角色卡聊天记录格式读取到 ${jsonMessages.length} 条消息`, 'debug');
+          messages = jsonMessages;
+        }
+      }
+
+      addLog(`[Full Reorganize] 共读取 ${messages.length} 条消息`, 'debug');
+
+      if (messages.length === 0) {
+        throw new Error('没有聊天记录可处理');
+      }
+
+      // 3. 过滤消息（仅处理user和assistant消息）
+      addLog('[Full Reorganize] 步骤 2/5: 过滤消息', 'debug');
+      const targetMessages = messages.filter(msg => msg.role === 'user' || msg.role === 'assistant');
+      addLog(`[Full Reorganize] 过滤后剩余 ${targetMessages.length} 条消息（排除system消息）`, 'debug');
+
+      if (targetMessages.length === 0) {
+        throw new Error('没有可处理的消息（user或assistant）');
+      }
+
+      // 4. 按时间顺序排序
+      addLog('[Full Reorganize] 步骤 3/5: 按时间排序', 'debug');
+      targetMessages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+      // 5. 获取模板信息
+      addLog('[Full Reorganize] 步骤 4/5: 获取模板信息', 'debug');
+      // 如果模板ID为空，使用默认模板
+      let effectiveTemplateId = templateId;
+      if (!effectiveTemplateId || effectiveTemplateId.trim() === '') {
+        addLog('[Full Reorganize] 模板ID为空，自动使用默认模板', 'info');
+        // 获取默认模板列表中的第一个
+        const defaultTemplates = tableTemplateService.getAllTemplates();
+        if (defaultTemplates && defaultTemplates.length > 0) {
+          effectiveTemplateId = defaultTemplates[0].id;
+          addLog(`[Full Reorganize] 使用默认模板: ${effectiveTemplateId} (${defaultTemplates[0].name})`, 'info');
+        } else {
+          throw new Error('没有可用的表格模板，请先在表格模板管理中创建模板');
+        }
+      }
+      const template = tableTemplateService.getTemplate(effectiveTemplateId);
+      if (!template) {
+        throw new Error(`模板 ${effectiveTemplateId} 不存在`);
+      }
+      addLog(`[Full Reorganize] 模板名称: ${template.name}`, 'debug');
+      addLog(`[Full Reorganize] 模板包含 ${template.sheets?.length || 0} 个页签`, 'debug');
+
+      // 6. 确定AI配置
+      addLog('[Full Reorganize] 步骤 5/5: 配置AI参数', 'debug');
+      const aiConfig = {
+        apiKey: config?.apiKey || '',
+        apiUrl: config?.apiUrl || 'http://127.0.0.1:5000',
+        modelName: config?.modelName || 'qwen3.5-27b-heretic-v3',
+        apiMode: config?.apiMode || 'text_completion'
+      };
+
+      // 根据API模式设置正确的API端点
+      let apiEndpoint = aiConfig.apiUrl;
+      if (aiConfig.apiMode === 'text_completion') {
+        if (!apiEndpoint.endsWith('/v1/completions')) {
+          apiEndpoint += '/v1/completions';
+        }
+      } else {
+        if (!apiEndpoint.endsWith('/v1/chat/completions')) {
+          apiEndpoint += '/v1/chat/completions';
+        }
+      }
+      addLog(`[Full Reorganize] 最终API端点: ${apiEndpoint}`, 'debug');
+
+      addLog('[Full Reorganize] 使用AI配置:', 'debug');
+      addLog(`  API密钥: ${aiConfig.apiKey ? '已设置' : '未设置'}`, 'debug');
+      addLog(`  API地址: ${apiEndpoint}`, 'debug');
+      addLog(`  模型名称: ${aiConfig.modelName}`, 'debug');
+      addLog(`  API模式: ${aiConfig.apiMode}`, 'debug');
+
+      // 7. 重置进度和表格数据
+      addLog('[Full Reorganize] 重置整理进度和表格数据', 'info');
+      this.clearOrganizingProgress(chatId);
+      
+      // 删除现有表格数据文件，重新创建
+      if (fs.existsSync(tableFilePath)) {
+        fs.unlinkSync(tableFilePath);
+        addLog('[Full Reorganize] 已删除现有表格数据文件', 'info');
+      }
+      
+      // 创建新的空表格文件
+      tableTemplateService.createTableFile(chatId, effectiveTemplateId);
+      addLog('[Full Reorganize] 已创建新的空表格文件', 'info');
+
+      // 保存关联关系
+      this.saveAssociation(chatId, effectiveTemplateId);
+
+      // 8. 开始逐条处理所有消息
+      const totalMessages = targetMessages.length;
+      addLog(`[Full Reorganize] 开始处理所有 ${totalMessages} 条消息`, 'info');
+
+      for (let i = 0; i < totalMessages; i++) {
+        const message = targetMessages[i];
+        const absoluteMessageIndex = i + 1;
+        const processedCount = i + 1;
+
+        addLog(`[Full Reorganize] 处理消息 ${absoluteMessageIndex}/${totalMessages}: ${message.role}`, 'info');
+
+        // 进度回调
+        if (onProgress) {
+          const progressPercent = Math.round((processedCount / totalMessages) * 100);
+          onProgress(absoluteMessageIndex, totalMessages, `处理消息 ${absoluteMessageIndex}/${totalMessages}...`, progressPercent);
+        }
+
+        // 发送实时更新
+        if (global.sendLogToRenderer) {
+          global.sendLogToRenderer(`[Full Reorganize] 处理消息 ${absoluteMessageIndex}/${totalMessages} (${message.role})`, 'info');
+        }
+
+        try {
+          // 构建表格数据上下文
+          addLog(`[Full Reorganize] 构建表格上下文 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'debug');
+          const tableContext = this.buildTableContext(chatId, effectiveTemplateId);
+
+          // 构建提示词
+          addLog(`[Full Reorganize] 构建AI提示词 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'debug');
+          const prompt = this.buildAIPromptForProgressive(message, template, chatId, tableContext);
+
+          // 调用AI API
+          addLog(`[Full Reorganize] 调用AI API (消息 ${absoluteMessageIndex}/${totalMessages})`, 'info');
+          const aiResponse = await this.callAIAPIWithRetry(prompt, aiConfig.apiKey, apiEndpoint, aiConfig.modelName);
+
+          if (!aiResponse || aiResponse.trim() === '') {
+            addLog(`[Full Reorganize] AI未返回有效响应 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'warn');
+            result.errors.push(`消息 ${absoluteMessageIndex}: AI未返回有效响应`);
+            result.errorCount++;
+            // 保存进度
+            this.saveOrganizingProgress(chatId, absoluteMessageIndex, totalMessages);
+            continue;
+          }
+
+          addLog(`[Full Reorganize] AI响应长度: ${aiResponse.length} 字符 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'debug');
+
+          // 解析tableEdit命令
+          addLog(`[Full Reorganize] 解析tableEdit命令 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'debug');
+          const parseResult = tableEditParser.parse(aiResponse);
+
+          if (!parseResult.success && parseResult.commands.length === 0) {
+            addLog(`[Full Reorganize] 未解析到tableEdit命令 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'warn');
+            if (parseResult.errors.length > 0) {
+              addLog(`[Full Reorganize] 解析错误: ${parseResult.errors.join('; ')}`, 'warn');
+            }
+            // 不视为错误，可能消息中没有可提取的信息
+            result.processedCount++;
+            this.saveOrganizingProgress(chatId, absoluteMessageIndex, totalMessages);
+            continue;
+          }
+
+          if (parseResult.errors.length > 0) {
+            addLog(`[Full Reorganize] 解析警告: ${parseResult.errors.join('; ')} (消息 ${absoluteMessageIndex}/${totalMessages})`, 'warn');
+          }
+
+          // 执行tableEdit命令
+          if (parseResult.commands.length > 0) {
+            addLog(`[Full Reorganize] 执行 ${parseResult.commands.length} 个tableEdit命令 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'info');
+            const execResult = this.executeTableEditCommands(chatId, parseResult.commands);
+
+            if (execResult.errors.length > 0) {
+              addLog(`[Full Reorganize] 命令执行错误: ${execResult.errors.join('; ')} (消息 ${absoluteMessageIndex}/${totalMessages})`, 'warn');
+              result.errors.push(`消息 ${absoluteMessageIndex}: ${execResult.errors.join('; ')}`);
+            }
+
+            addLog(`[Full Reorganize] 成功执行 ${execResult.executed} 个命令 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'info');
+          }
+
+          result.processedCount++;
+          // 每处理一条消息就保存进度
+          this.saveOrganizingProgress(chatId, absoluteMessageIndex, totalMessages);
+          addLog(`[Full Reorganize] 消息 ${absoluteMessageIndex}/${totalMessages} 处理完成`, 'info');
+
+        } catch (error) {
+          const errorMsg = `[Full Reorganize] 处理消息 ${absoluteMessageIndex} 失败: ${error instanceof Error ? error.message : String(error)}`;
+          addLog(errorMsg, 'error');
+          if (error instanceof Error && error.stack) {
+            addLog(`[Full Reorganize] 错误堆栈: ${error.stack}`, 'debug');
+          }
+          result.errors.push(errorMsg);
+          result.errorCount++;
+          // 单条消息处理失败不影响后续处理
+          addLog(`[Full Reorganize] 跳过消息 ${absoluteMessageIndex}，继续处理下一条`, 'info');
+        }
+      }
+
+      // 处理完成
+      addLog(`[Full Reorganize] 完全整理完成: 成功 ${result.processedCount}, 失败 ${result.errorCount}`, 'info');
+
+      if (result.errorCount > 0) {
+        addLog(`[Full Reorganize] 处理过程中有 ${result.errorCount} 条消息处理失败`, 'warn');
+        result.success = result.processedCount > 0; // 只要有成功的消息就认为整体成功
+      }
+
+      // 发送完成通知
+      if (global.sendLogToRenderer) {
+        global.sendLogToRenderer(`[Full Reorganize] 完全整理完成: 成功 ${result.processedCount}, 失败 ${result.errorCount}`, result.success ? 'info' : 'warn');
+      }
+
+      // 标记会话为已处理
+      this.setSessionProcessedStatus(chatId, result.success);
+
+      return result;
+
+    } catch (error) {
+      addLog(`[Full Reorganize] 完全整理失败: ${error}`, 'error');
+      if (error instanceof Error) {
+        addLog(`[Full Reorganize] 错误堆栈: ${error.stack}`, 'error');
+      }
+
+      // 发生严重错误时回滚表格数据
+      if (tableDataBackup && fs.existsSync(tableFilePath)) {
+        try {
+          addLog('[Full Reorganize] 检测到严重错误，正在回滚表格数据到备份状态...', 'error');
+          fs.writeFileSync(tableFilePath, tableDataBackup, 'utf-8');
+          addLog('[Full Reorganize] 表格数据已回滚到处理前的状态', 'info');
+        } catch (rollbackError) {
+          addLog(`[Full Reorganize] 回滚表格数据失败: ${rollbackError}`, 'error');
+        }
+      }
+
+      // 发送失败通知
+      if (global.sendLogToRenderer) {
+        global.sendLogToRenderer(`[Full Reorganize] 完全整理失败: ${error}`, 'error');
+      }
+
+      result.success = false;
+      result.errors.push(error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally {
+      // 释放整理锁
+      this.releaseOrganizingLock(chatId);
     }
   }
 
@@ -2426,6 +3191,8 @@ updateRow(2, 1, {"4":"朱迪","7":"兔子警官"})
     console.log('=== 开始获取表格数据 ===');
     console.log('原始 chatId:', chatId);
     console.log('转换后的 safeChatId:', safeChatId);
+    console.log('=== 获取表格数据开始 ===');
+    console.log('chatId:', chatId);
     console.log('表格数据目录:', this.chatlogDir);
     console.log('使用JSON文件路径:', jsonPath);
     console.log('文件是否存在:', fs.existsSync(jsonPath));
@@ -2439,7 +3206,7 @@ updateRow(2, 1, {"4":"朱迪","7":"兔子警官"})
         try {
           const content = fs.readFileSync(fallbackPath, 'utf8');
           const jsonData = JSON.parse(content);
-          return { sheets: jsonData.sheets || [], headers: jsonData.headers || {}, data: jsonData.data || {} };
+          return { sheets: jsonData.sheets || [], headers: jsonData.headers || {}, data: jsonData.data || {}, sheetDescriptions: {} };
         } catch (e) {
           console.error('读取备份文件失败:', e);
         }
@@ -2461,8 +3228,28 @@ updateRow(2, 1, {"4":"朱迪","7":"兔子警官"})
         console.log(`工作表 ${sheetName} 数据行数:`, data[sheetName].length);
       });
       
+      // 获取关联模板的表格描述信息
+      let sheetDescriptions: Record<string, string> = {};
+      try {
+        const templateId = this.getAssociatedTemplate(chatId);
+        if (templateId) {
+          const templates = tableTemplateService.getAllTemplates();
+          const template = templates?.find((t: any) => t.id === templateId);
+          if (template && template.sheets) {
+            template.sheets.forEach((sheet: any) => {
+              if (sheet.name) {
+                sheetDescriptions[sheet.name] = sheet.description || '';
+              }
+            });
+            console.log('表格描述信息:', sheetDescriptions);
+          }
+        }
+      } catch (descError) {
+        console.warn('获取表格描述信息失败:', descError);
+      }
+      
       console.log('=== 获取表格数据完成 ===');
-      return { sheets, headers, data };
+      return { sheets, headers, data, sheetDescriptions };
     } catch (error) {
       console.error('读取JSON文件失败:', error);
       throw new Error(`读取JSON文件失败: ${error.message}`);

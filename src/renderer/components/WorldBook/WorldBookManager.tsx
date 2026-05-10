@@ -3904,10 +3904,13 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
     {
       title: '操作',
       key: 'action',
+      width: 180,
+      fixed: 'right' as const,
       render: (_, record) => (
-        <Space size="middle">
+        <Space size="small">
           <Button
             type="link"
+            size="small"
             icon={<CloudUploadOutlined />}
             title="将世界书内容向量化并集成到知识库"
             onClick={() => handleVectorizeToWorldBook(record)}
@@ -3920,7 +3923,7 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
             okText="确定"
             cancelText="取消"
           >
-            <Button type="link" danger icon={<DeleteOutlined />}>
+            <Button type="link" size="small" danger icon={<DeleteOutlined />}>
               删除
             </Button>
           </Popconfirm>
@@ -4077,9 +4080,10 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
           rowKey="path"
           loading={loading}
           pagination={{
-            pageSize: 10,
+            pageSize,
             showSizeChanger: true,
-            showTotal: (total) => `共 ${total} 条`
+            showTotal: (total) => `共 ${total} 条`,
+            onChange: (page, size) => { setPageSize(size); },
           }}
         />
       </Card>

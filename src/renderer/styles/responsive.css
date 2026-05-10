@@ -1,0 +1,560 @@
+/*
+ * Responsive Styles - Global Responsive Layout
+ * 全局响应式布局样式
+ */
+
+/* ==========================================================================
+   Mobile First Responsive Design
+   移动优先响应式设计
+   ========================================================================== */
+
+/* -------------------------------------------------------------------------
+   Extra Small devices (phones, 480px and down)
+   超小型设备（手机，480px 及以下）
+   ------------------------------------------------------------------------- */
+@media (max-width: 575.98px) {
+  /* App Layout */
+  .app-content {
+    padding: var(--padding-mobile) !important;
+  }
+
+  /* Sidebar - 移动端隐藏侧边栏 */
+  .sidebar {
+    position: fixed;
+    left: -100%;
+    z-index: 1000;
+    width: var(--sidebar-width-tablet);
+    transition: left var(--duration-slow) ease;
+  }
+
+  .sidebar.mobile-open {
+    left: 0;
+  }
+
+  .sidebar-overlay {
+    display: block;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--bg-mask);
+    z-index: 999;
+  }
+
+  /* Header - 移动端优化 */
+  .app-header {
+    height: var(--header-height-mobile) !important;
+  }
+
+  .app-header .ant-menu {
+    line-height: var(--header-height-mobile);
+  }
+
+  /* Dashboard - 移动端优化 */
+  .dashboard {
+    padding: var(--padding-mobile) !important;
+    height: calc(100vh - var(--header-height-mobile)) !important;
+  }
+
+  .dashboard h2 {
+    font-size: var(--font-size-xl) !important;
+    margin-bottom: var(--spacing-md) !important;
+  }
+
+  .dashboard .ant-statistic-content {
+    font-size: var(--font-size-xl) !important;
+  }
+
+  .dashboard .ant-statistic-title {
+    font-size: var(--font-size-sm) !important;
+  }
+
+  .dashboard-buttons {
+    bottom: var(--spacing-md) !important;
+    right: var(--spacing-md) !important;
+    left: var(--spacing-md) !important;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+  }
+
+  .start-button, .update-button {
+    width: 100% !important;
+    height: var(--btn-height-lg) !important;
+    font-size: var(--font-size-base) !important;
+  }
+
+  /* Cards - 移动端优化 */
+  .ant-card {
+    margin-bottom: var(--spacing-md) !important;
+  }
+
+  .ant-card-head {
+    padding: 0 var(--card-padding-mobile) !important;
+    min-height: 40px !important;
+  }
+
+  .ant-card-head-title {
+    font-size: var(--font-size-base) !important;
+  }
+
+  .ant-card-body {
+    padding: var(--card-padding-mobile) !important;
+  }
+
+  /* Tables - 移动端优化 */
+  .ant-table {
+    font-size: var(--table-font-size-mobile) !important;
+  }
+
+  .ant-table-thead > tr > th,
+  .ant-table-tbody > tr > td {
+    padding: var(--table-cell-padding-mobile) !important;
+  }
+
+  /* Forms - 移动端优化 */
+  .ant-form-item {
+    margin-bottom: var(--spacing-md) !important;
+  }
+
+  .ant-form-item-label > label {
+    font-size: var(--font-size-base) !important;
+  }
+
+  .ant-input,
+  .ant-input-number,
+  .ant-select-selector,
+  .ant-picker {
+    padding: var(--spacing-xs) var(--spacing-sm) !important;
+    font-size: var(--font-size-mobile) !important;
+  }
+
+  /* Buttons - 移动端优化 */
+  .ant-btn {
+    padding: var(--spacing-xs) var(--spacing-sm) !important;
+    font-size: var(--font-size-mobile) !important;
+  }
+
+  .ant-btn-lg {
+    padding: var(--spacing-sm) var(--spacing-md) !important;
+    font-size: var(--font-size-base) !important;
+  }
+
+  /* Grid - 移动端优化 */
+  .ant-row {
+    margin: 0 calc(-1 * var(--grid-gutter-mobile) / 2) !important;
+  }
+
+  .ant-col {
+    padding: 0 calc(var(--grid-gutter-mobile) / 2) !important;
+  }
+
+  /* Lists - 移动端优化 */
+  .ant-list-item {
+    padding: var(--spacing-sm) 0 !important;
+  }
+
+  .ant-list-item-meta-title {
+    font-size: var(--font-size-base) !important;
+  }
+
+  .ant-list-item-meta-description {
+    font-size: var(--font-size-sm) !important;
+  }
+
+  /* Tabs - 移动端优化 */
+  .ant-tabs-tab {
+    padding: var(--spacing-xs) var(--spacing-sm) !important;
+    font-size: var(--font-size-base) !important;
+  }
+
+  /* Modals - 移动端优化 */
+  .ant-modal {
+    max-width: 100% !important;
+    top: 0 !important;
+    padding: 0 !important;
+  }
+
+  .ant-modal-content {
+    border-radius: 0 !important;
+    height: 100vh !important;
+  }
+
+  .ant-modal-header {
+    padding: var(--spacing-md) !important;
+  }
+
+  .ant-modal-body {
+    padding: var(--spacing-md) !important;
+  }
+
+  .ant-modal-footer {
+    padding: var(--spacing-md) !important;
+  }
+
+  /* Avatar Manager - 移动端优化 */
+  .avatar-manager {
+    padding: var(--padding-mobile) !important;
+  }
+
+  .avatar-grid .ant-col {
+    flex: 0 0 50% !important;
+    max-width: 50% !important;
+    padding: var(--spacing-xs) !important;
+  }
+
+  /* Character Manager - 移动端优化 */
+  .character-manager {
+    padding: var(--padding-mobile) !important;
+  }
+
+  .character-list .ant-col {
+    flex: 0 0 100% !important;
+    max-width: 100% !important;
+  }
+
+  /* Creative Manager - 移动端优化 */
+  .creative-manager {
+    padding: var(--padding-mobile) !important;
+  }
+
+  /* World Book Manager - 移动端优化 */
+  .world-book-manager {
+    padding: var(--padding-mobile) !important;
+  }
+
+  .world-book-grid .ant-col {
+    flex: 0 0 100% !important;
+    max-width: 100% !important;
+  }
+
+  /* Plugin Manager - 移动端优化 */
+  .plugin-manager {
+    padding: var(--padding-mobile) !important;
+  }
+
+  .plugin-grid .ant-col {
+    flex: 0 0 100% !important;
+    max-width: 100% !important;
+  }
+
+  /* Memory Chat - 移动端优化 */
+  .memory-chat-manager {
+    padding: var(--padding-mobile) !important;
+  }
+
+  .memory-chat-container {
+    height: calc(100vh - var(--header-height-mobile) - 120px) !important;
+  }
+
+  /* Settings - 移动端优化 */
+  .settings-container {
+    padding: var(--padding-mobile) !important;
+  }
+
+  .settings-tabs .ant-tabs-nav {
+    overflow-x: auto !important;
+    white-space: nowrap !important;
+  }
+
+  /* Prompt Optimizer - 移动端优化 */
+  .prompt-optimizer {
+    padding: var(--padding-mobile) !important;
+  }
+
+  /* Global Log Panel - 移动端优化 */
+  .global-log-panel {
+    max-width: 100% !important;
+  }
+
+  .global-log-panel .ant-drawer-content-wrapper {
+    width: 100% !important;
+  }
+
+  /* Character Dialogue Chat - 移动端优化 */
+  .character-dialogue-chat {
+    flex-direction: column !important;
+  }
+
+  .character-dialogue-chat .config-panel {
+    width: 100% !important;
+    max-height: 30vh !important;
+  }
+
+  .character-dialogue-chat .chat-container {
+    width: 100% !important;
+  }
+
+  /* Knowledge Base - 移动端优化 */
+  .knowledge-base-manager {
+    padding: var(--padding-mobile) !important;
+  }
+
+  .knowledge-base-grid .ant-col {
+    flex: 0 0 100% !important;
+    max-width: 100% !important;
+  }
+
+  /* Markdown Editor - 移动端优化 */
+  .markdown-editor {
+    height: calc(100vh - var(--header-height-mobile) - 100px) !important;
+  }
+
+  .markdown-editor .editor-toolbar {
+    flex-wrap: wrap !important;
+  }
+
+  /* Message Renderer - 移动端优化 */
+  .message-renderer {
+    padding: var(--spacing-sm) !important;
+  }
+
+  .message-renderer .message-content {
+    font-size: var(--font-size-mobile) !important;
+  }
+
+  /* Config Panel - 移动端优化 */
+  .config-panel {
+    padding: var(--padding-mobile) !important;
+  }
+
+  .config-panel .ant-descriptions-item-label {
+    font-size: var(--font-size-sm) !important;
+  }
+
+  .config-panel .ant-descriptions-item-content {
+    font-size: var(--font-size-base) !important;
+  }
+}
+
+/* -------------------------------------------------------------------------
+   Small devices (landscape phones, 576px and up)
+   小型设备（横屏手机，576px 及以上）
+   ------------------------------------------------------------------------- */
+@media (min-width: 576px) and (max-width: 767.98px) {
+  .app-content {
+    padding: var(--spacing-sm) !important;
+  }
+
+  .dashboard {
+    padding: var(--spacing-sm) !important;
+  }
+
+  .dashboard h2 {
+    font-size: var(--font-size-xxl) !important;
+  }
+
+  .avatar-grid .ant-col {
+    flex: 0 0 50% !important;
+    max-width: 50% !important;
+  }
+
+  .character-list .ant-col {
+    flex: 0 0 50% !important;
+    max-width: 50% !important;
+  }
+
+  .world-book-grid .ant-col {
+    flex: 0 0 50% !important;
+    max-width: 50% !important;
+  }
+
+  .plugin-grid .ant-col {
+    flex: 0 0 50% !important;
+    max-width: 50% !important;
+  }
+
+  .knowledge-base-grid .ant-col {
+    flex: 0 0 50% !important;
+    max-width: 50% !important;
+  }
+
+  .character-dialogue-chat .config-panel {
+    width: 40% !important;
+  }
+}
+
+/* -------------------------------------------------------------------------
+   Medium devices (tablets, 768px and up)
+   中型设备（平板，768px 及以上）
+   ------------------------------------------------------------------------- */
+@media (min-width: 768px) and (max-width: 991.98px) {
+  .app-content {
+    padding: var(--padding-tablet) !important;
+  }
+
+  .sidebar {
+    width: var(--sidebar-width-tablet) !important;
+  }
+
+  .app-header {
+    height: var(--header-height-tablet) !important;
+  }
+
+  .dashboard {
+    padding: var(--padding-tablet) !important;
+  }
+
+  .dashboard h2 {
+    font-size: var(--font-size-xxl) !important;
+  }
+
+  .ant-card-head {
+    padding: 0 var(--card-padding-tablet) !important;
+  }
+
+  .ant-card-body {
+    padding: var(--card-padding-tablet) !important;
+  }
+
+  .ant-table-thead > tr > th,
+  .ant-table-tbody > tr > td {
+    padding: var(--table-cell-padding-tablet) !important;
+  }
+
+  .avatar-grid .ant-col {
+    flex: 0 0 33.333333% !important;
+    max-width: 33.333333% !important;
+  }
+
+  .character-list .ant-col {
+    flex: 0 0 50% !important;
+    max-width: 50% !important;
+  }
+
+  .world-book-grid .ant-col {
+    flex: 0 0 50% !important;
+    max-width: 50% !important;
+  }
+
+  .plugin-grid .ant-col {
+    flex: 0 0 50% !important;
+    max-width: 50% !important;
+  }
+
+  .knowledge-base-grid .ant-col {
+    flex: 0 0 50% !important;
+    max-width: 50% !important;
+  }
+
+  .character-dialogue-chat .config-panel {
+    width: 30% !important;
+  }
+}
+
+/* -------------------------------------------------------------------------
+   Large devices (desktops, 992px and up)
+   大型设备（桌面，992px 及以上）
+   ------------------------------------------------------------------------- */
+@media (min-width: 992px) {
+  .app-content {
+    padding: var(--spacing-lg) !important;
+  }
+
+  .sidebar {
+    width: var(--sidebar-width-desktop) !important;
+  }
+
+  .dashboard {
+    padding: var(--spacing-lg) !important;
+  }
+}
+
+/* -------------------------------------------------------------------------
+   Extra Large devices (large desktops, 1200px and up)
+   超大型设备（大型桌面，1200px 及以上）
+   ------------------------------------------------------------------------- */
+@media (min-width: 1200px) {
+  .dashboard .ant-col {
+    flex: 0 0 25% !important;
+    max-width: 25% !important;
+  }
+}
+
+/* -------------------------------------------------------------------------
+   Extra Extra Large devices (extra large desktops, 1600px and up)
+   超超大型设备（超大型桌面，1600px 及以上）
+   ------------------------------------------------------------------------- */
+@media (min-width: 1600px) {
+  .dashboard .ant-col {
+    flex: 0 0 20% !important;
+    max-width: 20% !important;
+  }
+}
+
+/* ==========================================================================
+   Print Styles
+   打印样式
+   ========================================================================== */
+@media print {
+  .sidebar,
+  .app-header,
+  .dashboard-buttons,
+  .global-log-panel {
+    display: none !important;
+  }
+
+  .app-content {
+    padding: 0 !important;
+  }
+
+  .ant-card {
+    break-inside: avoid;
+    box-shadow: none !important;
+    border: 1px solid #ddd !important;
+  }
+}
+
+/* ==========================================================================
+   Utility Classes for Responsive Visibility
+   响应式可见性工具类
+   ========================================================================== */
+
+/* Hide on mobile */
+.hide-mobile {
+  @media (max-width: 575.98px) {
+    display: none !important;
+  }
+}
+
+/* Hide on tablet */
+.hide-tablet {
+  @media (min-width: 768px) and (max-width: 991.98px) {
+    display: none !important;
+  }
+}
+
+/* Hide on desktop */
+.hide-desktop {
+  @media (min-width: 992px) {
+    display: none !important;
+  }
+}
+
+/* Show only on mobile */
+.show-mobile-only {
+  display: none !important;
+  
+  @media (max-width: 575.98px) {
+    display: block !important;
+  }
+}
+
+/* Show only on tablet */
+.show-tablet-only {
+  display: none !important;
+  
+  @media (min-width: 768px) and (max-width: 991.98px) {
+    display: block !important;
+  }
+}
+
+/* Show only on desktop */
+.show-desktop-only {
+  display: none !important;
+  
+  @media (min-width: 992px) {
+    display: block !important;
+  }
+}

@@ -23,7 +23,7 @@ export class AIService {
     const safeTemperature = this.sanitizeNumber(config.defaultTemperature, 0.7, 0, 2);
     const safeRetryAttempts = this.sanitizeNumber(config.retryAttempts, 0, 0);
     const safeRetryDelay = this.sanitizeNumber(config.retryDelay, 1000, 0);
-    const safeTimeout = this.sanitizeNumber(config.timeout, 600000, 1);
+    const safeTimeout = this.sanitizeNumber(config.timeout, 0, 0); // 默认无超时限制
     
     const safeConfig: AIServiceConfig = {
       defaultModel: config.defaultModel,
@@ -317,7 +317,7 @@ export class AIService {
         method: 'POST',
         headers: this.buildHeaders(formattedOptions),
         body: this.buildRequestBody(formattedOptions, false),
-        timeout: (this.config as any).timeout || 600000,
+        timeout: (this.config as any).timeout || 0, // 无超时限制
         streaming: false
       });
 
@@ -589,7 +589,7 @@ export class AIService {
         method: 'POST',
         headers: this.buildHeaders(formattedOptions),
         body: this.buildRequestBody(formattedOptions, true),
-        timeout: (this.config as any).timeout || 600000,
+        timeout: (this.config as any).timeout || 0, // 无超时限制
         streaming: true
       });
 

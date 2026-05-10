@@ -97,11 +97,11 @@ interface ElectronAPI {
     openPath: (path: string) => Promise<string>;
     getRootPath: () => Promise<string>;
     getUserDataPath: () => Promise<string>;
+    getUserDataSize: () => Promise<{ success: boolean; size?: number; formattedSize?: string; error?: string }>;
   };
   update: {
-    check: () => Promise<any>;
-    download: (latestVersion: string) => Promise<any>;
-    install: (downloadPath: string) => Promise<any>;
+    check: () => Promise<{ success: boolean; message?: string; data?: { hasUpdate: boolean; currentVersion: string; latestVersion: string; commits: Array<{ hash: string; message: string; author: string; date: string }> } }>;
+    pull: () => Promise<{ success: boolean; message?: string; data?: { compiled: boolean; buildOutput: string[]; changedFiles: string[] }; logs?: string[] }>;
   };
   memory: {
     // 表格模板管理
@@ -192,6 +192,7 @@ interface ElectronAPI {
     count: () => Promise<{ success: boolean; count?: number; error?: string }>;
     rebuildIndex: () => Promise<{ success: boolean; error?: string }>;
     testStorage: () => Promise<{ success: boolean; mode: string; vectorCount: number; storagePath?: string; error?: string; details?: string }>;
+    getStorePath: () => Promise<string>;
   };
   // 向量嵌入 API
   embedding: {
@@ -217,8 +218,27 @@ interface ElectronAPI {
   };
   // 上下文管理 API
   context: {
-    retrieve: (conversation: Array<{ role: string; content: string }>, options: { topK?: number; minScore?: number; sources?: string[]; filter?: Record<string, any> }) => Promise<{ success: boolean; items?: Array<{ id: string; source: string; content: string; score: number; metadata: Record<string, any> }>; error?: string }>;
+    retrieve: (conversation: Array<{ role: string; content: string }>, options: { topK?: number; minScore?: number; sources?: string[]; filter?: Record<string, any>; scopeIds?: string[] }) => Promise<{ success: boolean; items?: Array<{ id: string; source: string; content: string; score: number; metadata: Record<string, any> }>; error?: string }>;
+    retrieveWithKeywords: (
+      conversation: Array<{ role: string; content: string }>, 
+      options: { topK?: number; minScore?: number; sources?: string[]; filter?: Record<string, any>; scopeIds?: string[] }, 
+      enableKeywordMatch?: boolean,
+      scanDepth?: number,
+      globalScanData?: {
+        personaDescription?: string;
+        characterDescription?: string;
+        characterPersonality?: string;
+        characterDepthPrompt?: string;
+        scenario?: string;
+        creatorNotes?: string;
+      }
+    ) => Promise<{ success: boolean; items?: Array<{ id: string; source: string; content: string; score: number; metadata: Record<string, any> }>; vectorItems?: any[]; keywordItems?: any[]; error?: string }>;
     compress: (items: Array<{ id: string; source: string; content: string; score: number }>, maxTokens: number) => Promise<{ success: boolean; compressed?: string; error?: string }>;
+  };
+
+  // 世界书关键词匹配 API
+  worldbook: {
+    matchKeywords: (text: string, worldBookPaths?: string[], options?: { caseSensitive?: boolean; matchWholeWords?: boolean; maxResults?: number }) => Promise<{ success: boolean; matches: Array<{ entry: any; matchedKeys: string[]; matchType: string; matchScore: number; content: string; comment?: string; name?: string }>; count: number; error?: string }>;
   };
 
   // 文档向量化 API

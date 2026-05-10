@@ -952,6 +952,10 @@ export class VectorStoreService {
       }
     });
 
+    ipcMain.handle('vector:getStorePath', async () => {
+      return path.join(app.getPath('userData'), 'vectors');
+    });
+
     ipcMain.handle('vector:testStorage', async (_event, { scopeIds }: { scopeIds?: string[] } = {}) => {
       return this.testStorageConnection(scopeIds);
     });

@@ -39,6 +39,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { useLogStore } from '../../stores/logStore';
 import { useSettingStore } from '../../stores/settingStore';
 import { AppSetting } from '../../settings';
+import '../../styles/list-common.css';
 import './PluginManager.css';
 
 const { Text } = Typography;
@@ -692,8 +693,8 @@ const PluginManager: React.FC = () => {
   };
 
   return (
-    <div className="plugin-manager">
-      <div className="plugin-header">
+    <div className={`plugin-manager list-container ${appTheme === 'dark' ? 'dark' : ''}`}>
+      <div className="plugin-header list-header">
         <h2>插件管理</h2>
         <Text type="secondary" style={{ marginBottom: 16, display: 'block' }}>
           插件存储地址: {pluginDir}

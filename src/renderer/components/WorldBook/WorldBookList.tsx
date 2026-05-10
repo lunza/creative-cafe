@@ -43,6 +43,7 @@ const WorldBookList: React.FC<WorldBookListProps> = ({
   const { theme: appTheme } = useUIStore();
   const { addLog } = useLogStore();
   const [worldBookDir, setWorldBookDir] = useState<string>('');
+  const [pageSize, setPageSize] = useState(10);
 
   useEffect(() => {
     const getWorldBookDir = async () => {
@@ -160,16 +161,19 @@ const WorldBookList: React.FC<WorldBookListProps> = ({
         </Space>
       </div>
 
-      <Card>
+      <Card className="table-container">
         <Table
           columns={columns}
           dataSource={worldBooks}
           rowKey="path"
           loading={loading}
+          bordered
           pagination={{
-            pageSize: 10,
+            pageSize,
             showSizeChanger: true,
-            showTotal: (total) => `共 ${total} 条`
+            showTotal: (total) => `共 ${total} 条`,
+            className: 'table-pagination-wrapper',
+            onChange: (page, size) => { setPageSize(size); },
           }}
         />
       </Card>

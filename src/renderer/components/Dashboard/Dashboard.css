@@ -11,30 +11,34 @@
 
 .dashboard .ant-row {
   width: 100%;
+  overflow-x: hidden;
 }
 
 .dashboard .ant-col {
   box-sizing: border-box;
+  overflow: hidden;
 }
 
 .dashboard .ant-card {
   width: 100%;
   box-sizing: border-box;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  border-radius: var(--radius-base);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
 }
 
 .dashboard .ant-card-body {
   width: 100%;
   box-sizing: border-box;
   text-align: center;
+  overflow: hidden;
 }
 
 .dashboard h2 {
   margin-bottom: 24px;
   font-size: 24px;
   font-weight: 600;
-  color: #262626;
+  color: var(--text-heading);
 }
 
 .dashboard .ant-statistic {
@@ -43,7 +47,7 @@
 
 .dashboard .ant-statistic-title {
   font-size: 14px;
-  color: #8c8c8c;
+  color: var(--text-secondary);
 }
 
 .dashboard .ant-statistic-content {
@@ -51,12 +55,11 @@
   font-weight: 600;
 }
 
-/* 背景图片区域 */
-.dashboard-background {
+.dashboard .dashboard-background {
   width: 100%;
   min-height: 100px;
   background: transparent;
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -65,12 +68,12 @@
 }
 
 .dashboard-background img {
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
 }
 
 .background-placeholder {
   text-align: center;
-  color: #8c8c8c;
+  color: var(--text-secondary);
 }
 
 .background-placeholder p {
@@ -95,7 +98,7 @@
 }
 
 .start-button {
-  box-shadow: 0 4px 12px rgba(24, 144, 255, 0.3);
+  box-shadow: var(--shadow-button);
 }
 
 .start-button:hover {
@@ -104,87 +107,84 @@
 }
 
 .update-button {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-2);
 }
 
 .update-button:hover {
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-3);
   transform: translateY(-2px);
 }
 
 /* 只在Windows上使用，不需要响应式设计 */
 
-/* 日志容器样式 */
 .dashboard .log-container {
   height: calc(100% - 48px);
   overflow-y: auto;
-  font-family: 'monospace';
-  font-size: 12px;
+  font-family: var(--font-family-code);
+  font-size: var(--font-size-xs);
   line-height: 1.4;
-  background-color: #f5f5f5;
-  padding: 12px;
-  border-radius: 4px;
+  background-color: var(--bg-code);
+  padding: var(--spacing-sm);
+  border-radius: var(--radius-sm);
   white-space: pre-wrap;
   width: 100%;
   box-sizing: border-box;
-  color: #333;
+  color: var(--text-primary);
 }
 
-/* 暗色模式样式 */
-.app-content.dark .dashboard h2 {
-  color: #f0f0f0;
+.dark .dashboard h2 {
+  color: var(--text-heading);
 }
 
-.app-content.dark .dashboard .ant-card {
-  background-color: #1f1f1f;
-  border-color: #333;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+.dark .dashboard .ant-card {
+  background-color: var(--bg-container);
+  border-color: var(--border-base);
+  box-shadow: var(--shadow-card);
 }
 
-.app-content.dark .dashboard .ant-statistic-title {
-  color: #a0a0a0;
+.dark .dashboard .ant-statistic-title {
+  color: var(--text-secondary);
 }
 
-.app-content.dark .dashboard .ant-statistic-content {
-  color: #f0f0f0;
+.dark .dashboard .ant-statistic-content {
+  color: var(--text-primary);
 }
 
-.app-content.dark .dashboard .dashboard-background {
-  background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+.dark .dashboard .dashboard-background {
+  background: linear-gradient(135deg, var(--bg-base) 0%, var(--bg-container) 100%);
+  box-shadow: var(--shadow-3);
 }
 
-.app-content.dark .dashboard .background-placeholder {
-  color: #a0a0a0;
+.dark .dashboard .background-placeholder {
+  color: var(--text-secondary);
 }
 
-.app-content.dark .dashboard .ant-card-head-title {
-  color: #f0f0f0;
+.dark .dashboard .ant-card-head-title {
+  color: var(--text-heading);
 }
 
-.app-content.dark .dashboard .ant-card-body {
-  background-color: #1f1f1f;
+.dark .dashboard .ant-card-body {
+  background-color: var(--bg-container);
 }
 
-.app-content.dark .dashboard .ant-btn {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+.dark .dashboard .ant-btn {
+  box-shadow: var(--shadow-3);
 }
 
-.app-content.dark .dashboard .update-button {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+.dark .dashboard .update-button {
+  box-shadow: var(--shadow-3);
 }
 
-.app-content.dark .dashboard .update-button:hover {
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+.dark .dashboard .update-button:hover {
+  box-shadow: var(--shadow-4);
 }
 
-/* 日志容器暗色模式样式 */
-.app-content.dark .dashboard .log-container {
-  background-color: #0d0d0d;
-  color: #ffffff;
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+.dark .dashboard .log-container {
+  background-color: var(--bg-code);
+  color: var(--text-primary);
+  font-family: var(--font-family-code);
 }
 
-.app-content.dark .dashboard .log-container .ant-text-secondary {
-  color: #a0a0a0;
+.dark .dashboard .log-container .ant-text-secondary {
+  color: var(--text-secondary);
 }

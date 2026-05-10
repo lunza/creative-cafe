@@ -78,7 +78,7 @@ export class ChatEngine implements IChatEngine {
         method: 'POST',
         headers: requestHeaders,
         body: requestBody,
-        timeout: config.max_tokens ? 60000 : 30000,
+        timeout: 0, // 无超时限制
         streaming: true,
       });
 
@@ -100,6 +100,13 @@ export class ChatEngine implements IChatEngine {
   cancelRequest(): void {
     this.isCancelled = true;
     this.cleanupListeners();
+    
+    // 调用主进程的取消请求 API，真正中止 fetch 请求
+    if (window.electronAPI?.ai?.cancel) {
+      window.electronAPI.ai.cancel().catch(() => {
+        // 忽略取消请求的错误
+      });
+    }
   }
 
   private buildApiUrl(config: AIEngineConfig): string {

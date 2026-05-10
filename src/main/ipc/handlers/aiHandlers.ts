@@ -142,6 +142,30 @@ const logDebug = (message: string, context?: any) => {
   console.debug(`[AI Handler] ${message}`, context);
 };
 
+// 存储活跃请求的 AbortController 和 timeoutId
+interface ActiveRequest {
+  controller: AbortController;
+  timeoutId?: NodeJS.Timeout;
+}
+const activeRequests = new Map<number, ActiveRequest>();
+
+// 处理取消 AI 请求
+ipcMain.handle('ai:cancel', async (event) => {
+  const senderId = event.sender.id;
+  const activeRequest = activeRequests.get(senderId);
+  if (activeRequest) {
+    activeRequest.controller.abort();
+    if (activeRequest.timeoutId) {
+      clearTimeout(activeRequest.timeoutId);
+    }
+    activeRequests.delete(senderId);
+    logInfo('AI 请求已被用户取消', { senderId });
+    return { success: true };
+  }
+  logWarn('没有找到活跃的 AI 请求可取消', { senderId });
+  return { success: false };
+});
+
 // 处理 AI 请求
 ipcMain.handle('ai:request', async (event, requestConfig: {
   url: string;
@@ -178,7 +202,26 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
       streaming: streaming
     });
     logDebug('请求头', sanitizedHeaders);
-    logDebug('请求体', sanitizedBody);
+    
+    // 打印完整请求体摘要（消息列表结构）
+    if (sanitizedBody.messages && Array.isArray(sanitizedBody.messages)) {
+      console.debug(`[AI Handler] === 请求体（完整messages） ===`);
+      console.debug(`[AI Handler] model: ${sanitizedBody.model || 'N/A'}`);
+      console.debug(`[AI Handler] stream: ${sanitizedBody.stream || false}`);
+      console.debug(`[AI Handler] messages 数量: ${sanitizedBody.messages.length}`);
+      sanitizedBody.messages.forEach((msg: any, idx: number) => {
+        const contentLen = msg.content ? msg.content.length : 0;
+        const preview = msg.content ? msg.content.substring(0, 200).replace(/\n/g, '\\n') : '(empty)';
+        const suffix = contentLen > 200 ? `... (${contentLen - 200} more chars)` : '';
+        console.debug(`[AI Handler]   message[${idx}] role=${msg.role}, content长度=${contentLen}: ${preview}${suffix}`);
+      });
+      // 同时输出完整 JSON 字符串到日志文件（不受 DevTools 截断影响）
+      const fullBodyStr = JSON.stringify(sanitizedBody, null, 2);
+      logToFile(LOG_LEVELS.DEBUG, '请求体（完整JSON）', fullBodyStr);
+      console.debug(`[AI Handler] === 请求体结束（完整JSON已写入日志文件） ===`);
+    } else {
+      logDebug('请求体', sanitizedBody);
+    }
     
     // 输入验证
     if (!url || typeof url !== 'string') {
@@ -216,13 +259,16 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
     // 如果启用流式响应
     if (streaming) {
       // 使用 Node.js 的 fetch (Electron 支持)
-      let controller: AbortController | undefined;
+      const controller = new AbortController();
       let timeoutId: NodeJS.Timeout | undefined;
       
-      const effectiveTimeout = timeout || 600000; // 默认 600 秒 (10分钟)
+      // 存储 AbortController 以便外部取消
+      const senderId = event.sender.id;
+      activeRequests.set(senderId, { controller, timeoutId: undefined });
       
-      if (effectiveTimeout) {
-        controller = new AbortController();
+      const effectiveTimeout = timeout || 0; // 默认无超时限制
+      
+      if (effectiveTimeout && effectiveTimeout > 0) {
         timeoutId = setTimeout(() => {
           logWarn(`AI 请求超时 (${effectiveTimeout}ms)，正在中止请求`, {
             timestamp: new Date().toISOString(),
@@ -231,6 +277,8 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
           });
           controller?.abort();
         }, effectiveTimeout);
+        // 更新 Map 中的 timeoutId
+        activeRequests.set(senderId, { controller, timeoutId });
       }
       
       logInfo(`正在发送流式请求到 ${url}...`, {
@@ -249,6 +297,8 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
         
         if (timeoutId) {
           clearTimeout(timeoutId);
+          // 清理 timeoutId，但保留 controller 直到请求完成
+          activeRequests.set(senderId, { controller, timeoutId: undefined });
         }
         
         // 记录响应时间
@@ -356,19 +406,6 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
           const chunk = new TextDecoder().decode(value);
           accumulatedData += chunk;
           
-          // 每 10 个 chunk 记录一次进度
-          if (chunkCount % 10 === 0) {
-            const elapsed = Date.now() - streamReadStartTime;
-            logInfo(`流式响应进度: 已接收 ${chunkCount} 个 chunk, ${totalBytesReceived} bytes, 累计 ${accumulatedData.length} 字符`, {
-              timestamp: new Date().toISOString(),
-              chunk_count: chunkCount,
-              chunk_size: chunkSize,
-              total_bytes: totalBytesReceived,
-              accumulated_length: accumulatedData.length,
-              elapsed_ms: elapsed
-            });
-          }
-          
           // 发送流式数据到渲染进程
           try {
             event.sender.send('ai:stream', {
@@ -414,13 +451,27 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
               .filter(line => line && line !== '[DONE]');
             
             if (jsonLines.length > 0) {
+              // 先合并所有 data: 行获取完整内容（用于日志）
+              let fullContent = '';
+              for (const line of jsonLines) {
+                try {
+                  const parsed = JSON.parse(line);
+                  if (parsed.choices?.[0]?.delta?.content) {
+                    fullContent += parsed.choices[0].delta.content;
+                  } else if (parsed.choices?.[0]?.message?.content) {
+                    fullContent = parsed.choices[0].message.content;
+                  }
+                } catch (e) { /* ignore */ }
+              }
+
               // 尝试解析最后一个有效行
               const lastLine = jsonLines[jsonLines.length - 1];
               try {
                 data = JSON.parse(lastLine);
-                logDebug('SSE 解析成功（最后一个 data: 行）', {
+                logInfo('[AI Handler] SSE 解析成功 - AI完整回复内容', {
                   lineCount: jsonLines.length,
-                  lastLineLength: lastLine.length
+                  fullContentLength: fullContent.length,
+                  fullContent: fullContent.substring(0, 2000) + (fullContent.length > 2000 ? `...(共${fullContent.length}字符)` : '')
                 });
               } catch (parseError) {
                 logWarn('SSE 最后一个 data: 行解析失败，尝试合并所有 data: 行', {
@@ -520,11 +571,17 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
         // 发送流式响应完成信号
         event.sender.send('ai:stream:complete', { data });
         
+        // 清理 AbortController
+        activeRequests.delete(senderId);
+        
         return {
           success: true,
           data
         };
       } catch (fetchError) {
+        // 清理 AbortController
+        activeRequests.delete(senderId);
+        
         if (timeoutId) {
           clearTimeout(timeoutId);
         }
@@ -536,7 +593,7 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
       let controller: AbortController | undefined;
       let timeoutId: NodeJS.Timeout | undefined;
       
-      if (timeout) {
+      if (timeout && timeout > 0) {
         controller = new AbortController();
         timeoutId = setTimeout(() => controller?.abort(), timeout);
       }
