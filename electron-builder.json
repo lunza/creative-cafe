@@ -1,6 +1,7 @@
 {
   "appId": "com.creativecafe.app",
   "productName": "Creative Café",
+  "icon": "build/icon.png",
   "directories": {
     "output": "release"
   },
@@ -10,6 +11,7 @@
   ],
   "npmRebuild": true,
   "win": {
+    "icon": "build/icon.png",
     "target": [
       {
         "target": "nsis",
