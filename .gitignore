@@ -11,7 +11,18 @@ node_modules
 dist
 dist-ssr
 *.local
+
+# Release and build directories
 release
+build/
+out/
+
+# Knowledge base
+knowledge_base
+
+# Documentation
+docs/
+doc/
 
 # Editor directories and files
 .vscode/*
@@ -31,13 +42,8 @@ release
 .env.test.local
 .env.production.local
 
-# Build files
-build/
-out/
-
 # OS generated files
 Thumbs.db
-.DS_Store
 
 # Temporary files
 *.tmp
