@@ -1,0 +1,358 @@
+/*
+ * Chat Module Styles - 聊天模块样式
+ * 全屏纵向布局，四个面板均分高度
+ */
+
+.chat-module {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  background: var(--bg-base);
+  overflow: hidden;
+}
+
+/* ==========================================================================
+   四个面板容器 - 全屏纵向布局
+   ========================================================================== */
+
+.chat-panels-container {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  height: 100%;
+  gap: 0;
+}
+
+/* ==========================================================================
+   单个面板 - 全屏纵向
+   ========================================================================== */
+
+.chat-panel {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+  background: var(--bg-container);
+  transition: all var(--duration-slow) var(--ease-out);
+  overflow: hidden;
+}
+
+.chat-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--bg-elevated);
+  opacity: 0;
+  transition: opacity var(--duration-normal) var(--ease-default);
+}
+
+.chat-panel:hover::before {
+  opacity: 0.3;
+}
+
+.chat-panel.active::before {
+  opacity: 0.5;
+}
+
+/* 面板内容 */
+.chat-panel-content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-lg);
+  padding: var(--spacing-xl);
+}
+
+/* 面板图标 - 扁平风格 Ant Design 图标 */
+.chat-panel-icon {
+  font-size: 56px;
+  line-height: 1;
+  transition: all var(--duration-normal) var(--ease-out);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chat-panel:hover .chat-panel-icon {
+  transform: scale(1.1);
+}
+
+.chat-panel.active .chat-panel-icon {
+  transform: scale(1.15);
+}
+
+/* 面板标签 */
+.chat-panel-label {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  transition: all var(--duration-normal) var(--ease-default);
+  white-space: nowrap;
+}
+
+.chat-panel:hover .chat-panel-label {
+  opacity: 0.85;
+}
+
+/* ==========================================================================
+   选中面板 - 浮雕边框效果
+   ========================================================================== */
+
+.chat-panel-border {
+  position: absolute;
+  inset: 8px;
+  border: 3px solid var(--color-primary);
+  border-radius: var(--radius-xl);
+  pointer-events: none;
+  transition: all var(--duration-slow) var(--ease-out);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.15),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.1),
+    0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.dark .chat-panel-border {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.2),
+    0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.chat-panel.active .chat-panel-border {
+  inset: 6px;
+  border-width: 4px;
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.15),
+    0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.dark .chat-panel.active .chat-panel-border {
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.12),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.25),
+    0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+/* ==========================================================================
+   点击闪烁动画
+   ========================================================================== */
+
+.chat-panel.flashing {
+  animation: panelFlash 0.3s ease-out;
+}
+
+@keyframes panelFlash {
+  0% {
+    filter: brightness(1);
+  }
+  30% {
+    filter: brightness(1.4);
+  }
+  100% {
+    filter: brightness(1);
+  }
+}
+
+/* ==========================================================================
+   聊天对话框（覆盖模式）
+   ========================================================================== */
+
+.chat-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  animation: fadeIn 0.3s ease-out;
+}
+
+.chat-dialog-container {
+  width: 90vw;
+  height: 90vh;
+  max-width: 1400px;
+  background: var(--bg-container);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-4);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: dialogSlideIn 0.4s ease-out;
+}
+
+.chat-dialog-wrapper {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-md) var(--spacing-lg);
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.chat-dialog-title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-heading);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.chat-dialog-title-icon {
+  font-size: 20px;
+}
+
+.chat-dialog-close-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--duration-normal) var(--ease-default);
+}
+
+.chat-dialog-close-btn:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+  transform: scale(1.05);
+}
+
+.chat-dialog-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.chat-dialog-sidebar {
+  width: 80px;
+  background: var(--bg-elevated);
+  border-right: 1px solid var(--border-light);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.chat-dialog-main {
+  flex: 1;
+  overflow: hidden;
+}
+
+.chat-dialog-main-full {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-dialog-main .chat-area,
+.chat-dialog-main-full .chat-area {
+  border-radius: 0;
+}
+
+/* ==========================================================================
+   动画
+   ========================================================================== */
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes dialogSlideIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* ==========================================================================
+   暗色主题适配
+   ========================================================================== */
+
+.dark {
+  .chat-panel {
+    background: var(--bg-container);
+  }
+
+  .chat-panel::before {
+    background: var(--bg-elevated);
+  }
+
+  .chat-dialog-overlay {
+    background: rgba(0, 0, 0, 0.6);
+  }
+
+  .chat-dialog-container {
+    background: var(--bg-container);
+  }
+
+  .chat-dialog-header {
+    background: var(--bg-elevated);
+    border-color: var(--border-light);
+  }
+
+  .chat-dialog-sidebar {
+    background: var(--bg-elevated);
+    border-color: var(--border-light);
+  }
+
+  .chat-dialog-close-btn {
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+  }
+
+  .chat-dialog-close-btn:hover {
+    background: var(--bg-active);
+    color: var(--text-primary);
+  }
+}
+
+/* ==========================================================================
+   响应式设计
+   ========================================================================== */
+
+@media (max-width: 768px) {
+  .chat-panels-container {
+    flex-direction: column;
+  }
+
+  .chat-panel-icon {
+    font-size: 40px;
+  }
+
+  .chat-panel-label {
+    font-size: var(--font-size-lg);
+  }
+
+  .chat-dialog-container {
+    width: 95vw;
+    height: 95vh;
+  }
+}

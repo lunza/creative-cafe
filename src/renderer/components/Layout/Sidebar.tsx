@@ -13,7 +13,8 @@ import {
   ThunderboltOutlined,
   DatabaseOutlined,
   FileTextOutlined,
-  EditOutlined
+  EditOutlined,
+  MessageOutlined
 } from '@ant-design/icons';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingStore } from '../../stores/settingStore';
@@ -32,6 +33,11 @@ const Sidebar: React.FC = () => {
       key: 'dashboard',
       icon: <DashboardOutlined />,
       label: '仪表盘'
+    },
+    {
+      key: 'chat',
+      icon: <MessageOutlined />,
+      label: '聊天'
     },
     {
       key: 'creative',
