@@ -6,15 +6,30 @@ import ChatMessageBubble from './ChatMessageBubble';
 import ChatInputBar from './ChatInputBar';
 import ChatTypingIndicator from './ChatTypingIndicator';
 import ConfigPanel from './ConfigPanel';
+import CharacterSelectorPanel from './CharacterSelectorPanel';
 import { useCharacterDialogueChat } from './CharacterDialogueChat.hooks';
 import { exportConversation } from './CharacterDialogueChat.utils';
 import { CharacterInfo, AIParameterConfig } from './CharacterDialogueChat.types';
+
+interface CharacterSelectorItem {
+  name: string;
+  path: string;
+  size: number;
+  modified: Date;
+  characterName?: string;
+  version?: string;
+  creator?: string;
+  tags?: string[];
+  cardVersion?: 'v1' | 'v2' | 'v3';
+}
 
 interface CharacterDialogueChatProps {
   characterInfo: CharacterInfo;
   open: boolean;
   onClose: () => void;
   avatarPath?: string;
+  characters?: CharacterSelectorItem[];
+  onCharacterSelect?: (character: CharacterSelectorItem) => void;
 }
 
 const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
@@ -22,6 +37,8 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
   open,
   onClose,
   avatarPath,
+  characters,
+  onCharacterSelect,
 }) => {
   const { 
     state, 
@@ -148,12 +165,14 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
     borderRadius: 0,
   } : {};
 
+  const showSelectorPanel = characters && characters.length > 0 && onCharacterSelect;
+
   return (
     <Modal
       open={open && !isFullscreen}
       onCancel={onClose}
       footer={null}
-      width={isFullscreen ? '100vw' : 1600}
+      width={isFullscreen ? '100vw' : (showSelectorPanel ? 1800 : 1600)}
       centered={!isFullscreen}
       closable={false}
       styles={{
@@ -285,12 +304,20 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
         }
       `}</style>
 
+      {showSelectorPanel && (
+        <CharacterSelectorPanel
+          characters={characters}
+          selectedCharacterPath={characterInfo.characterCardId}
+          onSelect={onCharacterSelect}
+        />
+      )}
+
       <div className="chat-area" style={{
         flex: 1,
         display: 'flex',
         flexDirection: 'column',
         minWidth: 0,
-        maxWidth: isFullscreen ? '70%' : undefined,
+        maxWidth: isFullscreen ? (showSelectorPanel ? '65%' : '70%') : undefined,
         position: 'relative',
         overflow: 'hidden',
       }}>

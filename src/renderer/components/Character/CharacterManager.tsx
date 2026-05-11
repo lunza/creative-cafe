@@ -15,7 +15,8 @@ import {
   RobotOutlined,
   ExperimentOutlined,
   FolderOpenOutlined,
-  CopyOutlined
+  CopyOutlined,
+  MessageOutlined
 } from '@ant-design/icons';
 import { useDataStore } from '../../stores/dataStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -26,6 +27,7 @@ import { ensurePositiveInteger } from '../../utils/requestParamUtils';
 import { sendCharacterAIRequest } from '../../utils/characterAIUtils';
 import type { ColumnsType } from 'antd/es/table';
 import ReactMarkdown from 'react-markdown';
+import { UnifiedChatDialog } from '../Chat/UnifiedChatDialog';
 import { WorldBookRelationPanel } from './WorldBookRelationPanel';
 import { useWorldBookStore } from '../../stores/worldBookStore';
 import { FieldEditor } from './FieldEditor';
@@ -317,6 +319,8 @@ const setGeneratingField = (field: string | null) => {
   const [isPolishModalOpen, setIsPolishModalOpen] = useState<boolean>(false);
   const [worldBookRelations, setWorldBookRelations] = useState<any[]>([]);
   const [pageSize, setPageSize] = useState(10);
+  const [isTestChatOpen, setIsTestChatOpen] = useState<boolean>(false);
+  const [selectedCharacter, setSelectedCharacter] = useState<Character | null>(null);
 
   // 获取当前激活的AI引擎配置
   const getActiveEngineConfig = () => {
@@ -402,6 +406,11 @@ const setGeneratingField = (field: string | null) => {
       addLog(`[Character] 删除失败: ${path}`, 'error');
       message.error('删除失败');
     }
+  };
+
+  const handleTestCharacter = async (record: Character) => {
+    setSelectedCharacter(record);
+    setIsTestChatOpen(true);
   };
 
   const handleView = async (record: Character) => {
@@ -1144,10 +1153,18 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
     {
       title: '操作',
       key: 'action',
-      width: 220,
+      width: 280,
       fixed: 'right' as const,
       render: (_, record) => (
         <Space size="small">
+          <Button
+            type="link"
+            size="small"
+            icon={<MessageOutlined />}
+            onClick={() => handleTestCharacter(record)}
+          >
+            对话
+          </Button>
           <Button
             type="link"
             size="small"
@@ -2012,6 +2029,18 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
           />
         </div>
       </Modal>
+
+      {/* 角色测试对话模态框 */}
+      <UnifiedChatDialog
+        open={isTestChatOpen}
+        onClose={() => {
+          setIsTestChatOpen(false);
+          setSelectedCharacter(null);
+        }}
+        initialCharacter={selectedCharacter || undefined}
+        showCharacterSelector={true}
+        characters={characters}
+      />
     </div>
   );
 };
