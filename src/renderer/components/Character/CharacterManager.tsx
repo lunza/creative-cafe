@@ -14,7 +14,6 @@ import {
   UserOutlined,
   RobotOutlined,
   ExperimentOutlined,
-  MessageOutlined,
   FolderOpenOutlined,
   CopyOutlined
 } from '@ant-design/icons';
@@ -27,8 +26,6 @@ import { ensurePositiveInteger } from '../../utils/requestParamUtils';
 import { sendCharacterAIRequest } from '../../utils/characterAIUtils';
 import type { ColumnsType } from 'antd/es/table';
 import ReactMarkdown from 'react-markdown';
-import { CharacterDialogueChat } from './CharacterDialogueChat';
-import type { CharacterInfo } from './CharacterDialogueChat';
 import { WorldBookRelationPanel } from './WorldBookRelationPanel';
 import { useWorldBookStore } from '../../stores/worldBookStore';
 import { FieldEditor } from './FieldEditor';
@@ -391,51 +388,6 @@ const setGeneratingField = (field: string | null) => {
     } catch (error) {
       addLog(`[Character] 优化失败: ${path}`, 'error');
       message.error('优化失败');
-    }
-  };
-
-  const handleTestCharacter = async (record: Character) => {
-    addLog(`[Character] 打开测试角色对话: ${record.name}`);
-    try {
-      const content = await window.electronAPI.character.read(record.path);
-      const characterName = content.data?.name || record.name;
-      const characterCardContent = content.data?.description || '';
-      
-      setTestChatCharacter({
-        creativeId: record.path,
-        characterCardId: record.path,
-        characterCardName: characterName,
-        characterCardContent,
-        personality: content.data?.personality || '',
-        scenario: content.data?.scenario || '',
-        first_mes: content.data?.first_mes || '',
-        mes_example: content.data?.mes_example || '',
-        system_prompt: content.data?.system_prompt || '',
-        creator_notes: content.data?.creator_notes || '',
-        alternate_greetings: content.data?.alternate_greetings || [],
-        tags: content.data?.tags || [],
-        character_version: content.data?.character_version || '',
-        creator: content.data?.creator || '',
-      });
-      
-      const isImageFile = record.path.endsWith('.png') || record.path.endsWith('.jpg') || record.path.endsWith('.jpeg') || record.path.endsWith('.webp');
-      if (isImageFile) {
-        try {
-          const result = await window.electronAPI.file.readAsBase64(record.path);
-          if (result?.success && result.data) {
-            setTestChatAvatar(result.data);
-          }
-        } catch {
-          setTestChatAvatar(undefined);
-        }
-      } else {
-        setTestChatAvatar(content.avatar || undefined);
-      }
-      
-      setIsTestChatOpen(true);
-    } catch (error) {
-      addLog(`[Character] 读取角色卡失败: ${record.path}`, 'error');
-      message.error('读取角色卡失败');
     }
   };
 
@@ -891,9 +843,6 @@ ${characterData.character_version ? `【角色版本】${characterData.character
 
   const [currentPolishField, setCurrentPolishField] = useState<string | null>(null);
   const [currentPolishText, setCurrentPolishText] = useState<string>('');
-  const [isTestChatOpen, setIsTestChatOpen] = useState<boolean>(false);
-  const [testChatCharacter, setTestChatCharacter] = useState<CharacterInfo | null>(null);
-  const [testChatAvatar, setTestChatAvatar] = useState<string | undefined>(undefined);
 
   const handlePolish = (field: string) => {
     addLog(`[Character] 准备润色字段: ${field}`);
@@ -1206,14 +1155,6 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
             onClick={() => handleEdit(record)}
           >
             编辑
-          </Button>
-          <Button
-            type="link"
-            size="small"
-            icon={<MessageOutlined />}
-            onClick={() => handleTestCharacter(record)}
-          >
-            对话
           </Button>
           <Popconfirm
             title="确定要删除这个角色卡吗？"
@@ -2071,20 +2012,6 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
           />
         </div>
       </Modal>
-
-      {/* 角色测试对话模态框 */}
-      {testChatCharacter && (
-        <CharacterDialogueChat
-          characterInfo={testChatCharacter}
-          open={isTestChatOpen}
-          onClose={() => {
-            setIsTestChatOpen(false);
-            setTestChatCharacter(null);
-            setTestChatAvatar(undefined);
-          }}
-          avatarPath={testChatAvatar}
-        />
-      )}
     </div>
   );
 };

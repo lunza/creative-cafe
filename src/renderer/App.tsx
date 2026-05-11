@@ -21,6 +21,7 @@ import TestPage from './components/Test/TestPage';
 import VectorTestPage from './components/Test/VectorTestPage';
 import DocumentVectorPage from './components/Test/DocumentVectorPage';
 import { KnowledgeBaseManager } from './components/KnowledgeBase/KnowledgeBaseManager';
+import ChatModule from './components/Chat/ChatModule';
 import './styles/ui-variables.css';
 import './styles/App.css';
 import './styles/animations.css';
@@ -60,7 +61,8 @@ function App() {
     switch (activeTab) {
       case 'dashboard':
         return <Dashboard />;
-     
+      case 'chat':
+        return <ChatModule />;
       case 'prompt-optimizer':
         return <PromptOptimizer />;
       case 'worldbook':
