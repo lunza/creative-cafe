@@ -61,9 +61,6 @@ const Settings: React.FC = () => {
         theme,
         animation: animationEnabled,
         compact: compactMode,
-        autoOptimize: false,
-        optimizeLevel: 'light',
-        backupBeforeOptimize: true,
         debugMode: setting.debugMode || false,
         logLevel: setting.logLevel || 'info',
         api_url: engine?.api_url || 'http://127.0.0.1:5000',
@@ -272,9 +269,6 @@ const Settings: React.FC = () => {
           dashboardBackgroundImage: dashboardBackgroundImage,
           debugMode: debugMode,
           vector: vectorConfig,
-          autoOptimize: values.autoOptimize ?? false,
-          optimizeLevel: values.optimizeLevel ?? 'light',
-          backupBeforeOptimize: values.backupBeforeOptimize ?? true,
         };
         
         addLog(`更新后的设置: ${JSON.stringify(updatedSetting)}`, 'info');
@@ -328,17 +322,6 @@ const Settings: React.FC = () => {
             }
           }
           
-          // 更新记忆目录
-          if (values.memoryPath) {
-            addLog(`更新记忆目录: ${values.memoryPath}`, 'info');
-            try {
-              const setDirectoryResult = await window.electronAPI.memory.setDirectory(values.memoryPath);
-              addLog(`记忆目录更新结果: ${JSON.stringify(setDirectoryResult)}`, 'info');
-            } catch (setDirectoryError) {
-              addLog(`更新记忆目录失败: ${setDirectoryError instanceof Error ? setDirectoryError.message : '未知错误'}`, 'error');
-            }
-          }
-          
           // 更新插件目录
           if (values.pluginPath) {
             addLog(`更新插件目录: ${values.pluginPath}`, 'info');
@@ -350,15 +333,14 @@ const Settings: React.FC = () => {
             }
           }
           
-          // 更新创意目录
+          // 记忆目录路径已保存到设置中
+          if (values.memoryPath) {
+            addLog(`记忆目录路径已保存: ${values.memoryPath}`, 'info');
+          }
+          
+          // 创意目录路径已保存到设置中
           if (values.creativePath) {
-            addLog(`更新创意目录: ${values.creativePath}`, 'info');
-            try {
-              const setDirectoryResult = await window.electronAPI.creative.setDirectory(values.creativePath);
-              addLog(`创意目录更新结果: ${JSON.stringify(setDirectoryResult)}`, 'info');
-            } catch (setDirectoryError) {
-              addLog(`更新创意目录失败: ${setDirectoryError instanceof Error ? setDirectoryError.message : '未知错误'}`, 'error');
-            }
+            addLog(`创意目录路径已保存: ${values.creativePath}`, 'info');
           }
           
           message.success('设置保存成功');
@@ -784,28 +766,6 @@ const Settings: React.FC = () => {
               </Form.Item>
             );
           })}
-        </Form>
-      </Card>
-
-      <Card title="优化设置" style={{ marginTop: 16 }}>
-        <Form form={form} layout="vertical">
-          <Form.Item label="自动优化" name="autoOptimize" valuePropName="checked" initialValue={false}>
-            <Switch />
-          </Form.Item>
-
-          <Form.Item label="优化级别" name="optimizeLevel">
-            <Select
-              options={[
-                { label: '轻度', value: 'light' },
-                { label: '中度', value: 'medium' },
-                { label: '深度', value: 'deep' }
-              ]}
-            />
-          </Form.Item>
-
-          <Form.Item label="备份优化前的数据" name="backupBeforeOptimize" valuePropName="checked" initialValue={true}>
-            <Switch />
-          </Form.Item>
         </Form>
       </Card>
 

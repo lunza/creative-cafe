@@ -95,6 +95,8 @@ export interface MemoryAPI {
   ) => Promise<AIProcessingResult[]>;
   applyAIResults: (chatId: string, results: AIProcessingResult[]) => Promise<string>;
   deleteChatSession: (chatId: string) => Promise<boolean>;
+  associateTemplate: (chatId: string, templateId: string) => Promise<void>;
+  getAssociatedTemplate: (chatId: string) => Promise<string | null>;
 
   getCharacterChatRecords: () => Promise<CharacterChatRecord[]>;
   getCharacterChatRecord: (fileName: string) => Promise<any>;
@@ -112,6 +114,7 @@ export interface MemoryAPI {
   // 表格数据管理
   getTableData: (chatId: string) => Promise<any>;
   saveTableData: (chatId: string, sheetName: string, sheetData: any[]) => Promise<void>;
+  autoInitializeSession: (chatId: string) => Promise<{ success: boolean; templateId: string | null }>;
 }
 
 

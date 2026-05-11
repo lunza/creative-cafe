@@ -60,11 +60,16 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
     memoryTableEnabled,
     memoryTableAutoOrganize,
     memoryTableOrganizeMode,
+    memoryTableTemplateId,
+    memoryTableTemplateName,
     isOrganizing,
     fetchMemoryTableData,
     handleMemoryTableToggle,
     handleMemoryTableAutoOrganizeToggle,
     handleMemoryTableOrganizeModeChange,
+    handleMemoryTableTemplateAssociate,
+    tokenManagementConfig,
+    handleTokenManagementConfigChange,
   } = useCharacterDialogueChat(characterInfo);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -496,6 +501,9 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
         memoryTableEnabled={memoryTableEnabled}
         memoryTableAutoOrganize={memoryTableAutoOrganize}
         memoryTableOrganizeMode={memoryTableOrganizeMode}
+        memoryTableTemplateId={memoryTableTemplateId}
+        memoryTableTemplateName={memoryTableTemplateName}
+        tokenManagementConfig={tokenManagementConfig}
         onPersonaChange={handlePersonaChange}
         onParameterChange={handleParameterChange}
         onResetParameters={handleResetParameters}
@@ -504,6 +512,8 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
         onMemoryTableToggle={handleMemoryTableToggle}
         onMemoryTableAutoOrganizeToggle={handleMemoryTableAutoOrganizeToggle}
         onMemoryTableOrganizeModeChange={handleMemoryTableOrganizeModeChange}
+        onMemoryTableTemplateAssociate={handleMemoryTableTemplateAssociate}
+        onTokenManagementConfigChange={handleTokenManagementConfigChange}
         onSaveConfig={saveConfig}
       />
     </Modal>

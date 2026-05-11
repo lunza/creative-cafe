@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { DownOutlined, RightOutlined, DatabaseOutlined, AppstoreOutlined } from '@ant-design/icons';
+import { DownOutlined, RightOutlined, DatabaseOutlined, AppstoreOutlined, QuestionCircleOutlined } from '@ant-design/icons';
+import { Tooltip } from 'antd';
 import KnowledgeBaseBindingPanel from './KnowledgeBaseBindingPanel';
 import './ConfigPanel.css';
 
@@ -38,6 +39,9 @@ const VectorizationPanel: React.FC<VectorizationPanelProps> = ({
           </div>
           <AppstoreOutlined className="vectorization-icon" />
           <span>向量化设置</span>
+          <Tooltip title="绑定知识库文档，用于对话时的向量检索和上下文增强">
+            <QuestionCircleOutlined className="vectorization-tooltip-icon" />
+          </Tooltip>
         </div>
       </div>
 

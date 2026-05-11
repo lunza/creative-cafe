@@ -223,8 +223,8 @@ const KnowledgeBaseBindingPanel: React.FC<KnowledgeBaseBindingPanelProps> = ({
             onChange={handleSelectChange}
             style={{ width: '100%' }}
             maxTagCount="responsive"
-            dropdownMatchSelectWidth={false}
-            dropdownClassName="knowledge-base-dropdown"
+            popupMatchSelectWidth={false}
+            classNames={{ popup: { root: 'knowledge-base-dropdown' } }}
             allowClear
             optionFilterProp="children"
           >

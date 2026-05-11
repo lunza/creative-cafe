@@ -37,7 +37,7 @@ const Sidebar: React.FC = () => {
     {
       key: 'chat',
       icon: <MessageOutlined />,
-      label: '聊天'
+      label: '创作中心'
     },
     {
       key: 'creative',

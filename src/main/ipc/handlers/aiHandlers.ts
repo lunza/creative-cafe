@@ -146,6 +146,7 @@ const logDebug = (message: string, context?: any) => {
 interface ActiveRequest {
   controller: AbortController;
   timeoutId?: NodeJS.Timeout;
+  connectionTimeoutId?: NodeJS.Timeout;
 }
 const activeRequests = new Map<number, ActiveRequest>();
 
@@ -157,6 +158,9 @@ ipcMain.handle('ai:cancel', async (event) => {
     activeRequest.controller.abort();
     if (activeRequest.timeoutId) {
       clearTimeout(activeRequest.timeoutId);
+    }
+    if (activeRequest.connectionTimeoutId) {
+      clearTimeout(activeRequest.connectionTimeoutId);
     }
     activeRequests.delete(senderId);
     logInfo('AI 请求已被用户取消', { senderId });
@@ -261,32 +265,48 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
       // 使用 Node.js 的 fetch (Electron 支持)
       const controller = new AbortController();
       let timeoutId: NodeJS.Timeout | undefined;
+      let connectionTimeoutId: NodeJS.Timeout | undefined;
       
       // 存储 AbortController 以便外部取消
       const senderId = event.sender.id;
-      activeRequests.set(senderId, { controller, timeoutId: undefined });
       
-      const effectiveTimeout = timeout || 0; // 默认无超时限制
+      // 双层超时策略
+      const CONNECTION_TIMEOUT = 30000; // 30秒连接超时
+      const effectiveTimeout = timeout || 120000; // 默认 120 秒请求超时
       
-      if (effectiveTimeout && effectiveTimeout > 0) {
-        timeoutId = setTimeout(() => {
-          logWarn(`AI 请求超时 (${effectiveTimeout}ms)，正在中止请求`, {
-            timestamp: new Date().toISOString(),
-            url: url,
-            timeout: effectiveTimeout
-          });
-          controller?.abort();
-        }, effectiveTimeout);
-        // 更新 Map 中的 timeoutId
-        activeRequests.set(senderId, { controller, timeoutId });
-      }
+      activeRequests.set(senderId, { controller, timeoutId: undefined, connectionTimeoutId: undefined });
       
       logInfo(`正在发送流式请求到 ${url}...`, {
         timestamp: startTimeStr,
         url: url,
         method: method,
-        timeout: effectiveTimeout
+        connectionTimeout: CONNECTION_TIMEOUT,
+        requestTimeout: effectiveTimeout
       });
+      
+      // 设置连接超时检测（30秒）
+      connectionTimeoutId = setTimeout(() => {
+        logWarn(`AI 请求连接超时 (${CONNECTION_TIMEOUT}ms)，正在中止请求`, {
+          timestamp: new Date().toISOString(),
+          url: url,
+          connectionTimeout: CONNECTION_TIMEOUT
+        });
+        controller?.abort();
+      }, CONNECTION_TIMEOUT);
+      
+      // 设置请求超时
+      timeoutId = setTimeout(() => {
+        logWarn(`AI 请求响应超时 (${effectiveTimeout}ms)，正在中止请求`, {
+          timestamp: new Date().toISOString(),
+          url: url,
+          requestTimeout: effectiveTimeout
+        });
+        controller?.abort();
+      }, effectiveTimeout);
+      
+      // 更新 Map 中的 timeoutId
+      activeRequests.set(senderId, { controller, timeoutId, connectionTimeoutId });
+      
       try {
         const response = await fetch(url, {
           method,
@@ -295,10 +315,16 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
           signal: controller?.signal
         });
         
+        // 连接成功，清除连接超时
+        if (connectionTimeoutId) {
+          clearTimeout(connectionTimeoutId);
+          connectionTimeoutId = undefined;
+        }
+        
         if (timeoutId) {
           clearTimeout(timeoutId);
           // 清理 timeoutId，但保留 controller 直到请求完成
-          activeRequests.set(senderId, { controller, timeoutId: undefined });
+          activeRequests.set(senderId, { controller, timeoutId: undefined, connectionTimeoutId: undefined });
         }
         
         // 记录响应时间
@@ -471,7 +497,7 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
                 logInfo('[AI Handler] SSE 解析成功 - AI完整回复内容', {
                   lineCount: jsonLines.length,
                   fullContentLength: fullContent.length,
-                  fullContent: fullContent.substring(0, 2000) + (fullContent.length > 2000 ? `...(共${fullContent.length}字符)` : '')
+                  fullContent: fullContent
                 });
               } catch (parseError) {
                 logWarn('SSE 最后一个 data: 行解析失败，尝试合并所有 data: 行', {
@@ -579,37 +605,64 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
           data
         };
       } catch (fetchError) {
-        // 清理 AbortController
+        // 清理 AbortController 和超时定时器
         activeRequests.delete(senderId);
         
         if (timeoutId) {
           clearTimeout(timeoutId);
+        }
+        if (connectionTimeoutId) {
+          clearTimeout(connectionTimeoutId);
         }
         throw fetchError;
       }
     } else {
       // 普通响应
       // 使用 Node.js 的 fetch (Electron 支持)
-      let controller: AbortController | undefined;
+      const controller = new AbortController();
       let timeoutId: NodeJS.Timeout | undefined;
       
-      if (timeout && timeout > 0) {
-        controller = new AbortController();
-        timeoutId = setTimeout(() => controller?.abort(), timeout);
-      }
+      // 双层超时策略
+      const CONNECTION_TIMEOUT = 30000; // 30秒连接超时
+      const effectiveTimeout = timeout || 120000; // 默认 120 秒请求超时
+      
+      // 设置连接超时检测（30秒）
+      const connectionTimeoutId = setTimeout(() => {
+        logWarn(`AI 请求连接超时 (${CONNECTION_TIMEOUT}ms)，正在中止请求`, {
+          timestamp: new Date().toISOString(),
+          url: url,
+          connectionTimeout: CONNECTION_TIMEOUT
+        });
+        controller.abort();
+      }, CONNECTION_TIMEOUT);
+      
+      // 设置请求超时
+      timeoutId = setTimeout(() => {
+        logWarn(`AI 请求响应超时 (${effectiveTimeout}ms)，正在中止请求`, {
+          timestamp: new Date().toISOString(),
+          url: url,
+          requestTimeout: effectiveTimeout
+        });
+        controller.abort();
+      }, effectiveTimeout);
       
       logInfo(`正在发送请求到 ${url}...`, {
         timestamp: startTimeStr,
         url: url,
-        method: method
+        method: method,
+        connectionTimeout: CONNECTION_TIMEOUT,
+        requestTimeout: effectiveTimeout
       });
       try {
         const response = await fetch(url, {
           method,
           headers,
           body: JSON.stringify(body),
-          signal: controller?.signal
+          signal: controller.signal
         });
+        
+        // 连接成功，清除连接超时
+        clearTimeout(connectionTimeoutId);
         
         if (timeoutId) {
           clearTimeout(timeoutId);

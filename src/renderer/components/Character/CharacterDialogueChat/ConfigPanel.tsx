@@ -5,8 +5,16 @@ import PersonaPanel from './PersonaPanel';
 import ParameterPanel from './ParameterPanel';
 import VectorizationPanel from './VectorizationPanel';
 import MemoryTablePanel from './MemoryTablePanel';
+import TokenManagementPanel from './TokenManagementPanel';
 import { UserPersona, AIParameterConfig, EffectiveAIParams } from './CharacterDialogueChat.types';
 import './ConfigPanel.css';
+
+interface TokenManagementConfig {
+  maxContextTokens?: number;
+  reservedForResponse?: number;
+  minMessagesToKeep?: number;
+  maxMessagesToKeep?: number;
+}
 
 interface ConfigPanelProps {
   characterCardId: string;
@@ -20,6 +28,9 @@ interface ConfigPanelProps {
   memoryTableEnabled: boolean;
   memoryTableAutoOrganize: boolean;
   memoryTableOrganizeMode: 'sync' | 'async';
+  memoryTableTemplateId: string | null;
+  memoryTableTemplateName: string;
+  tokenManagementConfig: TokenManagementConfig;
   onPersonaChange: (personaId: string) => void;
   onParameterChange: (params: Partial<AIParameterConfig>) => void;
   onResetParameters: () => void;
@@ -28,6 +39,8 @@ interface ConfigPanelProps {
   onMemoryTableToggle: (enabled: boolean) => void;
   onMemoryTableAutoOrganizeToggle: (enabled: boolean) => void;
   onMemoryTableOrganizeModeChange: (mode: 'sync' | 'async') => void;
+  onMemoryTableTemplateAssociate: (templateId: string, templateName: string) => void;
+  onTokenManagementConfigChange: (config: Partial<TokenManagementConfig>) => void;
   onSaveConfig: () => void;
 }
 
@@ -43,6 +56,9 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
   memoryTableEnabled,
   memoryTableAutoOrganize,
   memoryTableOrganizeMode,
+  memoryTableTemplateId,
+  memoryTableTemplateName,
+  tokenManagementConfig,
   onPersonaChange,
   onParameterChange,
   onResetParameters,
@@ -51,6 +67,8 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
   onMemoryTableToggle,
   onMemoryTableAutoOrganizeToggle,
   onMemoryTableOrganizeModeChange,
+  onMemoryTableTemplateAssociate,
+  onTokenManagementConfigChange,
   onSaveConfig,
 }) => {
   return (
@@ -60,6 +78,13 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
         selectedPersonaId={selectedPersonaId}
         loading={personasLoading}
         onPersonaChange={onPersonaChange}
+      />
+      <div className="config-panel-divider" />
+      <ParameterPanel
+        effectiveParams={effectiveParams}
+        customParameters={customParameters}
+        onParameterChange={onParameterChange}
+        onResetParameters={onResetParameters}
       />
       <div className="config-panel-divider" />
       <VectorizationPanel
@@ -73,17 +98,18 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
         enabled={memoryTableEnabled}
         autoOrganize={memoryTableAutoOrganize}
         organizeMode={memoryTableOrganizeMode}
+        associatedTemplateId={memoryTableTemplateId}
+        associatedTemplateName={memoryTableTemplateName}
         characterCardName={characterCardName}
         onToggle={onMemoryTableToggle}
         onAutoOrganizeToggle={onMemoryTableAutoOrganizeToggle}
         onOrganizeModeChange={onMemoryTableOrganizeModeChange}
+        onTemplateAssociate={onMemoryTableTemplateAssociate}
       />
       <div className="config-panel-divider" />
-      <ParameterPanel
-        effectiveParams={effectiveParams}
-        customParameters={customParameters}
-        onParameterChange={onParameterChange}
-        onResetParameters={onResetParameters}
+      <TokenManagementPanel
+        config={tokenManagementConfig}
+        onConfigChange={onTokenManagementConfigChange}
       />
       <div className="config-panel-divider" />
       <div className="config-panel-actions">

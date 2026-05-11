@@ -161,16 +161,17 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-bottom: 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  user-select: none;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   transition: background-color 0.2s ease;
+  user-select: none;
   position: relative;
 }
 
 .parameter-panel-header:hover {
-  background-color: rgba(255, 255, 255, 0.02);
-  border-radius: 4px;
+  background-color: rgba(255, 255, 255, 0.04);
 }
 
 .parameter-collapse-icon {
@@ -182,6 +183,11 @@
   justify-content: center;
 }
 
+.parameter-icon {
+  font-size: 16px;
+  color: #f59e0b;
+}
+
 .parameter-panel-title {
   display: flex;
   align-items: center;
@@ -190,6 +196,17 @@
   font-weight: 600;
   color: #e2e8f0;
   margin: 0;
+}
+
+.parameter-tooltip-icon {
+  font-size: 12px;
+  color: #94a3b8;
+  cursor: help;
+  transition: color 0.2s ease;
+}
+
+.parameter-tooltip-icon:hover {
+  color: #8b5cf6;
 }
 
 .parameter-panel-header-right {
@@ -229,6 +246,17 @@
 .parameter-panel-content.collapsed {
   max-height: 0;
   opacity: 0;
+}
+
+.parameter-panel-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 8px;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .parameter-custom-badge {
@@ -362,16 +390,16 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-bottom: 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  user-select: none;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   transition: background-color 0.2s ease;
-  position: relative;
+  user-select: none;
 }
 
 .vectorization-panel-header:hover {
-  background-color: rgba(255, 255, 255, 0.02);
-  border-radius: 4px;
+  background-color: rgba(255, 255, 255, 0.04);
 }
 
 .vectorization-collapse-icon {
@@ -398,11 +426,23 @@
   color: #3b82f6;
 }
 
+.vectorization-tooltip-icon {
+  font-size: 12px;
+  color: #94a3b8;
+  cursor: help;
+  transition: color 0.2s ease;
+}
+
+.vectorization-tooltip-icon:hover {
+  color: #8b5cf6;
+}
+
 .vectorization-panel-content {
   max-height: 1000px;
   opacity: 1;
   overflow: hidden;
   transition: max-height 0.3s ease, opacity 0.2s ease;
+  padding-top: 8px;
 }
 
 .vectorization-panel-content.collapsed {
@@ -415,6 +455,7 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  margin-top: 8px;
   padding: 12px;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.03);
@@ -754,6 +795,7 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  margin-top: 8px;
   padding: 12px;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.03);
@@ -791,6 +833,204 @@
   flex-shrink: 0;
 }
 
+/* Token管理面板样式 */
+.token-management-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0;
+}
+
+.token-management-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: background-color 0.2s ease;
+  user-select: none;
+}
+
+.token-management-panel-header:hover {
+  background-color: rgba(255, 255, 255, 0.04);
+}
+
+.token-management-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2e8f0;
+  margin: 0;
+}
+
+.token-management-collapse-icon {
+  font-size: 12px;
+  color: #8b5cf6;
+  width: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.token-management-icon {
+  font-size: 16px;
+  color: #8b5cf6;
+}
+
+.token-management-tooltip-icon {
+  font-size: 12px;
+  color: #94a3b8;
+  cursor: help;
+  transition: color 0.2s ease;
+}
+
+.token-management-tooltip-icon:hover {
+  color: #8b5cf6;
+}
+
+.token-management-panel-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 1000px;
+  opacity: 1;
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.2s ease;
+}
+
+.token-management-panel-content.collapsed {
+  max-height: 0;
+  opacity: 0;
+}
+
+.token-management-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 8px;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.token-config-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.token-config-fields.disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.token-config-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.token-config-label {
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  color: #cbd5e1;
+  font-weight: 500;
+}
+
+.token-config-label .anticon {
+  flex-shrink: 0;
+}
+
+.token-management-preset-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  min-width: 0;
+}
+
+.token-management-preset-row .ant-typography {
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 70px;
+}
+
+.token-model-dropdown .ant-select-item {
+  padding: 8px 12px !important;
+}
+
+.token-model-dropdown .ant-select-item-option-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.token-management-presets {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.token-preset-card {
+  background: rgba(255, 255, 255, 0.02) !important;
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+}
+
+.token-preset-card .ant-card-body {
+  padding: 12px !important;
+}
+
+.token-preset-card .ant-btn-primary {
+  background: linear-gradient(135deg, #8b5cf6 0%, #a855f7 100%) !important;
+  border: none !important;
+}
+
+.token-management-advanced {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.token-management-advanced .ant-card {
+  background: rgba(255, 255, 255, 0.02) !important;
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+}
+
+.token-management-advanced .ant-card-head {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+  min-height: 36px !important;
+}
+
+.token-management-advanced .ant-card-head-title {
+  font-size: 12px !important;
+  color: #cbd5e1 !important;
+}
+
+.token-management-advanced .ant-card-body {
+  padding: 10px 12px !important;
+}
+
+.token-management-tips {
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
 @media (max-width: 768px) {
   .config-panel {
     width: 100%;
@@ -798,4 +1038,53 @@
     border-top: 1px solid rgba(139, 92, 246, 0.2);
     max-height: 40vh;
   }
+}
+
+.memory-table-action-row {
+  display: flex;
+  justify-content: center;
+}
+
+.memory-table-associate-btn {
+  background: rgba(34, 197, 94, 0.08) !important;
+  border: 1px solid rgba(34, 197, 94, 0.3) !important;
+  color: #22c55e !important;
+  font-size: 12px !important;
+  height: 28px !important;
+  border-radius: 6px !important;
+  transition: all 0.2s ease !important;
+}
+
+.memory-table-associate-btn:hover {
+  background: rgba(34, 197, 94, 0.15) !important;
+  border-color: rgba(34, 197, 94, 0.5) !important;
+  color: #4ade80 !important;
+}
+
+.memory-table-associate-btn.has-association {
+  background: rgba(59, 130, 246, 0.08) !important;
+  border: 1px solid rgba(59, 130, 246, 0.3) !important;
+  color: #3b82f6 !important;
+}
+
+.memory-table-associate-btn.has-association:hover {
+  background: rgba(59, 130, 246, 0.15) !important;
+  border-color: rgba(59, 130, 246, 0.5) !important;
+  color: #60a5fa !important;
+}
+
+.memory-table-preview-btn {
+  background: rgba(139, 92, 246, 0.08) !important;
+  border: 1px solid rgba(139, 92, 246, 0.3) !important;
+  color: #8b5cf6 !important;
+  font-size: 12px !important;
+  height: 28px !important;
+  border-radius: 6px !important;
+  transition: all 0.2s ease !important;
+}
+
+.memory-table-preview-btn:hover {
+  background: rgba(139, 92, 246, 0.15) !important;
+  border-color: rgba(139, 92, 246, 0.5) !important;
+  color: #a78bfa !important;
 }

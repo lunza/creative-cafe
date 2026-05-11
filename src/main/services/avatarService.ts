@@ -1,13 +1,13 @@
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
+import { getUserDataPath } from '../utils/appPath';
 
 class AvatarService {
   private avatarDir: string;
 
   constructor() {
-    const projectRoot = process.cwd();
-    this.avatarDir = path.join(projectRoot, 'data', 'user-avatars');
+    this.avatarDir = path.join(getUserDataPath(), 'data', 'avatars');
     console.log('[AvatarService] Avatar directory:', this.avatarDir);
     this.ensureDirectoryExists();
   }
@@ -93,8 +93,7 @@ class AvatarService {
   setAvatarDir(dir: string) {
     let resolvedPath = dir;
     if (!path.isAbsolute(dir)) {
-      const appRootDir = process.cwd();
-      resolvedPath = path.resolve(appRootDir, dir);
+      resolvedPath = path.join(getUserDataPath(), dir);
     }
     this.avatarDir = path.normalize(resolvedPath);
     console.log('[AvatarService] Avatar directory set to:', this.avatarDir);

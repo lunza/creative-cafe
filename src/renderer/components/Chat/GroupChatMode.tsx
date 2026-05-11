@@ -1,5 +1,5 @@
 import React from 'react';
-import './ChatModule.css';
+import './CreationCenter.css';
 
 export const GroupChatMode: React.FC = () => {
   return (

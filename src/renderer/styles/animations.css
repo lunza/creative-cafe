@@ -197,15 +197,17 @@
 
 /* 页面切换动画 */
 .page-transition-wrapper {
-  animation: pageEnter var(--duration-slower) var(--ease-out);
+  animation-fill-mode: both;
 }
 
 .page-transition-wrapper.page-enter {
   animation: pageEnter var(--duration-slower) var(--ease-out);
+  animation-fill-mode: both;
 }
 
 .page-transition-wrapper.page-exit {
   animation: pageExit var(--duration-normal) var(--ease-in);
+  animation-fill-mode: both;
 }
 
 /* 模态框动画 */

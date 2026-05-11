@@ -1,0 +1,782 @@
+/*
+ * Creation Center Styles - 创作中心样式
+ * 全屏纵向布局，四个面板均分高度
+ * 包含动态效果与纹理样式系统
+ */
+
+/* ==========================================================================
+   CSS 变量规范 - 动效与纹理系统
+   ========================================================================== */
+
+:root {
+  /* 动效时长 */
+  --duration-fast: 0.15s;
+  --duration-normal: 0.3s;
+  --duration-slow: 0.45s;
+  --duration-slower: 0.6s;
+
+  /* 缓动函数 */
+  --ease-default: ease;
+  --ease-out: cubic-bezier(0.33, 1, 0.68, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out-back: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* 纹理透明度 */
+  --texture-opacity: 0.06;
+  --texture-opacity-hover: 0.1;
+  --texture-opacity-active: 0.15;
+
+  /* 面板主题色 */
+  --panel-chat-color: #6366f1;
+  --panel-chat-active: #818cf8;
+  --panel-chat-glow: rgba(99, 102, 241, 0.3);
+
+  --panel-group-color: #ec4899;
+  --panel-group-active: #f472b6;
+  --panel-group-glow: rgba(236, 72, 153, 0.3);
+
+  --panel-creative-color: #f59e0b;
+  --panel-creative-active: #fbbf24;
+  --panel-creative-glow: rgba(245, 158, 11, 0.3);
+
+  --panel-game-color: #10b981;
+  --panel-game-active: #34d399;
+  --panel-game-glow: rgba(16, 185, 129, 0.3);
+}
+
+/* ==========================================================================
+   基础容器
+   ========================================================================== */
+
+.chat-module {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  background: var(--bg-base);
+  overflow: hidden;
+}
+
+/* ==========================================================================
+   四个面板容器 - 全屏纵向布局
+   ========================================================================== */
+
+.chat-panels-container {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  height: 100%;
+  gap: 0;
+  position: relative;
+}
+
+/* ==========================================================================
+   单个面板 - 基础样式
+   ========================================================================== */
+
+.chat-panel {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+  background: var(--bg-container);
+  transition: all var(--duration-slow) var(--ease-out);
+  overflow: hidden;
+  will-change: transform, filter;
+  transform: translateZ(0);
+}
+
+/* ==========================================================================
+   纹理背景系统
+   ========================================================================== */
+
+/* 纹理层叠基础 */
+.chat-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity var(--duration-normal) var(--ease-default);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* 聊天模式纹理 - 对话气泡纹理 */
+.chat-panel[data-panel="chat"]::before {
+  background-image: 
+    radial-gradient(circle at 20% 30%, var(--panel-chat-color) 1px, transparent 1px),
+    radial-gradient(circle at 80% 70%, var(--panel-chat-color) 1px, transparent 1px),
+    radial-gradient(circle at 40% 80%, var(--panel-chat-color) 0.8px, transparent 0.8px),
+    radial-gradient(circle at 70% 20%, var(--panel-chat-color) 0.8px, transparent 0.8px),
+    linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, transparent 50%, rgba(99, 102, 241, 0.05) 100%);
+  background-size: 60px 60px, 80px 80px, 40px 40px, 50px 50px, 100% 100%;
+  opacity: var(--texture-opacity);
+}
+
+.chat-panel[data-panel="chat"]:hover::before {
+  opacity: var(--texture-opacity-hover);
+}
+
+.chat-panel[data-panel="chat"].active::before {
+  opacity: var(--texture-opacity-active);
+  animation: chatBreathing 4s ease-in-out infinite;
+}
+
+/* 群聊模式纹理 - 社交网络节点纹理 */
+.chat-panel[data-panel="group"]::before {
+  background-image: 
+    radial-gradient(circle at 25% 25%, var(--panel-group-color) 1.5px, transparent 1.5px),
+    radial-gradient(circle at 75% 75%, var(--panel-group-color) 1.5px, transparent 1.5px),
+    radial-gradient(circle at 50% 50%, var(--panel-group-color) 1px, transparent 1px),
+    radial-gradient(circle at 20% 80%, var(--panel-group-color) 1px, transparent 1px),
+    radial-gradient(circle at 80% 20%, var(--panel-group-color) 1px, transparent 1px),
+    linear-gradient(135deg, rgba(236, 72, 153, 0.1) 0%, transparent 50%, rgba(236, 72, 153, 0.05) 100%);
+  background-size: 50px 50px, 50px 50px, 35px 35px, 45px 45px, 45px 45px, 100% 100%;
+  opacity: var(--texture-opacity);
+}
+
+.chat-panel[data-panel="group"]:hover::before {
+  opacity: var(--texture-opacity-hover);
+}
+
+.chat-panel[data-panel="group"].active::before {
+  opacity: var(--texture-opacity-active);
+  animation: groupPulse 3s ease-in-out infinite;
+}
+
+/* 写作模式纹理 - 纸张质感纹理 */
+.chat-panel[data-panel="creative"]::before {
+  background-image: 
+    repeating-linear-gradient(0deg, transparent, transparent 28px, rgba(245, 158, 11, 0.08) 28px, rgba(245, 158, 11, 0.08) 29px),
+    repeating-linear-gradient(90deg, transparent, transparent 28px, rgba(245, 158, 11, 0.05) 28px, rgba(245, 158, 11, 0.05) 29px),
+    linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, transparent 50%, rgba(245, 158, 11, 0.05) 100%);
+  background-size: 100% 100%, 100% 100%, 100% 100%;
+  opacity: var(--texture-opacity);
+}
+
+.chat-panel[data-panel="creative"]:hover::before {
+  opacity: var(--texture-opacity-hover);
+}
+
+.chat-panel[data-panel="creative"].active::before {
+  opacity: var(--texture-opacity-active);
+  animation: creativeShimmer 2.5s ease-in-out infinite;
+}
+
+/* 游戏模式纹理 - 像素风格纹理 */
+.chat-panel[data-panel="game"]::before {
+  background-image: 
+    repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(16, 185, 129, 0.12) 3px, rgba(16, 185, 129, 0.12) 4px),
+    repeating-linear-gradient(90deg, transparent, transparent 3px, rgba(16, 185, 129, 0.08) 3px, rgba(16, 185, 129, 0.08) 4px),
+    linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, transparent 50%, rgba(16, 185, 129, 0.05) 100%);
+  background-size: 100% 100%, 100% 100%, 100% 100%;
+  opacity: var(--texture-opacity);
+}
+
+.chat-panel[data-panel="game"]:hover::before {
+  opacity: var(--texture-opacity-hover);
+}
+
+.chat-panel[data-panel="game"].active::before {
+  opacity: var(--texture-opacity-active);
+}
+
+/* ==========================================================================
+   动态效果动画 - 各模式专属
+   ========================================================================== */
+
+/* 聊天模式 - 呼吸动画 */
+@keyframes chatBreathing {
+  0%, 100% {
+    opacity: var(--texture-opacity-active);
+    transform: scale(1);
+  }
+  50% {
+    opacity: calc(var(--texture-opacity-active) * 0.8);
+    transform: scale(1.02);
+  }
+}
+
+/* 群聊模式 - 脉冲扩散动画 */
+@keyframes groupPulse {
+  0%, 100% {
+    opacity: var(--texture-opacity-active);
+    transform: scale(1);
+  }
+  50% {
+    opacity: calc(var(--texture-opacity-active) * 1.1);
+    transform: scale(1.01);
+  }
+}
+
+/* 写作模式 - 灵感闪烁动画 */
+@keyframes creativeShimmer {
+  0%, 100% {
+    opacity: var(--texture-opacity-active);
+  }
+  25% {
+    opacity: calc(var(--texture-opacity-active) * 1.2);
+  }
+  50% {
+    opacity: var(--texture-opacity-active);
+  }
+  75% {
+    opacity: calc(var(--texture-opacity-active) * 0.9);
+  }
+}
+
+/* 游戏模式 - 扫描线动画 */
+.chat-panel[data-panel="game"].active::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, var(--panel-game-color), transparent);
+  animation: gameScanline 3s linear infinite;
+  opacity: 0.6;
+  pointer-events: none;
+  z-index: 2;
+}
+
+@keyframes gameScanline {
+  0% {
+    top: -3px;
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.6;
+  }
+  90% {
+    opacity: 0.6;
+  }
+  100% {
+    top: 100%;
+    opacity: 0;
+  }
+}
+
+/* ==========================================================================
+   悬停层叠效果
+   ========================================================================== */
+
+.chat-panel .hover-overlay {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-elevated);
+  opacity: 0;
+  transition: opacity var(--duration-normal) var(--ease-default);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.chat-panel:hover .hover-overlay {
+  opacity: 0.3;
+}
+
+.chat-panel.active .hover-overlay {
+  opacity: 0.5;
+}
+
+/* ==========================================================================
+   面板内容
+   ========================================================================== */
+
+.chat-panel-content {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-lg);
+  padding: var(--spacing-xl);
+  transition: transform var(--duration-normal) var(--ease-out);
+}
+
+.chat-panel:hover .chat-panel-content {
+  transform: translateY(-2px);
+}
+
+/* ==========================================================================
+   面板图标 - 扁平风格 Ant Design 图标
+   ========================================================================== */
+
+.chat-panel-icon {
+  font-size: 56px;
+  line-height: 1;
+  transition: all var(--duration-normal) var(--ease-out);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
+}
+
+.chat-panel:hover .chat-panel-icon {
+  transform: scale(1.1);
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.15));
+}
+
+.chat-panel.active .chat-panel-icon {
+  transform: scale(1.15);
+  filter: drop-shadow(0 4px 12px var(--panel-glow, rgba(99, 102, 241, 0.2)));
+}
+
+/* 各模式图标颜色增强 */
+.chat-panel[data-panel="chat"] .chat-panel-icon {
+  --panel-glow: var(--panel-chat-glow);
+}
+
+.chat-panel[data-panel="group"] .chat-panel-icon {
+  --panel-glow: var(--panel-group-glow);
+}
+
+.chat-panel[data-panel="creative"] .chat-panel-icon {
+  --panel-glow: var(--panel-creative-glow);
+}
+
+.chat-panel[data-panel="game"] .chat-panel-icon {
+  --panel-glow: var(--panel-game-glow);
+}
+
+/* ==========================================================================
+   面板标签
+   ========================================================================== */
+
+.chat-panel-label {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  transition: all var(--duration-normal) var(--ease-default);
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.chat-panel:hover .chat-panel-label {
+  opacity: 0.85;
+}
+
+/* ==========================================================================
+   面板描述
+   ========================================================================== */
+
+.chat-panel-description {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  text-align: center;
+  line-height: 1.4;
+  max-width: 180px;
+  opacity: 0.7;
+  transition: opacity var(--duration-normal) var(--ease-default);
+}
+
+.chat-panel:hover .chat-panel-description {
+  opacity: 1;
+}
+
+.chat-panel.active .chat-panel-description {
+  opacity: 0.9;
+}
+
+/* ==========================================================================
+   敬请期待徽章
+   ========================================================================== */
+
+.chat-panel-badge {
+  position: relative;
+  margin-top: var(--spacing-sm);
+  padding: 2px 12px;
+  background: linear-gradient(135deg, rgba(236, 72, 153, 0.2), rgba(244, 114, 182, 0.2));
+  border: 1px solid rgba(236, 72, 153, 0.4);
+  border-radius: 20px;
+  animation: badgePulse 2s ease-in-out infinite;
+}
+
+.badge-text {
+  font-size: 11px;
+  font-weight: var(--font-weight-semibold);
+  color: #f472b6;
+  letter-spacing: 1px;
+  white-space: nowrap;
+}
+
+@keyframes badgePulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(236, 72, 153, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 12px 2px rgba(236, 72, 153, 0.2);
+  }
+}
+
+/* ==========================================================================
+   禁用状态（敬请期待面板）
+   ========================================================================== */
+
+.chat-panel.disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.chat-panel.disabled:hover {
+  filter: none;
+}
+
+.chat-panel.disabled:hover::before {
+  opacity: 0.1;
+}
+
+.chat-panel.disabled .chat-panel-icon {
+  filter: grayscale(0.3);
+}
+
+.chat-panel.disabled .chat-panel-label {
+  opacity: 0.7;
+}
+
+/* ==========================================================================
+   选中面板 - 浮雕边框效果
+   ========================================================================== */
+
+.chat-panel-border {
+  position: absolute;
+  inset: 8px;
+  border: 3px solid var(--color-primary);
+  border-radius: var(--radius-xl);
+  pointer-events: none;
+  transition: all var(--duration-slow) var(--ease-out);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.15),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.1),
+    0 2px 8px rgba(0, 0, 0, 0.15);
+  z-index: 4;
+}
+
+.dark .chat-panel-border {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.2),
+    0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.chat-panel.active .chat-panel-border {
+  inset: 6px;
+  border-width: 4px;
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.15),
+    0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.dark .chat-panel.active .chat-panel-border {
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.12),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.25),
+    0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+/* 各模式边框发光增强 */
+.chat-panel[data-panel="chat"].active .chat-panel-border {
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.15),
+    0 4px 16px var(--panel-chat-glow);
+}
+
+.chat-panel[data-panel="group"].active .chat-panel-border {
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.15),
+    0 4px 16px var(--panel-group-glow);
+}
+
+.chat-panel[data-panel="creative"].active .chat-panel-border {
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.15),
+    0 4px 16px var(--panel-creative-glow);
+}
+
+.chat-panel[data-panel="game"].active .chat-panel-border {
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.15),
+    0 4px 16px var(--panel-game-glow);
+}
+
+/* ==========================================================================
+   点击闪烁动画
+   ========================================================================== */
+
+.chat-panel.flashing {
+  animation: panelFlash 0.3s ease-out;
+}
+
+@keyframes panelFlash {
+  0% {
+    filter: brightness(1);
+  }
+  30% {
+    filter: brightness(1.4);
+  }
+  100% {
+    filter: brightness(1);
+  }
+}
+
+/* ==========================================================================
+   涟漪扩散效果
+   ========================================================================== */
+
+.chat-panel .ripple {
+  position: absolute;
+  border-radius: 50%;
+  transform: scale(0);
+  animation: rippleEffect 0.6s var(--ease-out);
+  pointer-events: none;
+  z-index: 5;
+}
+
+@keyframes rippleEffect {
+  to {
+    transform: scale(4);
+    opacity: 0;
+  }
+}
+
+/* ==========================================================================
+   聊天对话框（覆盖模式）
+   ========================================================================== */
+
+.chat-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  animation: fadeIn 0.3s ease-out;
+}
+
+.chat-dialog-container {
+  width: 90vw;
+  height: 90vh;
+  max-width: 1400px;
+  background: var(--bg-container);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-4);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: dialogSlideIn 0.4s ease-out;
+}
+
+.chat-dialog-wrapper {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-md) var(--spacing-lg);
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.chat-dialog-title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-heading);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.chat-dialog-title-icon {
+  font-size: 20px;
+}
+
+.chat-dialog-close-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--duration-normal) var(--ease-default);
+}
+
+.chat-dialog-close-btn:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+  transform: scale(1.05);
+}
+
+.chat-dialog-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.chat-dialog-sidebar {
+  width: 80px;
+  background: var(--bg-elevated);
+  border-right: 1px solid var(--border-light);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.chat-dialog-main {
+  flex: 1;
+  overflow: hidden;
+}
+
+.chat-dialog-main-full {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-dialog-main .chat-area,
+.chat-dialog-main-full .chat-area {
+  border-radius: 0;
+}
+
+/* ==========================================================================
+   动画
+   ========================================================================== */
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes dialogSlideIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* ==========================================================================
+   暗色主题适配
+   ========================================================================== */
+
+.dark {
+  .chat-panel {
+    background: var(--bg-container);
+  }
+
+  .chat-panel .hover-overlay {
+    background: var(--bg-elevated);
+  }
+
+  .chat-dialog-overlay {
+    background: rgba(0, 0, 0, 0.6);
+  }
+
+  .chat-dialog-container {
+    background: var(--bg-container);
+  }
+
+  .chat-dialog-header {
+    background: var(--bg-elevated);
+    border-color: var(--border-light);
+  }
+
+  .chat-dialog-sidebar {
+    background: var(--bg-elevated);
+    border-color: var(--border-light);
+  }
+
+  .chat-dialog-close-btn {
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+  }
+
+  .chat-dialog-close-btn:hover {
+    background: var(--bg-active);
+    color: var(--text-primary);
+  }
+}
+
+/* ==========================================================================
+   响应式设计
+   ========================================================================== */
+
+@media (max-width: 768px) {
+  .chat-panels-container {
+    flex-direction: column;
+  }
+
+  .chat-panel-icon {
+    font-size: 40px;
+  }
+
+  .chat-panel-label {
+    font-size: var(--font-size-lg);
+  }
+
+  .chat-dialog-container {
+    width: 95vw;
+    height: 95vh;
+  }
+
+  /* 小屏幕减少动画复杂度 */
+  .chat-panel[data-panel="game"].active::after {
+    display: none;
+  }
+}
+
+/* ==========================================================================
+   减少动画偏好支持
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-panel,
+  .chat-panel::before,
+  .chat-panel::after,
+  .chat-panel-content,
+  .chat-panel-icon,
+  .chat-panel-label,
+  .chat-panel-description,
+  .chat-panel-border {
+    transition: none !important;
+    animation: none !important;
+  }
+
+  .chat-panel:hover .chat-panel-content,
+  .chat-panel:hover .chat-panel-icon {
+    transform: none;
+  }
+
+  .chat-panel.active::before {
+    animation: none;
+    opacity: var(--texture-opacity);
+  }
+
+  .chat-panel[data-panel="game"].active::after {
+    display: none;
+  }
+}

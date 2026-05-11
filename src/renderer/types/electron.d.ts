@@ -127,6 +127,7 @@ interface ElectronAPI {
     applyAIResults: (chatId: string, results: any[]) => Promise<string>;
     deleteChatSession: (chatId: string) => Promise<boolean>;
     associateTemplate: (chatId: string, templateId: string) => Promise<void>;
+    getAssociatedTemplate: (chatId: string) => Promise<string | null>;
     processChat: (chatId: string, templateId: string, selectedMessageIds?: string[], config?: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }) => Promise<void>;
     processChatProgressive: (chatId: string, templateId: string, config?: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }, restart?: boolean) => Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[]; resumed: boolean }>;
     getOrganizingProgress: (chatId: string) => Promise<{ processedCount: number; totalMessages: number; lastProcessedAt?: string } | null>;
@@ -137,6 +138,9 @@ interface ElectronAPI {
     // 表格数据管理
     getTableData: (chatId: string) => Promise<any>;
     saveTableData: (chatId: string, sheetName: string, sheetData: any[]) => Promise<void>;
+    
+    // 自动初始化（首次对话时自动绑定模板并创建空表格）
+    autoInitializeSession: (chatId: string) => Promise<{ success: boolean; templateId: string | null }>;
     
     // 日志
     onLog?: (message: string, type: string) => void;

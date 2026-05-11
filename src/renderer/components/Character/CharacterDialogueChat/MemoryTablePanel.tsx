@@ -1,27 +1,35 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Switch, Tooltip, Button, Radio } from 'antd';
-import { DownOutlined, RightOutlined, TableOutlined, QuestionCircleOutlined, EyeOutlined } from '@ant-design/icons';
+import { Switch, Tooltip, Button, Radio, Select, Modal, message } from 'antd';
+import { DownOutlined, RightOutlined, TableOutlined, QuestionCircleOutlined, EyeOutlined, LinkOutlined } from '@ant-design/icons';
 import TablePreviewModal from './TablePreviewModal';
 import './ConfigPanel.css';
+
+const { Option } = Select;
 
 interface MemoryTablePanelProps {
   enabled: boolean;
   autoOrganize: boolean;
   organizeMode: 'sync' | 'async';
+  associatedTemplateId: string | null;
+  associatedTemplateName: string;
   characterCardName: string;
   onToggle: (enabled: boolean) => void;
   onAutoOrganizeToggle: (enabled: boolean) => void;
   onOrganizeModeChange: (mode: 'sync' | 'async') => void;
+  onTemplateAssociate: (templateId: string, templateName: string) => void;
 }
 
 const MemoryTablePanel: React.FC<MemoryTablePanelProps> = ({
   enabled,
   autoOrganize,
   organizeMode,
+  associatedTemplateId,
+  associatedTemplateName,
   characterCardName,
   onToggle,
   onAutoOrganizeToggle,
   onOrganizeModeChange,
+  onTemplateAssociate,
 }) => {
   const [collapsed, setCollapsed] = useState(() => {
     const saved = localStorage.getItem('memory-table-panel-collapsed');
@@ -29,20 +37,50 @@ const MemoryTablePanel: React.FC<MemoryTablePanelProps> = ({
   });
   const [previewVisible, setPreviewVisible] = useState(false);
 
+  // 关联模板 Modal 相关状态
+  const [associateModalVisible, setAssociateModalVisible] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<string>('');
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [associateLoading, setAssociateLoading] = useState(false);
+
   useEffect(() => {
     localStorage.setItem('memory-table-panel-collapsed', String(collapsed));
   }, [collapsed]);
+
+  // 加载模板列表
+  useEffect(() => {
+    loadTemplates();
+  }, []);
+
+  // 同步 selectedTemplate 与 associatedTemplateId
+  useEffect(() => {
+    setSelectedTemplate(associatedTemplateId || '');
+  }, [associatedTemplateId]);
+
+  const loadTemplates = async () => {
+    try {
+      const allTemplates = await window.electronAPI.memory.getAllTemplates();
+      setTemplates(allTemplates || []);
+    } catch (error) {
+      console.error('加载模板列表失败:', error);
+    }
+  };
 
   const toggleCollapse = useCallback(() => {
     setCollapsed(prev => !prev);
   }, []);
 
   const handleToggle = useCallback((checked: boolean) => {
+    if (checked && !associatedTemplateId) {
+      message.warning('启用记忆表格前，请先关联一个模板');
+      setAssociateModalVisible(true);
+      return;
+    }
     onToggle(checked);
     if (!checked) {
       onAutoOrganizeToggle(false);
     }
-  }, [onToggle, onAutoOrganizeToggle]);
+  }, [onToggle, onAutoOrganizeToggle, associatedTemplateId]);
 
   const handleAutoOrganizeToggle = useCallback((checked: boolean) => {
     onAutoOrganizeToggle(checked);
@@ -60,6 +98,40 @@ const MemoryTablePanel: React.FC<MemoryTablePanelProps> = ({
     setPreviewVisible(false);
   }, []);
 
+  const handleAssociateTemplate = async () => {
+    const templateIdToAssociate = selectedTemplate || associatedTemplateId;
+    if (!templateIdToAssociate) {
+      message.error('请选择模板');
+      return;
+    }
+
+    // 查找模板名称
+    const template = templates.find(t => t.id === templateIdToAssociate);
+    const templateName = template?.name || templateIdToAssociate;
+
+    setAssociateLoading(true);
+    try {
+      // 调用 IPC 执行实际的模板关联（创建模板副本、创建表格文件、存储关联关系）
+      await window.electronAPI.memory.associateTemplate(characterCardName, templateIdToAssociate);
+
+      // 将关联信息持久化到角色配置中
+      onTemplateAssociate(templateIdToAssociate, templateName);
+
+      message.success('关联模板成功');
+      setAssociateModalVisible(false);
+    } catch (error) {
+      console.error('关联模板失败:', error);
+      message.error('关联模板失败');
+    } finally {
+      setAssociateLoading(false);
+    }
+  };
+
+  const handleOpenAssociateModal = useCallback(() => {
+    setSelectedTemplate(associatedTemplateId || '');
+    setAssociateModalVisible(true);
+  }, [associatedTemplateId]);
+
   return (
     <div className="memory-table-panel">
       <div className="memory-table-panel-header" onClick={toggleCollapse} style={{ cursor: 'pointer' }}>
@@ -69,6 +141,9 @@ const MemoryTablePanel: React.FC<MemoryTablePanelProps> = ({
           </div>
           <TableOutlined className="memory-table-icon" />
           <span>记忆表格设置</span>
+          <Tooltip title="启用后，系统将在对话提示词中整合记忆管理模块的表格数据，强化AI的历史记忆能力">
+            <QuestionCircleOutlined className="memory-table-tooltip-icon" />
+          </Tooltip>
         </div>
       </div>
 
@@ -147,6 +222,18 @@ const MemoryTablePanel: React.FC<MemoryTablePanelProps> = ({
 
           <div className="memory-table-action-row">
             <Button
+              icon={<LinkOutlined />}
+              onClick={handleOpenAssociateModal}
+              size="small"
+              className={`memory-table-associate-btn ${associatedTemplateId ? 'has-association' : 'no-association'}`}
+              block
+            >
+              {associatedTemplateId ? `已关联: ${associatedTemplateName}` : '关联模板'}
+            </Button>
+          </div>
+
+          <div className="memory-table-action-row">
+            <Button
               icon={<EyeOutlined />}
               onClick={handlePreview}
               size="small"
@@ -164,6 +251,43 @@ const MemoryTablePanel: React.FC<MemoryTablePanelProps> = ({
         characterCardName={characterCardName}
         onClose={handleClosePreview}
       />
+
+      {/* 关联模板 Modal */}
+      <Modal
+        title="关联模板"
+        open={associateModalVisible}
+        onCancel={() => {
+          setAssociateModalVisible(false);
+          setSelectedTemplate(associatedTemplateId || '');
+        }}
+        onOk={handleAssociateTemplate}
+        confirmLoading={associateLoading}
+        width={480}
+      >
+        <div style={{ marginBottom: 16 }}>
+          <p style={{ marginBottom: 8, color: '#999', fontSize: 12 }}>
+            选择要关联的表格模板，关联后系统将使用该模板的结构创建记忆表格
+          </p>
+        </div>
+        <Select
+          placeholder="选择模板"
+          value={selectedTemplate || undefined}
+          onChange={setSelectedTemplate}
+          style={{ width: '100%' }}
+          allowClear
+        >
+          {templates.map(template => (
+            <Option key={template.id} value={template.id}>
+              {template.name}
+            </Option>
+          ))}
+        </Select>
+        {templates.length === 0 && (
+          <p style={{ color: '#ff4d4f', fontSize: 12, marginTop: 8 }}>
+            暂无可用模板，请先在记忆管理 - 模板管理中创建模板
+          </p>
+        )}
+      </Modal>
     </div>
   );
 };

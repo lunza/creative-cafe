@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useUIStore } from '../../stores/uiStore';
 
 interface PageTransitionProps {
@@ -6,43 +6,83 @@ interface PageTransitionProps {
   activeKey: string;
 }
 
+const EXIT_DURATION = 300;
+const ENTER_DURATION = 450;
+
 const PageTransition: React.FC<PageTransitionProps> = ({ children, activeKey }) => {
   const { animationEnabled } = useUIStore();
   const [displayChildren, setDisplayChildren] = useState(children);
   const [displayKey, setDisplayKey] = useState(activeKey);
-  const [animClass, setAnimClass] = useState(animationEnabled ? 'page-enter' : '');
+  const [animClass, setAnimClass] = useState('');
+  const [isFirstRender, setIsFirstRender] = useState(true);
+
+  const pendingChildrenRef = useRef(children);
+  const pendingKeyRef = useRef(activeKey);
+  const isTransitioningRef = useRef(false);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    if (activeKey !== displayKey) {
+    pendingChildrenRef.current = children;
+    pendingKeyRef.current = activeKey;
+  });
+
+  useEffect(() => {
+    if (isFirstRender) {
+      setIsFirstRender(false);
+      return;
+    }
+
+    if (activeKey !== displayKey && !isTransitioningRef.current) {
       if (animationEnabled) {
+        isTransitioningRef.current = true;
         setAnimClass('page-exit');
-        
+
         if (timerRef.current) {
           clearTimeout(timerRef.current);
         }
-        
+
         timerRef.current = setTimeout(() => {
-          setDisplayKey(activeKey);
-          setDisplayChildren(children);
+          setDisplayKey(pendingKeyRef.current);
+          setDisplayChildren(pendingChildrenRef.current);
           setAnimClass('page-enter');
-        }, 200);
-        
+        }, EXIT_DURATION);
+
         return () => {
           if (timerRef.current) {
             clearTimeout(timerRef.current);
+            timerRef.current = null;
           }
         };
       } else {
-        setDisplayKey(activeKey);
-        setDisplayChildren(children);
+        setDisplayKey(pendingKeyRef.current);
+        setDisplayChildren(pendingChildrenRef.current);
         setAnimClass('');
       }
     }
-  }, [activeKey, displayKey, children, animationEnabled]);
+  }, [activeKey, displayKey, animationEnabled]);
+
+  const handleAnimationEnd = useCallback((e: React.AnimationEvent<HTMLDivElement>) => {
+    if (e.animationName === 'pageEnter') {
+      setAnimClass('');
+      isTransitioningRef.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, []);
 
   return (
-    <div key={displayKey} className={`page-transition-wrapper ${animClass}`}>
+    <div
+      key={displayKey}
+      className={`page-transition-wrapper ${animClass}`}
+      onAnimationEnd={handleAnimationEnd}
+    >
       {displayChildren}
     </div>
   );
