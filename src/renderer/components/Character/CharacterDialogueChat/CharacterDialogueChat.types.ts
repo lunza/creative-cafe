@@ -92,7 +92,14 @@ export interface CharacterSessionConfig {
   knowledgeBaseBindings?: KnowledgeBaseBinding[];
   memoryTableEnabled?: boolean;
   memoryTableAutoOrganize?: boolean;
-  memoryTableOrganizeMode?: 'sync' | 'async'; // 新增：整理模式，默认'sync'
+  memoryTableOrganizeMode?: 'sync' | 'async';
+  memoryTableTemplateId?: string;
+  memoryTableTemplateName?: string;
+  tokenManagementEnabled?: boolean;
+  maxContextTokens?: number;
+  reservedForResponse?: number;
+  minMessagesToKeep?: number;
+  maxMessagesToKeep?: number;
   lastUpdated: number;
 }
 

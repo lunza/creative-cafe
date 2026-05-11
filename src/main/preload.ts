@@ -144,6 +144,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     applyAIResults: (chatId: string, results: any[]) => ipcRenderer.invoke('memory:applyAIResults', chatId, results),
     deleteChatSession: (chatId: string) => ipcRenderer.invoke('memory:deleteChatSession', chatId),
     associateTemplate: (chatId: string, templateId: string) => ipcRenderer.invoke('memory:associateTemplate', chatId, templateId),
+    getAssociatedTemplate: (chatId: string) => ipcRenderer.invoke('memory:getAssociatedTemplate', chatId),
     processChat: (chatId: string, templateId: string, selectedMessageIds: string[], config: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }) => ipcRenderer.invoke('memory:processChat', chatId, templateId, selectedMessageIds, config),
     processChatProgressive: (chatId: string, templateId: string, config: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }, options?: { continueFromLast?: boolean; minInterval?: number }) => ipcRenderer.invoke('memory:processChatProgressive', chatId, templateId, config, options),
     processChatFull: (chatId: string, templateId: string, config: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }) => ipcRenderer.invoke('memory:processChatFull', chatId, templateId, config),
@@ -152,9 +153,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getOrganizingProgress: (chatId: string) => ipcRenderer.invoke('memory:getOrganizingProgress', chatId),
     clearOrganizingProgress: (chatId: string) => ipcRenderer.invoke('memory:clearOrganizingProgress', chatId),
     clearTableData: (chatId: string) => ipcRenderer.invoke('memory:clearTableData', chatId),
-    copyTemplate: (sourceTemplateId: string, newTemplateName: string) => ipcRenderer.invoke('memory:copyTemplate', sourceTemplateId, newTemplateName),
+    copyTemplate: (sourceTemplateId: string, newTemplateName: string) => ipcRenderer.invoke('memory:copyTemplate', sourceTemplateId, newTemplateName),// 表格数据管理
     getTableData: (chatId: string) => ipcRenderer.invoke('memory:getTableData', chatId),
     saveTableData: (chatId: string, sheetName: string, sheetData: any[]) => ipcRenderer.invoke('memory:saveTableData', chatId, sheetName, sheetData),
+    autoInitializeSession: (chatId: string) => ipcRenderer.invoke('memory:autoInitializeSession', chatId),
     onLog: (callback: (message: string, type: string) => void) => {
       ipcRenderer.on('memory:addLog', (event, message, type) => {
         callback(message, type);

@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.0.29] - 2026-05-12
+
+### Fixed
+- **修复关联模板信息在对话框关闭后丢失的问题**：用户关联模板后关闭对话框，重新打开时模板关联信息丢失。根因：模板关联信息仅通过IPC存储在`associations.json`中，未持久化到角色卡对话配置JSON文件中。修复方案：(1)在`characterConfig`中新增`memoryTableTemplateId`和`memoryTableTemplateName`字段；(2)`MemoryTablePanel`改为从config props获取关联信息，不再独立从IPC加载；(3)关联模板时，先调用IPC执行模板关联，再调用`updateConfig`将关联信息持久化到角色配置中；(4)在`ConfigPanel`、`CharacterDialogueChat.tsx`、`CharacterDialogueChat.hooks.ts`中传递模板关联信息；(5)`MemoryTablePanel`使用`useEffect`同步`selectedTemplate`与`associatedTemplateId`，确保重新打开对话框时回显正确。涉及文件：MemoryTablePanel.tsx、ConfigPanel.tsx、CharacterDialogueChat.tsx、CharacterDialogueChat.hooks.ts
+
+- **在记忆表格设置面板中添加关联模板按钮**：用户在启用记忆表格时如果没有关联模板，无法正常使用表格功能。新增功能：(1)在`MemoryTablePanel`中添加"关联模板"按钮，效果与聊天记录管理中的关联按钮一致；(2)用户启用记忆表格时若未关联模板，自动弹出关联模板Modal并提示"启用记忆表格前，请先关联一个模板"；(3)按钮显示当前已关联的模板名称（未关联时显示"关联模板"）；(4)关联模板Modal中使用Select下拉框展示所有可用模板，支持更换已关联的模板；(5)新增IPC handler `memory:getAssociatedTemplate`获取当前关联的模板ID；(6)在preload.ts和类型声明中暴露`getAssociatedTemplate`和`associateTemplate` API；(7)在ConfigPanel.css中添加关联模板按钮样式（绿色未关联/蓝色已关联）。涉及文件：MemoryTablePanel.tsx、memoryHandlers.ts、preload.ts、electron.d.ts、memory.ts、ConfigPanel.css
+
+- **【重点标记】修复AI请求50%概率卡死问题**：AI服务器请求有约50%概率卡死，根因是超时机制完全失效。分析发现：(1)`ChatEngine.ts`中`timeout: 0`（无超时限制）传送到主进程；(2)`aiHandlers.ts`中`effectiveTimeout = timeout || 0`导致超时值始终为0；(3)`if (effectiveTimeout && effectiveTimeout > 0)`条件不满足，超时定时器永不创建，`fetch()`调用在服务器响应慢时无限期挂起。修复方案：采用双层超时策略——(1)连接超时30秒（检测DNS解析、TCP连接、TLS握手问题）；(2)请求超时120秒（检测服务器响应慢问题）；(3)修改`ChatEngine.ts`默认timeout从0改为120000；(4)流式和非流式请求路径均增加连接超时和请求超时检测；(5)更新`ActiveRequest`接口增加`connectionTimeoutId`字段；(6)在取消和清理逻辑中清除连接超时定时器。涉及文件：ChatEngine.ts、aiHandlers.ts
+
+- **修复AI Handler日志中AI完整回复内容被截断的问题**：`aiHandlers.ts` 中SSE解析成功日志将AI完整回复内容限制为前2000字符（`fullContent.substring(0, 2000)`），导致长回复无法在日志文件中查看完整内容。修复方案：移除 `substring(0, 2000)` 截断逻辑，直接输出完整 `fullContent` 到日志文件。涉及文件：aiHandlers.ts
+
+- **【重点标记】深度排查对话功能中断问题并添加调试日志**：第一轮修复后用户反馈对话仍然无法调用AI引擎，日志在`memory:getTableData`后完全停止。排查发现：(1)备份文件存在时`autoInitializeChatSession`不会触发，返回空数据后流程中断但错误被静默吞掉；(2)`memory:autoInitializeSession` IPC handler在`memoryHandlers.ts`中已注册但未在`preload.ts`中暴露给渲染进程，导致渲染进程无法调用；(3)IPC返回数据可能存在序列化问题导致渲染进程的`await`挂起。修复方案：(1)在`requestAIResponse`函数外层添加全局try-catch包裹，确保任何未捕获异常都能被记录并更新UI错误状态；(2)在`requestAIResponse`的每个关键步骤（上下文检索→表格数据获取→提示词构建→Token管理→引擎调用）之间添加`console.log`调试日志（不依赖`addLog`的IPC通道），便于精确定位中断点；(3)在`memory:getTableData` IPC handler中添加序列化验证，确保返回数据可被正确传输；(4)在`preload.ts`中注册`autoInitializeSession` API。涉及文件：CharacterDialogueChat.hooks.ts、memoryHandlers.ts、preload.ts
+
+- **【重点标记】实现用户首次对话自动初始化功能**：当系统检测到用户进行首次对话且尚未生成聊天记录文件和对应表格时，自动执行初始化流程。实现方案：(1)在`chatLogService.ts`中新增`autoInitializeChatSession()`方法，复用现有`associateTemplate`方法严格遵循"关联"功能的技术规范，完成模板副本创建、表格文件创建和关联关系存储；(2)修改`getTableData()`方法，在检测到表格文件不存在且备份文件也不存在时，自动调用`autoInitializeChatSession()`触发初始化，成功后递归调用自身返回新创建的表格数据；(3)在IPC层新增`memory:autoInitializeSession` handler供渲染进程主动调用；(4)在渲染进程类型声明中增加`autoInitializeSession` API类型。涉及文件：chatLogService.ts、memoryHandlers.ts、electron.d.ts、memory.ts
+
+- **【重点标记】修复对话功能无法调用AI引擎的Bug**：用户输入信息后系统未调用AI引擎进行对话，日志在`memory:getTableData`后停止。根因：`chatLogService.getTableData()`在表格JSON文件不存在时抛出异常(`throw new Error('文件不存在')`)，导致`requestAIResponse`函数中断，后续的system prompt构建、Token管理和AI引擎调用均无法执行。修复方案：(1)将`chatLogService.ts`中`getTableData`的文件不存在异常改为返回空数据结构`{ sheets: [], headers: {}, data: {}, sheetDescriptions: {} }`，允许新对话或尚未创建表格的角色继续对话；(2)在`CharacterDialogueChat.hooks.ts`中增加记忆表格数据处理完成的确认日志和提示词构建完成的确认日志，便于后续排查类似问题。涉及文件：chatLogService.ts、CharacterDialogueChat.hooks.ts
+
+- **【重点标记】修复用户头像存储路径错误**：avatarService.ts 使用 `process.cwd()` 作为基础路径，生成类似 `G:\AI\creative-cafe\data\user-avatars` 的绝对路径，而非正确的 `__USER_DATA__/data/user-avatars` 路径。修复方案：(1) 从 `../utils/appPath` 导入 `getUserDataPath`；(2) 将构造函数中的 `process.cwd()` 替换为 `getUserDataPath()`；(3) 头像目录现在正确设置为 `path.join(getUserDataPath(), 'data', 'user-avatars')`。涉及文件：avatarService.ts
+
+## [0.0.28] - 2026-05-11
+
+### Added
+- **【重点标记】实现类似SillyTavern的Token管理机制**：在对话组件和业务流程中新增Token管理模块，有效监控和控制发送至AI的上下文长度，避免因上下文过长导致的响应延迟或性能下降问题。
+  - **TokenCounter服务**：实现基于UTF-8字节长度的快速Token估算（UTF-8字节长度 / 3.35，与SillyTavern一致），支持消息级别Token计数、System Prompt计数、消息数组总计数。包含Token计数缓存机制（Map<messageId, tokenCount>），提升重复计算性能。涉及文件：TokenCounter.ts（新建）、types.ts（新建）
+  - **ContextTruncator服务**：实现智能上下文截断算法，基于Token预算分配策略（可用预算 = 最大上下文Token数 - System Prompt Token数 - 响应预留Token数）。截断规则：(1)从最旧消息开始移除；(2)优先保留最近对话；(3)至少保留minMessagesToKeep轮对话；(4)最多保留maxMessagesToKeep条消息；(5)确保消息成对（user+assistant）。涉及文件：ContextTruncator.ts（新建）
+  - **集成到对话流程**：在CharacterDialogueChat.hooks.ts的requestAIResponse()函数中，构建System Prompt后自动计算Token数并截断上下文消息。截断时记录详细日志（原始消息数、截断后消息数、Token变化、预算信息）。涉及文件：CharacterDialogueChat.hooks.ts（集成Token管理逻辑）
+  - **配置支持**：扩展CharacterSessionConfig类型，新增maxContextTokens（默认6000）、reservedForResponse（默认1024）、minMessagesToKeep（默认2）、maxMessagesToKeep（默认40）字段，支持按角色自定义Token管理策略。涉及文件：CharacterDialogueChat.types.ts（类型扩展）
+  - **技术实现要点**：(1)采用快速估算策略，避免浏览器端加载大型tokenizer文件；(2)Token计数包含消息格式开销（每消息4 tokens）和填充开销（3 tokens），与OpenAI API计数方式一致；(3)截断发生在System Prompt构建之后、发送给AI之前，确保关键信息（角色卡、向量检索、记忆表格）始终保留；(4)提供analyzeTruncation()方法用于分析和记录截断效果。涉及文件：TokenManagement/index.ts（模块导出）
+  - **单元测试**：编写32个单元测试用例，覆盖TokenCounter和ContextTruncator的核心功能，包括：Token估算准确性、缓存管理、消息计数、截断边界情况、消息成对验证、截断分析等。所有测试通过。涉及文件：TokenManagement.test.ts（新建）
+
+## [0.0.27] - 2026-05-11
+
+### Fixed
+- **修复模块切换时偶尔出现刷新效果的问题**：PageTransition 组件的 useEffect 依赖数组中包含了 children 参数，导致父组件每次渲染时即使 activeKey 未改变也会创建新的 React 元素引用，触发不必要的动画和组件重新挂载。修复方案：使用 useRef 缓存 children 引用，从 useEffect 依赖数组中移除 children，只在 activeKey 真正改变时才切换内容。涉及文件：PageTransition.tsx
+- **【重点标记】修复清理缓存后聊天模式对话框无法打开的问题**：SingleChatDialog 组件在 characters.length === 0 时直接返回 null，而 fetchCharacters() 只在 CharacterManager 和 Dashboard 中被调用。清理缓存后角色数据尚未加载，导致点击聊天模式面板无法打开对话框。修复方案：在 SingleChatDialog 中监听 isDialogMode 变化，当对话框需要打开但角色数据为空时自动触发 fetchCharacters() 加载数据，并展示加载状态和空数据提示。涉及文件：SingleChatDialog.tsx
+
+### Improved
+- **修复 Ant Design Select 组件废弃 API 警告**：KnowledgeBaseBindingPanel 中使用了已废弃的 dropdownMatchSelectWidth 和 dropdownClassName API，替换为新的 popupMatchSelectWidth 和 classNames={{ popup: { root: 'knowledge-base-dropdown' } }} 语法。涉及文件：KnowledgeBaseBindingPanel.tsx
+- **创作中心面板动态效果与纹理样式实现**：为四个模式面板（聊天/群聊/写作/游戏）分别实现独特纹理背景和动态动画效果。涉及文件：CreationCenter.css、CreationCenter.tsx
+
 ## [0.0.26] - 2026-05-10
 
 ### Improved

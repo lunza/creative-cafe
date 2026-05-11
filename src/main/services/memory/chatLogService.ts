@@ -1194,29 +1194,42 @@ deleteRow(4, 1)
       const tableFilePath = path.join(this.chatlogDir, `${safeChatId}.json`);
       
       if (!fs.existsSync(tableFilePath)) {
-        const currentTemplateId = this.getAssociatedTemplate(chatId);
-        if (currentTemplateId) {
-          addLog('[Async Execute] 表格文件不存在，使用关联模板创建初始文件', 'info');
-          tableTemplateService.createTableFile(chatId, currentTemplateId, safeChatId);
-          addLog(`[Async Execute] 表格文件已创建: ${tableFilePath}`, 'info');
-        } else {
-          addLog('[Async Execute] 未找到关联的模板，尝试使用默认模板创建文件', 'warn');
+        const associatedTemplateId = this.getAssociatedTemplate(chatId);
+        let templateIdToUse: string | null = null;
+        
+        // 先检查关联的模板是否真实存在
+        if (associatedTemplateId) {
+          const associatedTemplate = tableTemplateService.getTemplate(associatedTemplateId);
+          if (associatedTemplate) {
+            addLog(`[Async Execute] 表格文件不存在，使用关联模板 ${associatedTemplateId} 创建初始文件`, 'info');
+            templateIdToUse = associatedTemplateId;
+          } else {
+            addLog(`[Async Execute] 关联模板 ${associatedTemplateId} 不存在于磁盘，尝试使用默认模板`, 'warn');
+          }
+        }
+        
+        // 如果关联模板不存在，使用默认模板
+        if (!templateIdToUse) {
           const defaultTemplates = tableTemplateService.getAllTemplates();
           if (defaultTemplates && defaultTemplates.length > 0) {
             const defaultTemplateId = defaultTemplates[0].id;
             addLog(`[Async Execute] 使用默认模板 ${defaultTemplateId} 创建初始文件`, 'info');
-            tableTemplateService.createTableFile(chatId, defaultTemplateId, safeChatId);
-            addLog(`[Async Execute] 表格文件已创建: ${tableFilePath}`, 'info');
+            templateIdToUse = defaultTemplateId;
           } else {
             addLog('[Async Execute] 没有可用的模板，无法创建表格文件', 'error');
             return { success: false, executed: 0, errors: ['没有可用的表格模板，请先在表格模板管理中创建模板'] };
           }
         }
+        
+        // 创建表格文件
+        try {
+          tableTemplateService.createTableFile(chatId, templateIdToUse, safeChatId);
+          addLog(`[Async Execute] 表格文件已创建: ${tableFilePath}`, 'info');
+        } catch (createError) {
+          addLog(`[Async Execute] 创建表格文件失败: ${createError}`, 'error');
+          return { success: false, executed: 0, errors: [`创建表格文件失败: ${createError}`] };
+        }
       }
-    } catch (createError) {
-      addLog(`[Async Execute] 创建表格文件失败: ${createError}`, 'error');
-      // 不阻断执行，继续尝试执行命令（可能文件已存在但路径有问题）
-    }
 
     commands.forEach((command, index) => {
       try {
@@ -3167,6 +3180,46 @@ deleteRow(4, 1)
   }
 
   /**
+   * 自动初始化聊天会话（首次对话时自动绑定默认模板并创建空表格）
+   */
+  public autoInitializeChatSession(chatId: string): boolean {
+    // 检查是否已存在关联关系（避免重复初始化）
+    const existingTemplateId = this.getAssociatedTemplate(chatId);
+    if (existingTemplateId) {
+      addLog(`[AutoInit] 聊天会话 ${chatId} 已有关联模板 ${existingTemplateId}，跳过初始化`, 'info');
+      return false;
+    }
+
+    addLog(`[AutoInit] 开始自动初始化聊天会话: ${chatId}`, 'info');
+
+    try {
+      // 获取默认模板ID（取第一个可用模板）
+      const allTemplates = tableTemplateService.getAllTemplates();
+      if (!allTemplates || allTemplates.length === 0) {
+        addLog('[AutoInit] 没有可用的表格模板，无法自动初始化', 'error');
+        return false;
+      }
+
+      const defaultTemplateId = allTemplates[0].id;
+      addLog(`[AutoInit] 使用默认模板: ${defaultTemplateId} (${allTemplates[0].name})`, 'info');
+
+      // 调用现有的 associateTemplate 方法完成初始化
+      // associateTemplate 内部会：
+      //   - 创建模板副本（包含 originalTemplateId, chatId 等元数据）
+      //   - 调用 createTableFile 创建空表格JSON文件
+      //   - 调用 saveAssociation 保存关联关系
+      this.associateTemplate(chatId, defaultTemplateId);
+
+      addLog(`[AutoInit] 聊天会话 ${chatId} 自动初始化完成`, 'info');
+      return true;
+    } catch (error) {
+      addLog(`[AutoInit] 自动初始化失败: ${error}`, 'error');
+      console.error('[AutoInit] Auto initialization error:', error);
+      return false;
+    }
+  }
+
+  /**
    * 获取表格数据（JSON格式）
    */
   public getTableData(chatId: string): any {
@@ -3198,20 +3251,40 @@ deleteRow(4, 1)
     console.log('文件是否存在:', fs.existsSync(jsonPath));
     
     if (!fs.existsSync(jsonPath)) {
-      console.error('文件不存在:', jsonPath);
+      console.log('[getTableData] 表格文件不存在 (新对话或尚未创建表格):', jsonPath);
       // 尝试从 chats 目录查找（旧版 processChat 可能保存到这里）
       const fallbackPath = path.join(this.chatsDir, `${safeChatId}.json`);
       if (fs.existsSync(fallbackPath)) {
-        console.log('从 chats 目录找到备份文件:', fallbackPath);
+        console.log('[getTableData] 从 chats 目录找到备份文件:', fallbackPath);
         try {
           const content = fs.readFileSync(fallbackPath, 'utf8');
           const jsonData = JSON.parse(content);
-          return { sheets: jsonData.sheets || [], headers: jsonData.headers || {}, data: jsonData.data || {}, sheetDescriptions: {} };
+          const hasData = (jsonData.sheets && jsonData.sheets.length > 0) || 
+                          (jsonData.data && Object.keys(jsonData.data).length > 0);
+          
+          if (hasData) {
+            console.log('[getTableData] 备份文件包含有效数据，直接返回');
+            return { sheets: jsonData.sheets || [], headers: jsonData.headers || {}, data: jsonData.data || {}, sheetDescriptions: {} };
+          }
+          
+          console.log('[getTableData] 备份文件存在但数据为空，尝试自动初始化');
+          // fall through to auto-init
         } catch (e) {
-          console.error('读取备份文件失败:', e);
+          console.error('[getTableData] 读取备份文件失败:', e);
+          // fall through to auto-init
         }
       }
-      throw new Error(`文件不存在: ${jsonPath}`);
+      
+      console.log('[getTableData] 尝试自动初始化聊天会话');
+      const initSuccess = this.autoInitializeChatSession(chatId);
+      
+      if (initSuccess) {
+        addLog('[getTableData] 自动初始化成功，重新读取表格数据', 'info');
+        return this.getTableData(chatId);
+      }
+      
+      console.log('[getTableData] 自动初始化失败，返回空数据');
+      return { sheets: [], headers: {}, data: {}, sheetDescriptions: {} };
     }
     
     try {

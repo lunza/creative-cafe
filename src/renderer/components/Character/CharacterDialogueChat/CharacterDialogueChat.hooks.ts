@@ -10,6 +10,8 @@ import { ChatEngineFactory } from '../../Common/ChatEngine/ChatEngine.factory';
 import { AIEngineConfig, AIResponse } from '../../Common/ChatEngine/ChatEngine.types';
 import { usePromptBuilder } from './usePromptBuilder';
 import { buildAsyncTableOrganizeInstructions } from './PromptBuilder';
+import { TokenCounter, ContextTruncator } from './TokenManagement';
+import type { TruncationConfig } from './TokenManagement/types';
 
 // ==================== 角色配置 Hook ====================
 
@@ -215,6 +217,12 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
   const { saveTestChat } = useCharacterChatStore();
   const addLog = useLogStore(state => state.addLog);
 
+  useEffect(() => {
+    if (setting === null) {
+      useSettingStore.getState().fetchSetting();
+    }
+  }, []);
+
   const [state, setState] = useState<ChatState>({
     messages: [],
     isLoading: false,
@@ -401,7 +409,11 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     console.log('[DEBUG] promptType:', promptType);
     console.log('[DEBUG] contextMessages count:', contextMessages.length);
     console.log('========================================');
+    console.log('[DEBUG-FLOW] === requestAIResponse START ===');
+
+    try {
     const activeEngine = getActiveEngineConfig();
+    console.log('[DEBUG-FLOW] activeEngine check done, has engine:', !!activeEngine);
     if (!activeEngine) {
       message.warning('请先在设置中配置AI引擎');
       setState(prev => ({
@@ -532,7 +544,10 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       console.error('[CharacterDialogueChat] Context retrieval error:', error);
     }
 
+    console.log('[DEBUG-FLOW] Step A: Context retrieval done, items:', vectorContextItems.length);
+
     // ========== 记忆表格数据获取 ==========
+    console.log('[DEBUG-FLOW] Step B: Starting memory table data fetch');
     console.log('[DEBUG-MEMORY-TABLE] Step 1: Checking memory table enable status');
     console.log('[DEBUG-MEMORY-TABLE] memoryTableEnabledRef.current =', memoryTableEnabledRef.current);
     console.log('[DEBUG-MEMORY-TABLE] characterConfig.memoryTableEnabled =', characterConfig?.memoryTableEnabled);
@@ -553,6 +568,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         console.log('[DEBUG-MEMORY-TABLE] tableResult.data:', tableResult?.data);
         console.log('[DEBUG-MEMORY-TABLE] tableResult.data type:', typeof tableResult?.data);
         console.log('[DEBUG-MEMORY-TABLE] tableResult.data keys:', tableResult?.data ? Object.keys(tableResult.data) : 'N/A');
+        console.log('[DEBUG-FLOW] Step B: getTableData returned successfully');
         addLog(`[CharacterDialogueChat] tableResult received: ${JSON.stringify({ hasResult: !!tableResult, sheets: tableResult?.sheets, hasHeaders: !!tableResult?.headers, hasData: !!tableResult?.data, hasDescriptions: !!tableResult?.sheetDescriptions }, null, 2)}`, 'info');
         
         // 提取表格结构信息（供异步整理模式使用，包含描述）
@@ -609,13 +625,22 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
           addLog(`[CharacterDialogueChat] Memory table data is empty or invalid: sheets=${tableResult?.sheets?.length || 0}, hasData=${!!tableResult?.data}`, 'warn');
         }
       } catch (error) {
-        addLog(`[CharacterDialogueChat] Failed to load memory table data: ${error}`, 'error');
+        addLog(`[CharacterDialogueChat] Failed to load memory table data (will use empty data): ${error}`, 'error');
+        // 继续执行，memoryTableData 为空字符串，不影响对话
       }
     } else {
       addLog('[CharacterDialogueChat] Memory table is disabled, skipping data fetch', 'info');
     }
 
+    console.log('[DEBUG-FLOW] Step B: Memory table data fetch complete, memoryTableData length:', memoryTableData.length);
+
+    addLog('[CharacterDialogueChat] 记忆表格数据处理完成，继续构建系统提示词', 'info');
+
+    // 准备发送给 AI 的上下文消息（不修改 messages state，仅修改发送给 AI 的内容）
+    let messagesToSend = [...contextMessages];
+
     // 构建完整的 system prompt
+    console.log('[DEBUG-FLOW] Step C: Starting buildCompleteSystemPrompt');
     const finalSystemPrompt = buildCompleteSystemPrompt(
       promptType,
       vectorContextItems,
@@ -627,8 +652,65 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     // Debug: 显示提示词末尾（背景知识注入位置）
     const promptTail = finalSystemPrompt.substring(Math.max(0, finalSystemPrompt.length - 500));
     addLog(`[CharacterDialogueChat] System prompt length: ${finalSystemPrompt.length}, tail: ...${promptTail}`, 'info');
+    console.log('[DEBUG-FLOW] Step C: buildCompleteSystemPrompt done, length:', finalSystemPrompt.length);
+
+    addLog('[CharacterDialogueChat] 提示词构建完成，开始 Token 管理', 'info');
+    console.log('[DEBUG-FLOW] Step D: Starting token management');
+
+    // ========== Token管理与上下文截断 ==========
+    const tokenManagementEnabled = characterConfig?.tokenManagementEnabled ?? true;
+    const truncationConfig: TruncationConfig = {
+      enabled: tokenManagementEnabled,
+      maxContextTokens: characterConfig?.maxContextTokens ?? 6000,
+      reservedForResponse: characterConfig?.reservedForResponse ?? 1024,
+      minMessagesToKeep: characterConfig?.minMessagesToKeep ?? 2,
+      maxMessagesToKeep: characterConfig?.maxMessagesToKeep ?? 40,
+    };
+
+    let messagesToUse = messagesToSend;
+
+    if (tokenManagementEnabled) {
+      const systemPromptTokens = TokenCounter.countSystemPromptTokens(finalSystemPrompt);
+      
+      const truncatedMessages = ContextTruncator.truncateMessages(
+        messagesToSend,
+        systemPromptTokens,
+        truncationConfig
+      );
+
+      const truncationAnalysis = ContextTruncator.analyzeTruncation(
+        messagesToSend,
+        truncatedMessages,
+        systemPromptTokens,
+        truncationConfig
+      );
+
+      if (truncationAnalysis.wasTruncated) {
+        addLog(
+          `[TokenManagement] Context truncated: ${truncationAnalysis.originalCount} -> ${truncationAnalysis.truncatedCount} messages, ` +
+          `tokens: ${truncationAnalysis.originalTokens} -> ${truncationAnalysis.truncatedTokens} ` +
+          `(system: ${systemPromptTokens}, budget: ${truncationConfig.maxContextTokens})`,
+          'warn'
+        );
+      } else {
+        addLog(
+          `[TokenManagement] Context within budget: ${truncatedMessages.length} messages, ` +
+          `${truncationAnalysis.truncatedTokens} tokens (system: ${systemPromptTokens}, budget: ${truncationConfig.maxContextTokens})`,
+          'info'
+        );
+      }
+
+      messagesToUse = truncatedMessages;
+    } else {
+      addLog(`[TokenManagement] Token management disabled, sending all ${messagesToSend.length} messages`, 'info');
+    }
+
+    console.log('[DEBUG-FLOW] Step D: Token management done, messagesToUse count:', messagesToUse.length);
+    console.log('[DEBUG-FLOW] Step E: Creating engine');
 
     const engine = ChatEngineFactory.getInstance().getOrCreateDefaultEngine(engineConfigWithParams);
+
+    console.log('[DEBUG-FLOW] Step E: Engine created, calling sendMessage');
 
     engine.onStream((chunk, isDone) => {
       if (chunk) {
@@ -655,6 +737,10 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     });
 
     engine.onComplete((response: AIResponse) => {
+      console.log('[DEBUG-COMPLETE] === engine.onComplete called ===');
+      console.log('[DEBUG-COMPLETE] response?.content length:', response?.content?.length || 0);
+      console.log('[DEBUG-COMPLETE] response?.content contains tableEdit:', response?.content?.includes('tableEdit') || false);
+      console.log('[DEBUG-COMPLETE] streamContentRef.current length:', streamContentRef.current?.length || 0);
       clearStreamTimeout();
       const accumulatedContent = streamContentRef.current;
       const serverContent = response?.content || '';
@@ -696,8 +782,15 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       let displayContent = finalContent;
       let hasAsyncCommands = false;
 
+      console.log('[DEBUG-ASYNC-ORG] memoryTableAutoOrganizeRef.current:', memoryTableAutoOrganizeRef.current);
+      console.log('[DEBUG-ASYNC-ORG] memoryTableOrganizeModeRef.current:', memoryTableOrganizeModeRef.current);
+      console.log('[DEBUG-ASYNC-ORG] characterConfig?.memoryTableAutoOrganize:', characterConfig?.memoryTableAutoOrganize);
+      console.log('[DEBUG-ASYNC-ORG] characterConfig?.memoryTableOrganizeMode:', characterConfig?.memoryTableOrganizeMode);
+      console.log('[DEBUG-ASYNC-ORG] Condition check:', memoryTableAutoOrganizeRef.current && memoryTableOrganizeModeRef.current === 'async');
+
       if (memoryTableAutoOrganizeRef.current && memoryTableOrganizeModeRef.current === 'async') {
         addLog('[CharacterDialogueChat] 进入异步整理模式，开始检测tableEdit标签...', 'info');
+        console.log('[DEBUG-ASYNC-ORG] 进入异步整理模式分支');
 
         // 多种正则模式按优先级匹配，兼容AI可能的变体输出
         const tableEditPatterns = [
@@ -885,9 +978,6 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       initialContentRef.current = '';
     });
 
-    // 准备发送给 AI 的上下文消息（不修改 messages state，仅修改发送给 AI 的内容）
-    let messagesToSend = [...contextMessages];
-
     // 异步整理模式：在用户消息末尾拼接简短的整理指令
     if (memoryTableAutoOrganizeRef.current && memoryTableOrganizeModeRef.current === 'async') {
       addLog('[CharacterDialogueChat] 异步整理模式：在用户消息末尾拼接固定整理指令', 'info');
@@ -917,8 +1007,12 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     }
 
     try {
-      await engine.sendMessage(messagesToSend, finalSystemPrompt, engineConfigWithParams);
+      console.log('[DEBUG-FLOW] Step E: Calling engine.sendMessage');
+      await engine.sendMessage(messagesToUse, finalSystemPrompt, engineConfigWithParams);
+      console.log('[DEBUG-FLOW] Step E: engine.sendMessage returned successfully');
+      console.log('[DEBUG-FLOW] === requestAIResponse END ===');
     } catch (error) {
+      console.error('[DEBUG-FLOW] Step E: engine.sendMessage threw error:', error);
       const errorMessage = error instanceof Error ? error.message : 'Failed to send message';       
       setState(prev => ({
         ...prev,
@@ -934,6 +1028,22 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       message.error(`Failed: ${errorMessage}`);
       initialContentRef.current = '';
     }
+  } catch (error) {
+    console.error('[DEBUG-FLOW] !!! requestAIResponse UNCAUGHT EXCEPTION:', error);
+    console.error('[DEBUG-FLOW] !!! error stack:', error instanceof Error ? error.stack : 'N/A');
+    setState(prev => ({
+      ...prev,
+      messages: prev.messages.map(msg =>
+        msg.id === targetMessageId
+          ? { ...msg, content: `错误: ${error instanceof Error ? error.message : '未知错误'}`, status: 'error' as const }
+          : msg
+      ),
+      isLoading: false,
+      isStreaming: false,
+      error: error instanceof Error ? error.message : '未知错误',
+    }));
+    message.error(`对话请求失败: ${error instanceof Error ? error.message : '未知错误'}`);
+  }
   }, [getActiveEngineConfig, getEffectiveParams, buildDialoguePrompt, buildContinuationPrompt, saveChatToStore, addLog, characterConfig]);
 
   const sendMessage = useCallback(async (content: string) => {
@@ -1156,6 +1266,29 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     addLog(`[CharacterDialogueChat] Memory table organize mode changed to ${mode === 'sync' ? '同步整理' : '异步整理'}`, 'info');
   }, [updateConfig, addLog]);
 
+  const handleMemoryTableTemplateAssociate = useCallback((templateId: string, templateName: string) => {
+    updateConfig({ memoryTableTemplateId: templateId, memoryTableTemplateName: templateName });
+    addLog(`[CharacterDialogueChat] Memory table template associated: ${templateName} (${templateId})`, 'info');
+  }, [updateConfig, addLog]);
+
+  const tokenManagementConfig = useMemo(() => ({
+    enabled: characterConfig?.tokenManagementEnabled ?? true,
+    maxContextTokens: characterConfig?.maxContextTokens ?? 6000,
+    reservedForResponse: characterConfig?.reservedForResponse ?? 1024,
+    minMessagesToKeep: characterConfig?.minMessagesToKeep ?? 2,
+    maxMessagesToKeep: characterConfig?.maxMessagesToKeep ?? 40,
+  }), [characterConfig]);
+
+  const handleTokenManagementConfigChange = useCallback((config: Partial<typeof tokenManagementConfig>) => {
+    const { enabled, ...rest } = config;
+    const mappedConfig: Partial<typeof characterConfig> = {
+      ...rest,
+      ...(enabled !== undefined && { tokenManagementEnabled: enabled }),
+    };
+    updateConfig(mappedConfig);
+    addLog(`[CharacterDialogueChat] Token management config updated: enabled=${enabled ?? characterConfig?.tokenManagementEnabled}`, 'info');
+  }, [updateConfig, addLog, characterConfig]);
+
   return {
     state,
     sendMessage,
@@ -1177,11 +1310,16 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     memoryTableEnabled,
     memoryTableAutoOrganize,
     memoryTableOrganizeMode,
+    memoryTableTemplateId: characterConfig?.memoryTableTemplateId ?? null,
+    memoryTableTemplateName: characterConfig?.memoryTableTemplateName ?? '',
     isOrganizing,
     fetchMemoryTableData,
     handleMemoryTableToggle,
     handleMemoryTableAutoOrganizeToggle,
     handleMemoryTableOrganizeModeChange,
+    handleMemoryTableTemplateAssociate,
+    tokenManagementConfig,
+    handleTokenManagementConfigChange,
     getMemoryTableData: () => memoryTableDataRef.current,
   };
 }

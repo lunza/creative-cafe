@@ -303,6 +303,49 @@ export function registerMemoryHandlers() {
   });
 
   /**
+   * 获取聊天会话关联的模板ID
+   */
+  ipcMain.handle('memory:getAssociatedTemplate', async (event: IpcMainInvokeEvent, chatId: string): Promise<string | null> => {
+    try {
+      const templateId = chatLogService.getAssociatedTemplate(chatId);
+      console.log('[IPC] memory:getAssociatedTemplate 返回:', { chatId, templateId });
+      return templateId || null;
+    } catch (error) {
+      console.error('[IPC] memory:getAssociatedTemplate 失败:', error);
+      return null;
+    }
+  });
+
+  /**
+   * 自动初始化聊天会话（首次对话时自动绑定默认模板并创建空表格）
+   */
+  ipcMain.handle('memory:autoInitializeSession', async (
+    event: IpcMainInvokeEvent,
+    chatId: string
+  ): Promise<{ success: boolean; templateId: string | null }> => {
+    try {
+      console.log('[IPC] memory:autoInitializeSession 请求, chatId:', chatId);
+      
+      // 如果已有模板，说明已初始化
+      const existingTemplateId = chatLogService.getAssociatedTemplate(chatId);
+      if (existingTemplateId) {
+        console.log('[IPC] memory:autoInitializeSession 已初始化, templateId:', existingTemplateId);
+        return { success: true, templateId: existingTemplateId };
+      }
+      
+      // 执行自动初始化
+      const success = chatLogService.autoInitializeChatSession(chatId);
+      const newTemplateId = success ? chatLogService.getAssociatedTemplate(chatId) : null;
+      
+      console.log('[IPC] memory:autoInitializeSession 返回结果:', { success, templateId: newTemplateId });
+      return { success, templateId: newTemplateId };
+    } catch (error) {
+      console.error('[IPC] memory:autoInitializeSession 失败:', error);
+      return { success: false, templateId: null };
+    }
+  });
+
+  /**
    * 处理聊天记录（逐条处理模式 - 实时整理/增量更新）
    */
   ipcMain.handle('memory:processChatProgressive', async (
@@ -477,13 +520,32 @@ export function registerMemoryHandlers() {
   ipcMain.handle('memory:getTableData', async (event: IpcMainInvokeEvent, chatId: string): Promise<any> => {
     console.log('[IPC] memory:getTableData 请求, chatId:', chatId);
     const result = chatLogService.getTableData(chatId);
+    
+    // 确保返回的数据是纯 JSON 可序列化的，避免 IPC 传输失败
+    const serializableResult = {
+      sheets: result?.sheets || [],
+      headers: result?.headers || {},
+      data: result?.data || {},
+      sheetDescriptions: result?.sheetDescriptions || {}
+    };
+    
+    try {
+      JSON.stringify(serializableResult);
+      console.log('[IPC] memory:getTableData 数据序列化验证通过');
+    } catch (e) {
+      console.error('[IPC] memory:getTableData 数据序列化失败，返回空数据:', e);
+      return { sheets: [], headers: {}, data: {}, sheetDescriptions: {} };
+    }
+    
     console.log('[IPC] memory:getTableData 返回结果:', JSON.stringify({
-      sheets: result?.sheets,
-      headersKeys: result?.headers ? Object.keys(result.headers) : [],
-      dataKeys: result?.data ? Object.keys(result.data) : [],
-      dataSummary: result?.data ? Object.fromEntries(Object.entries(result.data).map(([k, v]) => [k, Array.isArray(v) ? v.length : typeof v])) : {}
+      sheets: serializableResult.sheets,
+      headersKeys: Object.keys(serializableResult.headers),
+      dataKeys: Object.keys(serializableResult.data),
+      dataSummary: Object.fromEntries(Object.entries(serializableResult.data).map(([k, v]) => [k, Array.isArray(v) ? v.length : typeof v]))
     }, null, 2));
-    return result;
+    
+    console.log('[IPC] memory:getTableData 即将通过 IPC 返回数据');
+    return serializableResult;
   });
 
   /**

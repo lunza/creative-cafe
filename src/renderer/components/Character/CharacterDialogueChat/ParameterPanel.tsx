@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { Tooltip, Button, Slider } from 'antd';
-import { QuestionCircleOutlined, ReloadOutlined, DownOutlined, RightOutlined } from '@ant-design/icons';
+import { QuestionCircleOutlined, ReloadOutlined, DownOutlined, RightOutlined, SlidersOutlined } from '@ant-design/icons';
 import { AIParameterConfig, EffectiveAIParams } from './CharacterDialogueChat.types';
 import './ConfigPanel.css';
 
@@ -126,7 +126,11 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
           <div className="parameter-collapse-icon">
             {collapsed ? <RightOutlined /> : <DownOutlined />}
           </div>
+          <SlidersOutlined className="parameter-icon" />
           <span>AI 参数配置</span>
+          <Tooltip title="调整AI模型生成的参数，控制输出的长度、随机性和多样性">
+            <QuestionCircleOutlined className="parameter-tooltip-icon" />
+          </Tooltip>
         </div>
         {!collapsed && (
           <div className="parameter-panel-header-right">
@@ -143,48 +147,50 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
       </div>
 
       <div className={`parameter-panel-content ${collapsed ? 'collapsed' : ''}`}>
-        <div className="parameter-list">
-          {PARAMETER_CONFIGS.map(config => {
-            const currentValue = localValues[config.key] ?? effectiveParams[config.key] ?? config.defaultValue;
-            const isModified = localValues[config.key] !== undefined;
+        <div className="parameter-panel-inner">
+          <div className="parameter-list">
+            {PARAMETER_CONFIGS.map(config => {
+              const currentValue = localValues[config.key] ?? effectiveParams[config.key] ?? config.defaultValue;
+              const isModified = localValues[config.key] !== undefined;
 
-            return (
-              <div key={config.key} className="parameter-item">
-                <div className="parameter-header">
-                  <div className="parameter-label-group">
-                    <span className="parameter-label">{config.label}</span>
-                    <Tooltip title={config.tooltip}>
-                      <QuestionCircleOutlined className="parameter-tooltip-icon" />
-                    </Tooltip>
+              return (
+                <div key={config.key} className="parameter-item">
+                  <div className="parameter-header">
+                    <div className="parameter-label-group">
+                      <span className="parameter-label">{config.label}</span>
+                      <Tooltip title={config.tooltip}>
+                        <QuestionCircleOutlined className="parameter-tooltip-icon" />
+                      </Tooltip>
+                    </div>
+                    <span className={`parameter-value ${isModified ? 'modified' : ''}`}>
+                      {config.key === 'max_tokens' ? Math.round(currentValue).toString() : currentValue.toFixed(2)}
+                    </span>
                   </div>
-                  <span className={`parameter-value ${isModified ? 'modified' : ''}`}>
-                    {config.key === 'max_tokens' ? Math.round(currentValue).toString() : currentValue.toFixed(2)}
-                  </span>
+                  <Slider
+                    min={config.min}
+                    max={config.max}
+                    step={config.step}
+                    value={currentValue}
+                    onChange={(value) => handleSliderChange(config.key, value)}
+                    onAfterChange={(value) => handleSliderAfterChange(config.key, value as number)}
+                    className="parameter-slider"
+                  />
                 </div>
-                <Slider
-                  min={config.min}
-                  max={config.max}
-                  step={config.step}
-                  value={currentValue}
-                  onChange={(value) => handleSliderChange(config.key, value)}
-                  onAfterChange={(value) => handleSliderAfterChange(config.key, value as number)}
-                  className="parameter-slider"
-                />
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
 
-        <div className="parameter-actions">
-          <Button
-            type="default"
-            icon={<ReloadOutlined />}
-            onClick={handleReset}
-            disabled={!isCustomized}
-            className="parameter-reset-btn"
-          >
-            重置为默认值
-          </Button>
+          <div className="parameter-actions">
+            <Button
+              type="default"
+              icon={<ReloadOutlined />}
+              onClick={handleReset}
+              disabled={!isCustomized}
+              className="parameter-reset-btn"
+            >
+              重置为默认值
+            </Button>
+          </div>
         </div>
       </div>
     </div>
