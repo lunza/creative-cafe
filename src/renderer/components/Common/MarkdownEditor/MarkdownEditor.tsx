@@ -19,7 +19,6 @@ import '@milkdown/crepe/theme/nord-dark.css';
 import '../../../styles/milkdownFixes.css';
 import { useSettingStore } from '../../../stores/settingStore';
 import { useLogStore } from '../../../stores/logStore';
-import { dataPersistence } from '../DataPersistence';
 import {
   MarkdownEditorProps,
   MarkdownEditorHandle,
@@ -283,7 +282,7 @@ const MarkdownEditorComponent = (
         category: 'system',
         context: { storageKey }
       });
-      const savedContent = await dataPersistence.get<string>(storageKey);
+      const savedContent = localStorage.getItem(storageKey);
       if (savedContent && savedContent.trim()) {
         addLog('MarkdownEditor: 从本地存储加载内容成功', 'info', {
           category: 'system',
@@ -339,7 +338,7 @@ const MarkdownEditorComponent = (
       setTimeout(async () => {
         try {
           // 执行存储操作
-          await dataPersistence.set<string>(storageKey, content);
+          localStorage.setItem(storageKey, content);
           
           // 保存成功后更新状态
           setHasUnsavedChanges(false);

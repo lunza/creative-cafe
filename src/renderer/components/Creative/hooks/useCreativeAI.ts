@@ -3,7 +3,11 @@ import { useSettingStore } from '../../../stores/settingStore';
 import { useLogStore } from '../../../stores/logStore';
 import { buildEngineApiUrl } from '../../../utils/apiUtils';
 import { getTemplateById } from '../../../utils/promptTemplates';
-import { ensurePositiveInteger } from '../../../utils/requestParamUtils';
+
+function ensurePositiveInteger(value: unknown, defaultValue: number): number {
+  const num = Number(value);
+  return Number.isInteger(num) && num > 0 ? num : defaultValue;
+}
 
 interface CreativeAIRequestParams {
   creativeContent: string;
