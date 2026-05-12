@@ -1173,64 +1173,6 @@ deleteRow(4, 1)
 
     addLog(`开始执行 ${commands.length} 个tableEdit命令`, 'info');
 
-    // 确保表格JSON文件存在（创建初始空文件）
-    // 这是异步模式与同步模式的关键差异：同步模式在processChatProgressive中创建，异步模式需要在这里创建
-    try {
-      // 使用与 tableTemplateService 相同的 safeChatId 计算方法
-      const safeChatId = chatId
-        .replace(/\//g, '_')
-        .replace(/\\/g, '_')
-        .replace(/\s+/g, '_')
-        .replace(/@/g, '_')
-        .replace(/-/g, '_')
-        .replace(/:/g, '_')
-        .replace(/\*/g, '_')
-        .replace(/\?/g, '_')
-        .replace(/"/g, '_')
-        .replace(/</g, '_')
-        .replace(/>/g, '_')
-        .replace(/\|/g, '_');
-      
-      const tableFilePath = path.join(this.chatlogDir, `${safeChatId}.json`);
-      
-      if (!fs.existsSync(tableFilePath)) {
-        const associatedTemplateId = this.getAssociatedTemplate(chatId);
-        let templateIdToUse: string | null = null;
-        
-        // 先检查关联的模板是否真实存在
-        if (associatedTemplateId) {
-          const associatedTemplate = tableTemplateService.getTemplate(associatedTemplateId);
-          if (associatedTemplate) {
-            addLog(`[Async Execute] 表格文件不存在，使用关联模板 ${associatedTemplateId} 创建初始文件`, 'info');
-            templateIdToUse = associatedTemplateId;
-          } else {
-            addLog(`[Async Execute] 关联模板 ${associatedTemplateId} 不存在于磁盘，尝试使用默认模板`, 'warn');
-          }
-        }
-        
-        // 如果关联模板不存在，使用默认模板
-        if (!templateIdToUse) {
-          const defaultTemplates = tableTemplateService.getAllTemplates();
-          if (defaultTemplates && defaultTemplates.length > 0) {
-            const defaultTemplateId = defaultTemplates[0].id;
-            addLog(`[Async Execute] 使用默认模板 ${defaultTemplateId} 创建初始文件`, 'info');
-            templateIdToUse = defaultTemplateId;
-          } else {
-            addLog('[Async Execute] 没有可用的模板，无法创建表格文件', 'error');
-            return { success: false, executed: 0, errors: ['没有可用的表格模板，请先在表格模板管理中创建模板'] };
-          }
-        }
-        
-        // 创建表格文件
-        try {
-          tableTemplateService.createTableFile(chatId, templateIdToUse, safeChatId);
-          addLog(`[Async Execute] 表格文件已创建: ${tableFilePath}`, 'info');
-        } catch (createError) {
-          addLog(`[Async Execute] 创建表格文件失败: ${createError}`, 'error');
-          return { success: false, executed: 0, errors: [`创建表格文件失败: ${createError}`] };
-        }
-      }
-
     commands.forEach((command, index) => {
       try {
         const { type, tableIndex, rowIndex, data } = command;
@@ -2613,6 +2555,9 @@ deleteRow(4, 1)
       } else {
         addLog(`[Auto Organize] 表格文件已存在: ${tableFilePath}`, 'debug');
       }
+
+      // 保存关联关系（确保associations.json中有该chatId的记录）
+      this.saveAssociation(chatId, effectiveTemplateId);
 
       // 备份当前表格数据（用于错误回滚）
       try {
