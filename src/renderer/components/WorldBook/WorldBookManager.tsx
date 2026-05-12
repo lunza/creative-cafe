@@ -806,6 +806,11 @@ const WorldBookManager: React.FC = () => {
         systemPrompt += `\n\n【世界书背景】\n${worldBookContent.description}`;
       }
 
+      // 拼接全局system_prompt
+      if (activeEngine.system_prompt && activeEngine.system_prompt.trim()) {
+        systemPrompt = activeEngine.system_prompt.trim() + '\n\n' + systemPrompt;
+      }
+
       // 构建用户提示词，包含条目数据
       const userPrompt = `请对以下条目进行排序：\n\n${JSON.stringify(entriesList, null, 2)}`;
 
@@ -827,7 +832,7 @@ const WorldBookManager: React.FC = () => {
         requestBody = {
           model: modelName,
           messages: [
-            { role: 'system', content: systemPrompt },
+            { role: 'system', content: finalSystemPrompt },
             { role: 'user', content: userPrompt }
           ],
           max_tokens: maxTokens,
@@ -1087,7 +1092,7 @@ const WorldBookManager: React.FC = () => {
       const worldBookDescription = worldBookContent?.description || '';
 
       // 调用翻译函数
-      let cleanedText = await translateText(text, apiUrl, apiKey, apiMode, modelName, apiKeyTransmission, worldBookDescription, maxTokens, temperature, topP);
+      let cleanedText = await translateText(text, apiUrl, apiKey, apiMode, modelName, apiKeyTransmission, worldBookDescription, maxTokens, temperature, topP, activeEngine.system_prompt || '');
 
       // 如果翻译的是关键词字段（key 或 keysecondary），处理顿号分隔的情况
       if (field === 'key' || field === 'keysecondary') {
@@ -1190,7 +1195,7 @@ const WorldBookManager: React.FC = () => {
         // 翻译注释
         if (entryAny.comment) {
           addLog(`[WorldBook] 翻译注释: ${entryAny.comment.substring(0, 50)}...`);
-          entryAny.comment = await translateText(entryAny.comment, apiUrl, apiKey, apiMode, modelName, apiKeyTransmission, worldBookDescription, maxTokens, temperature, topP);
+          entryAny.comment = await translateText(entryAny.comment, apiUrl, apiKey, apiMode, modelName, apiKeyTransmission, worldBookDescription, maxTokens, temperature, topP, activeEngine.system_prompt || '');
         }
         
         // 翻译主要关键词
@@ -1199,7 +1204,7 @@ const WorldBookManager: React.FC = () => {
           const translatedKeys = [];
           for (const key of entryAny.key) {
             if (key) {
-              let translatedKey = await translateText(key, apiUrl, apiKey, apiMode, modelName, apiKeyTransmission, worldBookDescription, maxTokens, temperature, topP);
+              let translatedKey = await translateText(key, apiUrl, apiKey, apiMode, modelName, apiKeyTransmission, worldBookDescription, maxTokens, temperature, topP, activeEngine.system_prompt || '');
               // 处理API返回的顿号或逗号分隔的情况
               if (translatedKey.includes('、') || translatedKey.includes(',')) {
                 // 分割并只取第一个结果
@@ -1218,7 +1223,7 @@ const WorldBookManager: React.FC = () => {
           const translatedKeySecondaries = [];
           for (const key of entryAny.keysecondary) {
             if (key) {
-              let translatedKey = await translateText(key, apiUrl, apiKey, apiMode, modelName, apiKeyTransmission, worldBookDescription, maxTokens, temperature, topP);
+              let translatedKey = await translateText(key, apiUrl, apiKey, apiMode, modelName, apiKeyTransmission, worldBookDescription, maxTokens, temperature, topP, activeEngine.system_prompt || '');
               // 处理API返回的顿号或逗号分隔的情况
               if (translatedKey.includes('、') || translatedKey.includes(',')) {
                 // 分割并只取第一个结果
@@ -1234,7 +1239,7 @@ const WorldBookManager: React.FC = () => {
         // 翻译内容
         if (entryAny.content) {
           addLog(`[WorldBook] 翻译内容: ${entryAny.content.length} 字符`);
-          entryAny.content = await translateText(entryAny.content, apiUrl, apiKey, apiMode, modelName, apiKeyTransmission, worldBookDescription, maxTokens, temperature, topP);
+          entryAny.content = await translateText(entryAny.content, apiUrl, apiKey, apiMode, modelName, apiKeyTransmission, worldBookDescription, maxTokens, temperature, topP, activeEngine.system_prompt || '');
         }
         
         const entryEndTime = Date.now();
@@ -1366,7 +1371,7 @@ const WorldBookManager: React.FC = () => {
         // 润色内容（仅润色 content 字段）
         if (entryAny.content) {
           addLog(`[WorldBook] 润色内容: ${entryAny.content.length} 字符`);
-          entryAny.content = await polishText(entryAny.content, apiUrl, apiKey, apiMode, modelName, apiKeyTransmission, requirements, worldBookDescription, 'content', maxTokens, temperature, topP);
+          entryAny.content = await polishText(entryAny.content, apiUrl, apiKey, apiMode, modelName, apiKeyTransmission, requirements, worldBookDescription, 'content', maxTokens, temperature, topP, activeEngine.system_prompt || '');
         }
         
         const entryEndTime = Date.now();
@@ -1489,7 +1494,7 @@ const WorldBookManager: React.FC = () => {
       }
       
       // 调用润色函数
-      let cleanedText = await polishText(currentPolishText, apiUrl, apiKey, apiMode, modelName, apiKeyTransmission, polishRequirements, worldBookDescription, textType, maxTokens, temperature, topP);
+      let cleanedText = await polishText(currentPolishText, apiUrl, apiKey, apiMode, modelName, apiKeyTransmission, polishRequirements, worldBookDescription, textType, maxTokens, temperature, topP, activeEngine.system_prompt || '');
 
       // 如果润色的是关键词字段（key 或 keysecondary），处理顿号分隔的情况
       if (currentPolishField === 'key' || currentPolishField === 'keysecondary') {
@@ -1525,7 +1530,7 @@ const WorldBookManager: React.FC = () => {
   };
 
   // 辅助函数：翻译单个文本
-  const translateText = async (text: string, apiUrl: string, apiKey: string, apiMode: string, modelName: string, apiKeyTransmission: string, worldBookDescription: string = '', maxTokens: number = 10240, temperature: number = 0.7, topP: number = 0.95): Promise<string> => {
+  const translateText = async (text: string, apiUrl: string, apiKey: string, apiMode: string, modelName: string, apiKeyTransmission: string, worldBookDescription: string = '', maxTokens: number = 10240, temperature: number = 0.7, topP: number = 0.95, globalSystemPrompt: string = ''): Promise<string> => {
     if (!text || text.trim() === '') {
       return text;
     }
@@ -1559,6 +1564,11 @@ const WorldBookManager: React.FC = () => {
     // 如果提供了世界书描述，添加到提示词中
     if (worldBookDescription) {
       systemPrompt += `\n\n【世界书背景】\n${worldBookDescription}`;
+    }
+    
+    // 拼接全局system_prompt
+    if (globalSystemPrompt && globalSystemPrompt.trim()) {
+      systemPrompt = globalSystemPrompt.trim() + '\n\n' + systemPrompt;
     }
     
     // 根据 API 模式构建请求 URL
@@ -1780,7 +1790,7 @@ ${worldBookDescription}`;
     }
   };
 
-  const polishText = async (text: string, apiUrl: string, apiKey: string, apiMode: string, modelName: string, apiKeyTransmission: string, requirements: string = '', worldBookDescription: string = '', textType: 'keyword' | 'content' | 'comment' = 'content', maxTokens: number = 10240, temperature: number = 0.7, topP: number = 0.95): Promise<string> => {
+  const polishText = async (text: string, apiUrl: string, apiKey: string, apiMode: string, modelName: string, apiKeyTransmission: string, requirements: string = '', worldBookDescription: string = '', textType: 'keyword' | 'content' | 'comment' = 'content', maxTokens: number = 10240, temperature: number = 0.7, topP: number = 0.95, globalSystemPrompt: string = ''): Promise<string> => {
     if (!text || text.trim() === '') {
       return text;
     }
@@ -1843,6 +1853,11 @@ ${worldBookDescription}`;
     // 添加用户润色要求
     if (requirements) {
       basePrompt += `\n\n【润色要求】\n${requirements}`;
+    }
+    
+    // 拼接全局system_prompt
+    if (globalSystemPrompt && globalSystemPrompt.trim()) {
+      basePrompt = globalSystemPrompt.trim() + '\n\n' + basePrompt;
     }
     
     // 根据 API 模式构建请求 URL
@@ -2039,6 +2054,11 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
 条目内容: ${content.substring(0, 2000)}${content.length > 2000 ? '...' : ''}
 
 请只返回JSON格式的结果。`;
+
+    // 拼接全局system_prompt
+    if (activeEngine.system_prompt && activeEngine.system_prompt.trim()) {
+      systemPrompt = activeEngine.system_prompt.trim() + '\n\n' + systemPrompt;
+    }
 
     // 根据 API 模式构建请求 URL
     if (api_mode === 'chat_completion') {
@@ -2619,6 +2639,11 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
         systemPrompt += `\n\n【世界书背景】\n${worldBookDescription}`;
       }
 
+      // 拼接全局system_prompt
+      if (activeEngine.system_prompt && activeEngine.system_prompt.trim()) {
+        systemPrompt = activeEngine.system_prompt.trim() + '\n\n' + systemPrompt;
+      }
+
       // 发送请求
       let requestUrl;
       let requestBody;
@@ -2828,6 +2853,12 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
 3. 返回格式：用逗号分隔的字符串
 4. 只返回关键词字符串，不要其他解释性文字`;
 
+      // 拼接全局system_prompt
+      let finalSystemPrompt = systemPrompt;
+      if (activeEngine.system_prompt && activeEngine.system_prompt.trim()) {
+        finalSystemPrompt = activeEngine.system_prompt.trim() + '\n\n' + systemPrompt;
+      }
+
       // 发送请求
       let requestUrl;
       let requestBody;
@@ -2847,7 +2878,7 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
         requestBody = {
           model: modelName,
           messages: [
-            { role: 'system', content: systemPrompt },
+            { role: 'system', content: finalSystemPrompt },
             { role: 'user', content: keywords }
           ],
           max_tokens: maxTokens,
@@ -2871,7 +2902,7 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
         
         requestBody = {
           model: modelName,
-          prompt: `${systemPrompt}\n\n${keywords}`,
+          prompt: `${finalSystemPrompt}\n\n${keywords}`,
           max_tokens: maxTokens,
           temperature: temperature,
           top_p: topP,
@@ -2970,6 +3001,12 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
       const userPrompt = `主题描述：${themeDescription}
 关键词：${keywords}`;
 
+      // 拼接全局system_prompt
+      let finalSystemPrompt = systemPrompt;
+      if (activeEngine.system_prompt && activeEngine.system_prompt.trim()) {
+        finalSystemPrompt = activeEngine.system_prompt.trim() + '\n\n' + systemPrompt;
+      }
+
       // 发送请求
       let requestUrl;
       let requestBody;
@@ -2989,7 +3026,7 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
         requestBody = {
           model: modelName,
           messages: [
-            { role: 'system', content: systemPrompt },
+            { role: 'system', content: finalSystemPrompt },
             { role: 'user', content: userPrompt }
           ],
           max_tokens: maxTokens,
@@ -3013,7 +3050,7 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
         
         requestBody = {
           model: modelName,
-          prompt: `${systemPrompt}\n\n${userPrompt}`,
+          prompt: `${finalSystemPrompt}\n\n${userPrompt}`,
           max_tokens: maxTokens,
           temperature: temperature,
           top_p: topP,
@@ -3392,6 +3429,12 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
         systemPrompt += `\n\n【世界书背景】\n${worldBookDescription}`;
       }
 
+      // 拼接全局system_prompt
+      let finalSystemPrompt = systemPrompt;
+      if (activeEngine.system_prompt && activeEngine.system_prompt.trim()) {
+        finalSystemPrompt = activeEngine.system_prompt.trim() + '\n\n' + systemPrompt;
+      }
+
       // 发送请求
       let requestUrl;
       let requestBody;
@@ -3411,7 +3454,7 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
         requestBody = {
           model: modelName,
           messages: [
-            { role: 'system', content: systemPrompt },
+            { role: 'system', content: finalSystemPrompt },
             { role: 'user', content: expectedContent }
           ],
           max_tokens: maxTokens,
@@ -3435,7 +3478,7 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
         
         requestBody = {
           model: modelName,
-          prompt: `${systemPrompt}\n\n${expectedContent}`,
+          prompt: `${finalSystemPrompt}\n\n${expectedContent}`,
           max_tokens: maxTokens,
           temperature: temperature,
           top_p: topP,

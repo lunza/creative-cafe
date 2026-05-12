@@ -311,8 +311,14 @@ ${userRequirements.trim()}`;
     }
 
     try {
+      // 拼接全局system_prompt
+      let finalSystemPrompt = systemPrompt;
+      if (engine.system_prompt && engine.system_prompt.trim()) {
+        finalSystemPrompt = engine.system_prompt.trim() + '\n\n' + systemPrompt;
+      }
+
       const messages = [
-        { role: 'system', content: systemPrompt },
+        { role: 'system', content: finalSystemPrompt },
         { role: 'user', content: userPrompt }
       ];
 
@@ -357,8 +363,15 @@ ${userRequirements.trim()}`;
     }
 
     const systemPrompt = `你是一个创意内容优化助手。请根据用户的要求，对以下内容进行优化：\n${currentContent}`;
+    
+    // 拼接全局system_prompt
+    let finalSystemPrompt = systemPrompt;
+    if (engine.system_prompt && engine.system_prompt.trim()) {
+      finalSystemPrompt = engine.system_prompt.trim() + '\n\n' + systemPrompt;
+    }
+    
     const messages = [
-      { role: 'system', content: systemPrompt },
+      { role: 'system', content: finalSystemPrompt },
       ...chatHistory
     ];
 

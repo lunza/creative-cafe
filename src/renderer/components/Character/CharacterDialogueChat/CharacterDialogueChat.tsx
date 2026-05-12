@@ -8,6 +8,7 @@ import ChatTypingIndicator from './ChatTypingIndicator';
 import ConfigPanel from './ConfigPanel';
 import CharacterSelectorPanel from './CharacterSelectorPanel';
 import { useCharacterDialogueChat } from './CharacterDialogueChat.hooks';
+import { useFavoritesStore } from '../../../stores/favoritesStore';
 import { exportConversation } from './CharacterDialogueChat.utils';
 import { CharacterInfo, AIParameterConfig } from './CharacterDialogueChat.types';
 
@@ -72,11 +73,14 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
     handleTokenManagementConfigChange,
   } = useCharacterDialogueChat(characterInfo);
   
+  const { toggleFavorite, isFavorite, getFavoritePaths } = useFavoritesStore();
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [personasLoading, setPersonasLoading] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const favoritePaths = getFavoritePaths();
 
   useEffect(() => {
     if (state.messages.length > 0 || state.isStreaming) {
@@ -154,6 +158,14 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
   const handleToggleFullscreen = useCallback(() => {
     setIsFullscreen(prev => !prev);
   }, []);
+
+  const handleToggleFavorite = useCallback(() => {
+    toggleFavorite(characterInfo.characterCardId);
+  }, [toggleFavorite, characterInfo.characterCardId]);
+
+  const handleCharacterSelectWithFavorite = useCallback((character: CharacterSelectorItem) => {
+    onCharacterSelect?.(character);
+  }, [onCharacterSelect]);
 
   if (!open && !isFullscreen) return null;
 
@@ -313,7 +325,9 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
         <CharacterSelectorPanel
           characters={characters}
           selectedCharacterPath={characterInfo.characterCardId}
-          onSelect={onCharacterSelect}
+          onSelect={handleCharacterSelectWithFavorite}
+          favoritePaths={favoritePaths}
+          onToggleFavorite={toggleFavorite}
         />
       )}
 
@@ -343,6 +357,8 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
           isFullscreen={isFullscreen}
           onToggleFullscreen={handleToggleFullscreen}
           selectedPersona={selectedPersona}
+          isFavorite={isFavorite(characterInfo.characterCardId)}
+          onToggleFavorite={handleToggleFavorite}
         />
 
         <div

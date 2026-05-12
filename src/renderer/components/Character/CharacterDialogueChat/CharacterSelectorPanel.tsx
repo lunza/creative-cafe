@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { UserOutlined } from '@ant-design/icons';
+import { UserOutlined, HeartFilled } from '@ant-design/icons';
 import './CharacterSelectorPanel.css';
 
 interface Character {
@@ -18,6 +18,8 @@ interface CharacterSelectorPanelProps {
   characters: Character[];
   selectedCharacterPath?: string;
   onSelect: (character: Character) => void;
+  favoritePaths?: string[];
+  onToggleFavorite?: (path: string) => void;
 }
 
 const ITEM_HEIGHT = 100;
@@ -26,11 +28,23 @@ const CharacterSelectorPanel: React.FC<CharacterSelectorPanelProps> = ({
   characters,
   selectedCharacterPath,
   onSelect,
+  favoritePaths = [],
+  onToggleFavorite,
 }) => {
   const listRef = useRef<HTMLDivElement>(null);
   const [avatarCache, setAvatarCache] = useState<Record<string, string>>({});
   const [avatarLoading, setAvatarLoading] = useState<Record<string, boolean>>({});
   const [avatarError, setAvatarError] = useState<Record<string, boolean>>({});
+
+  const sortedCharacters = React.useMemo(() => {
+    if (favoritePaths.length === 0) {
+      return characters;
+    }
+    const favoriteSet = new Set(favoritePaths);
+    const favorites = characters.filter((c) => favoriteSet.has(c.path));
+    const nonFavorites = characters.filter((c) => !favoriteSet.has(c.path));
+    return [...favorites, ...nonFavorites];
+  }, [characters, favoritePaths]);
 
   const loadAvatar = useCallback(async (character: Character) => {
     if (avatarCache[character.path] || avatarError[character.path] || avatarLoading[character.path]) {
@@ -127,10 +141,11 @@ const CharacterSelectorPanel: React.FC<CharacterSelectorPanelProps> = ({
         className="character-selector-list"
         onWheel={handleWheel}
       >
-        {characters.map((character, index) => {
+        {sortedCharacters.map((character, index) => {
           const isSelected = character.path === selectedCharacterPath;
           const displayName = character.characterName || character.name;
           const firstChar = displayName.charAt(0).toUpperCase();
+          const isFavorite = favoritePaths.includes(character.path);
 
           return (
             <div
@@ -141,6 +156,14 @@ const CharacterSelectorPanel: React.FC<CharacterSelectorPanelProps> = ({
               style={{ animationDelay: `${index * 0.05}s` }}
             >
               <div className="character-selector-avatar">
+                {isFavorite && (
+                  <div className="favorite-heart-badge" onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleFavorite?.(character.path);
+                  }}>
+                    <HeartFilled />
+                  </div>
+                )}
                 {avatarLoading[character.path] && (
                   <div className="avatar-loading" />
                 )}

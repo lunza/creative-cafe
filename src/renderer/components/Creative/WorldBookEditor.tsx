@@ -220,12 +220,20 @@ const WorldBookEditor: React.FC = () => {
 
       let requestBody: any;
       if (apiMode === 'chat_completion') {
+        let finalSystemPrompt = template.systemPrompt;
+        if (activeEngine.system_prompt && activeEngine.system_prompt.trim()) {
+          finalSystemPrompt = activeEngine.system_prompt.trim() + '\n\n' + template.systemPrompt;
+        }
+
+        addLog(`[Creative] 拼接后的systemPrompt长度: ${finalSystemPrompt.length}`, 'info');
+        console.log('[DEBUG] finalSystemPrompt:', finalSystemPrompt);
+
         requestBody = {
           model: modelName,
           messages: [
             {
               role: 'system',
-              content: template.systemPrompt
+              content: finalSystemPrompt
             },
             {
               role: 'user',

@@ -6,6 +6,7 @@ export { default as ChatHeader } from './ChatHeader';
 export { default as ConfigPanel } from './ConfigPanel';
 export { default as PersonaPanel } from './PersonaPanel';
 export { default as ParameterPanel } from './ParameterPanel';
+export { default as CharacterSelectorPanel } from './CharacterSelectorPanel';
 export { useCharacterDialogueChat } from './CharacterDialogueChat.hooks';
 export * from './CharacterDialogueChat.types';
 export * from './CharacterDialogueChat.utils';
