@@ -18,7 +18,6 @@ import Settings from './components/Settings/Settings';
 import MemoryChatManager from './components/MemoryChat/MemoryChatManager';
 import CreativeManager from './components/Creative/CreativeManager';
 import TestPage from './components/Test/TestPage';
-import VectorTestPage from './components/Test/VectorTestPage';
 import DocumentVectorPage from './components/Test/DocumentVectorPage';
 import { KnowledgeBaseManager } from './components/KnowledgeBase/KnowledgeBaseManager';
 import { CreationCenter } from './components/Chat/CreationCenter';
@@ -82,12 +81,10 @@ function App() {
       case 'settings':
         return <Settings />;
       case 'test':
-      case 'test-vector':
-        return <VectorTestPage />;
-      case 'document-vector':
-        return <DocumentVectorPage />;
       case 'test-markdown':
         return <TestPage />;
+      case 'document-vector':
+        return <DocumentVectorPage />;
       default:
         return <Dashboard />;
     }

@@ -1,7 +1,11 @@
 import { AIService, defaultAIService } from '../components/Common/AIService';
 import type { AIRequestOptions, AIResult } from '../components/Common/AIService.types';
 import type { AIEngine } from '../types/setting';
-import { ensurePositiveInteger } from './requestParamUtils';
+
+function ensurePositiveInteger(value: unknown, defaultValue: number): number {
+  const num = Number(value);
+  return Number.isInteger(num) && num > 0 ? num : defaultValue;
+}
 
 function buildAIRequestOptions(
   engine: AIEngine,
