@@ -213,10 +213,22 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
       console.debug(`[AI Handler] model: ${sanitizedBody.model || 'N/A'}`);
       console.debug(`[AI Handler] stream: ${sanitizedBody.stream || false}`);
       console.debug(`[AI Handler] messages 数量: ${sanitizedBody.messages.length}`);
+
+      // 打印system消息的前缀日志（方便确认拼接状态）
+      const systemMsg = sanitizedBody.messages.find((m: any) => m.role === 'system');
+      if (systemMsg && systemMsg.content) {
+        const systemContent = systemMsg.content;
+        const systemPreviewLen = Math.min(500, systemContent.length);
+        const systemPreview = systemContent.substring(0, systemPreviewLen).replace(/\n/g, '\\n');
+        const systemSuffix = systemContent.length > systemPreviewLen ? `... (${systemContent.length - systemPreviewLen} more chars)` : '';
+        logDebug(`System消息摘要`, `长度=${systemContent.length}, 预览: ${systemPreview}${systemSuffix}`);
+      }
+
       sanitizedBody.messages.forEach((msg: any, idx: number) => {
         const contentLen = msg.content ? msg.content.length : 0;
-        const preview = msg.content ? msg.content.substring(0, 200).replace(/\n/g, '\\n') : '(empty)';
-        const suffix = contentLen > 200 ? `... (${contentLen - 200} more chars)` : '';
+        const previewLen = Math.min(500, contentLen);
+        const preview = msg.content ? msg.content.substring(0, previewLen).replace(/\n/g, '\\n') : '(empty)';
+        const suffix = contentLen > previewLen ? `... (${contentLen - previewLen} more chars)` : '';
         console.debug(`[AI Handler]   message[${idx}] role=${msg.role}, content长度=${contentLen}: ${preview}${suffix}`);
       });
       // 同时输出完整 JSON 字符串到日志文件（不受 DevTools 截断影响）
@@ -270,9 +282,9 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
       // 存储 AbortController 以便外部取消
       const senderId = event.sender.id;
       
-      // 双层超时策略
-      const CONNECTION_TIMEOUT = 30000; // 30秒连接超时
-      const effectiveTimeout = timeout || 120000; // 默认 120 秒请求超时
+      // 超时策略
+      const CONNECTION_TIMEOUT = 0; // 无连接超时限制
+      const effectiveTimeout = timeout === 0 ? 0 : (timeout || 0); // timeout为0或undefined时无超时限制
       
       activeRequests.set(senderId, { controller, timeoutId: undefined, connectionTimeoutId: undefined });
       
@@ -281,28 +293,32 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
         url: url,
         method: method,
         connectionTimeout: CONNECTION_TIMEOUT,
-        requestTimeout: effectiveTimeout
+        requestTimeout: effectiveTimeout > 0 ? effectiveTimeout : '无限制'
       });
       
-      // 设置连接超时检测（30秒）
-      connectionTimeoutId = setTimeout(() => {
-        logWarn(`AI 请求连接超时 (${CONNECTION_TIMEOUT}ms)，正在中止请求`, {
-          timestamp: new Date().toISOString(),
-          url: url,
-          connectionTimeout: CONNECTION_TIMEOUT
-        });
-        controller?.abort();
-      }, CONNECTION_TIMEOUT);
+      // 设置连接超时检测（无超时限制）
+      if (CONNECTION_TIMEOUT > 0) {
+        connectionTimeoutId = setTimeout(() => {
+          logWarn(`AI 请求连接超时 (${CONNECTION_TIMEOUT}ms)，正在中止请求`, {
+            timestamp: new Date().toISOString(),
+            url: url,
+            connectionTimeout: CONNECTION_TIMEOUT
+          });
+          controller?.abort();
+        }, CONNECTION_TIMEOUT);
+      }
       
-      // 设置请求超时
-      timeoutId = setTimeout(() => {
-        logWarn(`AI 请求响应超时 (${effectiveTimeout}ms)，正在中止请求`, {
-          timestamp: new Date().toISOString(),
-          url: url,
-          requestTimeout: effectiveTimeout
-        });
-        controller?.abort();
-      }, effectiveTimeout);
+      // 设置请求超时（无超时限制）
+      if (effectiveTimeout > 0) {
+        timeoutId = setTimeout(() => {
+          logWarn(`AI 请求响应超时 (${effectiveTimeout}ms)，正在中止请求`, {
+            timestamp: new Date().toISOString(),
+            url: url,
+            requestTimeout: effectiveTimeout
+          });
+          controller?.abort();
+        }, effectiveTimeout);
+      }
       
       // 更新 Map 中的 timeoutId
       activeRequests.set(senderId, { controller, timeoutId, connectionTimeoutId });
@@ -622,36 +638,41 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
       const controller = new AbortController();
       let timeoutId: NodeJS.Timeout | undefined;
       
-      // 双层超时策略
-      const CONNECTION_TIMEOUT = 30000; // 30秒连接超时
-      const effectiveTimeout = timeout || 120000; // 默认 120 秒请求超时
+      // 超时策略
+      const CONNECTION_TIMEOUT = 0; // 无连接超时限制
+      const effectiveTimeout = timeout === 0 ? 0 : (timeout || 0); // timeout为0或undefined时无超时限制
       
-      // 设置连接超时检测（30秒）
-      const connectionTimeoutId = setTimeout(() => {
-        logWarn(`AI 请求连接超时 (${CONNECTION_TIMEOUT}ms)，正在中止请求`, {
-          timestamp: new Date().toISOString(),
-          url: url,
-          connectionTimeout: CONNECTION_TIMEOUT
-        });
-        controller.abort();
-      }, CONNECTION_TIMEOUT);
+      // 设置连接超时检测（无超时限制）
+      let connectionTimeoutId: NodeJS.Timeout | undefined;
+      if (CONNECTION_TIMEOUT > 0) {
+        connectionTimeoutId = setTimeout(() => {
+          logWarn(`AI 请求连接超时 (${CONNECTION_TIMEOUT}ms)，正在中止请求`, {
+            timestamp: new Date().toISOString(),
+            url: url,
+            connectionTimeout: CONNECTION_TIMEOUT
+          });
+          controller.abort();
+        }, CONNECTION_TIMEOUT);
+      }
       
-      // 设置请求超时
-      timeoutId = setTimeout(() => {
-        logWarn(`AI 请求响应超时 (${effectiveTimeout}ms)，正在中止请求`, {
-          timestamp: new Date().toISOString(),
-          url: url,
-          requestTimeout: effectiveTimeout
-        });
-        controller.abort();
-      }, effectiveTimeout);
+      // 设置请求超时（无超时限制）
+      if (effectiveTimeout > 0) {
+        timeoutId = setTimeout(() => {
+          logWarn(`AI 请求响应超时 (${effectiveTimeout}ms)，正在中止请求`, {
+            timestamp: new Date().toISOString(),
+            url: url,
+            requestTimeout: effectiveTimeout
+          });
+          controller.abort();
+        }, effectiveTimeout);
+      }
       
       logInfo(`正在发送请求到 ${url}...`, {
         timestamp: startTimeStr,
         url: url,
         method: method,
         connectionTimeout: CONNECTION_TIMEOUT,
-        requestTimeout: effectiveTimeout
+        requestTimeout: effectiveTimeout > 0 ? effectiveTimeout : '无限制'
       });
       try {
         const response = await fetch(url, {

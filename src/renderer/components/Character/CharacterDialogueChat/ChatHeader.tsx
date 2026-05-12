@@ -1,6 +1,6 @@
 import React from 'react';
 import { Button, Space, Tooltip } from 'antd';
-import { ClearOutlined, ExportOutlined, CloseOutlined, RobotOutlined, FullscreenOutlined, FullscreenExitOutlined, UserOutlined } from '@ant-design/icons';
+import { ClearOutlined, ExportOutlined, CloseOutlined, RobotOutlined, FullscreenOutlined, FullscreenExitOutlined, UserOutlined, HeartOutlined, HeartFilled } from '@ant-design/icons';
 
 interface ChatHeaderProps {
   characterName: string;
@@ -13,6 +13,8 @@ interface ChatHeaderProps {
   isFullscreen?: boolean;
   onToggleFullscreen?: () => void;
   selectedPersona?: { name: string; avatarPath?: string } | null;
+  isFavorite?: boolean;
+  onToggleFavorite?: () => void;
 }
 
 const ChatHeader: React.FC<ChatHeaderProps> = ({
@@ -26,6 +28,8 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
   isFullscreen = false,
   onToggleFullscreen,
   selectedPersona,
+  isFavorite = false,
+  onToggleFavorite,
 }) => {
   return (
     <div style={{
@@ -38,25 +42,48 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
       borderBottom: '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-        <div style={{
-          width: isFullscreen ? '48px' : '40px',
-          height: isFullscreen ? '48px' : '40px',
-          borderRadius: '50%',
-          overflow: 'hidden',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
-          border: '2px solid var(--secondary-color, #8b5cf6)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          background: 'linear-gradient(135deg, #8b5cf6 0%, #a855f7 100%)',
-        }}>
-          {avatarPath ? (
-            <img src={avatarPath} alt={characterName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-          ) : (
-            <RobotOutlined style={{ fontSize: isFullscreen ? '24px' : '20px', color: '#fff' }} />
+          <div style={{
+            width: isFullscreen ? '48px' : '40px',
+            height: isFullscreen ? '48px' : '40px',
+            borderRadius: '50%',
+            overflow: 'hidden',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+            border: '2px solid var(--secondary-color, #8b5cf6)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'linear-gradient(135deg, #8b5cf6 0%, #a855f7 100%)',
+          }}>
+            {avatarPath ? (
+              <img src={avatarPath} alt={characterName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            ) : (
+              <RobotOutlined style={{ fontSize: isFullscreen ? '24px' : '20px', color: '#fff' }} />
+            )}
+          </div>
+          {onToggleFavorite && (
+            <Tooltip title={isFavorite ? '取消喜爱' : '喜爱'}>
+              <Button
+                type="text"
+                icon={isFavorite ? <HeartFilled /> : <HeartOutlined />}
+                onClick={onToggleFavorite}
+                size="small"
+                style={{
+                  color: isFavorite ? '#ec4899' : 'var(--text-secondary, #9ca3af)',
+                  fontSize: isFullscreen ? '18px' : '16px',
+                  padding: '4px',
+                  transition: 'all 0.2s ease',
+                  transform: isFavorite ? 'scale(1.1)' : 'scale(1)',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = 'scale(1.2)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = isFavorite ? 'scale(1.1)' : 'scale(1)';
+                }}
+              />
+            </Tooltip>
           )}
-        </div>
-        <div>
+          <div>
           <h3 style={{
             margin: 0,
             fontSize: isFullscreen ? '18px' : '16px',

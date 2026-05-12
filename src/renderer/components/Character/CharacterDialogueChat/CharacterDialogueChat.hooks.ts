@@ -649,10 +649,16 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       tableStructure
     );
 
+    // 拼接全局system_prompt到角色提示词
+    const globalSystemPrompt = activeEngine.system_prompt?.trim();
+    const effectiveSystemPrompt = globalSystemPrompt 
+      ? globalSystemPrompt + '\n\n' + finalSystemPrompt
+      : finalSystemPrompt;
+
     // Debug: 显示提示词末尾（背景知识注入位置）
-    const promptTail = finalSystemPrompt.substring(Math.max(0, finalSystemPrompt.length - 500));
-    addLog(`[CharacterDialogueChat] System prompt length: ${finalSystemPrompt.length}, tail: ...${promptTail}`, 'info');
-    console.log('[DEBUG-FLOW] Step C: buildCompleteSystemPrompt done, length:', finalSystemPrompt.length);
+    const promptTail = effectiveSystemPrompt.substring(Math.max(0, effectiveSystemPrompt.length - 500));
+    addLog(`[CharacterDialogueChat] System prompt length: ${effectiveSystemPrompt.length}, tail: ...${promptTail}`, 'info');
+    console.log('[DEBUG-FLOW] Step C: buildCompleteSystemPrompt done, length:', effectiveSystemPrompt.length);
 
     addLog('[CharacterDialogueChat] 提示词构建完成，开始 Token 管理', 'info');
     console.log('[DEBUG-FLOW] Step D: Starting token management');
@@ -670,7 +676,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     let messagesToUse = messagesToSend;
 
     if (tokenManagementEnabled) {
-      const systemPromptTokens = TokenCounter.countSystemPromptTokens(finalSystemPrompt);
+      const systemPromptTokens = TokenCounter.countSystemPromptTokens(effectiveSystemPrompt);
       
       const truncatedMessages = ContextTruncator.truncateMessages(
         messagesToSend,
@@ -1008,7 +1014,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
 
     try {
       console.log('[DEBUG-FLOW] Step E: Calling engine.sendMessage');
-      await engine.sendMessage(messagesToUse, finalSystemPrompt, engineConfigWithParams);
+      await engine.sendMessage(messagesToUse, effectiveSystemPrompt, engineConfigWithParams);
       console.log('[DEBUG-FLOW] Step E: engine.sendMessage returned successfully');
       console.log('[DEBUG-FLOW] === requestAIResponse END ===');
     } catch (error) {
