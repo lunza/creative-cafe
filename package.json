@@ -1,6 +1,6 @@
 {
   "name": "creative-cafe",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "创想咖啡厅 Creative Café - AI 驱动的 SillyTavern 创意工坊",
   "main": "dist/main/index.js",
   "author": "",
