@@ -338,7 +338,7 @@ class StorageService {
   private async ensureModuleDirectories(): Promise<void> {
     try {
       const userDataPath = getUserDataPath();
-      const modules = ['characters', 'worldbooks', 'avatars', 'creatives', 'memories', 'plugins'];
+      const modules = ['characters', 'worldbooks', 'avatars', 'creatives', 'memories', 'plugins', 'groups', 'groupchats'];
       for (const mod of modules) {
         const dirPath = path.join(userDataPath, 'data', mod);
         if (!fs.existsSync(dirPath)) {

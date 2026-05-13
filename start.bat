@@ -46,11 +46,19 @@ if not exist "node_modules" (
 
 rem Check Vite
 if not exist "node_modules\vite" (
-    echo [ERROR] Vite not installed
-    pause
-    exit /b 1
+    echo.
+    echo [WARN] Vite not found, installing...
+    call npm install vite --save-dev --no-audit --no-fund
+    if %errorlevel% neq 0 (
+        echo [ERROR] Vite installation failed
+        echo Try running: npm install
+        pause
+        exit /b 1
+    )
+    echo [OK] Vite: installed
+) else (
+    echo [OK] Vite: installed
 )
-echo [OK] Vite: installed
 
 rem Check Electron
 set "ELECTRON_OK=false"

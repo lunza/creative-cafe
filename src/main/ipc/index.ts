@@ -8,6 +8,8 @@ import { appHandlers } from './handlers/appHandlers';
 import { pluginHandlers } from './handlers/pluginHandlers';
 import { documentHandlers } from './handlers/documentHandlers';
 import { updateHandlers } from './handlers/updateHandlers';
+import { registerGroupHandlers } from './handlers/groupHandlers';
+import { registerGroupChatHandlers } from './handlers/groupChatHandlers';
 import './handlers/aiHandlers';
 import { getStorageService } from '../services/storageService';
 import { embeddingService } from '../services/EmbeddingService';
@@ -47,4 +49,7 @@ export function setupIpcHandlers() {
 
   embeddingWorkerService.initialize();
   embeddingWorkerService.registerIpcHandlers();
+
+  registerGroupHandlers();
+  registerGroupChatHandlers();
 }

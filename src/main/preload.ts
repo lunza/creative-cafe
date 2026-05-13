@@ -4,6 +4,9 @@ import { contextBridge, ipcRenderer } from 'electron';
 const subscriptionMap = new Map<string, Map<Function, Function>>();
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  // 通用 invoke 方法，用于直接调用 IPC handler
+  invoke: (channel: string, ...args: any[]) => ipcRenderer.invoke(channel, ...args),
+
   // 通用方法，用于监听 IPC 事件
   on: (channel: string, callback: (...args: any[]) => void) => {
     const subscription = (_event: any, ...args: any[]) => callback(...args);
@@ -306,5 +309,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
     vectorize: (characterId: string, messages: any[]) => ipcRenderer.invoke('chatVector:vectorize', characterId, messages),
     delete: (characterId: string) => ipcRenderer.invoke('chatVector:delete', characterId),
     search: (characterId: string, query: string, topK?: number) => ipcRenderer.invoke('chatVector:search', characterId, query, topK)
+  },
+  // 群组聊天 API
+  group: {
+    getAll: () => ipcRenderer.invoke('group:getAll'),
+    get: (id: string) => ipcRenderer.invoke('group:get', id),
+    create: (data: any) => ipcRenderer.invoke('group:create', data),
+    edit: (group: any) => ipcRenderer.invoke('group:edit', group),
+    delete: (id: string) => ipcRenderer.invoke('group:delete', id)
+  },
+  groupChat: {
+    get: (chatId: string) => ipcRenderer.invoke('group-chat:get', chatId),
+    save: (chatId: string, chat: any[], force?: boolean) => ipcRenderer.invoke('group-chat:save', chatId, chat, force),
+    delete: (chatId: string) => ipcRenderer.invoke('group-chat:delete', chatId),
+    info: (chatId: string) => ipcRenderer.invoke('group-chat:info', chatId),
+    import: (content: string, suggestedId?: string) => ipcRenderer.invoke('group-chat:import', content, suggestedId)
   }
 });

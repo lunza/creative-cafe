@@ -6,13 +6,15 @@ import {
   TrophyOutlined,
   HeartFilled
 } from '@ant-design/icons';
-import { Tooltip } from 'antd';
+import { Tooltip, message } from 'antd';
 import { SingleChatDialog } from './SingleChatDialog';
-import { GroupChatMode } from './GroupChatMode';
+import { GroupChatDialog } from '../GroupChat/GroupChatDialog';
 import { CreativeMode } from './CreativeMode';
 import { GameMode } from './GameMode';
 import { useDataStore } from '../../stores/dataStore';
 import { useFavoritesStore } from '../../stores/favoritesStore';
+import { useGroupChatStore } from '../../stores/groupChatStore';
+import { ActivationStrategy, GenerationMode } from '../../types/groupChat.types';
 import './CreationCenter.css';
 
 type ChatPanelType = 'chat' | 'group' | 'creative' | 'game';
@@ -24,6 +26,7 @@ interface PanelConfig {
   color: string;
   activeColor: string;
   comingSoon?: boolean;
+  devBadge?: boolean;
 }
 
 const panelConfig: Record<ChatPanelType, PanelConfig> = {
@@ -40,7 +43,7 @@ const panelConfig: Record<ChatPanelType, PanelConfig> = {
     icon: <TeamOutlined />,
     color: '#ec4899',
     activeColor: '#f472b6',
-    comingSoon: true,
+    devBadge: true,
   },
   creative: {
     label: '写作模式',
@@ -85,6 +88,7 @@ interface FavoriteCharacterData {
 export const CreationCenter: React.FC = () => {
   const [activePanel, setActivePanel] = useState<ChatPanelType>('chat');
   const [showChatDialog, setShowChatDialog] = useState(false);
+  const [showGroupChatDialog, setShowGroupChatDialog] = useState(false);
   const [flashingPanel, setFlashingPanel] = useState<ChatPanelType | null>(null);
   const [ripples, setRipples] = useState<Record<ChatPanelType, Ripple[]>>({
     chat: [],
@@ -95,8 +99,10 @@ export const CreationCenter: React.FC = () => {
   const rippleCounter = useRef(0);
   const { characters, fetchCharacters, loading: charactersLoading } = useDataStore();
   const { getFavoritePaths, toggleFavorite } = useFavoritesStore();
+  const { loadGroups, selectGroup, groups, createGroup } = useGroupChatStore();
   const [favoriteData, setFavoriteData] = useState<FavoriteCharacterData[]>([]);
   const hasFetchedRef = useRef(false);
+  const hasLoadedGroupsRef = useRef(false);
 
   useEffect(() => {
     if (!hasFetchedRef.current && !charactersLoading && characters.length === 0) {
@@ -104,6 +110,13 @@ export const CreationCenter: React.FC = () => {
       fetchCharacters();
     }
   }, [characters.length, charactersLoading, fetchCharacters]);
+
+  useEffect(() => {
+    if (!hasLoadedGroupsRef.current) {
+      hasLoadedGroupsRef.current = true;
+      loadGroups();
+    }
+  }, [loadGroups]);
 
   const favoritePaths = getFavoritePaths();
 
@@ -122,7 +135,17 @@ export const CreationCenter: React.FC = () => {
         modified: c.modified,
         characterName: c.characterName,
       }));
-    setFavoriteData(favCharacters);
+    
+    setFavoriteData((prev) => {
+      if (prev.length === favCharacters.length && 
+          prev.every((p, i) => p.path === favCharacters[i].path && p.avatarUrl !== undefined)) {
+        return prev;
+      }
+      return favCharacters.map((fc, i) => {
+        const existing = prev.find((p) => p.path === fc.path);
+        return existing ? { ...fc, avatarUrl: existing.avatarUrl } : fc;
+      });
+    });
   }, [characters, favoritePaths]);
 
   const loadAvatar = useCallback(async (path: string) => {
@@ -136,6 +159,8 @@ export const CreationCenter: React.FC = () => {
       if (isImageFile) {
         const result = await window.electronAPI.file.readAsBase64(path);
         if (result?.success && result.data) {
+          loadedAvatarPathsRef.current.add(path);
+          loadingAvatarPathsRef.current.delete(path);
           setFavoriteData((prev) =>
             prev.map((item) =>
               item.path === path ? { ...item, avatarUrl: result.data } : item
@@ -164,6 +189,8 @@ export const CreationCenter: React.FC = () => {
               avatarUrl = `data:image/${imgType};base64,${avatarUrl}`;
             }
           }
+          loadedAvatarPathsRef.current.add(path);
+          loadingAvatarPathsRef.current.delete(path);
           setFavoriteData((prev) =>
             prev.map((item) =>
               item.path === path ? { ...item, avatarUrl } : item
@@ -173,15 +200,20 @@ export const CreationCenter: React.FC = () => {
       }
     } catch (err) {
       console.error('[CreationCenter] Avatar load failed for:', path, err);
+      loadedAvatarPathsRef.current.add(path);
+      loadingAvatarPathsRef.current.delete(path);
     }
   }, []);
 
   const loadedAvatarPathsRef = useRef<Set<string>>(new Set());
+  const loadingAvatarPathsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     favoriteData.forEach((item) => {
-      if (!item.avatarUrl && !loadedAvatarPathsRef.current.has(item.path)) {
-        loadedAvatarPathsRef.current.add(item.path);
+      if (!item.avatarUrl && 
+          !loadedAvatarPathsRef.current.has(item.path) && 
+          !loadingAvatarPathsRef.current.has(item.path)) {
+        loadingAvatarPathsRef.current.add(item.path);
         loadAvatar(item.path);
       }
     });
@@ -200,7 +232,7 @@ export const CreationCenter: React.FC = () => {
     [characters]
   );
 
-  const handlePanelClick = useCallback((panel: ChatPanelType, e: React.MouseEvent<HTMLDivElement>) => {
+  const handlePanelClick = useCallback(async (panel: ChatPanelType, e: React.MouseEvent<HTMLDivElement>) => {
     const config = panelConfig[panel];
     if (config.comingSoon) {
       return;
@@ -233,11 +265,35 @@ export const CreationCenter: React.FC = () => {
 
     if (panel === 'chat') {
       setShowChatDialog(true);
+    } else if (panel === 'group') {
+      if (groups.length === 0) {
+        const newGroup = await createGroup({
+          name: '新群聊',
+          members: [],
+          disabled_members: [],
+          activation_strategy: ActivationStrategy.NATURAL,
+          generation_mode: GenerationMode.SWAP,
+          auto_mode_delay: 5,
+          generation_mode_join_prefix: '',
+          generation_mode_join_suffix: '',
+        });
+        if (newGroup) {
+          selectGroup(newGroup);
+        }
+      } else {
+        const existingGroup = groups[0];
+        selectGroup(existingGroup);
+      }
+      setShowGroupChatDialog(true);
     }
   }, []);
 
   const handleCloseChat = useCallback(() => {
     setShowChatDialog(false);
+  }, []);
+
+  const handleCloseGroupChat = useCallback(() => {
+    setShowGroupChatDialog(false);
   }, []);
 
   return (
@@ -289,6 +345,11 @@ export const CreationCenter: React.FC = () => {
                 {config.comingSoon && (
                   <div className="chat-panel-badge">
                     <span className="badge-text">敬请期待</span>
+                  </div>
+                )}
+                {config.devBadge && (
+                  <div className="chat-panel-badge chat-panel-badge-dev">
+                    <span className="badge-text">DEV</span>
                   </div>
                 )}
 
@@ -347,6 +408,11 @@ export const CreationCenter: React.FC = () => {
       <SingleChatDialog
         isDialogMode={showChatDialog}
         onCloseDialog={handleCloseChat}
+      />
+
+      <GroupChatDialog
+        open={showGroupChatDialog}
+        onClose={handleCloseGroupChat}
       />
     </div>
   );
