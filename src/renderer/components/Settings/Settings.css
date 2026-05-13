@@ -50,3 +50,32 @@
 .dark .settings .ant-card-body {
   background-color: var(--bg-container);
 }
+
+/* 高亮新复制的引擎行 */
+.engine-row-highlighted {
+  animation: highlight-fade 3s ease-in-out;
+  background-color: rgba(24, 144, 255, 0.1) !important;
+}
+
+@keyframes highlight-fade {
+  0% {
+    background-color: rgba(24, 144, 255, 0.3);
+  }
+  100% {
+    background-color: rgba(24, 144, 255, 0);
+  }
+}
+
+/* 确保操作列在小屏幕下不会重叠 */
+.settings .ant-table-cell {
+  overflow: visible;
+}
+
+.settings .ant-space-item {
+  white-space: nowrap;
+}
+
+/* 确保重命名对话框在最顶层 */
+.settings .ant-modal {
+  z-index: 1001;
+}

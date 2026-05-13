@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Form, Switch, Select, Button, Space, message, Divider, Input, Upload, Modal, Table, Popconfirm, Alert } from 'antd';
-import { SaveOutlined, ReloadOutlined, FolderOutlined, UndoOutlined, UploadOutlined, DeleteOutlined, PlusOutlined, EditOutlined, SettingOutlined, CheckCircleOutlined, CloseCircleOutlined, SyncOutlined, FileTextOutlined } from '@ant-design/icons';
+import { SaveOutlined, ReloadOutlined, FolderOutlined, UndoOutlined, UploadOutlined, DeleteOutlined, PlusOutlined, EditOutlined, SettingOutlined, CheckCircleOutlined, CloseCircleOutlined, SyncOutlined, FileTextOutlined, CopyOutlined } from '@ant-design/icons';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingStore } from '../../stores/settingStore';
 import { useLogStore } from '../../stores/logStore';
@@ -33,6 +33,13 @@ const Settings: React.FC = () => {
   const [editingEngine, setEditingEngine] = useState<AIEngineSetting | null>(null);
   const [engineForm] = Form.useForm();
   const [testResult, setTestResult] = useState<{ success: boolean; responseTime?: number; model?: string; error?: string; details?: string } | null>(null);
+  
+  // 复制引擎相关状态
+  const [showRenameModal, setShowRenameModal] = useState(false);
+  const [copyingEngine, setCopyingEngine] = useState<AIEngineSetting | null>(null);
+  const [newEngineName, setNewEngineName] = useState('');
+  const [nameError, setNameError] = useState('');
+  const [copiedEngineId, setCopiedEngineId] = useState<string | null>(null);
 
   // 加载设置
   useEffect(() => {
@@ -560,6 +567,105 @@ const Settings: React.FC = () => {
     }
   };
   
+  // 处理复制引擎
+  const handleCopyEngine = (engine: AIEngineSetting) => {
+    addLog(`开始复制引擎: ${engine.name}`, 'info');
+    setCopyingEngine(engine);
+    const defaultName = `${engine.name} (副本)`;
+    setNewEngineName(defaultName);
+    setNameError('');
+    setShowRenameModal(true);
+  };
+  
+  // 验证引擎名称唯一性
+  const validateEngineName = (name: string): boolean => {
+    if (!name || name.trim() === '') {
+      setNameError('引擎名称不能为空');
+      return false;
+    }
+    
+    const existingEngines = setting?.aiEngines || [];
+    const nameExists = existingEngines.some(
+      engine => engine.name === name.trim() && engine.id !== copyingEngine?.id
+    );
+    
+    if (nameExists) {
+      setNameError('引擎名称已存在，请使用其他名称');
+      return false;
+    }
+    
+    setNameError('');
+    return true;
+  };
+  
+  // 处理确认复制
+  const handleConfirmCopy = async () => {
+    if (!validateEngineName(newEngineName)) {
+      return;
+    }
+    
+    if (!copyingEngine || !setting) {
+      message.error('无法复制引擎');
+      return;
+    }
+    
+    try {
+      addLog(`确认复制引擎: ${copyingEngine.name} -> ${newEngineName}`, 'info');
+      
+      // 深拷贝引擎配置
+      const newEngine: AIEngineSetting = {
+        ...copyingEngine,
+        id: `engine_${Date.now()}`,
+        name: newEngineName.trim()
+      };
+      
+      const updatedEngines = [...(setting.aiEngines || []), newEngine];
+      
+      const updatedSetting = {
+        ...setting,
+        aiEngines: updatedEngines
+      };
+      
+      await saveSetting(updatedSetting);
+      
+      // 设置高亮显示
+      setCopiedEngineId(newEngine.id);
+      
+      // 关闭重命名对话框
+      setShowRenameModal(false);
+      setCopyingEngine(null);
+      setNewEngineName('');
+      setNameError('');
+      
+      message.success('引擎复制成功');
+      addLog(`引擎复制成功: ${newEngineName}`, 'success');
+      
+      // 3秒后清除高亮
+      setTimeout(() => {
+        setCopiedEngineId(null);
+      }, 3000);
+    } catch (error) {
+      addLog(`引擎复制失败: ${error}`, 'error');
+      message.error('引擎复制失败');
+    }
+  };
+  
+  // 处理取消复制
+  const handleCancelCopy = () => {
+    setShowRenameModal(false);
+    setCopyingEngine(null);
+    setNewEngineName('');
+    setNameError('');
+  };
+  
+  // 处理引擎名称输入变化
+  const handleEngineNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setNewEngineName(e.target.value);
+    if (nameError) {
+      validateEngineName(e.target.value);
+    }
+  };
+  
   // 处理测试连通性
   const handleTestConnection = async () => {
     try {
@@ -963,6 +1069,7 @@ const Settings: React.FC = () => {
             <Table
               dataSource={setting?.aiEngines || []}
               rowKey="id"
+              rowClassName={(record) => record.id === copiedEngineId ? 'engine-row-highlighted' : ''}
               columns={[
                 {
                   title: '引擎名称',
@@ -1000,15 +1107,25 @@ const Settings: React.FC = () => {
                 {
                   title: '操作',
                   key: 'action',
+                  width: 280,
                   render: (_, record) => (
-                    <Space size="middle">
+                    <Space size="small">
                       <Button
+                        size="small"
+                        icon={<CopyOutlined />}
+                        onClick={() => handleCopyEngine(record)}
+                      >
+                        复制
+                      </Button>
+                      <Button
+                        size="small"
                         icon={<EditOutlined />}
                         onClick={() => handleEditEngine(record)}
                       >
                         编辑
                       </Button>
                       <Button
+                        size="small"
                         danger
                         onClick={() => handleDeleteEngine(record.id)}
                       >
@@ -1016,6 +1133,7 @@ const Settings: React.FC = () => {
                       </Button>
                       {record.id !== setting?.defaultEngineId && (
                         <Button
+                          size="small"
                           onClick={() => handleSetDefaultEngine(record.id)}
                         >
                           设置默认
@@ -1080,6 +1198,36 @@ const Settings: React.FC = () => {
               />
             </Form.Item>
           </Form>
+        )}
+      </Modal>
+
+      {/* 引擎重命名对话框 */}
+      <Modal
+        title="复制引擎 - 重命名"
+        open={showRenameModal}
+        onCancel={handleCancelCopy}
+        onOk={handleConfirmCopy}
+        okText="确认复制"
+        cancelText="取消"
+        width={500}
+        style={{ zIndex: 1001 }}
+      >
+        <div style={{ marginBottom: 16 }}>
+          <p>正在复制引擎: <strong>{copyingEngine?.name}</strong></p>
+          <p>请为新引擎输入名称：</p>
+        </div>
+        <Input
+          value={newEngineName}
+          onChange={handleEngineNameChange}
+          placeholder="请输入新引擎名称"
+          status={nameError ? 'error' : undefined}
+          onPressEnter={handleConfirmCopy}
+          autoFocus
+        />
+        {nameError && (
+          <div style={{ color: '#ff4d4f', marginTop: 8, fontSize: 14 }}>
+            {nameError}
+          </div>
         )}
       </Modal>
       </div>

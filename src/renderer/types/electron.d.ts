@@ -5,6 +5,9 @@ declare global {
 }
 
 interface ElectronAPI {
+  // 通用 invoke 方法，用于直接调用 IPC handler
+  invoke: (channel: string, ...args: any[]) => Promise<any>;
+
   setting: {
     load: () => Promise<{ success: boolean; setting?: any; error?: string }>;
     save: (setting: any) => Promise<{ success: boolean; error?: string }>;
@@ -257,6 +260,22 @@ interface ElectronAPI {
     getVectorStats: () => Promise<{ totalVectors: number; documentCount: number; documents: Array<{ docId: string; fileName: string; vectorCount: number }> }>;
     generateEmbedding: (text: string) => Promise<{ success: boolean; vector?: number[]; error?: string; dimension?: number }>;
     selectFile: () => Promise<string | null>;
+  };
+
+  // 群组聊天 API
+  group: {
+    getAll: () => Promise<any[]>;
+    get: (id: string) => Promise<any | null>;
+    create: (data: any) => Promise<any>;
+    edit: (group: any) => Promise<boolean>;
+    delete: (id: string) => Promise<boolean>;
+  };
+  groupChat: {
+    get: (chatId: string) => Promise<any[]>;
+    save: (chatId: string, chat: any[], force?: boolean) => Promise<{ ok: true } | { error: string }>;
+    delete: (chatId: string) => Promise<boolean>;
+    info: (chatId: string) => Promise<any>;
+    import: (content: string, suggestedId?: string) => Promise<string>;
   };
 
   // 对话记录向量化 API
