@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Tooltip } from 'antd';
-import { CopyOutlined, CheckOutlined, ReloadOutlined, DoubleRightOutlined, RetweetOutlined, LoadingOutlined, EditOutlined } from '@ant-design/icons';
+import { CopyOutlined, CheckOutlined, ReloadOutlined, DoubleRightOutlined, RetweetOutlined, LoadingOutlined, EditOutlined, TableOutlined, WarningOutlined } from '@ant-design/icons';
 import { MessageRenderer } from './MessageRenderer';
-import { ChatMessage } from './CharacterDialogueChat.types';
+import { ChatMessage, ChatMessageVersionInfo } from './CharacterDialogueChat.types';
 
 interface ChatMessageBubbleProps {
   message: ChatMessage;
@@ -11,6 +11,7 @@ interface ChatMessageBubbleProps {
   onRetry?: (messageId: string) => void;
   onContinue?: () => void;
   onEdit?: (messageId: string, newContent: string) => void;
+  onRetryFromVersion?: (versionFilePath: string) => void;
   isLastMessage?: boolean;
   isStreaming?: boolean;
   isGenerating?: boolean;
@@ -23,6 +24,7 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
   onRetry,
   onContinue,
   onEdit,
+  onRetryFromVersion,
   isLastMessage = false,
   isStreaming = false,
   isGenerating = false,
@@ -34,6 +36,10 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
   const [editContent, setEditContent] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isUser = message.role === 'user';
+  const versionInfo = message.versionInfo;
+
+  const hasVersionInfo = !!versionInfo && versionInfo.allVersions && versionInfo.allVersions.length > 0;
+  const isLatestVersion = versionInfo?.isLatestVersion ?? false;
 
   useEffect(() => {
     if (isEditing && textareaRef.current) {
@@ -95,6 +101,12 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
     }
   };
 
+  const handleRetryFromVersion = () => {
+    if (onRetryFromVersion && versionInfo?.versionFilePath) {
+      onRetryFromVersion(versionInfo.versionFilePath);
+    }
+  };
+
   const handleContinue = () => {
     if (onContinue && !isUser && !isStreaming && !isGenerating) {
       onContinue();
@@ -112,7 +124,13 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
 
   const isActionVisible = showActions || isHovered;
 
-  const actionButtons = !isUser && (
+  const shouldHideAllButtons = !hasVersionInfo && !isLastMessage && !isUser && message.status === 'sent';
+
+  const showRegenerateOnly = !isUser && hasVersionInfo && !isLatestVersion && message.status === 'sent';
+
+  const showFullActions = !isUser && (isLatestVersion || !hasVersionInfo) && message.status === 'sent';
+
+  const actionButtons = !isUser && !shouldHideAllButtons && (
     <div style={{
       display: 'flex',
       gap: '4px',
@@ -153,44 +171,48 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
         </button>
       </Tooltip>
 
-      <Tooltip title={isEditing ? '保存编辑' : '编辑内容'}>
-        <button
-          onClick={() => {
-            if (isEditing) {
-              handleEditSave();
-            } else {
-              handleEditStart();
-            }
-          }}
-          style={{
-            background: 'none',
-            border: 'none',
-            color: isEditing ? 'var(--primary-color, #6366f1)' : 'var(--text-secondary, #9ca3af)',
-            cursor: 'pointer',
-            padding: '6px 8px',
-            fontSize: '12px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '4px',
-            borderRadius: '6px',
-            transition: 'all 0.2s ease',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
-            e.currentTarget.style.color = 'var(--primary-color, #6366f1)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = 'none';
-            e.currentTarget.style.color = isEditing ? 'var(--primary-color, #6366f1)' : 'var(--text-secondary, #9ca3af)';
-          }}
-        >
-          <EditOutlined />
-        </button>
-      </Tooltip>
+      {showFullActions && (
+        <>
+          <Tooltip title={isEditing ? '保存编辑' : '编辑内容'}>
+            <button
+              onClick={() => {
+                if (isEditing) {
+                  handleEditSave();
+                } else {
+                  handleEditStart();
+                }
+              }}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: isEditing ? 'var(--primary-color, #6366f1)' : 'var(--text-secondary, #9ca3af)',
+                cursor: 'pointer',
+                padding: '6px 8px',
+                fontSize: '12px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                borderRadius: '6px',
+                transition: 'all 0.2s ease',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
+                e.currentTarget.style.color = 'var(--primary-color, #6366f1)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'none';
+                e.currentTarget.style.color = isEditing ? 'var(--primary-color, #6366f1)' : 'var(--text-secondary, #9ca3af)';
+              }}
+            >
+              <EditOutlined />
+            </button>
+          </Tooltip>
+        </>
+      )}
 
-      <Tooltip title="重新生成">
+      <Tooltip title={showRegenerateOnly ? '从此版本重新生成' : '重新生成'}>
         <button
-          onClick={handleRetry}
+          onClick={showRegenerateOnly ? handleRetryFromVersion : handleRetry}
           disabled={isGenerating || isStreaming || message.status === 'error'}
           style={{
             background: 'none',
@@ -227,15 +249,72 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
         </button>
       </Tooltip>
 
-      <Tooltip title="继续对话">
+      {showFullActions && (
+        <Tooltip title="继续对话">
+          <button
+            onClick={handleContinue}
+            disabled={isGenerating || isStreaming || message.status !== 'sent'}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'var(--text-secondary, #9ca3af)',
+              cursor: isGenerating || isStreaming || message.status !== 'sent' ? 'not-allowed' : 'pointer',
+              padding: '6px 8px',
+              fontSize: '12px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              borderRadius: '6px',
+              transition: 'all 0.2s ease',
+              opacity: isGenerating || isStreaming || message.status !== 'sent' ? 0.5 : 1,
+            }}
+            onMouseEnter={(e) => {
+              if (!isGenerating && !isStreaming && message.status === 'sent') {
+                e.currentTarget.style.background = 'rgba(99, 102, 241, 0.2)';
+                e.currentTarget.style.color = 'var(--primary-color, #6366f1)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!isGenerating && !isStreaming && message.status === 'sent') {
+                e.currentTarget.style.background = 'none';
+                e.currentTarget.style.color = 'var(--text-secondary, #9ca3af)';
+              }
+            }}
+          >
+            <DoubleRightOutlined />
+          </button>
+        </Tooltip>
+      )}
+    </div>
+  );
+
+  const userEditButton = isUser && message.status !== 'sending' && (
+    <div style={{
+      display: 'flex',
+      gap: '4px',
+      padding: '4px 8px',
+      borderRadius: '12px',
+      background: 'var(--action-bg, rgba(255, 255, 255, 0.05))',
+      border: '1px solid var(--action-border, rgba(255, 255, 255, 0.08))',
+      opacity: isActionVisible ? 1 : 0,
+      transform: isActionVisible ? 'translateY(0)' : 'translateY(4px)',
+      transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+      justifyContent: 'flex-end',
+    }}>
+      <Tooltip title={isEditing ? '保存编辑' : '编辑内容'}>
         <button
-          onClick={handleContinue}
-          disabled={isGenerating || isStreaming || message.status !== 'sent'}
+          onClick={() => {
+            if (isEditing) {
+              handleEditSave();
+            } else {
+              handleEditStart();
+            }
+          }}
           style={{
             background: 'none',
             border: 'none',
-            color: 'var(--text-secondary, #9ca3af)',
-            cursor: isGenerating || isStreaming || message.status !== 'sent' ? 'not-allowed' : 'pointer',
+            color: isEditing ? 'var(--primary-color, #6366f1)' : 'var(--text-secondary, #9ca3af)',
+            cursor: 'pointer',
             padding: '6px 8px',
             fontSize: '12px',
             display: 'flex',
@@ -243,22 +322,17 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
             gap: '4px',
             borderRadius: '6px',
             transition: 'all 0.2s ease',
-            opacity: isGenerating || isStreaming || message.status !== 'sent' ? 0.5 : 1,
           }}
           onMouseEnter={(e) => {
-            if (!isGenerating && !isStreaming && message.status === 'sent') {
-              e.currentTarget.style.background = 'rgba(99, 102, 241, 0.2)';
-              e.currentTarget.style.color = 'var(--primary-color, #6366f1)';
-            }
+            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
+            e.currentTarget.style.color = 'var(--primary-color, #6366f1)';
           }}
           onMouseLeave={(e) => {
-            if (!isGenerating && !isStreaming && message.status === 'sent') {
-              e.currentTarget.style.background = 'none';
-              e.currentTarget.style.color = 'var(--text-secondary, #9ca3af)';
-            }
+            e.currentTarget.style.background = 'none';
+            e.currentTarget.style.color = isEditing ? 'var(--primary-color, #6366f1)' : 'var(--text-secondary, #9ca3af)';
           }}
         >
-          <DoubleRightOutlined />
+          <EditOutlined />
         </button>
       </Tooltip>
     </div>
@@ -271,7 +345,7 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
       justifyContent: isUser ? 'flex-end' : 'flex-start',
       animation: 'fadeInUp 0.3s ease-out',
     }}>
-      <div 
+      <div
         className="chat-message-bubble-inner"
         style={{
           display: 'flex',
@@ -330,7 +404,6 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
             position: 'relative',
             transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
           }}>
-            {/* Invisible sizer — renders content invisibly to keep bubble dimensions */}
             {isEditing && (
               <div style={{
                 opacity: 0,
@@ -351,7 +424,6 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
               </div>
             )}
 
-            {/* Edit form overlay (absolute, fills bubble) */}
             {isEditing ? (
               <div style={{
                 display: 'flex',
@@ -369,7 +441,7 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
                   value={editContent}
                   onChange={(e) => setEditContent(e.target.value)}
                   onKeyDown={handleEditKeyDown}
-                  placeholder="输入Markdown内容..."
+                  placeholder="输入内容..."
                   style={{
                     width: '100%',
                     flex: 1,
@@ -427,6 +499,45 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
           </div>
 
           {actionButtons}
+
+          {userEditButton}
+
+          {!isUser && versionInfo && (
+            <div style={{
+              display: 'flex',
+              gap: '6px',
+              padding: '2px 8px 0',
+              alignItems: 'center',
+              justifyContent: 'flex-end',
+              opacity: isActionVisible ? 1 : 0,
+              transition: 'opacity 0.3s ease',
+            }}>
+              {versionInfo.tableSnapshotExists && (
+                <Tooltip title="包含表格快照">
+                  <TableOutlined style={{ fontSize: '11px', color: 'var(--primary-color, #6366f1)' }} />
+                </Tooltip>
+              )}
+              {versionInfo.consistencyStatus === 'mismatched' && (
+                <Tooltip title="版本不一致">
+                  <WarningOutlined style={{ fontSize: '11px', color: 'var(--error-color, #ef4444)' }} />
+                </Tooltip>
+              )}
+              {versionInfo.consistencyStatus === 'partial' && (
+                <Tooltip title="版本部分匹配">
+                  <WarningOutlined style={{ fontSize: '11px', color: 'var(--warning-color, #f59e0b)' }} />
+                </Tooltip>
+              )}
+              {!isLatestVersion && hasVersionInfo && (
+                <span style={{
+                  fontSize: '10px',
+                  color: 'var(--text-tertiary, #6b7280)',
+                  fontStyle: 'italic',
+                }}>
+                  历史版本 #{versionInfo.versionSequenceNumber}
+                </span>
+              )}
+            </div>
+          )}
 
           {!showActions && isGenerating && isLastMessage && (
             <div style={{

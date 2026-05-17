@@ -43,9 +43,11 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
 }) => {
   const { 
     state, 
+    stateWithVersionInfo,
     sendMessage, 
     continueConversation, 
     retryMessage, 
+    retryMessageFromVersion,
     editMessage,
     clearChat, 
     cancelRequest,
@@ -71,6 +73,7 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
     handleMemoryTableTemplateAssociate,
     tokenManagementConfig,
     handleTokenManagementConfigChange,
+    handleStopOrganizing,
   } = useCharacterDialogueChat(characterInfo);
   
   const { toggleFavorite, isFavorite, getFavoritePaths } = useFavoritesStore();
@@ -83,10 +86,10 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
   const favoritePaths = getFavoritePaths();
 
   useEffect(() => {
-    if (state.messages.length > 0 || state.isStreaming) {
+    if (stateWithVersionInfo.messages.length > 0 || stateWithVersionInfo.isStreaming) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [state.messages, state.isStreaming]);
+  }, [stateWithVersionInfo.messages, stateWithVersionInfo.isStreaming]);
 
   useEffect(() => {
     const timer = setTimeout(() => setPersonasLoading(false), 2000);
@@ -121,16 +124,16 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
   }, []);
 
   const handleExport = useCallback(() => {
-    if (state.messages.length === 0) {
+    if (stateWithVersionInfo.messages.length === 0) {
       message.warning('No messages to export');
       return;
     }
-    const content = exportConversation(state.messages, characterInfo.characterCardName);
+    const content = exportConversation(stateWithVersionInfo.messages, characterInfo.characterCardName);
     navigator.clipboard.writeText(content).then(
       () => message.success('Conversation exported to clipboard'),
       () => message.error('Failed to export conversation')
     );
-  }, [state.messages, characterInfo.characterCardName]);
+  }, [stateWithVersionInfo.messages, characterInfo.characterCardName]);
 
   const handleClearChat = useCallback(() => {
     clearChat();
@@ -349,7 +352,7 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
         <ChatHeader
           characterName={characterInfo.characterCardName}
           characterCardContent={characterInfo.characterCardContent}
-          messageCount={state.messages.length}
+          messageCount={stateWithVersionInfo.messages.length}
           onClear={handleClearChat}
           onClose={isFullscreen ? handleToggleFullscreen : onClose}
           onExport={handleExport}
@@ -372,7 +375,7 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
           }}
           onScroll={handleScroll}
         >
-          {state.messages.length === 0 && !state.isStreaming && (
+          {stateWithVersionInfo.messages.length === 0 && !stateWithVersionInfo.isStreaming && (
             <div style={{
               display: 'flex',
               flexDirection: 'column',
@@ -412,22 +415,23 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
             </div>
           )}
 
-          {state.messages.map((msg, index) => (
+          {stateWithVersionInfo.messages.map((msg, index) => (
             <ChatMessageBubble
               key={msg.id}
               message={msg}
               characterName={characterInfo.characterCardName}
               avatarPath={avatarPath}
               onRetry={retryMessage}
+              onRetryFromVersion={retryMessageFromVersion}
               onContinue={handleContinueConversation}
               onEdit={editMessage}
-              isLastMessage={index === state.messages.length - 1}
-              isStreaming={state.isStreaming && index === state.messages.length - 1 && msg.role === 'assistant'}
-              isGenerating={state.isLoading && index === state.messages.length - 1 && msg.role === 'assistant' && msg.status === 'sending'}
+              isLastMessage={index === stateWithVersionInfo.messages.length - 1}
+              isStreaming={stateWithVersionInfo.isStreaming && index === stateWithVersionInfo.messages.length - 1 && msg.role === 'assistant'}
+              isGenerating={stateWithVersionInfo.isLoading && index === stateWithVersionInfo.messages.length - 1 && msg.role === 'assistant' && msg.status === 'sending'}
             />
           ))}
 
-          {state.isStreaming && state.messages[state.messages.length - 1]?.role === 'user' && (
+          {stateWithVersionInfo.isStreaming && stateWithVersionInfo.messages[stateWithVersionInfo.messages.length - 1]?.role === 'user' && (
             <ChatTypingIndicator
               characterName={characterInfo.characterCardName}
               avatarPath={avatarPath}
@@ -499,9 +503,11 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
         <ChatInputBar
           onSend={sendMessage}
           onCancel={cancelRequest}
+          onStopOrganizing={handleStopOrganizing}
           disabled={isOrganizing}
           isStreaming={state.isStreaming}
-          placeholder={isOrganizing ? '表格整理中，请稍候...' : `Message ${characterInfo.characterCardName}...`}
+          isOrganizing={isOrganizing}
+          placeholder={isOrganizing ? '表格整理中，请稍后...' : `Message ${characterInfo.characterCardName}...`}
         />
       </div>
 

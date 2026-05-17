@@ -8,6 +8,27 @@ export interface ChatMessage {
   timestamp: number;
   status?: 'sending' | 'sent' | 'error';
   speakerName?: string;
+  versionInfo?: ChatMessageVersionInfo;
+}
+
+export interface ChatMessageVersionInfo {
+  versionFilePath: string;
+  isLatestVersion: boolean;
+  versionSequenceNumber: number;
+  allVersions: ChatVersionSummary[];
+  versionLinkId?: string;
+  tableSnapshotExists?: boolean;
+  consistencyStatus?: 'matched' | 'mismatched' | 'partial';
+}
+
+export interface ChatVersionSummary {
+  fileName: string;
+  filePath: string;
+  sequenceNumber: number;
+  timestamp: number;
+  messageCount: number;
+  versionLinkId?: string;
+  tableSnapshotExists?: boolean;
 }
 
 // 聊天状态接口

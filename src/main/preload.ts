@@ -150,6 +150,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getAssociatedTemplate: (chatId: string) => ipcRenderer.invoke('memory:getAssociatedTemplate', chatId),
     processChat: (chatId: string, templateId: string, selectedMessageIds: string[], config: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }) => ipcRenderer.invoke('memory:processChat', chatId, templateId, selectedMessageIds, config),
     processChatProgressive: (chatId: string, templateId: string, config: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }, options?: { continueFromLast?: boolean; minInterval?: number }) => ipcRenderer.invoke('memory:processChatProgressive', chatId, templateId, config, options),
+    stopOrganizing: (chatId: string) => ipcRenderer.invoke('memory:stopOrganizing', chatId),
     processChatFull: (chatId: string, templateId: string, config: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }) => ipcRenderer.invoke('memory:processChatFull', chatId, templateId, config),
     executeTableEditCommands: (chatId: string, commands: any[]) => ipcRenderer.invoke('memory:executeTableEditCommands', chatId, commands),
     parseTableEdit: (content: string) => ipcRenderer.invoke('memory:parseTableEdit', content),
@@ -200,6 +201,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     deleteTestChat: (creativeId: string, characterCardId: string) => ipcRenderer.invoke('characterChat:deleteTestChat', creativeId, characterCardId),
     getAllTestChats: () => ipcRenderer.invoke('characterChat:getAllTestChats'),
     clearCache: () => ipcRenderer.invoke('characterChat:clearCache')
+  },
+  // 聊天记录版本管理 API
+  chatVersion: {
+    getVersions: (characterCardName: string) => ipcRenderer.invoke('chatVersion:getVersions', characterCardName),
+    getVersionContent: (filePath: string) => ipcRenderer.invoke('chatVersion:getVersionContent', filePath),
+    deleteVersion: (filePath: string) => ipcRenderer.invoke('chatVersion:deleteVersion', filePath),
+    getVersionsDir: (characterCardName: string) => ipcRenderer.invoke('chatVersion:getVersionsDir', characterCardName),
+    getLinkedVersion: (characterCardName: string, versionLinkId: string) => ipcRenderer.invoke('chatVersion:getLinkedVersion', characterCardName, versionLinkId),
+    createLinkedVersion: (characterCardName: string, options: any) => ipcRenderer.invoke('chatVersion:createLinkedVersion', characterCardName, options),
+    getVersionIndex: (characterCardName: string) => ipcRenderer.invoke('chatVersion:getVersionIndex', characterCardName),
+    getChangeLog: (characterCardName: string, options?: any) => ipcRenderer.invoke('chatVersion:getChangeLog', characterCardName, options),
+    verifyConsistency: (characterCardName: string) => ipcRenderer.invoke('chatVersion:verifyConsistency', characterCardName),
+    getTableSnapshot: (characterCardName: string, versionLinkId: string) => ipcRenderer.invoke('chatVersion:getTableSnapshot', characterCardName, versionLinkId),
+    getTableSnapshots: (characterCardName: string) => ipcRenderer.invoke('chatVersion:getTableSnapshots', characterCardName),
+    getSnapshotContent: (filePath: string) => ipcRenderer.invoke('chatVersion:getSnapshotContent', filePath)
   },
   // 通用存储 API
   storage: {

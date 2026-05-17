@@ -1,20 +1,24 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Button, Tooltip } from 'antd';
-import { SendOutlined, StopOutlined } from '@ant-design/icons';
+import { SendOutlined, StopOutlined, ClearOutlined } from '@ant-design/icons';
 
 interface ChatInputBarProps {
   onSend: (message: string) => void;
   onCancel?: () => void;
+  onStopOrganizing?: () => void;
   disabled?: boolean;
   isStreaming?: boolean;
+  isOrganizing?: boolean;
   placeholder?: string;
 }
 
 const ChatInputBar: React.FC<ChatInputBarProps> = ({
   onSend,
   onCancel,
+  onStopOrganizing,
   disabled = false,
   isStreaming = false,
+  isOrganizing = false,
   placeholder = 'Type a message...',
 }) => {
   const [input, setInput] = useState('');
@@ -107,6 +111,27 @@ const ChatInputBar: React.FC<ChatInputBarProps> = ({
               background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
               border: 'none',
               boxShadow: '0 4px 12px rgba(239, 68, 68, 0.4)',
+            }}
+          />
+        </Tooltip>
+      ) : isOrganizing ? (
+        <Tooltip title="停止整理">
+          <Button
+            type="primary"
+            danger
+            icon={<ClearOutlined />}
+            onClick={onStopOrganizing}
+            size="large"
+            style={{
+              borderRadius: '50%',
+              width: '44px',
+              height: '44px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+              border: 'none',
+              boxShadow: '0 4px 12px rgba(245, 158, 11, 0.4)',
             }}
           />
         </Tooltip>

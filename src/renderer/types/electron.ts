@@ -65,6 +65,20 @@ export interface ElectronAPI {
     getAllTestChats: () => Promise<any[]>;
     clearCache: () => Promise<{ success: boolean }>;
   };
+  chatVersion: {
+    getVersions: (characterCardName: string) => Promise<Array<{ fileName: string; filePath: string; sequenceNumber: number; timestamp: number; messageCount: number; versionLinkId?: string }>>;
+    getVersionContent: (filePath: string) => Promise<any>;
+    deleteVersion: (filePath: string) => Promise<boolean>;
+    getVersionsDir: (characterCardName: string) => Promise<string>;
+    getLinkedVersion: (characterCardName: string, versionLinkId: string) => Promise<{ chatVersion: any | null; tableSnapshot: any | null; linkRecord: any | null }>;
+    createLinkedVersion: (characterCardName: string, options: any) => Promise<any>;
+    getVersionIndex: (characterCardName: string) => Promise<any>;
+    getChangeLog: (characterCardName: string, options?: any) => Promise<any[]>;
+    verifyConsistency: (characterCardName: string) => Promise<any>;
+    getTableSnapshot: (characterCardName: string, versionLinkId: string) => Promise<any>;
+    getTableSnapshots: (characterCardName: string) => Promise<any[]>;
+    getSnapshotContent: (filePath: string) => Promise<any>;
+  };
   vector: {
     add: (id: string, vector: number[], metadata: Record<string, any>) => Promise<{ success: boolean; error?: string }>;
     addBatch: (items: Array<{ id: string; vector: number[]; metadata: Record<string, any> }>) => Promise<{ success: boolean; error?: string }>;
@@ -155,7 +169,8 @@ export interface ElectronAPI {
     deleteChatSession: (chatId: string) => Promise<boolean>;
     associateTemplate: (chatId: string, templateId: string) => Promise<void>;
     processChat: (chatId: string, templateId: string, selectedMessageIds?: string[], config?: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }) => Promise<void>;
-    processChatProgressive: (chatId: string, templateId: string, config?: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }) => Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[] }>;
+    processChatProgressive: (chatId: string, templateId: string, config?: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }, options?: { continueFromLast?: boolean; minInterval?: number }) => Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[] }>;
+    stopOrganizing: (chatId: string) => Promise<{ success: boolean }>;
     copyTemplate: (sourceTemplateId: string, newTemplateName: string) => Promise<any>;
     getTableData: (chatId: string) => Promise<any>;
     saveTableData: (chatId: string, sheetName: string, sheetData: any[]) => Promise<void>;

@@ -472,6 +472,10 @@ class TableTemplateService {
   private readJsonFile(chatId: string): any {
     const safeId = this.safeChatId(chatId);
     const jsonPath = path.join(this.chatlogDir, `${safeId}.json`);
+    console.log(`[TableTemplateService.readJsonFile] chatlogDir=${this.chatlogDir}`);
+    console.log(`[TableTemplateService.readJsonFile] safeId=${safeId}`);
+    console.log(`[TableTemplateService.readJsonFile] jsonPath=${jsonPath}`);
+    console.log(`[TableTemplateService.readJsonFile] fs.existsSync=${fs.existsSync(jsonPath)}`);
 
     if (!fs.existsSync(jsonPath)) {
       return null;
