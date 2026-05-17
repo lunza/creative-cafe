@@ -245,6 +245,8 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
   const memoryTableDataRef = useRef<string>('');
   const isOrganizingRef = useRef(false);
   const [isOrganizing, setIsOrganizing] = useState(false);
+  const versionListRef = useRef<Array<{ fileName: string; filePath: string; sequenceNumber: number; timestamp: number; messageCount: number; versionLinkId?: string }>>([]);
+  const versionIndexRef = useRef<any>(null);
 
   const selectedPersonaId = characterConfig?.selectedPersonaId;
   const selectedPersona = useMemo(() => {
@@ -1295,11 +1297,182 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     addLog(`[CharacterDialogueChat] Token management config updated: enabled=${enabled ?? characterConfig?.tokenManagementEnabled}`, 'info');
   }, [updateConfig, addLog, characterConfig]);
 
+  const handleStopOrganizing = useCallback(async () => {
+    const chatId = characterInfo.characterCardName || characterInfo.characterCardId;
+    try {
+      addLog(`[CharacterDialogueChat] Stopping organize task for: ${chatId}`, 'info');
+      const result = await window.electronAPI.memory.stopOrganizing(chatId);
+      if (result.success) {
+        isOrganizingRef.current = false;
+        setIsOrganizing(false);
+        addLog('[CharacterDialogueChat] Organize task stopped successfully', 'info');
+        message.success('已停止表格整理');
+      } else {
+        addLog('[CharacterDialogueChat] No active organize task to stop', 'warn');
+        message.warning('当前没有正在执行的整理任务');
+      }
+    } catch (error) {
+      addLog(`[CharacterDialogueChat] Failed to stop organizing: ${error}`, 'error');
+      message.error('停止整理失败');
+    }
+  }, [characterInfo.characterCardName, characterInfo.characterCardId, addLog]);
+
+  const loadVersions = useCallback(async () => {
+    try {
+      const versions = await window.electronAPI.chatVersion.getVersions(characterInfo.characterCardName);
+      versionListRef.current = versions.sort((a, b) => a.timestamp - b.timestamp);
+      
+      try {
+        const index = await window.electronAPI.chatVersion.getVersionIndex(characterInfo.characterCardName);
+        versionIndexRef.current = index;
+      } catch {
+        versionIndexRef.current = null;
+      }
+      
+      addLog(`[CharacterDialogueChat] Loaded ${versions.length} versions`, 'info');
+    } catch (error) {
+      addLog(`[CharacterDialogueChat] Failed to load versions: ${error}`, 'warn');
+      versionListRef.current = [];
+      versionIndexRef.current = null;
+    }
+  }, [characterInfo.characterCardName, addLog]);
+
+  useEffect(() => {
+    loadVersions();
+  }, [loadVersions]);
+
+  const getVersionInfoForMessage = useCallback((message: ChatMessage): typeof message['versionInfo'] => {
+    if (message.role !== 'assistant') return undefined;
+    if (!versionListRef.current || versionListRef.current.length === 0) return undefined;
+
+    const versions = versionListRef.current;
+    const latestVersion = versions[versions.length - 1];
+    const index = versionIndexRef.current;
+
+    const getTableSnapshotExists = (vlid: string | undefined) => {
+      if (!vlid || !index?.versions) return false;
+      const record = index.versions.find((vr: any) => vr.versionLinkId === vlid);
+      return record?.tableSnapshot?.exists ?? false;
+    };
+
+    const getConsistencyStatus = (vlid: string | undefined) => {
+      if (!vlid || !index?.versions) return undefined;
+      const record = index.versions.find((vr: any) => vr.versionLinkId === vlid);
+      return record?.consistencyStatus as 'matched' | 'mismatched' | 'partial' | undefined;
+    };
+
+    for (let i = versions.length - 1; i >= 0; i--) {
+      const v = versions[i];
+      if (v.timestamp <= message.timestamp + 1000 && v.timestamp >= message.timestamp - 1000) {
+        return {
+          versionFilePath: v.filePath,
+          isLatestVersion: v === latestVersion,
+          versionSequenceNumber: v.sequenceNumber,
+          versionLinkId: v.versionLinkId,
+          tableSnapshotExists: getTableSnapshotExists(v.versionLinkId),
+          consistencyStatus: getConsistencyStatus(v.versionLinkId),
+          allVersions: versions.map(vv => ({
+            fileName: vv.fileName,
+            filePath: vv.filePath,
+            sequenceNumber: vv.sequenceNumber,
+            timestamp: vv.timestamp,
+            messageCount: vv.messageCount,
+            versionLinkId: vv.versionLinkId,
+            tableSnapshotExists: getTableSnapshotExists(vv.versionLinkId),
+          })),
+        };
+      }
+    }
+
+    if (message === messagesRef.current[messagesRef.current.length - 1] && message.status === 'sent') {
+      return {
+        versionFilePath: latestVersion?.filePath || '',
+        isLatestVersion: true,
+        versionSequenceNumber: latestVersion?.sequenceNumber || 0,
+        versionLinkId: latestVersion?.versionLinkId,
+        tableSnapshotExists: getTableSnapshotExists(latestVersion?.versionLinkId),
+        consistencyStatus: getConsistencyStatus(latestVersion?.versionLinkId),
+        allVersions: versions.map(vv => ({
+          fileName: vv.fileName,
+          filePath: vv.filePath,
+          sequenceNumber: vv.sequenceNumber,
+          timestamp: vv.timestamp,
+          messageCount: vv.messageCount,
+          versionLinkId: vv.versionLinkId,
+          tableSnapshotExists: getTableSnapshotExists(vv.versionLinkId),
+        })),
+      };
+    }
+
+    return undefined;
+  }, []);
+
+  const retryMessageFromVersion = useCallback(async (versionFilePath: string) => {
+    if (state.isStreaming) {
+      message.warning('请等待当前回复完成');
+      return;
+    }
+
+    try {
+      addLog(`[CharacterDialogueChat] Restoring from version: ${versionFilePath}`, 'info');
+      const versionData = await window.electronAPI.chatVersion.getVersionContent(versionFilePath);
+      if (!versionData || !versionData.messages) {
+        message.error('版本数据无效');
+        return;
+      }
+
+      const restoredMessages: ChatMessage[] = versionData.messages.map((msg: any) => ({
+        ...msg,
+        status: msg.status || 'sent',
+      }));
+
+      const messagesBeforeRetry = restoredMessages.slice(0, -1);
+      const lastMessage = restoredMessages[restoredMessages.length - 1];
+
+      if (!lastMessage || lastMessage.role !== 'assistant') {
+        message.warning('版本数据格式不正确');
+        return;
+      }
+
+      const newEmptyMessage: ChatMessage = {
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+        status: 'sending',
+        speakerName: characterInfo.characterCardName,
+      };
+
+      messagesRef.current = [...messagesBeforeRetry, newEmptyMessage];
+      setState({
+        messages: [...messagesBeforeRetry, newEmptyMessage],
+        isLoading: true,
+        isStreaming: true,
+        error: null,
+      });
+
+      await requestAIResponse(messagesBeforeRetry, newEmptyMessage.id, '', 'dialogue');
+    } catch (error) {
+      addLog(`[CharacterDialogueChat] Failed to restore from version: ${error}`, 'error');
+      message.error('从版本恢复失败');
+    }
+  }, [state.isStreaming, requestAIResponse, addLog, characterInfo.characterCardName]);
+
+  const stateWithVersionInfo = useMemo(() => {
+    const messagesWithVersion = state.messages.map((msg, index) => {
+      const versionInfo = getVersionInfoForMessage(msg);
+      return { ...msg, versionInfo };
+    });
+    return { ...state, messages: messagesWithVersion };
+  }, [state, getVersionInfoForMessage]);
+
   return {
     state,
+    stateWithVersionInfo,
     sendMessage,
     continueConversation,
     retryMessage,
+    retryMessageFromVersion,
     editMessage,
     clearChat,
     cancelRequest,
@@ -1326,6 +1499,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     handleMemoryTableTemplateAssociate,
     tokenManagementConfig,
     handleTokenManagementConfigChange,
+    handleStopOrganizing,
     getMemoryTableData: () => memoryTableDataRef.current,
   };
 }

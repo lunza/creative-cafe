@@ -1,0 +1,435 @@
+import fs from 'fs/promises';
+import path from 'path';
+import { getUserDataPath } from '../utils/appPath';
+
+export interface VersionLinkRecord {
+  versionLinkId: string;
+  timestamp: number;
+  triggerType: 'auto' | 'manual' | 'aiOrganize';
+  chatVersion: {
+    exists: boolean;
+    filePath: string;
+    messageCount: number;
+  };
+  tableSnapshot: {
+    exists: boolean;
+    filePath: string;
+    sheetCount: number;
+    totalRows: number;
+  };
+  consistencyStatus: 'matched' | 'mismatched' | 'partial';
+}
+
+export interface VersionIndex {
+  characterCardName: string;
+  lastUpdated: number;
+  versions: VersionLinkRecord[];
+}
+
+export interface ChangeLogEntry {
+  timestamp: number;
+  versionLinkId: string;
+  action: 'create_chat_version' | 'create_table_snapshot' | 'create_linked_version' | 'edit_version' | 'delete_version' | 'migrate_snapshot' | 'consistency_check';
+  source: 'user' | 'ai' | 'system';
+  description: string;
+  affectedFiles: string[];
+}
+
+export interface ConsistencyReport {
+  characterCardName: string;
+  totalVersions: number;
+  matchedCount: number;
+  partialCount: number;
+  mismatchedCount: number;
+  orphanedChatFiles: string[];
+  orphanedTableFiles: string[];
+  details: Array<{
+    versionLinkId: string;
+    status: 'matched' | 'mismatched' | 'partial';
+    issues: string[];
+  }>;
+}
+
+class VersionLinkerService {
+  getCharacterDir(characterCardName: string): string {
+    const sanitized = characterCardName.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
+    return path.join(getUserDataPath(), 'data', 'memories', 'chats', sanitized);
+  }
+
+  generateVersionLinkId(): string {
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    const hh = String(now.getHours()).padStart(2, '0');
+    const min = String(now.getMinutes()).padStart(2, '0');
+    const ss = String(now.getSeconds()).padStart(2, '0');
+    const random = Math.random().toString(36).substring(2, 8);
+    return `v${yyyy}${mm}${dd}_${hh}${min}${ss}_${random}`;
+  }
+
+  async getVersionIndex(characterCardName: string): Promise<VersionIndex> {
+    const characterDir = this.getCharacterDir(characterCardName);
+    const indexPath = path.join(characterDir, 'version-index.json');
+
+    try {
+      await fs.access(indexPath);
+      const content = await fs.readFile(indexPath, 'utf8');
+      return JSON.parse(content);
+    } catch {
+      return {
+        characterCardName,
+        lastUpdated: Date.now(),
+        versions: [],
+      };
+    }
+  }
+
+  async saveVersionIndex(characterCardName: string, index: VersionIndex): Promise<void> {
+    const characterDir = this.getCharacterDir(characterCardName);
+    const indexPath = path.join(characterDir, 'version-index.json');
+
+    await fs.mkdir(characterDir, { recursive: true });
+
+    index.lastUpdated = Date.now();
+    await fs.writeFile(indexPath, JSON.stringify(index, null, 2), 'utf8');
+  }
+
+  async addChangeLog(characterCardName: string, entry: Omit<ChangeLogEntry, 'timestamp'>): Promise<void> {
+    const characterDir = this.getCharacterDir(characterCardName);
+    const logPath = path.join(characterDir, 'change-log.json');
+
+    let entries: ChangeLogEntry[] = [];
+    try {
+      await fs.access(logPath);
+      const content = await fs.readFile(logPath, 'utf8');
+      entries = JSON.parse(content);
+    } catch {
+    }
+
+    const newEntry: ChangeLogEntry = {
+      ...entry,
+      timestamp: Date.now(),
+    };
+
+    entries.push(newEntry);
+
+    await fs.mkdir(characterDir, { recursive: true });
+    await fs.writeFile(logPath, JSON.stringify(entries, null, 2), 'utf8');
+  }
+
+  async getChangeLog(characterCardName: string, options?: { limit?: number }): Promise<ChangeLogEntry[]> {
+    const characterDir = this.getCharacterDir(characterCardName);
+    const logPath = path.join(characterDir, 'change-log.json');
+
+    try {
+      await fs.access(logPath);
+      const content = await fs.readFile(logPath, 'utf8');
+      const entries: ChangeLogEntry[] = JSON.parse(content);
+
+      if (options?.limit && options.limit > 0) {
+        return entries.slice(-options.limit);
+      }
+
+      return entries;
+    } catch {
+      return [];
+    }
+  }
+
+  async createLinkedVersion(
+    characterCardName: string,
+    options: {
+      messages?: any[];
+      tableData?: any;
+      metadata?: any;
+      triggerType?: 'auto' | 'manual' | 'aiOrganize';
+      source?: 'user' | 'ai' | 'system';
+      description?: string;
+    } = {}
+  ): Promise<VersionLinkRecord> {
+    const versionLinkId = this.generateVersionLinkId();
+    const characterDir = this.getCharacterDir(characterCardName);
+    const chatDir = path.join(characterDir, 'versions', 'chat');
+    const tableDir = path.join(characterDir, 'versions', 'table');
+
+    await fs.mkdir(chatDir, { recursive: true });
+    await fs.mkdir(tableDir, { recursive: true });
+
+    const chatTimestamp = Date.now();
+    const chatFilePath = path.join(chatDir, `${versionLinkId}.json`);
+    const chatData = {
+      versionLinkId,
+      timestamp: chatTimestamp,
+      messages: options.messages || [],
+      metadata: options.metadata || {},
+    };
+    await fs.writeFile(chatFilePath, JSON.stringify(chatData, null, 2), 'utf8');
+
+    await this.addChangeLog(characterCardName, {
+      versionLinkId,
+      action: 'create_chat_version',
+      source: options.source || 'user',
+      description: options.description || 'Created chat version',
+      affectedFiles: [chatFilePath],
+    });
+
+    const tableTimestamp = Date.now();
+    const tableFilePath = path.join(tableDir, `${versionLinkId}.json`);
+    const sheets = options.tableData ? Object.keys(options.tableData) : [];
+    const headers: Record<string, string[]> = {};
+    const data: Record<string, any[]> = {};
+    let totalRows = 0;
+
+    for (const sheet of sheets) {
+      const sheetData = options.tableData?.[sheet] || [];
+      data[sheet] = sheetData;
+      headers[sheet] = sheetData.length > 0 ? Object.keys(sheetData[0]) : [];
+      totalRows += sheetData.length;
+    }
+
+    const tableSnapshotData = {
+      versionLinkId,
+      timestamp: tableTimestamp,
+      characterCardName,
+      sheets,
+      headers,
+      data,
+      metadata: {
+        sheetCount: sheets.length,
+        totalRows,
+      },
+    };
+    await fs.writeFile(tableFilePath, JSON.stringify(tableSnapshotData, null, 2), 'utf8');
+
+    await this.addChangeLog(characterCardName, {
+      versionLinkId,
+      action: 'create_table_snapshot',
+      source: options.source || 'user',
+      description: options.description || 'Created table snapshot',
+      affectedFiles: [tableFilePath],
+    });
+
+    const index = await this.getVersionIndex(characterCardName);
+
+    const linkRecord: VersionLinkRecord = {
+      versionLinkId,
+      timestamp: chatTimestamp,
+      triggerType: options.triggerType || 'manual',
+      chatVersion: {
+        exists: true,
+        filePath: chatFilePath,
+        messageCount: chatData.messages.length,
+      },
+      tableSnapshot: {
+        exists: true,
+        filePath: tableFilePath,
+        sheetCount: sheets.length,
+        totalRows,
+      },
+      consistencyStatus: Math.abs(tableTimestamp - chatTimestamp) <= 5000 ? 'matched' : 'partial',
+    };
+
+    index.versions.push(linkRecord);
+    await this.saveVersionIndex(characterCardName, index);
+
+    await this.addChangeLog(characterCardName, {
+      versionLinkId,
+      action: 'create_linked_version',
+      source: options.source || 'user',
+      description: options.description || 'Created linked version',
+      affectedFiles: [chatFilePath, tableFilePath],
+    });
+
+    return linkRecord;
+  }
+
+  async getLinkedVersion(
+    characterCardName: string,
+    versionLinkId: string
+  ): Promise<{ chatVersion: any | null; tableSnapshot: any | null; linkRecord: VersionLinkRecord | null }> {
+    const characterDir = this.getCharacterDir(characterCardName);
+    const chatFilePath = path.join(characterDir, 'versions', 'chat', `${versionLinkId}.json`);
+    const tableFilePath = path.join(characterDir, 'versions', 'table', `${versionLinkId}.json`);
+
+    let chatVersion: any | null = null;
+    let tableSnapshot: any | null = null;
+
+    try {
+      const chatContent = await fs.readFile(chatFilePath, 'utf8');
+      chatVersion = JSON.parse(chatContent);
+    } catch {
+    }
+
+    try {
+      const tableContent = await fs.readFile(tableFilePath, 'utf8');
+      tableSnapshot = JSON.parse(tableContent);
+    } catch {
+    }
+
+    const index = await this.getVersionIndex(characterCardName);
+    const linkRecord = index.versions.find(v => v.versionLinkId === versionLinkId) || null;
+
+    return { chatVersion, tableSnapshot, linkRecord };
+  }
+
+  async verifyConsistency(characterCardName: string): Promise<ConsistencyReport> {
+    const characterDir = this.getCharacterDir(characterCardName);
+    const chatDir = path.join(characterDir, 'versions', 'chat');
+    const tableDir = path.join(characterDir, 'versions', 'table');
+
+    const index = await this.getVersionIndex(characterCardName);
+
+    const chatFiles = new Set<string>();
+    const tableFiles = new Set<string>();
+
+    try {
+      await fs.access(chatDir);
+      const files = await fs.readdir(chatDir);
+      for (const file of files) {
+        if (file.endsWith('.json')) {
+          chatFiles.add(file.replace('.json', ''));
+        }
+      }
+    } catch {
+    }
+
+    try {
+      await fs.access(tableDir);
+      const files = await fs.readdir(tableDir);
+      for (const file of files) {
+        if (file.endsWith('.json')) {
+          tableFiles.add(file.replace('.json', ''));
+        }
+      }
+    } catch {
+    }
+
+    const indexedIds = new Set(index.versions.map(v => v.versionLinkId));
+
+    const orphanedChatFiles: string[] = [];
+    for (const chatFile of chatFiles) {
+      if (!indexedIds.has(chatFile)) {
+        orphanedChatFiles.push(path.join(chatDir, `${chatFile}.json`));
+      }
+    }
+
+    const orphanedTableFiles: string[] = [];
+    for (const tableFile of tableFiles) {
+      if (!indexedIds.has(tableFile)) {
+        orphanedTableFiles.push(path.join(tableDir, `${tableFile}.json`));
+      }
+    }
+
+    const details: Array<{
+      versionLinkId: string;
+      status: 'matched' | 'mismatched' | 'partial';
+      issues: string[];
+    }> = [];
+
+    let matchedCount = 0;
+    let partialCount = 0;
+    let mismatchedCount = 0;
+
+    for (const record of index.versions) {
+      const issues: string[] = [];
+      let status: 'matched' | 'mismatched' | 'partial' = 'matched';
+
+      const chatExists = chatFiles.has(record.versionLinkId);
+      const tableExists = tableFiles.has(record.versionLinkId);
+
+      if (!chatExists && !tableExists) {
+        issues.push('Both chat version and table snapshot files are missing');
+        status = 'mismatched';
+      } else if (!chatExists) {
+        issues.push('Chat version file is missing');
+        status = 'mismatched';
+      } else if (!tableExists) {
+        issues.push('Table snapshot file is missing');
+        status = 'mismatched';
+      } else {
+        let chatTimestamp = 0;
+        let tableTimestamp = 0;
+
+        try {
+          const chatContent = await fs.readFile(path.join(chatDir, `${record.versionLinkId}.json`), 'utf8');
+          const chatData = JSON.parse(chatContent);
+          chatTimestamp = chatData.timestamp || 0;
+        } catch {
+          issues.push('Failed to read chat version file');
+        }
+
+        try {
+          const tableContent = await fs.readFile(path.join(tableDir, `${record.versionLinkId}.json`), 'utf8');
+          const tableData = JSON.parse(tableContent);
+          tableTimestamp = tableData.timestamp || 0;
+        } catch {
+          issues.push('Failed to read table snapshot file');
+        }
+
+        if (chatTimestamp > 0 && tableTimestamp > 0) {
+          const diff = Math.abs(tableTimestamp - chatTimestamp);
+          if (diff > 5000) {
+            issues.push(`Timestamp difference (${diff}ms) exceeds 5000ms threshold`);
+            status = 'partial';
+          }
+        }
+
+        if (record.chatVersion.messageCount === 0 && issues.length === 0) {
+          issues.push('Chat version has 0 messages');
+          status = 'partial';
+        }
+
+        if (record.tableSnapshot.sheetCount === 0 && issues.length === 0) {
+          issues.push('Table snapshot has 0 sheets');
+          status = 'partial';
+        }
+      }
+
+      if (status === 'matched') matchedCount++;
+      else if (status === 'partial') partialCount++;
+      else mismatchedCount++;
+
+      details.push({
+        versionLinkId: record.versionLinkId,
+        status,
+        issues,
+      });
+    }
+
+    await this.addChangeLog(characterCardName, {
+      versionLinkId: 'system',
+      action: 'consistency_check',
+      source: 'system',
+      description: `Consistency check completed: ${matchedCount} matched, ${partialCount} partial, ${mismatchedCount} mismatched`,
+      affectedFiles: [],
+    });
+
+    return {
+      characterCardName,
+      totalVersions: index.versions.length,
+      matchedCount,
+      partialCount,
+      mismatchedCount,
+      orphanedChatFiles,
+      orphanedTableFiles,
+      details,
+    };
+  }
+
+  async updateConsistencyStatus(
+    characterCardName: string,
+    versionLinkId: string,
+    status: 'matched' | 'mismatched' | 'partial'
+  ): Promise<void> {
+    const index = await this.getVersionIndex(characterCardName);
+
+    const record = index.versions.find(v => v.versionLinkId === versionLinkId);
+    if (record) {
+      record.consistencyStatus = status;
+      await this.saveVersionIndex(characterCardName, index);
+    }
+  }
+}
+
+export const versionLinkerService = new VersionLinkerService();

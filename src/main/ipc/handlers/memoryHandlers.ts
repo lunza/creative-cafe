@@ -72,6 +72,19 @@ export function registerMemoryHandlers() {
     }
   });
 
+  ipcMain.handle('memory:stopOrganizing', async (
+    event: IpcMainInvokeEvent,
+    chatId: string
+  ): Promise<{ success: boolean }> => {
+    try {
+      const success = chatLogService.stopOrganizing(chatId);
+      return { success };
+    } catch (error) {
+      console.error('停止整理失败:', error);
+      return { success: false };
+    }
+  });
+
   /**
    * 获取单个模板
    */

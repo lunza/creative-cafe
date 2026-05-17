@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.0.30] - 2026-05-17
+
+### Added
+- **版本链接服务 VersionLinkerService**：实现聊天版本与表格快照的统一版本管理核心服务。支持版本索引管理、变更追踪、一致性验证等功能。
+  - **核心接口**：VersionLinkRecord（版本链接记录）、VersionIndex（版本索引）、ChangeLogEntry（变更日志条目）、ConsistencyReport（一致性报告）
+  - **版本ID生成**：格式为 `v{YYYYMMDD_HHmmss}_{6位随机字符}`，确保唯一性
+  - **版本索引管理**：通过 `version-index.json` 管理所有版本链接记录，支持读取、保存、更新一致性状态
+  - **变更追踪日志**：通过 `change-log.json` 记录所有版本操作，支持按数量限制查询最新条目
+  - **联动版本创建**：`createLinkedVersion()` 方法同时创建聊天版本（`versions/chat/`）和表格快照（`versions/table/`），使用相同 versionLinkId 关联，自动更新索引和变更日志
+  - **一致性验证**：`verifyConsistency()` 扫描所有版本文件，交叉引用索引，检查文件存在性、时间戳差异（≤5000ms阈值），发现孤立文件
+  - **目录结构**：`{userDataPath}/data/memories/chats/{characterCardName}/` 下管理 `version-index.json`、`change-log.json`、`versions/chat/`、`versions/table/`
+  - **字符名清理**：使用正则 `/[<>:"/\\|?*\x00-\x1F]/g` 替换为 `_`，确保目录名安全
+  - **单例导出**：`export const versionLinkerService = new VersionLinkerService()`
+  - **依赖**：使用 `fs/promises` 进行异步文件操作，从 `../utils/appPath` 导入 `getUserDataPath`
+  - 涉及文件：VersionLinkerService.ts（新建）
+
 ## [0.0.29] - 2026-05-12
 
 ### Fixed

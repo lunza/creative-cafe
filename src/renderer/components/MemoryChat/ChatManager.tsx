@@ -238,6 +238,13 @@ const ChatManager: React.FC = () => {
   const [deletingRecord, setDeletingRecord] = useState<string | null>(null);
   const [pageSize, setPageSize] = useState(10);
 
+  const [versionList, setVersionList] = useState<Array<{ fileName: string; filePath: string; sequenceNumber: number; timestamp: number; messageCount: number; versionLinkId?: string }>>([]);
+  const [selectedVersionPath, setSelectedVersionPath] = useState<string>('');
+  const [versionLoading, setVersionLoading] = useState(false);
+  const [versionSnapshots, setVersionSnapshots] = useState<Map<string, boolean>>(new Map());
+  const [consistencyReport, setConsistencyReport] = useState<any>(null);
+  const [consistencyChecking, setConsistencyChecking] = useState(false);
+
   const { addLog } = useLogStore();
   const { setting, fetchSetting } = useSettingStore();
 
@@ -346,6 +353,84 @@ const ChatManager: React.FC = () => {
       setEditContent('');
     } finally {
       setEditLoading(false);
+    }
+
+    try {
+      const versions = await window.electronAPI.chatVersion.getVersions(record.characterCardName);
+      const sortedVersions = versions.sort((a, b) => b.timestamp - a.timestamp);
+      setVersionList(sortedVersions);
+      setSelectedVersionPath('');
+
+      const snapshotMap = new Map<string, boolean>();
+      for (const v of sortedVersions) {
+        if (v.versionLinkId) {
+          try {
+            const linked = await window.electronAPI.chatVersion.getLinkedVersion(record.characterCardName, v.versionLinkId);
+            snapshotMap.set(v.filePath, !!linked?.tableSnapshot?.exists);
+          } catch {
+            snapshotMap.set(v.filePath, false);
+          }
+        }
+      }
+      setVersionSnapshots(snapshotMap);
+    } catch (error) {
+      console.error('加载版本列表失败:', error);
+      setVersionList([]);
+    }
+
+    setConsistencyReport(null);
+  };
+
+  const handleConsistencyCheck = async () => {
+    if (!currentRecord) return;
+    setConsistencyChecking(true);
+    try {
+      const report = await window.electronAPI.chatVersion.verifyConsistency(currentRecord.characterCardName);
+      setConsistencyReport(report);
+      if (report.mismatchedCount > 0 || report.partialCount > 0) {
+        message.warning(`发现 ${report.mismatchedCount} 个不一致版本和 ${report.partialCount} 个部分匹配版本`);
+      } else {
+        message.success('所有版本一致性校验通过');
+      }
+    } catch (error) {
+      message.error('一致性校验失败');
+    } finally {
+      setConsistencyChecking(false);
+    }
+  };
+
+  const handleVersionChange = async (versionFilePath: string) => {
+    if (!versionFilePath) {
+      if (currentRecord) {
+        setVersionLoading(true);
+        try {
+          const data = await window.electronAPI.memory.getCharacterChatRecord(currentRecord.fileName);
+          setEditContent(JSON.stringify(data, null, 2));
+        } catch (error) {
+          message.error('加载聊天记录内容失败');
+        } finally {
+          setVersionLoading(false);
+        }
+      }
+      setSelectedVersionPath('');
+      return;
+    }
+
+    setSelectedVersionPath(versionFilePath);
+    setVersionLoading(true);
+    try {
+      const versionData = await window.electronAPI.chatVersion.getVersionContent(versionFilePath);
+      if (versionData && versionData.messages) {
+        const chatData = {
+          ...versionData.metadata,
+          messages: versionData.messages,
+        };
+        setEditContent(JSON.stringify(chatData, null, 2));
+      }
+    } catch (error) {
+      message.error('加载版本内容失败');
+    } finally {
+      setVersionLoading(false);
     }
   };
 
@@ -995,7 +1080,7 @@ const ChatManager: React.FC = () => {
       <Modal
         title="编辑聊天记录"
         open={editModalVisible}
-        onCancel={() => setEditModalVisible(false)}
+        onCancel={() => { setEditModalVisible(false); setVersionList([]); setSelectedVersionPath(''); setVersionSnapshots(new Map()); setConsistencyReport(null); }}
         onOk={handleSaveEdit}
         okText="保存"
         cancelText="取消"
@@ -1007,12 +1092,97 @@ const ChatManager: React.FC = () => {
             <Spin tip="加载中..." />
           </div>
         ) : (
-          <TextArea
-            rows={20}
-            value={editContent}
-            onChange={(e) => setEditContent(e.target.value)}
-            style={{ fontFamily: 'monospace' }}
-          />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {versionList.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '13px', color: 'rgba(255, 255, 255, 0.65)', whiteSpace: 'nowrap' }}>版本选择:</span>
+                  <Select
+                    value={selectedVersionPath}
+                    onChange={handleVersionChange}
+                    placeholder="选择版本"
+                    allowClear
+                    style={{ flex: 1 }}
+                    loading={versionLoading}
+                  >
+                    {versionList.map(v => (
+                      <Select.Option key={v.filePath} value={v.filePath}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          版本 {v.sequenceNumber} - {v.messageCount} 条消息 - {new Date(v.timestamp).toLocaleString('zh-CN')}
+                          {versionSnapshots.get(v.filePath) && (
+                            <Tag color="blue" style={{ margin: 0, fontSize: '10px', lineHeight: '16px' }}>表格快照</Tag>
+                          )}
+                        </span>
+                      </Select.Option>
+                    ))}
+                  </Select>
+                  <button
+                    onClick={handleConsistencyCheck}
+                    disabled={consistencyChecking}
+                    style={{
+                      padding: '4px 10px',
+                      fontSize: '12px',
+                      background: consistencyChecking ? 'rgba(99, 102, 241, 0.5)' : 'transparent',
+                      color: 'rgba(255, 255, 255, 0.65)',
+                      border: '1px solid rgba(255, 255, 255, 0.15)',
+                      borderRadius: '4px',
+                      cursor: consistencyChecking ? 'not-allowed' : 'pointer',
+                      whiteSpace: 'nowrap',
+                      transition: 'all 0.2s',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!consistencyChecking) {
+                        e.currentTarget.style.background = 'rgba(99, 102, 241, 0.2)';
+                        e.currentTarget.style.borderColor = 'var(--primary-color, #6366f1)';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!consistencyChecking) {
+                        e.currentTarget.style.background = 'transparent';
+                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.15)';
+                      }
+                    }}
+                  >
+                    {consistencyChecking ? '校验中...' : '一致性校验'}
+                  </button>
+                </div>
+                {consistencyReport && (
+                  <div style={{
+                    padding: '8px 12px',
+                    background: 'rgba(0, 0, 0, 0.2)',
+                    borderRadius: '6px',
+                    fontSize: '12px',
+                    color: 'rgba(255, 255, 255, 0.7)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                  }}>
+                    <div style={{ marginBottom: '4px', fontWeight: 'bold' }}>一致性校验报告:</div>
+                    <div>总版本数: {consistencyReport.totalVersions}</div>
+                    <div style={{ color: '#22c55e' }}>完全匹配: {consistencyReport.matchedCount}</div>
+                    {consistencyReport.partialCount > 0 && <div style={{ color: '#f59e0b' }}>部分匹配: {consistencyReport.partialCount}</div>}
+                    {consistencyReport.mismatchedCount > 0 && <div style={{ color: '#ef4444' }}>不匹配: {consistencyReport.mismatchedCount}</div>}
+                    {consistencyReport.orphanedChatFiles?.length > 0 && (
+                      <div style={{ color: '#ef4444', marginTop: '4px' }}>孤立聊天文件: {consistencyReport.orphanedChatFiles.length} 个</div>
+                    )}
+                    {consistencyReport.orphanedTableFiles?.length > 0 && (
+                      <div style={{ color: '#ef4444', marginTop: '4px' }}>孤立表格文件: {consistencyReport.orphanedTableFiles.length} 个</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+            {versionLoading ? (
+              <div style={{ textAlign: 'center', padding: 20 }}>
+                <Spin tip="加载版本内容..." />
+              </div>
+            ) : (
+              <TextArea
+                rows={18}
+                value={editContent}
+                onChange={(e) => setEditContent(e.target.value)}
+                style={{ fontFamily: 'monospace' }}
+              />
+            )}
+          </div>
         )}
       </Modal>
 

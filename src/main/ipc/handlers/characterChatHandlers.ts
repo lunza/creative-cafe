@@ -1,6 +1,9 @@
 import { ipcMain } from 'electron';
 import { chatStorageService, ChatMessage, TestChatData } from '../../services/ChatStorageService';
 import { chatVectorizationService } from '../../services/ChatVectorizationService';
+import { chatVersionService } from '../../services/ChatVersionService';
+import { tableSnapshotService } from '../../services/TableSnapshotService';
+import { versionLinkerService } from '../../services/VersionLinkerService';
 
 function getCharacterTestChat(creativeId: string, characterCardId: string): TestChatData | null {
   return chatStorageService.getTestChat(creativeId, characterCardId);
@@ -17,7 +20,16 @@ async function saveCharacterTestChat(
   if (existingChat) {
     existingChat.messages = messages;
     existingChat.updatedAt = Date.now();
-    return await chatStorageService.saveTestChat(existingChat);
+    const saved = await chatStorageService.saveTestChat(existingChat);
+    
+    await chatVersionService.createVersion(characterCardName, messages, {
+      creativeId,
+      characterCardId,
+      characterCardName,
+      savedAt: Date.now(),
+    });
+    
+    return saved;
   } else {
     const newChat: TestChatData = {
       id: `test-chat-${Date.now()}`,
@@ -28,7 +40,16 @@ async function saveCharacterTestChat(
       createdAt: Date.now(),
       updatedAt: Date.now()
     };
-    return await chatStorageService.saveTestChat(newChat);
+    const saved = await chatStorageService.saveTestChat(newChat);
+    
+    await chatVersionService.createVersion(characterCardName, messages, {
+      creativeId,
+      characterCardId,
+      characterCardName,
+      savedAt: Date.now(),
+    });
+    
+    return saved;
   }
 }
 
@@ -85,6 +106,66 @@ export function registerCharacterChatHandlers(): void {
     console.log('[ChatVector] Searching chat vectors for character:', characterId);
     return await chatVectorizationService.searchChatMessages(characterId, query, topK);
   });
-  
+
+  ipcMain.handle('chatVersion:getVersions', async (_event, characterCardName: string) => {
+    console.log('[ChatVersion] Getting versions for character:', characterCardName);
+    return await chatVersionService.getVersionList(characterCardName);
+  });
+
+  ipcMain.handle('chatVersion:getVersionContent', async (_event, filePath: string) => {
+    console.log('[ChatVersion] Getting version content:', filePath);
+    return await chatVersionService.getVersionContent(filePath);
+  });
+
+  ipcMain.handle('chatVersion:deleteVersion', async (_event, filePath: string) => {
+    console.log('[ChatVersion] Deleting version:', filePath);
+    return await chatVersionService.deleteVersion(filePath);
+  });
+
+  ipcMain.handle('chatVersion:getVersionsDir', async (_event, characterCardName: string) => {
+    return chatVersionService.getVersionsDir(characterCardName);
+  });
+
+  ipcMain.handle('chatVersion:getLinkedVersion', async (_event, characterCardName: string, versionLinkId: string) => {
+    console.log('[ChatVersion] Getting linked version:', characterCardName, versionLinkId);
+    return await versionLinkerService.getLinkedVersion(characterCardName, versionLinkId);
+  });
+
+  ipcMain.handle('chatVersion:createLinkedVersion', async (_event, characterCardName: string, options: any) => {
+    console.log('[ChatVersion] Creating linked version for:', characterCardName);
+    return await versionLinkerService.createLinkedVersion(characterCardName, options);
+  });
+
+  ipcMain.handle('chatVersion:getVersionIndex', async (_event, characterCardName: string) => {
+    console.log('[ChatVersion] Getting version index for:', characterCardName);
+    return await versionLinkerService.getVersionIndex(characterCardName);
+  });
+
+  ipcMain.handle('chatVersion:getChangeLog', async (_event, characterCardName: string, options?: any) => {
+    console.log('[ChatVersion] Getting change log for:', characterCardName);
+    return await versionLinkerService.getChangeLog(characterCardName, options);
+  });
+
+  ipcMain.handle('chatVersion:verifyConsistency', async (_event, characterCardName: string) => {
+    console.log('[ChatVersion] Verifying consistency for:', characterCardName);
+    return await versionLinkerService.verifyConsistency(characterCardName);
+  });
+
+  ipcMain.handle('chatVersion:getTableSnapshot', async (_event, characterCardName: string, versionLinkId: string) => {
+    console.log('[ChatVersion] Getting table snapshot for:', characterCardName, versionLinkId);
+    const linked = await versionLinkerService.getLinkedVersion(characterCardName, versionLinkId);
+    return linked.tableSnapshot;
+  });
+
+  ipcMain.handle('chatVersion:getTableSnapshots', async (_event, characterCardName: string) => {
+    console.log('[ChatVersion] Getting table snapshots for:', characterCardName);
+    return await tableSnapshotService.getSnapshots(characterCardName);
+  });
+
+  ipcMain.handle('chatVersion:getSnapshotContent', async (_event, filePath: string) => {
+    console.log('[ChatVersion] Getting snapshot content:', filePath);
+    return await tableSnapshotService.getSnapshotContent(filePath);
+  });
+
   console.log('[Chat] Character chat handlers registered');
 }

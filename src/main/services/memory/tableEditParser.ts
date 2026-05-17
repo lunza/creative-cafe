@@ -101,25 +101,19 @@ class TableEditParser {
 
   /**
    * 从内容中解析命令
+   * 直接在内容中按行匹配命令，不依赖 HTML 注释提取（避免嵌套注释破坏外层注释的完整性）
    */
   private parseCommands(content: string, errors: string[]): TableEditCommand[] {
     const commands: TableEditCommand[] = [];
 
-    const commentText = this.extractCommentText(content);
-    if (!commentText) {
-      errors.push('未找到 HTML 注释或注释内容为空');
-      addLog('TableEditParser: 未找到 HTML 注释', 'warn');
-      return commands;
-    }
+    addLog(`TableEditParser: 内容长度 ${content.length} 字符`, 'debug');
 
-    addLog(`TableEditParser: 提取注释内容长度 ${commentText.length} 字符`, 'debug');
-
-    const lines = commentText
+    const lines = content
       .split('\n')
       .map(line => line.trim())
       .filter(line => line.length > 0);
 
-    addLog(`TableEditParser: 共 ${lines.length} 行命令待解析`, 'debug');
+    addLog(`TableEditParser: 共 ${lines.length} 行内容待解析`, 'debug');
 
     for (const line of lines) {
       const command = this.parseSingleCommand(line);
@@ -127,9 +121,13 @@ class TableEditParser {
         commands.push(command);
         addLog(`TableEditParser: 成功解析命令 ${command.type}(tableIndex=${command.tableIndex})`, 'debug');
       } else {
-        errors.push(`无法解析命令: ${line}`);
-        addLog(`TableEditParser: 命令解析失败: ${line}`, 'error');
+        addLog(`TableEditParser: 跳过非命令行: ${line.substring(0, 50)}`, 'debug');
       }
+    }
+
+    if (commands.length === 0) {
+      errors.push('未找到有效的 tableEdit 命令（insertRow/updateRow/deleteRow）');
+      addLog('TableEditParser: 未找到有效的 tableEdit 命令', 'warn');
     }
 
     return commands;
@@ -268,10 +266,13 @@ class TableEditParser {
    * 解析数据对象（处理引号和非引号键）
    */
   private parseDataObject(dataStr: string): Record<string, string> | null {
+    // 清理 JSON 字符串中的嵌套 HTML 注释（如 "朱迪<!-- 药 -->" → "朱迪"）
+    const cleanedStr = dataStr.replace(/<!--[\s\S]*?-->/g, '');
+
     try {
-      // 首先尝试直接解析（AI 返回的标准 JSON）
+      // 首先尝试直接解析清理后的 JSON（AI 返回的标准 JSON）
       try {
-        const parsed = JSON.parse(dataStr);
+        const parsed = JSON.parse(cleanedStr);
         if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
           const result: Record<string, string> = {};
           for (const [key, value] of Object.entries(parsed)) {
@@ -284,7 +285,7 @@ class TableEditParser {
       }
 
       // 规范化后重试
-      const normalizedStr = this.normalizeJsonObject(dataStr);
+      const normalizedStr = this.normalizeJsonObject(cleanedStr);
       const parsed = JSON.parse(normalizedStr);
 
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {

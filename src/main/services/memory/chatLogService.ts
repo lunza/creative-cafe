@@ -90,8 +90,8 @@ class ChatLogService {
   private chatsDir: string;
   private chatlogDir: string;
   
-  // 整理锁机制，防止并发整理
   private organizingLocks: Map<string, { isOrganizing: boolean; lastOrganizeTime: number; organizeType: 'auto' | 'manual' }> = new Map();
+  private organizeAbortControllers: Map<string, AbortController> = new Map();
 
   constructor() {
     // 使用 getUserDataPath 获取用户数据目录
@@ -178,6 +178,29 @@ class ChatLogService {
       });
       addLog(`[${chatId}] 释放整理锁`, 'debug');
     }
+  }
+
+  /**
+   * 停止正在进行的整理任务
+   * @param chatId 聊天ID
+   * @returns 是否成功取消
+   */
+  public stopOrganizing(chatId: string): boolean {
+    const lock = this.organizingLocks.get(chatId);
+    if (!lock || !lock.isOrganizing) {
+      addLog(`[${chatId}] 当前没有正在执行的整理任务`, 'info');
+      return false;
+    }
+
+    const controller = this.organizeAbortControllers.get(chatId);
+    if (controller) {
+      controller.abort();
+      this.organizeAbortControllers.delete(chatId);
+      addLog(`[${chatId}] 已发送整理任务取消信号`, 'info');
+    }
+
+    this.releaseOrganizingLock(chatId);
+    return true;
   }
 
   /**
@@ -1171,6 +1194,56 @@ deleteRow(4, 1)
       return result;
     }
 
+    // 确保表格文件存在（修复异步整理模式下表格文件未创建的问题）
+    const safeChatId = chatId
+      .replace(/\//g, '_')
+      .replace(/\\/g, '_')
+      .replace(/\s+/g, '_')
+      .replace(/@/g, '_')
+      .replace(/-/g, '_')
+      .replace(/:/g, '_')
+      .replace(/\*/g, '_')
+      .replace(/\?/g, '_')
+      .replace(/"/g, '_')
+      .replace(/</g, '_')
+      .replace(/>/g, '_')
+      .replace(/\|/g, '_');
+    const tableFilePath = path.join(this.chatlogDir, `${safeChatId}.json`);
+    console.log(`[executeTableEditCommands] chatLogService.chatlogDir=${this.chatlogDir}`);
+    console.log(`[executeTableEditCommands] safeChatId=${safeChatId}`);
+    console.log(`[executeTableEditCommands] tableFilePath=${tableFilePath}`);
+    console.log(`[executeTableEditCommands] fs.existsSync=${fs.existsSync(tableFilePath)}`);
+    if (!fs.existsSync(tableFilePath)) {
+      addLog(`[executeTableEditCommands] 表格文件不存在，尝试自动初始化: ${tableFilePath}`, 'info');
+      console.log(`[executeTableEditCommands] 进入自动初始化分支`);
+      const templateId = this.resolveAvailableTemplate(chatId);
+      console.log(`[executeTableEditCommands] resolveAvailableTemplate 返回: ${templateId}`);
+      if (!templateId) {
+        addLog('[executeTableEditCommands] 没有可用的表格模板，无法自动创建', 'error');
+        result.errors.push('表格文件不存在且没有可用的模板');
+        return result;
+      }
+      try {
+        console.log(`[executeTableEditCommands] 调用 createTableFile, templateId=${templateId}`);
+        const createdPath = tableTemplateService.createTableFile(chatId, templateId, safeChatId);
+        console.log(`[executeTableEditCommands] createTableFile 返回路径: ${createdPath}`);
+        console.log(`[executeTableEditCommands] 创建后 fs.existsSync=${fs.existsSync(tableFilePath)}`);
+        addLog(`[executeTableEditCommands] 表格文件已自动创建: ${tableFilePath}`, 'info');
+        if (!fs.existsSync(tableFilePath)) {
+          addLog(`[executeTableEditCommands] 警告：表格文件创建后验证失败: ${tableFilePath}`, 'error');
+          result.errors.push('表格文件创建后验证失败');
+          return result;
+        }
+      } catch (createError) {
+        addLog(`[executeTableEditCommands] 创建表格文件失败: ${createError}`, 'error');
+        console.error(`[executeTableEditCommands] createTableFile 异常:`, createError);
+        result.errors.push(`创建表格文件失败: ${createError}`);
+        return result;
+      }
+    } else {
+      addLog(`[executeTableEditCommands] 表格文件已存在: ${tableFilePath}`, 'info');
+    }
+
     addLog(`开始执行 ${commands.length} 个tableEdit命令`, 'info');
 
     commands.forEach((command, index) => {
@@ -1415,7 +1488,8 @@ deleteRow(4, 1)
     prompt: string,
     apiKey: string,
     apiUrl: string,
-    modelName: string
+    modelName: string,
+    signal?: AbortSignal
   ): Promise<string> {
     addLog('调用 AI API', 'debug');
     addLog(`API 地址: ${apiUrl}`, 'debug');
@@ -1425,14 +1499,11 @@ deleteRow(4, 1)
     addLog(prompt, 'debug');
     
     try {
-      // 确定 API 模式（根据 URL 判断）
       const isChatCompletion = apiUrl.includes('/chat/completions');
       addLog(`API 模式: ${isChatCompletion ? '聊天补全' : '文本补全'}`, 'debug');
       
-      // 构建请求体
       let requestBody: any;
       if (isChatCompletion) {
-        // 聊天补全模式
         requestBody = {
           model: modelName,
           messages: [
@@ -1455,7 +1526,6 @@ deleteRow(4, 1)
           }
         };
       } else {
-        // 文本补全模式
         requestBody = {
           model: modelName,
           prompt: prompt,
@@ -1479,14 +1549,17 @@ deleteRow(4, 1)
           addLog('API密钥不包含Bearer前缀，自动添加', 'debug');
         }
       }
-      
+
+      const timeoutSignal = AbortSignal.timeout(60000);
+
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...authHeader
         },
-        body: JSON.stringify(requestBody)
+        body: JSON.stringify(requestBody),
+        signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
       });
       
       if (!response.ok) {
@@ -1542,19 +1615,24 @@ deleteRow(4, 1)
     apiUrl: string,
     modelName: string,
     maxRetries: number = 3,
-    retryDelay: number = 2000
+    retryDelay: number = 2000,
+    signal?: AbortSignal
   ): Promise<string> {
     let lastError: Error | null = null;
     
     for (let i = 0; i < maxRetries; i++) {
       try {
         console.log(`尝试调用 AI API (${i + 1}/${maxRetries})...`);
-        const response = await this.callAIAPI(prompt, apiKey, apiUrl, modelName);
+        const response = await this.callAIAPI(prompt, apiKey, apiUrl, modelName, signal);
         console.log('AI API 调用成功');
         return response;
       } catch (error) {
         lastError = error as Error;
         console.error(`AI API 调用失败 (${i + 1}/${maxRetries}):`, lastError);
+        
+        if (signal?.aborted) {
+          throw new Error('整理任务已取消');
+        }
         
         if (i < maxRetries - 1) {
           console.log(`等待 ${retryDelay}ms 后重试...`);
@@ -2100,6 +2178,40 @@ deleteRow(4, 1)
     return result;
   }
 
+  /**
+   * 尝试获取可用的模板ID（优先使用关联模板，若副本不存在则回退到原始模板）
+   */
+  private resolveAvailableTemplate(chatId: string): string | null {
+    const associatedTemplateId = this.getAssociatedTemplate(chatId);
+    if (!associatedTemplateId) {
+      const allTemplates = tableTemplateService.getAllTemplates();
+      if (allTemplates && allTemplates.length > 0) {
+        return allTemplates[0].id;
+      }
+      return null;
+    }
+
+    const template = tableTemplateService.getTemplate(associatedTemplateId);
+    if (template) {
+      return associatedTemplateId;
+    }
+
+    addLog(`[resolveAvailableTemplate] 关联的副本模板不存在: ${associatedTemplateId}，尝试回退`, 'info');
+
+    const allTemplates = tableTemplateService.getAllTemplates();
+    if (allTemplates && allTemplates.length > 0) {
+      const nonCopyTemplate = allTemplates.find(t => !t.isCopy);
+      if (nonCopyTemplate) {
+        addLog(`[resolveAvailableTemplate] 回退使用原始模板: ${nonCopyTemplate.id}`, 'info');
+        return nonCopyTemplate.id;
+      }
+      addLog(`[resolveAvailableTemplate] 无原始模板，使用第一个可用模板: ${allTemplates[0].id}`, 'info');
+      return allTemplates[0].id;
+    }
+
+    return null;
+  }
+
 
 
   /**
@@ -2232,6 +2344,181 @@ deleteRow(4, 1)
       associations[chatId].lastProcessedAt = new Date().toISOString();
       fs.writeFileSync(associationsPath, JSON.stringify(associations, null, 2));
     }
+  }
+
+  private getSafeChatId(chatId: string): string {
+    return chatId
+      .replace(/\//g, '_')
+      .replace(/\\/g, '_')
+      .replace(/\s+/g, '_')
+      .replace(/@/g, '_')
+      .replace(/-/g, '_')
+      .replace(/:/g, '_')
+      .replace(/\*/g, '_')
+      .replace(/\?/g, '_')
+      .replace(/"/g, '_')
+      .replace(/</g, '_')
+      .replace(/>/g, '_')
+      .replace(/\|/g, '_');
+  }
+
+  private buildOrganizeConfig(
+    config?: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }
+  ): { aiConfig: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }; apiEndpoint: string } {
+    const aiConfig = {
+      apiKey: config?.apiKey || '',
+      apiUrl: config?.apiUrl || 'http://127.0.0.1:5000',
+      modelName: config?.modelName || 'qwen3.5-27b-heretic-v3',
+      apiMode: config?.apiMode || 'text_completion'
+    };
+
+    let apiEndpoint = aiConfig.apiUrl;
+    if (aiConfig.apiMode === 'text_completion') {
+      if (!apiEndpoint.endsWith('/v1/completions')) {
+        apiEndpoint += '/v1/completions';
+      }
+    } else {
+      if (!apiEndpoint.endsWith('/v1/chat/completions')) {
+        apiEndpoint += '/v1/chat/completions';
+      }
+    }
+
+    return { aiConfig, apiEndpoint };
+  }
+
+  private rollbackTableData(backup: string | null, filePath: string): void {
+    if (backup && filePath && fs.existsSync(filePath)) {
+      try {
+        addLog('[TableOrganize] 检测到严重错误，正在回滚表格数据到备份状态...', 'error');
+        fs.writeFileSync(filePath, backup, 'utf-8');
+        addLog('[TableOrganize] 表格数据已回滚到处理前的状态', 'info');
+      } catch (rollbackError) {
+        addLog(`[TableOrganize] 回滚表格数据失败: ${rollbackError}`, 'error');
+      }
+    }
+  }
+
+  private sendOrganizeNotification(chatId: string, message: string, level: 'info' | 'warn' | 'error' | 'debug'): void {
+    if (global.sendLogToRenderer) {
+      global.sendLogToRenderer(message, level);
+    }
+  }
+
+  private readAndFilterMessages(chatId: string): ChatMessage[] {
+    const allMessages = this.getChatMessages(chatId).messages;
+    let messages: ChatMessage[] = allMessages;
+    if (allMessages.length === 0) {
+      const jsonMessages = this.readCharacterChatMessages(chatId);
+      if (jsonMessages.length > 0) {
+        addLog(`[TableOrganize] 从角色卡聊天记录格式读取到 ${jsonMessages.length} 条消息`, 'debug');
+        messages = jsonMessages;
+      }
+    }
+    return messages.filter(msg => msg.role === 'user' || msg.role === 'assistant');
+  }
+
+  private async processMessagesCore(params: {
+    messages: ChatMessage[];
+    startIndex: number;
+    totalMessages: number;
+    aiConfig: { apiKey: string; apiUrl: string; modelName: string; apiMode: string };
+    apiEndpoint: string;
+    effectiveTemplateId: string;
+    template: any;
+    chatId: string;
+    signal?: AbortSignal;
+    logger: string;
+    onProgress?: (current: number, total: number, message: string, percent?: number) => void;
+  }): Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[] }> {
+    const {
+      messages, startIndex, totalMessages, aiConfig, apiEndpoint,
+      effectiveTemplateId, template, chatId, signal, logger, onProgress
+    } = params;
+
+    const result = { success: true, processedCount: 0, errorCount: 0, errors: [] as string[] };
+
+    const checkAborted = () => {
+      if (signal?.aborted) {
+        throw new Error('整理任务已取消');
+      }
+    };
+
+    for (let i = startIndex; i < totalMessages; i++) {
+      checkAborted();
+
+      const message = messages[i];
+      const absoluteMessageIndex = i + 1;
+      const processedCount = i - startIndex + 1;
+
+      addLog(`${logger} 处理消息 ${absoluteMessageIndex}/${totalMessages}: ${message.role}`, 'info');
+
+      if (onProgress) {
+        const progressPercent = Math.round((processedCount / (totalMessages - startIndex)) * 100);
+        onProgress(absoluteMessageIndex, totalMessages, `处理消息 ${absoluteMessageIndex}/${totalMessages}...`, progressPercent);
+      }
+
+      this.sendOrganizeNotification(chatId, `${logger} 处理消息 ${absoluteMessageIndex}/${totalMessages} (${message.role})`, 'info');
+
+      try {
+        const tableContext = this.buildTableContext(chatId, effectiveTemplateId);
+        const prompt = this.buildAIPromptForProgressive(message, template, chatId, tableContext);
+        const aiResponse = await this.callAIAPIWithRetry(prompt, aiConfig.apiKey, apiEndpoint, aiConfig.modelName, 3, 2000, signal);
+
+        if (!aiResponse || aiResponse.trim() === '') {
+          addLog(`${logger} AI未返回有效响应 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'warn');
+          result.errors.push(`消息 ${absoluteMessageIndex}: AI未返回有效响应`);
+          result.errorCount++;
+          this.saveOrganizingProgress(chatId, absoluteMessageIndex, totalMessages);
+          continue;
+        }
+
+        addLog(`${logger} AI响应长度: ${aiResponse.length} 字符 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'debug');
+
+        const parseResult = tableEditParser.parse(aiResponse);
+
+        if (!parseResult.success && parseResult.commands.length === 0) {
+          addLog(`${logger} 未解析到tableEdit命令 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'warn');
+          if (parseResult.errors.length > 0) {
+            addLog(`${logger} 解析错误: ${parseResult.errors.join('; ')}`, 'warn');
+          }
+          result.processedCount++;
+          this.saveOrganizingProgress(chatId, absoluteMessageIndex, totalMessages);
+          continue;
+        }
+
+        if (parseResult.errors.length > 0) {
+          addLog(`${logger} 解析警告: ${parseResult.errors.join('; ')} (消息 ${absoluteMessageIndex}/${totalMessages})`, 'warn');
+        }
+
+        if (parseResult.commands.length > 0) {
+          addLog(`${logger} 执行 ${parseResult.commands.length} 个tableEdit命令 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'info');
+          const execResult = this.executeTableEditCommands(chatId, parseResult.commands);
+
+          if (execResult.errors.length > 0) {
+            addLog(`${logger} 命令执行错误: ${execResult.errors.join('; ')} (消息 ${absoluteMessageIndex}/${totalMessages})`, 'warn');
+            result.errors.push(`消息 ${absoluteMessageIndex}: ${execResult.errors.join('; ')}`);
+          }
+
+          addLog(`${logger} 成功执行 ${execResult.executed} 个命令 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'info');
+        }
+
+        result.processedCount++;
+        this.saveOrganizingProgress(chatId, absoluteMessageIndex, totalMessages);
+        addLog(`${logger} 消息 ${absoluteMessageIndex}/${totalMessages} 处理完成`, 'info');
+
+      } catch (error) {
+        const errorMsg = `${logger} 处理消息 ${absoluteMessageIndex} 失败: ${error instanceof Error ? error.message : String(error)}`;
+        addLog(errorMsg, 'error');
+        if (error instanceof Error && error.stack) {
+          addLog(`${logger} 错误堆栈: ${error.stack}`, 'debug');
+        }
+        result.errors.push(errorMsg);
+        result.errorCount++;
+        addLog(`${logger} 跳过消息 ${absoluteMessageIndex}，继续处理下一条`, 'info');
+      }
+    }
+
+    return result;
   }
 
   /**
@@ -2404,8 +2691,9 @@ deleteRow(4, 1)
   ): Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[]; resumed: boolean }> {
     const result = { success: true, processedCount: 0, errorCount: 0, errors: [] as string[], resumed: false };
     const { continueFromLast = true, minInterval = 3000 } = options || {};
+    const startTime = Date.now();
 
-    addLog(`[Auto Organize] 开始实时整理: ${chatId}`, 'info');
+    addLog(`[TableOrganize][Sync] 开始实时整理: ${chatId}`, 'info');
 
     // 防抖检查
     if (!this.canStartOrganize(chatId, minInterval)) {
@@ -2415,41 +2703,31 @@ deleteRow(4, 1)
     // 设置整理锁
     this.setOrganizingLock(chatId, 'auto');
 
+    // 创建 AbortController 用于取消整理任务
+    const controller = new AbortController();
+    this.organizeAbortControllers.set(chatId, controller);
+
     let tableDataBackup: string | null = null;
     let tableFilePath = '';
 
+    const checkAborted = () => {
+      if (controller.signal.aborted) {
+        throw new Error('整理任务已取消');
+      }
+    };
+
     try {
-      // 1. 读取聊天记录（支持两种格式）
-      addLog('[Auto Organize] 步骤 1/5: 读取聊天记录', 'debug');
-      const allMessages = this.getChatMessages(chatId).messages;
-
-      // 如果 .jsonl 格式没读到，尝试从 .json 格式（角色卡聊天记录）读取
-      let messages: ChatMessage[] = allMessages;
-      if (allMessages.length === 0) {
-        const jsonMessages = this.readCharacterChatMessages(chatId);
-        if (jsonMessages.length > 0) {
-          addLog(`[Auto Organize] 从角色卡聊天记录格式读取到 ${jsonMessages.length} 条消息`, 'debug');
-          messages = jsonMessages;
-        }
-      }
-
-      addLog(`[Auto Organize] 共读取 ${messages.length} 条消息`, 'debug');
-
-      if (messages.length === 0) {
-        throw new Error('没有聊天记录可处理');
-      }
-
-      // 2. 过滤消息（仅处理user和assistant消息）
-      addLog('[Auto Organize] 步骤 2/5: 过滤消息', 'debug');
-      const targetMessages = messages.filter(msg => msg.role === 'user' || msg.role === 'assistant');
-      addLog(`[Auto Organize] 过滤后剩余 ${targetMessages.length} 条消息（排除system消息）`, 'debug');
+      addLog('[TableOrganize][Sync] 步骤 1/5: 读取并过滤聊天记录', 'debug');
+      checkAborted();
+      const targetMessages = this.readAndFilterMessages(chatId);
+      addLog(`[TableOrganize][Sync] 共读取并过滤 ${targetMessages.length} 条消息`, 'debug');
 
       if (targetMessages.length === 0) {
         throw new Error('没有可处理的消息（user或assistant）');
       }
 
       // 3. 按时间顺序排序
-      addLog('[Auto Organize] 步骤 3/5: 按时间排序', 'debug');
+      addLog('[TableOrganize][Sync] 步骤 2/5: 按时间排序', 'debug');
       targetMessages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
       // 检查断点续传
@@ -2457,36 +2735,33 @@ deleteRow(4, 1)
       const existingProgress = this.getOrganizingProgress(chatId);
       if (continueFromLast && existingProgress && existingProgress.processedCount > 0 && existingProgress.totalMessages === targetMessages.length) {
         startIndex = existingProgress.processedCount;
-        addLog(`[Auto Organize] 检测到断点续传记录: 已处理 ${startIndex}/${targetMessages.length} 条消息`, 'info');
+        addLog(`[TableOrganize][Sync] 检测到断点续传记录: 已处理 ${startIndex}/${targetMessages.length} 条消息`, 'info');
         if (startIndex >= targetMessages.length) {
-          addLog('[Auto Organize] 所有消息已处理完成，无需重复整理', 'info');
+          addLog('[TableOrganize][Sync] 所有消息已处理完成，无需重复整理', 'info');
           result.resumed = true;
           result.processedCount = startIndex;
           return result;
         }
         result.resumed = true;
       } else if (existingProgress && existingProgress.totalMessages !== targetMessages.length) {
-        addLog(`[Auto Organize] 消息数量变化 (${existingProgress.totalMessages} -> ${targetMessages.length})，仅处理新增消息`, 'info');
-        // 如果消息数量变化，计算新增消息的起始位置
+        addLog(`[TableOrganize][Sync] 消息数量变化 (${existingProgress.totalMessages} -> ${targetMessages.length})，仅处理新增消息`, 'info');
         if (existingProgress.totalMessages < targetMessages.length) {
           startIndex = existingProgress.totalMessages;
-          addLog(`[Auto Organize] 检测到新增 ${targetMessages.length - existingProgress.totalMessages} 条消息，从第 ${startIndex + 1} 条开始处理`, 'info');
+          addLog(`[TableOrganize][Sync] 检测到新增 ${targetMessages.length - existingProgress.totalMessages} 条消息，从第 ${startIndex + 1} 条开始处理`, 'info');
         }
       }
 
-      addLog(`[Auto Organize] 待处理消息: ${startIndex + 1} ~ ${targetMessages.length} (共 ${targetMessages.length - startIndex} 条)`, 'info');
+      addLog(`[TableOrganize][Sync] 待处理消息: ${startIndex + 1} ~ ${targetMessages.length} (共 ${targetMessages.length - startIndex} 条)`, 'info');
 
       // 4. 获取模板信息
-      addLog('[Auto Organize] 步骤 4/5: 获取模板信息', 'debug');
-      // 如果模板ID为空，使用默认模板
+      addLog('[TableOrganize][Sync] 步骤 3/5: 获取模板信息', 'debug');
       let effectiveTemplateId = templateId;
       if (!effectiveTemplateId || effectiveTemplateId.trim() === '') {
-        addLog('[Auto Organize] 模板ID为空，自动使用默认模板', 'info');
-        // 获取默认模板列表中的第一个
+        addLog('[TableOrganize][Sync] 模板ID为空，自动使用默认模板', 'info');
         const defaultTemplates = tableTemplateService.getAllTemplates();
         if (defaultTemplates && defaultTemplates.length > 0) {
           effectiveTemplateId = defaultTemplates[0].id;
-          addLog(`[Auto Organize] 使用默认模板: ${effectiveTemplateId} (${defaultTemplates[0].name})`, 'info');
+          addLog(`[TableOrganize][Sync] 使用默认模板: ${effectiveTemplateId} (${defaultTemplates[0].name})`, 'info');
         } else {
           throw new Error('没有可用的表格模板，请先在表格模板管理中创建模板');
         }
@@ -2495,32 +2770,13 @@ deleteRow(4, 1)
       if (!template) {
         throw new Error(`模板 ${effectiveTemplateId} 不存在`);
       }
-      addLog(`[Auto Organize] 模板名称: ${template.name}`, 'debug');
-      addLog(`[Auto Organize] 模板包含 ${template.sheets?.length || 0} 个页签`, 'debug');
+      addLog(`[TableOrganize][Sync] 模板名称: ${template.name}`, 'debug');
+      addLog(`[TableOrganize][Sync] 模板包含 ${template.sheets?.length || 0} 个页签`, 'debug');
 
       // 5. 确定AI配置
-      addLog('[Auto Organize] 步骤 5/5: 配置AI参数', 'debug');
-      const aiConfig = {
-        apiKey: config?.apiKey || '',
-        apiUrl: config?.apiUrl || 'http://127.0.0.1:5000',
-        modelName: config?.modelName || 'qwen3.5-27b-heretic-v3',
-        apiMode: config?.apiMode || 'text_completion'
-      };
-
-      // 根据API模式设置正确的API端点
-      let apiEndpoint = aiConfig.apiUrl;
-      if (aiConfig.apiMode === 'text_completion') {
-        if (!apiEndpoint.endsWith('/v1/completions')) {
-          apiEndpoint += '/v1/completions';
-        }
-      } else {
-        if (!apiEndpoint.endsWith('/v1/chat/completions')) {
-          apiEndpoint += '/v1/chat/completions';
-        }
-      }
-      addLog(`[Auto Organize] 最终API端点: ${apiEndpoint}`, 'debug');
-
-      addLog('[Auto Organize] 使用AI配置:', 'debug');
+      addLog('[TableOrganize][Sync] 步骤 4/5: 配置AI参数', 'debug');
+      const { aiConfig, apiEndpoint } = this.buildOrganizeConfig(config);
+      addLog('[TableOrganize][Sync] 使用AI配置:', 'debug');
       addLog(`  API密钥: ${aiConfig.apiKey ? '已设置' : '未设置'}`, 'debug');
       addLog(`  API地址: ${apiEndpoint}`, 'debug');
       addLog(`  模型名称: ${aiConfig.modelName}`, 'debug');
@@ -2533,27 +2789,14 @@ deleteRow(4, 1)
       }
 
       // 确保表格JSON文件存在（创建初始空文件）
-      // 使用与 tableTemplateService 相同的 safeChatId 计算方法
-      const safeChatId = chatId
-        .replace(/\//g, '_')
-        .replace(/\\/g, '_')
-        .replace(/\s+/g, '_')
-        .replace(/@/g, '_')
-        .replace(/-/g, '_')
-        .replace(/:/g, '_')
-        .replace(/\*/g, '_')
-        .replace(/\?/g, '_')
-        .replace(/"/g, '_')
-        .replace(/</g, '_')
-        .replace(/>/g, '_')
-        .replace(/\|/g, '_');
+      const safeChatId = this.getSafeChatId(chatId);
       tableFilePath = path.join(this.chatlogDir, `${safeChatId}.json`);
       if (!fs.existsSync(tableFilePath)) {
-        addLog('[Auto Organize] 创建初始表格数据文件', 'info');
+        addLog('[TableOrganize][Sync] 创建初始表格数据文件', 'info');
         tableTemplateService.createTableFile(chatId, effectiveTemplateId, safeChatId);
-        addLog(`[Auto Organize] 表格文件已创建: ${tableFilePath}`, 'info');
+        addLog(`[TableOrganize][Sync] 表格文件已创建: ${tableFilePath}`, 'info');
       } else {
-        addLog(`[Auto Organize] 表格文件已存在: ${tableFilePath}`, 'debug');
+        addLog(`[TableOrganize][Sync] 表格文件已存在: ${tableFilePath}`, 'debug');
       }
 
       // 保存关联关系（确保associations.json中有该chatId的记录）
@@ -2563,128 +2806,49 @@ deleteRow(4, 1)
       try {
         if (fs.existsSync(tableFilePath)) {
           tableDataBackup = fs.readFileSync(tableFilePath, 'utf-8');
-          addLog('[Auto Organize] 表格数据备份完成', 'debug');
+          addLog('[TableOrganize][Sync] 表格数据备份完成', 'debug');
         }
       } catch (backupError) {
-        addLog(`[Auto Organize] 备份表格数据失败: ${backupError}`, 'warn');
+        addLog(`[TableOrganize][Sync] 备份表格数据失败: ${backupError}`, 'warn');
       }
 
-      // 开始逐条处理
+      // 开始处理
+      addLog('[TableOrganize][Sync] 步骤 5/5: 调用核心处理方法', 'info');
       const totalMessages = targetMessages.length;
       const messagesToProcess = totalMessages - startIndex;
-      addLog(`[Auto Organize] 开始增量处理 ${messagesToProcess} 条新消息${startIndex > 0 ? ` (从第 ${startIndex + 1} 条开始)` : ''}`, 'info');
+      addLog(`[TableOrganize][Sync] 开始增量处理 ${messagesToProcess} 条新消息${startIndex > 0 ? ` (从第 ${startIndex + 1} 条开始)` : ''}`, 'info');
 
       // 初始化进度
       this.saveOrganizingProgress(chatId, startIndex, totalMessages);
 
-      for (let i = startIndex; i < totalMessages; i++) {
-        const message = targetMessages[i];
-        const absoluteMessageIndex = i + 1;
-        const processedCount = i - startIndex + 1;
+      const coreResult = await this.processMessagesCore({
+        messages: targetMessages,
+        startIndex,
+        totalMessages,
+        aiConfig,
+        apiEndpoint,
+        effectiveTemplateId,
+        template,
+        chatId,
+        signal: controller.signal,
+        logger: '[TableOrganize][Sync]',
+        onProgress
+      });
 
-        addLog(`[Auto Organize] 处理消息 ${absoluteMessageIndex}/${totalMessages}: ${message.role}`, 'info');
-
-        // 进度回调：传递绝对消息位置用于前端显示，同时传递计算好的百分比
-        if (onProgress) {
-          // 计算正确的进度百分比（基于相对进度：已处理数/当前批次待处理总数）
-          const progressPercent = Math.round((processedCount / messagesToProcess) * 100);
-          
-          // 前端需要显示绝对进度（如 4/5），所以传递 absoluteMessageIndex 和 totalMessages
-          // 同时传递计算好的百分比值，避免前端计算错误
-          onProgress(absoluteMessageIndex, totalMessages, `处理消息 ${absoluteMessageIndex}/${totalMessages}...`, progressPercent);
-        }
-
-        // 发送实时更新
-        if (global.sendLogToRenderer) {
-          global.sendLogToRenderer(`[Auto Organize] 处理消息 ${absoluteMessageIndex}/${totalMessages} (${message.role})`, 'info');
-        }
-
-        try {
-          // 构建表格数据上下文
-          addLog(`[Auto Organize] 构建表格上下文 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'debug');
-          const tableContext = this.buildTableContext(chatId, effectiveTemplateId);
-
-          // 构建提示词
-          addLog(`[Auto Organize] 构建AI提示词 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'debug');
-          const prompt = this.buildAIPromptForProgressive(message, template, chatId, tableContext);
-
-          // 调用AI API
-          addLog(`[Auto Organize] 调用AI API (消息 ${absoluteMessageIndex}/${totalMessages})`, 'info');
-          const aiResponse = await this.callAIAPIWithRetry(prompt, aiConfig.apiKey, apiEndpoint, aiConfig.modelName);
-
-          if (!aiResponse || aiResponse.trim() === '') {
-            addLog(`[Auto Organize] AI未返回有效响应 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'warn');
-            result.errors.push(`消息 ${absoluteMessageIndex}: AI未返回有效响应`);
-            result.errorCount++;
-            // 保存进度（即使AI没有返回有效响应，这条消息也算处理过了）
-            this.saveOrganizingProgress(chatId, absoluteMessageIndex, totalMessages);
-            continue;
-          }
-
-          addLog(`[Auto Organize] AI响应长度: ${aiResponse.length} 字符 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'debug');
-
-          // 解析tableEdit命令
-          addLog(`[Auto Organize] 解析tableEdit命令 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'debug');
-          const parseResult = tableEditParser.parse(aiResponse);
-
-          if (!parseResult.success && parseResult.commands.length === 0) {
-            addLog(`[Auto Organize] 未解析到tableEdit命令 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'warn');
-            if (parseResult.errors.length > 0) {
-              addLog(`[Auto Organize] 解析错误: ${parseResult.errors.join('; ')}`, 'warn');
-            }
-            // 不视为错误，可能消息中没有可提取的信息
-            result.processedCount++;
-            this.saveOrganizingProgress(chatId, absoluteMessageIndex, totalMessages);
-            continue;
-          }
-
-          if (parseResult.errors.length > 0) {
-            addLog(`[Auto Organize] 解析警告: ${parseResult.errors.join('; ')} (消息 ${absoluteMessageIndex}/${totalMessages})`, 'warn');
-          }
-
-          // 执行tableEdit命令
-          if (parseResult.commands.length > 0) {
-            addLog(`[Auto Organize] 执行 ${parseResult.commands.length} 个tableEdit命令 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'info');
-            const execResult = this.executeTableEditCommands(chatId, parseResult.commands);
-
-            if (execResult.errors.length > 0) {
-              addLog(`[Auto Organize] 命令执行错误: ${execResult.errors.join('; ')} (消息 ${absoluteMessageIndex}/${totalMessages})`, 'warn');
-              result.errors.push(`消息 ${absoluteMessageIndex}: ${execResult.errors.join('; ')}`);
-            }
-
-            addLog(`[Auto Organize] 成功执行 ${execResult.executed} 个命令 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'info');
-          }
-
-          result.processedCount++;
-          // 每处理一条消息就保存进度
-          this.saveOrganizingProgress(chatId, absoluteMessageIndex, totalMessages);
-          addLog(`[Auto Organize] 消息 ${absoluteMessageIndex}/${totalMessages} 处理完成`, 'info');
-
-        } catch (error) {
-          const errorMsg = `[Auto Organize] 处理消息 ${absoluteMessageIndex} 失败: ${error instanceof Error ? error.message : String(error)}`;
-          addLog(errorMsg, 'error');
-          if (error instanceof Error && error.stack) {
-            addLog(`[Auto Organize] 错误堆栈: ${error.stack}`, 'debug');
-          }
-          result.errors.push(errorMsg);
-          result.errorCount++;
-          // 单条消息处理失败不影响后续处理
-          addLog(`[Auto Organize] 跳过消息 ${absoluteMessageIndex}，继续处理下一条`, 'info');
-        }
-      }
+      result.processedCount = coreResult.processedCount;
+      result.errorCount = coreResult.errorCount;
+      result.errors = coreResult.errors;
+      result.success = coreResult.success;
 
       // 处理完成
-      addLog(`[Auto Organize] 增量处理完成: 成功 ${result.processedCount}, 失败 ${result.errorCount}`, 'info');
+      addLog(`[TableOrganize][Sync] 增量处理完成: 成功 ${result.processedCount}, 失败 ${result.errorCount}`, 'info');
 
       if (result.errorCount > 0) {
-        addLog(`[Auto Organize] 处理过程中有 ${result.errorCount} 条消息处理失败`, 'warn');
-        result.success = result.processedCount > 0; // 只要有成功的消息就认为整体成功
+        addLog(`[TableOrganize][Sync] 处理过程中有 ${result.errorCount} 条消息处理失败`, 'warn');
+        result.success = result.processedCount > 0;
       }
 
-      // 发送完成通知
-      if (global.sendLogToRenderer) {
-        global.sendLogToRenderer(`[Auto Organize] 实时整理完成: 成功 ${result.processedCount}, 失败 ${result.errorCount}`, result.success ? 'info' : 'warn');
-      }
+      this.sendOrganizeNotification(chatId, `[TableOrganize][Sync] 实时整理完成: 成功 ${result.processedCount}, 失败 ${result.errorCount}`, result.success ? 'info' : 'warn');
 
       // 标记会话为已处理
       this.setSessionProcessedStatus(chatId, result.success);
@@ -2692,31 +2856,30 @@ deleteRow(4, 1)
       return result;
 
     } catch (error) {
-      addLog(`[Auto Organize] 实时整理失败: ${error}`, 'error');
+      if (error instanceof Error && error.message === '整理任务已取消') {
+        addLog('[TableOrganize][Sync] 整理任务已被用户取消', 'info');
+        this.sendOrganizeNotification(chatId, '[TableOrganize][Sync] 整理任务已取消', 'info');
+        result.success = false;
+        result.errors.push('整理任务已取消');
+        return result;
+      }
+
+      addLog(`[TableOrganize][Sync] 实时整理失败: ${error}`, 'error');
       if (error instanceof Error) {
-        addLog(`[Auto Organize] 错误堆栈: ${error.stack}`, 'error');
+        addLog(`[TableOrganize][Sync] 错误堆栈: ${error.stack}`, 'error');
       }
 
       // 发生严重错误时回滚表格数据
-      if (tableDataBackup && tableFilePath && fs.existsSync(tableFilePath)) {
-        try {
-          addLog('[Auto Organize] 检测到严重错误，正在回滚表格数据到备份状态...', 'error');
-          fs.writeFileSync(tableFilePath, tableDataBackup, 'utf-8');
-          addLog('[Auto Organize] 表格数据已回滚到处理前的状态', 'info');
-        } catch (rollbackError) {
-          addLog(`[Auto Organize] 回滚表格数据失败: ${rollbackError}`, 'error');
-        }
-      }
+      this.rollbackTableData(tableDataBackup, tableFilePath);
 
       // 发送失败通知
-      if (global.sendLogToRenderer) {
-        global.sendLogToRenderer(`[Auto Organize] 实时整理失败: ${error}`, 'error');
-      }
+      this.sendOrganizeNotification(chatId, `[TableOrganize][Sync] 实时整理失败: ${error}`, 'error');
 
       result.success = false;
       result.errors.push(error instanceof Error ? error.message : String(error));
       throw error;
     } finally {
+      this.organizeAbortControllers.delete(chatId);
       // 释放整理锁
       this.releaseOrganizingLock(chatId);
     }
@@ -2738,89 +2901,60 @@ deleteRow(4, 1)
   ): Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[] }> {
     const result = { success: true, processedCount: 0, errorCount: 0, errors: [] as string[] };
 
-    addLog(`[Full Reorganize] 开始完全整理: ${chatId}`, 'info');
+    addLog(`[TableOrganize][Full] 开始完全整理: ${chatId}`, 'info');
 
-    // 检查是否可以开始整理（不允许并发）
     if (!this.canStartOrganize(chatId, 0)) {
       return { success: false, processedCount: 0, errorCount: 0, errors: ['已有整理任务在执行中'] };
     }
 
-    // 设置整理锁
     this.setOrganizingLock(chatId, 'manual');
+
+    const controller = new AbortController();
+    this.organizeAbortControllers.set(chatId, controller);
 
     let tableDataBackup: string | null = null;
     let tableFilePath = '';
 
+    const checkAborted = () => {
+      if (controller.signal.aborted) {
+        throw new Error('整理任务已取消');
+      }
+    };
+
     try {
-      // 1. 备份当前表格数据
-      // 使用与 tableTemplateService 相同的 safeChatId 计算方法
-      const safeChatId = chatId
-        .replace(/\//g, '_')
-        .replace(/\\/g, '_')
-        .replace(/\s+/g, '_')
-        .replace(/@/g, '_')
-        .replace(/-/g, '_')
-        .replace(/:/g, '_')
-        .replace(/\*/g, '_')
-        .replace(/\?/g, '_')
-        .replace(/"/g, '_')
-        .replace(/</g, '_')
-        .replace(/>/g, '_')
-        .replace(/\|/g, '_');
+      checkAborted();
+
+      const safeChatId = this.getSafeChatId(chatId);
       tableFilePath = path.join(this.chatlogDir, `${safeChatId}.json`);
+
       try {
         if (fs.existsSync(tableFilePath)) {
           tableDataBackup = fs.readFileSync(tableFilePath, 'utf-8');
-          addLog('[Full Reorganize] 表格数据备份完成', 'debug');
+          addLog('[TableOrganize][Full] 表格数据备份完成', 'debug');
         }
       } catch (backupError) {
-        addLog(`[Full Reorganize] 备份表格数据失败: ${backupError}`, 'warn');
+        addLog(`[TableOrganize][Full] 备份表格数据失败: ${backupError}`, 'warn');
       }
 
-      // 2. 读取聊天记录（支持两种格式）
-      addLog('[Full Reorganize] 步骤 1/5: 读取聊天记录', 'debug');
-      const allMessages = this.getChatMessages(chatId).messages;
-
-      // 如果 .jsonl 格式没读到，尝试从 .json 格式（角色卡聊天记录）读取
-      let messages: ChatMessage[] = allMessages;
-      if (allMessages.length === 0) {
-        const jsonMessages = this.readCharacterChatMessages(chatId);
-        if (jsonMessages.length > 0) {
-          addLog(`[Full Reorganize] 从角色卡聊天记录格式读取到 ${jsonMessages.length} 条消息`, 'debug');
-          messages = jsonMessages;
-        }
-      }
-
-      addLog(`[Full Reorganize] 共读取 ${messages.length} 条消息`, 'debug');
-
-      if (messages.length === 0) {
-        throw new Error('没有聊天记录可处理');
-      }
-
-      // 3. 过滤消息（仅处理user和assistant消息）
-      addLog('[Full Reorganize] 步骤 2/5: 过滤消息', 'debug');
-      const targetMessages = messages.filter(msg => msg.role === 'user' || msg.role === 'assistant');
-      addLog(`[Full Reorganize] 过滤后剩余 ${targetMessages.length} 条消息（排除system消息）`, 'debug');
+      addLog('[TableOrganize][Full] 步骤 1/5: 读取聊天记录', 'debug');
+      const targetMessages = this.readAndFilterMessages(chatId);
+      addLog(`[TableOrganize][Full] 共读取并过滤 ${targetMessages.length} 条消息`, 'debug');
 
       if (targetMessages.length === 0) {
         throw new Error('没有可处理的消息（user或assistant）');
       }
 
-      // 4. 按时间顺序排序
-      addLog('[Full Reorganize] 步骤 3/5: 按时间排序', 'debug');
+      addLog('[TableOrganize][Full] 步骤 2/5: 按时间排序', 'debug');
       targetMessages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
-      // 5. 获取模板信息
-      addLog('[Full Reorganize] 步骤 4/5: 获取模板信息', 'debug');
-      // 如果模板ID为空，使用默认模板
+      addLog('[TableOrganize][Full] 步骤 3/5: 获取模板信息', 'debug');
       let effectiveTemplateId = templateId;
       if (!effectiveTemplateId || effectiveTemplateId.trim() === '') {
-        addLog('[Full Reorganize] 模板ID为空，自动使用默认模板', 'info');
-        // 获取默认模板列表中的第一个
+        addLog('[TableOrganize][Full] 模板ID为空，自动使用默认模板', 'info');
         const defaultTemplates = tableTemplateService.getAllTemplates();
         if (defaultTemplates && defaultTemplates.length > 0) {
           effectiveTemplateId = defaultTemplates[0].id;
-          addLog(`[Full Reorganize] 使用默认模板: ${effectiveTemplateId} (${defaultTemplates[0].name})`, 'info');
+          addLog(`[TableOrganize][Full] 使用默认模板: ${effectiveTemplateId} (${defaultTemplates[0].name})`, 'info');
         } else {
           throw new Error('没有可用的表格模板，请先在表格模板管理中创建模板');
         }
@@ -2829,195 +2963,88 @@ deleteRow(4, 1)
       if (!template) {
         throw new Error(`模板 ${effectiveTemplateId} 不存在`);
       }
-      addLog(`[Full Reorganize] 模板名称: ${template.name}`, 'debug');
-      addLog(`[Full Reorganize] 模板包含 ${template.sheets?.length || 0} 个页签`, 'debug');
+      addLog(`[TableOrganize][Full] 模板名称: ${template.name}`, 'debug');
+      addLog(`[TableOrganize][Full] 模板包含 ${template.sheets?.length || 0} 个页签`, 'debug');
 
-      // 6. 确定AI配置
-      addLog('[Full Reorganize] 步骤 5/5: 配置AI参数', 'debug');
-      const aiConfig = {
-        apiKey: config?.apiKey || '',
-        apiUrl: config?.apiUrl || 'http://127.0.0.1:5000',
-        modelName: config?.modelName || 'qwen3.5-27b-heretic-v3',
-        apiMode: config?.apiMode || 'text_completion'
-      };
-
-      // 根据API模式设置正确的API端点
-      let apiEndpoint = aiConfig.apiUrl;
-      if (aiConfig.apiMode === 'text_completion') {
-        if (!apiEndpoint.endsWith('/v1/completions')) {
-          apiEndpoint += '/v1/completions';
-        }
-      } else {
-        if (!apiEndpoint.endsWith('/v1/chat/completions')) {
-          apiEndpoint += '/v1/chat/completions';
-        }
-      }
-      addLog(`[Full Reorganize] 最终API端点: ${apiEndpoint}`, 'debug');
-
-      addLog('[Full Reorganize] 使用AI配置:', 'debug');
+      addLog('[TableOrganize][Full] 步骤 4/5: 配置AI参数', 'debug');
+      const { aiConfig, apiEndpoint } = this.buildOrganizeConfig(config);
+      addLog('[TableOrganize][Full] 使用AI配置:', 'debug');
       addLog(`  API密钥: ${aiConfig.apiKey ? '已设置' : '未设置'}`, 'debug');
       addLog(`  API地址: ${apiEndpoint}`, 'debug');
       addLog(`  模型名称: ${aiConfig.modelName}`, 'debug');
       addLog(`  API模式: ${aiConfig.apiMode}`, 'debug');
 
-      // 7. 重置进度和表格数据
-      addLog('[Full Reorganize] 重置整理进度和表格数据', 'info');
+      addLog('[TableOrganize][Full] 步骤 5/5: 重置进度和表格数据', 'info');
       this.clearOrganizingProgress(chatId);
-      
-      // 删除现有表格数据文件，重新创建
+
       if (fs.existsSync(tableFilePath)) {
         fs.unlinkSync(tableFilePath);
-        addLog('[Full Reorganize] 已删除现有表格数据文件', 'info');
+        addLog('[TableOrganize][Full] 已删除现有表格数据文件', 'info');
       }
-      
-      // 创建新的空表格文件
-      tableTemplateService.createTableFile(chatId, effectiveTemplateId);
-      addLog('[Full Reorganize] 已创建新的空表格文件', 'info');
 
-      // 保存关联关系
+      tableTemplateService.createTableFile(chatId, effectiveTemplateId);
+      addLog('[TableOrganize][Full] 已创建新的空表格文件', 'info');
+
       this.saveAssociation(chatId, effectiveTemplateId);
 
-      // 8. 开始逐条处理所有消息
       const totalMessages = targetMessages.length;
-      addLog(`[Full Reorganize] 开始处理所有 ${totalMessages} 条消息`, 'info');
+      addLog(`[TableOrganize][Full] 开始处理所有 ${totalMessages} 条消息`, 'info');
 
-      for (let i = 0; i < totalMessages; i++) {
-        const message = targetMessages[i];
-        const absoluteMessageIndex = i + 1;
-        const processedCount = i + 1;
+      const coreResult = await this.processMessagesCore({
+        messages: targetMessages,
+        startIndex: 0,
+        totalMessages,
+        aiConfig,
+        apiEndpoint,
+        effectiveTemplateId,
+        template,
+        chatId,
+        signal: controller.signal,
+        logger: '[TableOrganize][Full]',
+        onProgress
+      });
 
-        addLog(`[Full Reorganize] 处理消息 ${absoluteMessageIndex}/${totalMessages}: ${message.role}`, 'info');
+      result.processedCount = coreResult.processedCount;
+      result.errorCount = coreResult.errorCount;
+      result.errors = coreResult.errors;
+      result.success = coreResult.success;
 
-        // 进度回调
-        if (onProgress) {
-          const progressPercent = Math.round((processedCount / totalMessages) * 100);
-          onProgress(absoluteMessageIndex, totalMessages, `处理消息 ${absoluteMessageIndex}/${totalMessages}...`, progressPercent);
-        }
-
-        // 发送实时更新
-        if (global.sendLogToRenderer) {
-          global.sendLogToRenderer(`[Full Reorganize] 处理消息 ${absoluteMessageIndex}/${totalMessages} (${message.role})`, 'info');
-        }
-
-        try {
-          // 构建表格数据上下文
-          addLog(`[Full Reorganize] 构建表格上下文 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'debug');
-          const tableContext = this.buildTableContext(chatId, effectiveTemplateId);
-
-          // 构建提示词
-          addLog(`[Full Reorganize] 构建AI提示词 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'debug');
-          const prompt = this.buildAIPromptForProgressive(message, template, chatId, tableContext);
-
-          // 调用AI API
-          addLog(`[Full Reorganize] 调用AI API (消息 ${absoluteMessageIndex}/${totalMessages})`, 'info');
-          const aiResponse = await this.callAIAPIWithRetry(prompt, aiConfig.apiKey, apiEndpoint, aiConfig.modelName);
-
-          if (!aiResponse || aiResponse.trim() === '') {
-            addLog(`[Full Reorganize] AI未返回有效响应 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'warn');
-            result.errors.push(`消息 ${absoluteMessageIndex}: AI未返回有效响应`);
-            result.errorCount++;
-            // 保存进度
-            this.saveOrganizingProgress(chatId, absoluteMessageIndex, totalMessages);
-            continue;
-          }
-
-          addLog(`[Full Reorganize] AI响应长度: ${aiResponse.length} 字符 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'debug');
-
-          // 解析tableEdit命令
-          addLog(`[Full Reorganize] 解析tableEdit命令 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'debug');
-          const parseResult = tableEditParser.parse(aiResponse);
-
-          if (!parseResult.success && parseResult.commands.length === 0) {
-            addLog(`[Full Reorganize] 未解析到tableEdit命令 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'warn');
-            if (parseResult.errors.length > 0) {
-              addLog(`[Full Reorganize] 解析错误: ${parseResult.errors.join('; ')}`, 'warn');
-            }
-            // 不视为错误，可能消息中没有可提取的信息
-            result.processedCount++;
-            this.saveOrganizingProgress(chatId, absoluteMessageIndex, totalMessages);
-            continue;
-          }
-
-          if (parseResult.errors.length > 0) {
-            addLog(`[Full Reorganize] 解析警告: ${parseResult.errors.join('; ')} (消息 ${absoluteMessageIndex}/${totalMessages})`, 'warn');
-          }
-
-          // 执行tableEdit命令
-          if (parseResult.commands.length > 0) {
-            addLog(`[Full Reorganize] 执行 ${parseResult.commands.length} 个tableEdit命令 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'info');
-            const execResult = this.executeTableEditCommands(chatId, parseResult.commands);
-
-            if (execResult.errors.length > 0) {
-              addLog(`[Full Reorganize] 命令执行错误: ${execResult.errors.join('; ')} (消息 ${absoluteMessageIndex}/${totalMessages})`, 'warn');
-              result.errors.push(`消息 ${absoluteMessageIndex}: ${execResult.errors.join('; ')}`);
-            }
-
-            addLog(`[Full Reorganize] 成功执行 ${execResult.executed} 个命令 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'info');
-          }
-
-          result.processedCount++;
-          // 每处理一条消息就保存进度
-          this.saveOrganizingProgress(chatId, absoluteMessageIndex, totalMessages);
-          addLog(`[Full Reorganize] 消息 ${absoluteMessageIndex}/${totalMessages} 处理完成`, 'info');
-
-        } catch (error) {
-          const errorMsg = `[Full Reorganize] 处理消息 ${absoluteMessageIndex} 失败: ${error instanceof Error ? error.message : String(error)}`;
-          addLog(errorMsg, 'error');
-          if (error instanceof Error && error.stack) {
-            addLog(`[Full Reorganize] 错误堆栈: ${error.stack}`, 'debug');
-          }
-          result.errors.push(errorMsg);
-          result.errorCount++;
-          // 单条消息处理失败不影响后续处理
-          addLog(`[Full Reorganize] 跳过消息 ${absoluteMessageIndex}，继续处理下一条`, 'info');
-        }
-      }
-
-      // 处理完成
-      addLog(`[Full Reorganize] 完全整理完成: 成功 ${result.processedCount}, 失败 ${result.errorCount}`, 'info');
+      addLog(`[TableOrganize][Full] 完全整理完成: 成功 ${result.processedCount}, 失败 ${result.errorCount}`, 'info');
 
       if (result.errorCount > 0) {
-        addLog(`[Full Reorganize] 处理过程中有 ${result.errorCount} 条消息处理失败`, 'warn');
-        result.success = result.processedCount > 0; // 只要有成功的消息就认为整体成功
+        addLog(`[TableOrganize][Full] 处理过程中有 ${result.errorCount} 条消息处理失败`, 'warn');
+        result.success = result.processedCount > 0;
       }
 
-      // 发送完成通知
-      if (global.sendLogToRenderer) {
-        global.sendLogToRenderer(`[Full Reorganize] 完全整理完成: 成功 ${result.processedCount}, 失败 ${result.errorCount}`, result.success ? 'info' : 'warn');
-      }
+      this.sendOrganizeNotification(chatId, `[TableOrganize][Full] 完全整理完成: 成功 ${result.processedCount}, 失败 ${result.errorCount}`, result.success ? 'info' : 'warn');
 
-      // 标记会话为已处理
       this.setSessionProcessedStatus(chatId, result.success);
 
       return result;
 
     } catch (error) {
-      addLog(`[Full Reorganize] 完全整理失败: ${error}`, 'error');
+      if (error instanceof Error && error.message === '整理任务已取消') {
+        addLog('[TableOrganize][Full] 整理任务已被用户取消', 'info');
+        this.sendOrganizeNotification(chatId, '[TableOrganize][Full] 整理任务已取消', 'info');
+        result.success = false;
+        result.errors.push('整理任务已取消');
+        return result;
+      }
+
+      addLog(`[TableOrganize][Full] 完全整理失败: ${error}`, 'error');
       if (error instanceof Error) {
-        addLog(`[Full Reorganize] 错误堆栈: ${error.stack}`, 'error');
+        addLog(`[TableOrganize][Full] 错误堆栈: ${error.stack}`, 'error');
       }
 
-      // 发生严重错误时回滚表格数据
-      if (tableDataBackup && fs.existsSync(tableFilePath)) {
-        try {
-          addLog('[Full Reorganize] 检测到严重错误，正在回滚表格数据到备份状态...', 'error');
-          fs.writeFileSync(tableFilePath, tableDataBackup, 'utf-8');
-          addLog('[Full Reorganize] 表格数据已回滚到处理前的状态', 'info');
-        } catch (rollbackError) {
-          addLog(`[Full Reorganize] 回滚表格数据失败: ${rollbackError}`, 'error');
-        }
-      }
+      this.rollbackTableData(tableDataBackup, tableFilePath);
 
-      // 发送失败通知
-      if (global.sendLogToRenderer) {
-        global.sendLogToRenderer(`[Full Reorganize] 完全整理失败: ${error}`, 'error');
-      }
+      this.sendOrganizeNotification(chatId, `[TableOrganize][Full] 完全整理失败: ${error}`, 'error');
 
       result.success = false;
       result.errors.push(error instanceof Error ? error.message : String(error));
       throw error;
     } finally {
-      // 释放整理锁
+      this.organizeAbortControllers.delete(chatId);
       this.releaseOrganizingLock(chatId);
     }
   }
@@ -3128,11 +3155,47 @@ deleteRow(4, 1)
    * 自动初始化聊天会话（首次对话时自动绑定默认模板并创建空表格）
    */
   public autoInitializeChatSession(chatId: string): boolean {
-    // 检查是否已存在关联关系（避免重复初始化）
+    // 检查表格文件是否存在
+    const safeChatId = chatId
+      .replace(/\//g, '_')
+      .replace(/\\/g, '_')
+      .replace(/\s+/g, '_')
+      .replace(/@/g, '_')
+      .replace(/-/g, '_')
+      .replace(/:/g, '_')
+      .replace(/\*/g, '_')
+      .replace(/\?/g, '_')
+      .replace(/"/g, '_')
+      .replace(/</g, '_')
+      .replace(/>/g, '_')
+      .replace(/\|/g, '_');
+    const tableFilePath = path.join(this.chatlogDir, `${safeChatId}.json`);
+    const tableFileExists = fs.existsSync(tableFilePath);
+
+    // 检查是否已存在关联关系
     const existingTemplateId = this.getAssociatedTemplate(chatId);
-    if (existingTemplateId) {
-      addLog(`[AutoInit] 聊天会话 ${chatId} 已有关联模板 ${existingTemplateId}，跳过初始化`, 'info');
+    if (existingTemplateId && tableFileExists) {
+      addLog(`[AutoInit] 聊天会话 ${chatId} 已有关联模板 ${existingTemplateId} 且表格文件存在，跳过初始化`, 'info');
       return false;
+    }
+
+    // 如果关联存在但表格文件缺失，使用可用模板重建表格文件
+    if (existingTemplateId && !tableFileExists) {
+      addLog(`[AutoInit] 聊天会话 ${chatId} 有关联模板 ${existingTemplateId} 但表格文件缺失，尝试重建`, 'info');
+      const templateId = this.resolveAvailableTemplate(chatId);
+      if (!templateId) {
+        addLog('[AutoInit] 没有可用的表格模板，无法重建', 'error');
+        return false;
+      }
+      try {
+        tableTemplateService.createTableFile(chatId, templateId, safeChatId);
+        addLog(`[AutoInit] 表格文件已重建: ${tableFilePath} (模板: ${templateId})`, 'info');
+        return true;
+      } catch (rebuildError) {
+        addLog(`[AutoInit] 重建表格文件失败: ${rebuildError}`, 'error');
+        console.error('[AutoInit] Rebuild table file error:', rebuildError);
+        return false;
+      }
     }
 
     addLog(`[AutoInit] 开始自动初始化聊天会话: ${chatId}`, 'info');
