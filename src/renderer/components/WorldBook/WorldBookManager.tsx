@@ -2026,7 +2026,7 @@ ${worldBookDescription}`;
     };
     
     // 构建系统提示词 - 符合 SillyTavern 世界书格式规范
-    const systemPrompt = `你是一个专业的关键词生成助手，正在为SillyTavern世界书（Lorebook）条目生成优化的关键词。
+    let systemPrompt = `你是一个专业的关键词生成助手，正在为SillyTavern世界书（Lorebook）条目生成优化的关键词。
 
 【生成要求】
 1. 仔细分析条目的内容（Content）和注释（Comment），提取核心语义概念

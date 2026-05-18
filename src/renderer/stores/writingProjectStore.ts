@@ -8,7 +8,7 @@ interface WritingProjectState {
 
   loadProjects: () => Promise<void>;
   createProject: (config: WritingConfig) => Promise<string>;
-  updateProject: (id: string, updates: Partial<WritingProject>) => void;
+  updateProject: (id: string, updates: Partial<WritingProject>) => Promise<void>;
   deleteProject: (id: string) => Promise<boolean>;
   setCurrentProject: (id: string | null) => void;
   saveProject: () => Promise<void>;
@@ -53,13 +53,13 @@ export const useWritingProjectStore = create<WritingProjectState>((set, get) => 
     return '';
   },
 
-  updateProject: (id, updates) => {
+  updateProject: async (id, updates) => {
     set((state) => ({
       projects: state.projects.map((p) =>
         p.id === id ? { ...p, ...updates, updatedAt: Date.now() } : p
       )
     }));
-    get().saveProject();
+    await get().saveProject();
   },
 
   deleteProject: async (id) => {

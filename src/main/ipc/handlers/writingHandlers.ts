@@ -1,4 +1,6 @@
 import { ipcMain } from 'electron';
+import fs from 'fs';
+import path from 'path';
 import { writingStorageService } from '../../services/WritingStorageService';
 import { writingResourceManager } from '../../services/WritingResourceManager';
 import { outlineGenerator } from '../../services/writing/OutlineGenerator';
@@ -58,6 +60,7 @@ export function registerWritingHandlers(): void {
         status: ProjectStatus.OUTLINING,
         config,
         outline: null,
+        outlineRaw: null,
         outlineHistory: [],
         chapters,
         createdAt: Date.now(),
@@ -101,6 +104,22 @@ export function registerWritingHandlers(): void {
     }
   });
 
+  ipcMain.handle('writing:saveProjectRaw', async (_event, projectId: string, rawContent: string) => {
+    try {
+      const projectDir = writingStorageService.getProjectDirPath(projectId);
+      if (projectDir && rawContent) {
+        const rawFile = path.join(projectDir, 'outline_raw.md');
+        fs.writeFileSync(rawFile, rawContent, 'utf8');
+        console.log('[Writing] Saved raw outline content for project:', projectId, 'length:', rawContent.length);
+        return { success: true };
+      }
+      return { success: false, error: 'Project dir not found' };
+    } catch (error) {
+      console.error('[Writing] Failed to save raw outline:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  });
+
   ipcMain.handle('writing:deleteProject', async (_event, projectId: string) => {
     try {
       const deleted = await writingStorageService.deleteProject(projectId);
@@ -125,29 +144,101 @@ export function registerWritingHandlers(): void {
     }
   });
 
-  ipcMain.handle('writing:generateOutline', async (_event, request) => {
+  ipcMain.handle('writing:generateOutline', async (event, request) => {
     try {
+      if (!request || !request.parameters || !request.modelConfig) {
+        console.error('[Writing] Invalid request format:', JSON.stringify(request, null, 2));
+        return {
+          success: false,
+          outline: null,
+          outlineRaw: null,
+          error: '请求参数格式不正确'
+        };
+      }
+
       const abortController = new AbortController();
       const requestId = `outline_${Date.now()}`;
       activeAbortControllers.set(requestId, abortController);
 
       try {
-        const outline = await outlineGenerator.generate(
-          outlineGenerator.buildPrompt(request),
+        const resources = request.resources || { worldBookIds: [], characterCardIds: [] };
+        const userPersonaIds = resources.userPersonaIds || [];
+        console.log('[Writing] Generating outline with resources:', {
+          worldBooks: resources.worldBookIds?.length || 0,
+          characters: resources.characterCardIds?.length || 0,
+          personas: userPersonaIds.length
+        });
+
+        const worldBooks = await writingResourceManager.loadWorldBooks(resources.worldBookIds || []);
+        const characters = await writingResourceManager.loadCharacterCards(resources.characterCardIds || []);
+        const userPersonas = await writingResourceManager.loadUserPersonas(userPersonaIds);
+
+        console.log('[Writing] Loaded resources:', {
+          worldBooks: worldBooks.length,
+          characters: characters.length,
+          personas: userPersonas.length
+        });
+
+        const resourceContext = writingResourceManager.buildResourceContextSummary(worldBooks, characters, userPersonas);
+        console.log('[Writing] Resource context (length):', resourceContext.length);
+        console.log('[Writing] Resource context (preview):', resourceContext.substring(0, 300));
+
+        outlineGenerator.onStreamChunk((chunk: string) => {
+          event.sender.send('writing:stream:chunk', { requestId, chunk });
+        });
+
+        const result = await outlineGenerator.generate(
+          outlineGenerator.buildPrompt({ ...request, resources, _resourceContext: resourceContext }),
           request.modelConfig
         );
 
         activeAbortControllers.delete(requestId);
-        return { success: true, outline };
+
+        try {
+          event.sender.send('writing:stream:complete', { requestId, outline: result.outline });
+        } catch (sendError) {
+          console.warn('[Writing] Failed to send stream:complete event:', sendError);
+        }
+
+        return {
+          success: true,
+          outline: result.outline,
+          outlineRaw: result.rawContent
+        };
       } catch (error) {
         activeAbortControllers.delete(requestId);
+        console.error('[Writing] Outline generation error:', error);
+
+        if (error instanceof Error && 'rawContent' in error && error.rawContent) {
+          console.warn('[Writing] Parse failed but raw content available, preserving...');
+          try {
+            event.sender.send('writing:stream:error', {
+              requestId: `outline_${Date.now()}`,
+              error: error.message
+            });
+          } catch {}
+          return {
+            success: false,
+            outline: null,
+            outlineRaw: error.rawContent as string,
+            parseError: error.message,
+            error: '大纲解析失败，但原始内容已保留。你可以在下方查看并手动修正。'
+          };
+        }
+
         throw error;
       }
     } catch (error) {
+      console.error('[Writing] Outline generation failed:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      try {
+        event.sender.send('writing:stream:error', { requestId: `outline_${Date.now()}`, error: errorMessage });
+      } catch {}
       return {
         success: false,
         outline: null,
-        error: error instanceof Error ? error.message : 'Unknown error'
+        outlineRaw: null,
+        error: errorMessage || '大纲生成失败，请稍后重试'
       };
     }
   });
@@ -222,22 +313,30 @@ export function registerWritingHandlers(): void {
     return { success: true };
   });
 
-  ipcMain.handle('writing:loadResources', async (_event, { worldBookIds, characterCardIds }) => {
+  ipcMain.handle('writing:loadResources', async (_event, params?: { worldBookIds?: string[]; characterCardIds?: string[]; userPersonaIds?: string[] }) => {
     try {
+      const worldBookIds = params?.worldBookIds || [];
+      const characterCardIds = params?.characterCardIds || [];
+      const userPersonaIds = params?.userPersonaIds || [];
+
       const worldBooks = await writingResourceManager.loadWorldBooks(worldBookIds);
       const characters = await writingResourceManager.loadCharacterCards(characterCardIds);
-      const summary = writingResourceManager.buildResourceContextSummary(worldBooks, characters);
+      const userPersonas = userPersonaIds.length > 0
+        ? await writingResourceManager.loadUserPersonas(userPersonaIds)
+        : [];
+      const summary = writingResourceManager.buildResourceContextSummary(worldBooks, characters, userPersonas);
 
       return {
         success: true,
         worldBooks,
         characters,
+        userPersonas,
         summary
       };
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: error instanceof Error ? error.message : '加载资源失败'
       };
     }
   });
