@@ -1,0 +1,16 @@
+- [x] update:check IPC 处理器已实现，能正确检测远程更新
+- [x] git fetch 和 commit 差异比较正常工作
+- [x] 能获取 commit 列表（hash, message, author, date）
+- [x] 非 Git 仓库等异常情况处理正确
+- [x] 返回标准化结果格式
+- [x] update:pull IPC 处理器已实现，能执行 git pull
+- [x] git pull 冲突等异常情况处理正确
+- [x] 拉取成功后能执行 npm run build 重新编译
+- [x] 能返回编译结果和变更文件列表
+- [x] preload.ts 中已添加 update.pull 暴露接口
+- [x] preload.ts 中已移除 update.download 和 update.install
+- [x] Dashboard.tsx 能正确显示 commit 变更列表
+- [x] onOk 回调正确调用 update.pull
+- [x] 拉取和编译进度反馈正常显示
+- [x] 非 Git 仓库环境下正确提示用户
+- [x] 类型检查和 lint 检查通过

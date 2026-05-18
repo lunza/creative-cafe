@@ -1,0 +1,39 @@
+- [x] ChatVersionService 服务已创建，包含版本创建、读取、删除、轮换功能
+  - 文件: `src/main/services/ChatVersionService.ts`
+  - 方法: createVersion, getVersionList, getVersionContent, deleteVersion, deleteOldestVersion
+- [x] 版本文件命名格式为 `{序号}_{角色卡名称}_{时间戳}.json`
+  - 实现: [ChatVersionService.createVersion](file:///g:/AI/creative-cafe/src/main/services/ChatVersionService.ts#L36-L70)
+- [x] 版本文件存储在 `{chatStorageBaseDir}/{角色卡名称}/versions/` 目录下
+  - 实现: [ChatVersionService.getVersionsDir](file:///g:/AI/creative-cafe/src/main/services/ChatVersionService.ts#L30-L34)
+- [x] 版本数量限制生效：最多保留19个历史版本 + 1个最新版本（共20个）
+  - 实现: [ChatVersionService.createVersion](file:///g:/AI/creative-cafe/src/main/services/ChatVersionService.ts#L36-L70) 中的 MAX_VERSIONS 限制
+- [x] 超过19个历史版本时，自动删除最早版本后生成新版本
+  - 实现: createVersion 中检测历史版本数 > MAX_HISTORY_VERSIONS 时调用 deleteOldestVersion
+- [x] AI回复完成后自动触发版本创建
+  - 实现: [characterChatHandlers.saveCharacterTestChat](file:///g:/AI/creative-cafe/src/main/ipc/handlers/characterChatHandlers.ts#L18-L52) 在保存聊天记录后调用 chatVersionService.createVersion
+- [x] ChatMessage 类型已添加 versionInfo 字段
+  - 文件: [CharacterDialogueChat.types.ts](file:///g:/AI/creative-cafe/src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.types.ts#L11-L26)
+  - 接口: ChatMessageVersionInfo, ChatVersionSummary
+- [x] 最新版本气泡下方显示完整操作按钮组（继续对话、编辑内容、重新生成）
+  - 实现: [ChatMessageBubble](file:///g:/AI/creative-cafe/src/renderer/components/Character/CharacterDialogueChat/ChatMessageBubble.tsx#L150-L152) showFullActions 逻辑
+- [x] 历史版本气泡下方仅显示重新生成按钮
+  - 实现: [ChatMessageBubble](file:///g:/AI/creative-cafe/src/renderer/components/Character/CharacterDialogueChat/ChatMessageBubble.tsx#L148) showRegenerateOnly 逻辑
+- [x] 历史版本气泡下方不显示继续对话和编辑内容按钮
+  - 实现: showFullActions 条件包裹编辑内容和继续对话按钮
+- [x] 版本信息被删除后，对应气泡下所有操作按钮均不显示
+  - 实现: shouldHideAllButtons 逻辑，当 hasVersionInfo=false 且非最后消息时隐藏
+- [x] 点击历史版本重新生成按钮后，聊天记录回退到该版本状态
+  - 实现: [retryMessageFromVersion](file:///g:/AI/creative-cafe/src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.hooks.ts#L1370-L1413) 从版本文件恢复消息
+- [x] 点击历史版本重新生成按钮后，触发AI重新生成回复
+  - 实现: retryMessageFromVersion 调用 requestAIResponse 触发重新生成
+- [x] 历史版本重新生成后执行与当前重新生成逻辑一致的后续流程
+  - 实现: retryMessageFromVersion 复用与 retryMessage 相同的状态管理和 onComplete 回调
+- [x] 记忆管理 > 聊天记录管理编辑界面已添加版本下拉选择控件
+  - 文件: [ChatManager.tsx](file:///g:/AI/creative-cafe/src/renderer/components/MemoryChat/ChatManager.tsx#L1056-L1089)
+  - 组件: antd Select 控件
+- [x] 版本下拉控件列出该聊天记录的所有可用版本
+  - 实现: handleOpenEdit 中调用 window.electronAPI.chatVersion.getVersions
+- [x] 选择不同版本后，编辑内容显示对应版本的数据
+  - 实现: [handleVersionChange](file:///g:/AI/creative-cafe/src/renderer/components/MemoryChat/ChatManager.tsx#L372-L396) 加载版本内容并更新 editContent
+- [x] 版本保存后，编辑界面内容同步更新
+  - 实现: handleSaveEdit 保存后重新加载数据并刷新列表
