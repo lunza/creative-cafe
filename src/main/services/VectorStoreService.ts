@@ -48,6 +48,124 @@ export interface VectorTestResponse {
   logs: VectorTestLog[];
 }
 
+interface GroupedVectorItems {
+  items: VectorItem[];
+  source: string;
+  sourceId: string;
+}
+
+interface BatchProcessingStrategy {
+  process(store: VecstoreVectorStore, items: VectorItem[]): Promise<void>;
+}
+
+class NormalBatchStrategy implements BatchProcessingStrategy {
+  async process(store: VecstoreVectorStore, items: VectorItem[]): Promise<void> {
+    if ((store as any).addBatch) {
+      await (store as any).addBatch(items);
+    } else {
+      for (const item of items) {
+        await store.add(item.id, item.vector, item.metadata);
+      }
+    }
+  }
+}
+
+class DeferredBatchStrategy implements BatchProcessingStrategy {
+  async process(store: VecstoreVectorStore, items: VectorItem[]): Promise<void> {
+    for (const item of items) {
+      await store.add(item.id, item.vector, item.metadata);
+    }
+    await store.persist();
+  }
+}
+
+class NoPersistBatchStrategy implements BatchProcessingStrategy {
+  async process(store: VecstoreVectorStore, items: VectorItem[]): Promise<void> {
+    if ((store as any).addBatchNoPersist) {
+      await (store as any).addBatchNoPersist(items);
+    } else {
+      for (const item of items) {
+        await store.add(item.id, item.vector, item.metadata);
+      }
+    }
+  }
+}
+
+interface SearchStrategy {
+  search(
+    query: number[],
+    topK: number,
+    filter?: Record<string, any>
+  ): Promise<SearchResult[]>;
+}
+
+class ScopeIdsSearchStrategy implements SearchStrategy {
+  constructor(
+    private service: VectorStoreService,
+    private scopeIds: string[]
+  ) {}
+
+  async search(query: number[], topK: number, filter?: Record<string, any>): Promise<SearchResult[]> {
+    const { vectorRegistryService } = await import('./VectorRegistryService');
+    const allResults: SearchResult[] = [];
+
+    for (const scopeId of this.scopeIds) {
+      const entry = await vectorRegistryService.getVectorFileById(scopeId);
+      if (entry) {
+        const sourceStore = this.service.getVecstoreStoreForSource(entry.sourceType, entry.sourceId);
+        if (!sourceStore.initialized) {
+          await sourceStore.initialize({ source: entry.sourceType, sourceId: entry.sourceId });
+        }
+        const scopeResults = await sourceStore.search(query, topK * 2, filter);
+        allResults.push(...scopeResults);
+      }
+    }
+
+    return allResults.sort((a, b) => b.similarity - a.similarity).slice(0, topK);
+  }
+}
+
+class SourceTypeSearchStrategy implements SearchStrategy {
+  constructor(
+    private service: VectorStoreService,
+    private sourceType: string
+  ) {}
+
+  async search(query: number[], topK: number, filter?: Record<string, any>): Promise<SearchResult[]> {
+    const sourceStore = this.service.getVecstoreStoreForSource(this.sourceType, this.sourceType);
+    if (!sourceStore.initialized) {
+      await sourceStore.initialize({ source: this.sourceType, sourceId: this.sourceType });
+    }
+    return sourceStore.search(query, topK, filter);
+  }
+}
+
+class AggregateSearchStrategy implements SearchStrategy {
+  constructor(private service: VectorStoreService) {}
+
+  async search(query: number[], topK: number, filter?: Record<string, any>): Promise<SearchResult[]> {
+    const allResults: SearchResult[] = [];
+
+    if (this.service['vecstoreStore'].initialized) {
+      const defaultResults = await this.service['vecstoreStore'].search(query, topK, filter);
+      allResults.push(...defaultResults);
+    }
+
+    for (const [key, store] of this.service['storeBySource']) {
+      if (!store.initialized) {
+        const parts = key.split(':');
+        const source = parts[0];
+        const sourceId = parts.slice(1).join(':');
+        await store.initialize({ source, sourceId });
+      }
+      const sourceResults = await store.search(query, topK * 2, filter);
+      allResults.push(...sourceResults);
+    }
+
+    return allResults.sort((a, b) => b.similarity - a.similarity).slice(0, topK);
+  }
+}
+
 export class VectorStoreService {
   private vecstoreStore: VecstoreVectorStore;
   private storeBySource: Map<string, VecstoreVectorStore> = new Map();
@@ -70,6 +188,33 @@ export class VectorStoreService {
       this.storeBySource.set(key, store);
     }
     return this.storeBySource.get(key)!;
+  }
+
+  private groupItemsBySource(items: VectorItem[]): Map<string, GroupedVectorItems> {
+    const grouped = new Map<string, GroupedVectorItems>();
+    
+    for (const item of items) {
+      const source = item.metadata.source || 'default';
+      const sourceId = item.metadata.sourceId || item.metadata.docId || source || 'default';
+      const key = `${source}:${sourceId}`;
+      
+      if (!grouped.has(key)) {
+        grouped.set(key, { items: [], source, sourceId });
+      }
+      grouped.get(key)!.items.push(item);
+    }
+    
+    return grouped;
+  }
+
+  private async ensureStoreInitialized(source: string, sourceId: string): Promise<VecstoreVectorStore> {
+    const sourceStore = this.getVecstoreStoreForSource(source, sourceId);
+    
+    if (!sourceStore.initialized) {
+      await sourceStore.initialize({ source, sourceId });
+    }
+    
+    return sourceStore;
   }
 
   removeStoreFromCache(source: string, sourceId: string): boolean {
@@ -402,95 +547,33 @@ export class VectorStoreService {
     
     const source = metadata.source || 'default';
     const sourceId = metadata.sourceId || metadata.docId || source || 'default';
-    const sourceStore = this.getVecstoreStoreForSource(source, sourceId);
-    if (!sourceStore.initialized) {
-      await sourceStore.initialize({ source, sourceId });
-    }
+    const sourceStore = await this.ensureStoreInitialized(source, sourceId);
     await sourceStore.add(id, vector, metadata);
   }
 
-  async addBatch(items: VectorItem[]): Promise<void> {
+  private async processBatchWithStrategy(
+    items: VectorItem[],
+    strategy: BatchProcessingStrategy
+  ): Promise<void> {
     await this.ensureInitialized();
-    
-    const grouped = new Map<string, { items: VectorItem[], source: string, sourceId: string }>();
-    for (const item of items) {
-      const source = item.metadata.source || 'default';
-      const sourceId = item.metadata.sourceId || item.metadata.docId || source || 'default';
-      const key = `${source}:${sourceId}`;
-      if (!grouped.has(key)) {
-        grouped.set(key, { items: [], source, sourceId });
-      }
-      grouped.get(key)!.items.push(item);
-    }
+    const grouped = this.groupItemsBySource(items);
     
     for (const [, group] of grouped) {
-      const sourceStore = this.getVecstoreStoreForSource(group.source, group.sourceId);
-      if (!sourceStore.initialized) {
-        await sourceStore.initialize({ source: group.source, sourceId: group.sourceId });
-      }
-      if ((sourceStore as any).addBatch) {
-        await (sourceStore as any).addBatch(group.items);
-      } else {
-        for (const item of group.items) {
-          await sourceStore.add(item.id, item.vector, item.metadata);
-        }
-      }
+      const sourceStore = await this.ensureStoreInitialized(group.source, group.sourceId);
+      await strategy.process(sourceStore, group.items);
     }
+  }
+
+  async addBatch(items: VectorItem[]): Promise<void> {
+    await this.processBatchWithStrategy(items, new NormalBatchStrategy());
   }
 
   async addBatchDeferred(items: VectorItem[]): Promise<void> {
-    await this.ensureInitialized();
-    
-    const grouped = new Map<string, { items: VectorItem[], source: string, sourceId: string }>();
-    for (const item of items) {
-      const source = item.metadata.source || 'default';
-      const sourceId = item.metadata.sourceId || item.metadata.docId || source || 'default';
-      const key = `${source}:${sourceId}`;
-      if (!grouped.has(key)) {
-        grouped.set(key, { items: [], source, sourceId });
-      }
-      grouped.get(key)!.items.push(item);
-    }
-    
-    for (const [, group] of grouped) {
-      const sourceStore = this.getVecstoreStoreForSource(group.source, group.sourceId);
-      if (!sourceStore.initialized) {
-        await sourceStore.initialize({ source: group.source, sourceId: group.sourceId });
-      }
-      for (const item of group.items) {
-        await sourceStore.add(item.id, item.vector, item.metadata);
-      }
-      await sourceStore.persist();
-    }
+    await this.processBatchWithStrategy(items, new DeferredBatchStrategy());
   }
 
   async addBatchNoPersist(items: VectorItem[]): Promise<void> {
-    await this.ensureInitialized();
-    
-    const grouped = new Map<string, { items: VectorItem[], source: string, sourceId: string }>();
-    for (const item of items) {
-      const source = item.metadata.source || 'default';
-      const sourceId = item.metadata.sourceId || item.metadata.docId || source || 'default';
-      const key = `${source}:${sourceId}`;
-      if (!grouped.has(key)) {
-        grouped.set(key, { items: [], source, sourceId });
-      }
-      grouped.get(key)!.items.push(item);
-    }
-    
-    for (const [, group] of grouped) {
-      const sourceStore = this.getVecstoreStoreForSource(group.source, group.sourceId);
-      if (!sourceStore.initialized) {
-        await sourceStore.initialize({ source: group.source, sourceId: group.sourceId });
-      }
-      if ((sourceStore as any).addBatchNoPersist) {
-        await (sourceStore as any).addBatchNoPersist(group.items);
-      } else {
-        for (const item of group.items) {
-          await sourceStore.add(item.id, item.vector, item.metadata);
-        }
-      }
-    }
+    await this.processBatchWithStrategy(items, new NoPersistBatchStrategy());
   }
 
   async search(query: number[], topK: number, filter?: Record<string, any>, options?: { 
@@ -506,63 +589,16 @@ export class VectorStoreService {
       return cachedResult;
     }
 
-    let results: SearchResult[] = [];
-
+    let strategy: SearchStrategy;
     if (options?.scopeIds && options.scopeIds.length > 0) {
-      console.log(`[VectorStoreService] search(): scopeIds search mode, scopeIds: ${JSON.stringify(options.scopeIds)}`);
-      const { vectorRegistryService } = await import('./VectorRegistryService');
-      const allResults: SearchResult[] = [];
-      
-      for (const scopeId of options.scopeIds) {
-        console.log(`[VectorStoreService] search(): looking up scopeId: ${scopeId}`);
-        const entry = await vectorRegistryService.getVectorFileById(scopeId);
-        if (entry) {
-          console.log(`[VectorStoreService] search(): found entry - sourceType: ${entry.sourceType}, sourceId: ${entry.sourceId}, sourceName: ${entry.sourceName}`);
-          const sourceStore = this.getVecstoreStoreForSource(entry.sourceType, entry.sourceId);
-          if (!sourceStore.initialized) {
-            console.log(`[VectorStoreService] search(): initializing store for ${entry.sourceType}:${entry.sourceId}`);
-            await sourceStore.initialize({ source: entry.sourceType, sourceId: entry.sourceId });
-          }
-          console.log(`[VectorStoreService] search(): searching store at ${sourceStore.getStoreFilePath()}`);
-          const scopeResults = await sourceStore.search(query, topK * 2, filter);
-          console.log(`[VectorStoreService] search(): got ${scopeResults.length} results from ${sourceStore.getStoreFilePath()}`);
-          allResults.push(...scopeResults);
-        } else {
-          console.log(`[VectorStoreService] search(): no entry found for scopeId: ${scopeId}`);
-        }
-      }
-      
-      results = allResults.sort((a, b) => b.similarity - a.similarity).slice(0, topK);
-      console.log(`[VectorStoreService] search(): final results after scopeIds search: ${results.length} items`);
+      strategy = new ScopeIdsSearchStrategy(this, options.scopeIds);
     } else if (options?.sourceType) {
-      const sourceStore = this.getVecstoreStoreForSource(options.sourceType, options.sourceType);
-      if (!sourceStore.initialized) {
-        console.log(`[VectorStoreService] search(): initializing uninitialized store for sourceType ${options.sourceType}`);
-        await sourceStore.initialize({ source: options.sourceType, sourceId: options.sourceType });
-      }
-      results = await sourceStore.search(query, topK, filter);
+      strategy = new SourceTypeSearchStrategy(this, options.sourceType);
     } else {
-      const allResults: SearchResult[] = [];
-      
-      if (this.vecstoreStore.initialized) {
-        const defaultResults = await this.vecstoreStore.search(query, topK, filter);
-        allResults.push(...defaultResults);
-      }
-      
-      for (const [key, store] of this.storeBySource) {
-        if (!store.initialized) {
-          const parts = key.split(':');
-          const source = parts[0];
-          const sourceId = parts.slice(1).join(':');
-          console.log(`[VectorStoreService] search(): initializing uninitialized store for ${key} in aggregate mode`);
-          await store.initialize({ source, sourceId });
-        }
-        const sourceResults = await store.search(query, topK * 2, filter);
-        allResults.push(...sourceResults);
-      }
-      
-      results = allResults.sort((a, b) => b.similarity - a.similarity).slice(0, topK);
+      strategy = new AggregateSearchStrategy(this);
     }
+
+    const results = await strategy.search(query, topK, filter);
 
     if (results.length > 0) {
       await this.cache.setSearchResult(queryHash, results);
@@ -576,10 +612,7 @@ export class VectorStoreService {
     
     const source = metadata?.source || 'default';
     const sourceId = metadata?.sourceId || metadata?.docId || source || 'default';
-    const sourceStore = this.getVecstoreStoreForSource(source, sourceId);
-    if (!sourceStore.initialized) {
-      await sourceStore.initialize({ source, sourceId });
-    }
+    const sourceStore = await this.ensureStoreInitialized(source, sourceId);
     await sourceStore.update(id, vector, metadata);
     this.cache.clearBySource(id);
   }
