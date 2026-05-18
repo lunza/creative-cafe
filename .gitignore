@@ -58,7 +58,7 @@ data/
 /settings/
 
 # Trae IDE workspace
-.trae/
+#.trae/
 
 # SillyTavern source
 sillytavern-source/
