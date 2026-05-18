@@ -340,5 +340,34 @@ contextBridge.exposeInMainWorld('electronAPI', {
     delete: (chatId: string) => ipcRenderer.invoke('group-chat:delete', chatId),
     info: (chatId: string) => ipcRenderer.invoke('group-chat:info', chatId),
     import: (content: string, suggestedId?: string) => ipcRenderer.invoke('group-chat:import', content, suggestedId)
+  },
+  writing: {
+    loadProjects: () => ipcRenderer.invoke('writing:loadProjects'),
+    createProject: (config: any) => ipcRenderer.invoke('writing:createProject', config),
+    saveProject: (project: any) => ipcRenderer.invoke('writing:saveProject', project),
+    deleteProject: (projectId: string) => ipcRenderer.invoke('writing:deleteProject', projectId),
+    exportProject: (projectId: string, format: string) => ipcRenderer.invoke('writing:exportProject', projectId, format),
+    generateOutline: (request: any) => ipcRenderer.invoke('writing:generateOutline', request),
+    generateChapter: (request: any) => ipcRenderer.invoke('writing:generateChapter', request),
+    cancelGeneration: (projectId: string) => ipcRenderer.invoke('writing:cancelGeneration', projectId),
+    loadResources: (params: { worldBookIds: string[]; characterCardIds: string[] }) => ipcRenderer.invoke('writing:loadResources', params),
+    autoSaveChapter: (params: { projectId: string; chapterIndex: number; content: string }) => ipcRenderer.invoke('writing:autoSaveChapter', params),
+    saveVersion: (params: { projectId: string; chapterIndex: number; content: string; note?: string }) => ipcRenderer.invoke('writing:saveVersion', params),
+    restoreVersion: (params: { projectId: string; chapterIndex: number; versionId: string }) => ipcRenderer.invoke('writing:restoreVersion', params),
+    onStreamChunk: (callback: (data: any) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('writing:stream:chunk', handler);
+      return () => ipcRenderer.removeListener('writing:stream:chunk', handler);
+    },
+    onStreamComplete: (callback: (data: any) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('writing:stream:complete', handler);
+      return () => ipcRenderer.removeListener('writing:stream:complete', handler);
+    },
+    onStreamError: (callback: (data: any) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('writing:stream:error', handler);
+      return () => ipcRenderer.removeListener('writing:stream:error', handler);
+    }
   }
 });
