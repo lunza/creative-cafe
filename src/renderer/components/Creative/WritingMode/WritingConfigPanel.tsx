@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { Card, Form, Input, Select, InputNumber, Button, Row, Col, message, Checkbox, Collapse, Tag, Spin } from 'antd';
-import { BookOutlined, UserOutlined, EditOutlined } from '@ant-design/icons';
+import React, { useState, useEffect, useRef } from 'react';
+import { Card, Form, Input, Select, InputNumber, Button, Row, Col, message, Checkbox, Collapse, Tag, Spin, Modal, List } from 'antd';
+import { BookOutlined, UserOutlined, EditOutlined, IdcardOutlined, SaveOutlined, FolderOpenOutlined, DeleteOutlined } from '@ant-design/icons';
 import {
   NovelType,
   NarrativePerspective,
@@ -34,25 +34,143 @@ const WritingConfigPanel: React.FC<WritingConfigPanelProps> = ({ onConfirm, onCa
   const [form] = Form.useForm();
   const [selectedWorldBooks, setSelectedWorldBooks] = useState<any[]>([]);
   const [selectedCharacters, setSelectedCharacters] = useState<any[]>([]);
+  const [selectedPersonas, setSelectedPersonas] = useState<any[]>([]);
   const [availableWorldBooks, setAvailableWorldBooks] = useState<any[]>([]);
   const [availableCharacters, setAvailableCharacters] = useState<any[]>([]);
+  const [availablePersonas, setAvailablePersonas] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingResources, setLoadingResources] = useState(true);
   const [aiConfig, setAiConfig] = useState<any>(null);
   const [isAiConfigLoaded, setIsAiConfigLoaded] = useState(false);
+  const [streamContent, setStreamContent] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const streamRef = useRef<HTMLTextAreaElement>(null);
+  const [savedConfigs, setSavedConfigs] = useState<{ name: string; config: any; timestamp: number }[]>([]);
+  const [showSavedConfigs, setShowSavedConfigs] = useState(false);
+  const [saveModalVisible, setSaveModalVisible] = useState(false);
+  const [saveName, setSaveName] = useState('');
+
+  const CONFIG_STORAGE_KEY = 'writing-config-saved';
+
+  useEffect(() => {
+    loadSavedConfigs();
+  }, []);
+
+  useEffect(() => {
+    if (streamRef.current) {
+      streamRef.current.scrollTop = streamRef.current.scrollHeight;
+    }
+  }, [streamContent]);
 
   useEffect(() => {
     loadAiConfig();
     loadResources();
   }, []);
 
+  const loadSavedConfigs = () => {
+    try {
+      const stored = localStorage.getItem(CONFIG_STORAGE_KEY);
+      if (stored) {
+        setSavedConfigs(JSON.parse(stored));
+      }
+    } catch (e) {
+      console.error('Failed to load saved configs:', e);
+    }
+  };
+
+  const saveConfigToStorage = (name: string, config: any) => {
+    try {
+      const existing = [...savedConfigs];
+      const index = existing.findIndex(c => c.name === name);
+      const entry = { name, config, timestamp: Date.now() };
+      if (index >= 0) {
+        existing[index] = entry;
+      } else {
+        existing.push(entry);
+      }
+      localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(existing));
+      setSavedConfigs(existing);
+      message.success(`配置 "${name}" 已保存`);
+    } catch (e) {
+      console.error('Failed to save config:', e);
+      message.error('保存配置失败');
+    }
+  };
+
+  const handleSaveConfig = () => {
+    form.validateFields().then(values => {
+      setSaveName('');
+      setSaveModalVisible(true);
+    }).catch(() => {
+      message.warning('请先填写必填项后再保存配置');
+    });
+  };
+
+  const handleConfirmSave = () => {
+    if (!saveName.trim()) {
+      message.warning('请输入配置名称');
+      return;
+    }
+    const values = form.getFieldsValue();
+    const config = {
+      resources: {
+        worldBookIds: selectedWorldBooks.map(wb => wb.id),
+        characterCardIds: selectedCharacters.map(c => c.id),
+        userPersonaIds: selectedPersonas.length > 0 ? selectedPersonas.map(p => p.id) : undefined
+      },
+      parameters: {
+        creativeDescription: values.creativeDescription,
+        novelType: values.novelType,
+        targetWordCount: values.targetWordCount,
+        chapterCount: values.chapterCount,
+        narrativePerspective: values.narrativePerspective,
+        writingStyle: values.writingStyle,
+        additionalRequirements: values.additionalRequirements,
+        forbiddenContent: values.forbiddenContent?.split('\n').filter(Boolean) || []
+      }
+    };
+    saveConfigToStorage(saveName.trim(), config);
+    setSaveModalVisible(false);
+  };
+
+  const handleLoadConfig = (entry: { name: string; config: any }) => {
+    const { config } = entry;
+    form.setFieldsValue(config.parameters);
+    const worldBooks = availableWorldBooks.filter(wb => config.resources?.worldBookIds?.includes(wb.id));
+    const characters = availableCharacters.filter(c => config.resources?.characterCardIds?.includes(c.id));
+    const personas = availablePersonas.filter(p => config.resources?.userPersonaIds?.includes(p.id));
+    setSelectedWorldBooks(worldBooks);
+    setSelectedCharacters(characters);
+    setSelectedPersonas(personas);
+    setShowSavedConfigs(false);
+    message.success(`已加载配置 "${entry.name}"`);
+  };
+
+  const handleDeleteConfig = (name: string) => {
+    Modal.confirm({
+      title: '确认删除',
+      content: `确定要删除配置 "${name}" 吗？`,
+      onOk: () => {
+        const updated = savedConfigs.filter(c => c.name !== name);
+        localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(updated));
+        setSavedConfigs(updated);
+        message.success('已删除');
+      }
+    });
+  };
+
   const loadAiConfig = async () => {
     try {
-      const allSettings = await window.electronAPI?.setting?.load?.();
-      const aiSettings = allSettings?.ai || {};
-      setAiConfig(aiSettings);
+      const loadResult = await window.electronAPI?.setting?.load?.();
+      const allSettings = loadResult?.setting || loadResult;
+      const aiEngines = allSettings?.aiEngines || [];
+      const activeEngine = allSettings?.activeEngineId
+        ? aiEngines.find((e: any) => e.id === allSettings.activeEngineId)
+        : aiEngines[0];
+      
+      setAiConfig(activeEngine || {});
       setIsAiConfigLoaded(true);
-      if (!aiSettings?.baseUrl && !aiSettings?.apiBaseUrl && !aiSettings?.apiKey && !aiSettings?.apiToken) {
+      if (!activeEngine?.api_url || !activeEngine?.api_key) {
         message.warning('请先在设置中配置 AI 服务地址和 API Key');
       }
     } catch {
@@ -78,6 +196,16 @@ const WritingConfigPanel: React.FC<WritingConfigPanelProps> = ({ onConfirm, onCa
           id: ch.path,
           name: ch.characterName || ch.name.replace(/\.(png|jpg|jpeg|webp)$/i, ''),
           path: ch.path
+        })));
+      }
+
+      const personaResult = await window.electronAPI?.avatar?.list?.();
+      if (personaResult && Array.isArray(personaResult)) {
+        setAvailablePersonas(personaResult.filter((p: any) => p.path.endsWith('.json') && !p.path.includes('user-profile.json')).map((p: any) => ({
+          id: p.path,
+          name: p.name || p.path.replace(/\.json$/i, ''),
+          path: p.path,
+          description: p.description || ''
         })));
       }
     } catch (error) {
@@ -107,7 +235,8 @@ const WritingConfigPanel: React.FC<WritingConfigPanelProps> = ({ onConfirm, onCa
     const config: WritingConfig = {
       resources: {
         worldBookIds: selectedWorldBooks.map(wb => wb.id),
-        characterCardIds: selectedCharacters.map(c => c.id)
+        characterCardIds: selectedCharacters.map(c => c.id),
+        userPersonaIds: selectedPersonas.length > 0 ? selectedPersonas.map(p => p.id) : undefined
       },
       parameters: {
         creativeDescription: values.creativeDescription,
@@ -123,11 +252,34 @@ const WritingConfigPanel: React.FC<WritingConfigPanelProps> = ({ onConfirm, onCa
     };
 
     setLoading(true);
+    setIsGenerating(true);
+    setStreamContent('');
     try {
       if (!window.electronAPI?.writing) {
         message.error('写作模块未加载');
         return;
       }
+
+      // Set up stream listeners before making the request
+      const unsubscribeChunk = window.electronAPI.writing.onStreamChunk((data: any) => {
+        setStreamContent(prev => prev + data.chunk);
+      });
+
+      const unsubscribeComplete = window.electronAPI.writing.onStreamComplete((_data: any) => {
+        // Stream complete
+      });
+
+      const unsubscribeError = window.electronAPI.writing.onStreamError((data: any) => {
+        console.error('[WritingConfig] Stream error:', data.error);
+      });
+
+      console.log('[WritingConfig] Sending outline generation request:', {
+        resources: config.resources,
+        parameters: {
+          ...config.parameters,
+          creativeDescription: `[${config.parameters.creativeDescription.length} characters]`
+        }
+      });
 
       const result = await window.electronAPI.writing.generateOutline({
         resources: config.resources,
@@ -135,21 +287,40 @@ const WritingConfigPanel: React.FC<WritingConfigPanelProps> = ({ onConfirm, onCa
         modelConfig: config.modelConfig
       });
 
+      // Clean up stream listeners
+      unsubscribeChunk();
+      unsubscribeComplete();
+      unsubscribeError();
+
+      console.log('[WritingConfig] Outline generation result:', {
+        success: result.success,
+        hasOutline: !!result.outline,
+        hasOutlineRaw: !!result.outlineRaw,
+        outlineRawLength: result.outlineRaw?.length || 0
+      });
+
       if (result.success && result.outline) {
-        const { useWritingProjectStore } = require('../../../stores/writingProjectStore');
-        const projectId = await useWritingProjectStore.getState().createProject(config);
-        if (projectId) {
-          useWritingProjectStore.getState().setCurrentProject(projectId);
-        }
         useWritingModeStore.getState().setOutline(result.outline);
+        useWritingModeStore.getState().setConfig(config);
+        if (result.outlineRaw) {
+          useWritingModeStore.getState().setOutlineRaw(result.outlineRaw);
+        }
         onConfirm(config);
+      } else if (result.outlineRaw) {
+        message.warning({
+          content: result.error || '大纲解析失败，但原始内容已保留',
+          duration: 8
+        });
       } else {
         message.error(result.error || '大纲生成失败');
       }
     } catch (error: any) {
-      message.error(error.message || '大纲生成出错');
+      console.error('[WritingConfig] Outline generation error:', error);
+      const errorMessage = error?.message || error?.toString() || '大纲生成出错';
+      message.error(errorMessage);
     } finally {
       setLoading(false);
+      setIsGenerating(false);
     }
   };
 
@@ -207,10 +378,30 @@ const WritingConfigPanel: React.FC<WritingConfigPanelProps> = ({ onConfirm, onCa
                   </Form.Item>
                 </Col>
               </Row>
-              {(selectedWorldBooks.length > 0 || selectedCharacters.length > 0) && (
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Form.Item label="用户人设">
+                    <Checkbox.Group
+                      value={selectedPersonas.map(p => p.id)}
+                      onChange={(checkedIds) => {
+                        const selected = availablePersonas.filter(p => (checkedIds as string[]).includes(p.id));
+                        setSelectedPersonas(selected);
+                      }}
+                      style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+                    >
+                      {availablePersonas.map(p => (
+                        <Checkbox key={p.id} value={p.id}>{p.name}</Checkbox>
+                      ))}
+                      {availablePersonas.length === 0 && <div style={{ color: '#999' }}>暂无用户人设</div>}
+                    </Checkbox.Group>
+                  </Form.Item>
+                </Col>
+              </Row>
+              {(selectedWorldBooks.length > 0 || selectedCharacters.length > 0 || selectedPersonas.length > 0) && (
                 <div style={{ marginTop: 8 }}>
                   <Tag color="blue">已选 {selectedWorldBooks.length} 个世界书</Tag>
                   <Tag color="green">已选 {selectedCharacters.length} 个角色卡</Tag>
+                  <Tag color="purple">已选 {selectedPersonas.length} 个用户人设</Tag>
                 </div>
               )}
             </Collapse.Panel>
@@ -278,14 +469,80 @@ const WritingConfigPanel: React.FC<WritingConfigPanelProps> = ({ onConfirm, onCa
             </Collapse.Panel>
           </Collapse>
 
+          {isGenerating && (
+            <div style={{ marginTop: 16 }}>
+              <div style={{ marginBottom: 8, fontWeight: 600, fontSize: 14 }}>AI 生成中...</div>
+              <TextArea
+                ref={streamRef}
+                value={streamContent}
+                readOnly
+                rows={12}
+                style={{ fontFamily: 'monospace', fontSize: 13, lineHeight: 1.6, resize: 'vertical' }}
+              />
+            </div>
+          )}
+
           <Form.Item>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <Button onClick={onCancel}>取消</Button>
-              <Button type="primary" htmlType="submit" loading={loading} size="large">
-                生成大纲
-              </Button>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <Button onClick={onCancel}>取消</Button>
+                <Button icon={<FolderOpenOutlined />} onClick={() => setShowSavedConfigs(true)} disabled={savedConfigs.length === 0}>
+                  加载配置 ({savedConfigs.length})
+                </Button>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <Button icon={<SaveOutlined />} onClick={handleSaveConfig}>
+                  保存配置
+                </Button>
+                <Button type="primary" htmlType="submit" loading={loading} size="large">
+                  生成大纲
+                </Button>
+              </div>
             </div>
           </Form.Item>
+
+          <Modal
+            title="保存配置"
+            open={saveModalVisible}
+            onOk={handleConfirmSave}
+            onCancel={() => setSaveModalVisible(false)}
+            okText="保存"
+            cancelText="取消"
+          >
+            <Input
+              placeholder="请输入配置名称"
+              value={saveName}
+              onChange={e => setSaveName(e.target.value)}
+              onPressEnter={handleConfirmSave}
+              autoFocus
+            />
+          </Modal>
+
+          <Modal
+            title="已保存的配置"
+            open={showSavedConfigs}
+            onCancel={() => setShowSavedConfigs(false)}
+            footer={<Button onClick={() => setShowSavedConfigs(false)}>关闭</Button>}
+            width={600}
+          >
+            <List
+              dataSource={savedConfigs}
+              renderItem={(item) => (
+                <List.Item
+                  actions={[
+                    <Button key="load" type="link" onClick={() => handleLoadConfig(item)}>加载</Button>,
+                    <Button key="delete" type="link" danger icon={<DeleteOutlined />} onClick={() => handleDeleteConfig(item.name)} />
+                  ]}
+                >
+                  <List.Item.Meta
+                    title={item.name}
+                    description={`保存于 ${new Date(item.timestamp).toLocaleString()}`}
+                  />
+                </List.Item>
+              )}
+              locale={{ emptyText: '暂无已保存的配置' }}
+            />
+          </Modal>
         </Form>
       </div>
     </Spin>

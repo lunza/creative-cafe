@@ -298,6 +298,28 @@ interface ElectronAPI {
       metadata: Record<string, any>;
     }[]>;
   };
+
+  // 写作模式 API
+  writing: {
+    loadProjects: () => Promise<{ success: boolean; projects: any[] }>;
+    createProject: (config: any) => Promise<{ success: boolean; projectId: string }>;
+    saveProject: (project: any) => Promise<{ success: boolean }>;
+    deleteProject: (projectId: string) => Promise<{ success: boolean }>;
+    exportProject: (projectId: string, format: string) => Promise<{ success: boolean; filePath?: string }>;
+    generateOutline: (request: any) => Promise<{ success: boolean; outline?: any; outlineRaw?: string; error?: string; parseError?: string }>;
+    saveProjectRaw: (projectId: string, rawContent: string) => Promise<{ success: boolean; error?: string }>;
+    generateChapter: (request: any) => Promise<{ success: boolean }>;
+    cancelGeneration: (projectId: string) => Promise<{ success: boolean }>;
+    autoSaveChapter: (data: { projectId: string; chapterIndex: number; content: string }) => Promise<{ success: boolean }>;
+    saveVersion: (data: { projectId: string; chapterIndex: number; content: string; note?: string }) => Promise<{ success: boolean }>;
+    restoreVersion: (data: { projectId: string; chapterIndex: number; versionId: string }) => Promise<{ success: boolean }>;
+    onStreamChunk: (callback: (data: { projectId: string; chapterIndex: number; chunk: string }) => void) => () => void;
+    onStreamComplete: (callback: (data: { projectId: string; chapterIndex: number; content: string; metadata: any }) => void) => () => void;
+    onStreamError: (callback: (data: { projectId: string; chapterIndex: number; error: any }) => void) => () => void;
+    offStreamChunk: (callback: (data: any) => void) => void;
+    offStreamComplete: (callback: (data: any) => void) => void;
+    offStreamError: (callback: (data: any) => void) => void;
+  };
 }
 
 export { ElectronAPI };

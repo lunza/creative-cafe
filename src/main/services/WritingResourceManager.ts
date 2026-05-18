@@ -2,34 +2,50 @@ import fs from 'fs';
 import path from 'path';
 import { pathService } from './pathService';
 import { getStorageService } from './storageService';
-import { WorldBookContext, CharacterCardContext } from '../../shared/types/writing.types';
+import { characterService } from './characterService';
+import { worldBookService } from './worldBookService';
+import { WorldBookContext, CharacterCardContext, UserPersonaContext } from '../../shared/types/writing.types';
 
 export class WritingResourceManager {
   async loadWorldBooks(worldBookIds: string[]): Promise<WorldBookContext[]> {
     const contexts: WorldBookContext[] = [];
-    const storageService = getStorageService();
-    const allWorldBooks = storageService.getWorldBooks();
     
     for (const id of worldBookIds) {
       try {
-        const worldBook = allWorldBooks[id];
-        if (worldBook) {
+        if (!id || typeof id !== 'string') {
+          console.warn('[WritingResourceManager] Invalid world book ID:', id);
+          continue;
+        }
+
+        const data = await worldBookService.readWorldBook(id);
+        if (data) {
+          const name = data.name || path.basename(id, path.extname(id));
+          const entries = data.entries ? Object.values(data.entries) : [];
+          
           contexts.push({
-            id: worldBook.id || id,
-            name: worldBook.name || 'Unknown',
-            content: worldBook.content || '',
-            entries: worldBook.entries?.map((entry: any) => ({
+            id,
+            name,
+            content: data.content || '',
+            entries: entries.map((entry: any) => ({
               uid: entry.uid || entry.id || '',
               name: entry.name || '',
               content: entry.content || '',
               keywords: entry.keywords || []
-            })) || []
+            }))
           });
+        } else {
+          console.warn('[WritingResourceManager] World book data is null for:', id);
         }
       } catch (error) {
         console.error(`[WritingResourceManager] Failed to load world book ${id}:`, error);
       }
     }
+    
+    console.log('[WritingResourceManager] loadWorldBooks result:', {
+      requested: worldBookIds.length,
+      loaded: contexts.length,
+      names: contexts.map(c => c.name)
+    });
     
     return contexts;
   }
@@ -41,8 +57,6 @@ export class WritingResourceManager {
     if (!fs.existsSync(characterDir)) {
       return contexts;
     }
-
-    const { characterService } = require('./characterService');
 
     for (const id of characterCardIds) {
       try {
@@ -66,11 +80,77 @@ export class WritingResourceManager {
     return contexts;
   }
 
+  async loadUserPersonas(userPersonaIds: string[]): Promise<UserPersonaContext[]> {
+    const contexts: UserPersonaContext[] = [];
+    
+    if (!userPersonaIds || userPersonaIds.length === 0) {
+      return contexts;
+    }
+
+    let personaDir: string;
+    try {
+      personaDir = pathService.getCustomPath('avatar');
+    } catch (error) {
+      console.warn('[WritingResourceManager] Failed to get avatar directory path:', error);
+      return contexts;
+    }
+
+    if (!personaDir || !fs.existsSync(personaDir)) {
+      console.warn('[WritingResourceManager] Avatar directory does not exist:', personaDir);
+      return contexts;
+    }
+
+    for (const id of userPersonaIds) {
+      try {
+        if (!id || typeof id !== 'string') {
+          console.warn('[WritingResourceManager] Invalid persona ID:', id);
+          continue;
+        }
+
+        const resolvedPath = id.startsWith(personaDir) ? id : path.join(personaDir, id);
+        
+        if (!fs.existsSync(resolvedPath)) {
+          console.warn('[WritingResourceManager] Persona file not found:', resolvedPath);
+          continue;
+        }
+
+        const content = fs.readFileSync(resolvedPath, 'utf-8');
+        const personaData = JSON.parse(content);
+        
+        if (!personaData || typeof personaData !== 'object') {
+          console.warn('[WritingResourceManager] Invalid persona data format:', id);
+          continue;
+        }
+
+        contexts.push({
+          id,
+          name: personaData.name || '未命名人设',
+          description: personaData.description || '',
+          avatarPath: personaData.avatarPath
+        });
+      } catch (error) {
+        console.error(`[WritingResourceManager] Failed to load user persona ${id}:`, error);
+      }
+    }
+    
+    return contexts;
+  }
+
   buildResourceContextSummary(
     worldBooks: WorldBookContext[],
-    characters: CharacterCardContext[]
+    characters: CharacterCardContext[],
+    userPersonas: UserPersonaContext[] = []
   ): string {
     const parts: string[] = [];
+    
+    if (userPersonas.length > 0) {
+      parts.push('## 用户信息\n');
+      for (const persona of userPersonas) {
+        parts.push(`### ${persona.name}`);
+        if (persona.description) parts.push(persona.description);
+        parts.push('');
+      }
+    }
     
     if (characters.length > 0) {
       parts.push('## 角色信息\n');

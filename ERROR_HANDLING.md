@@ -358,3 +358,23 @@ tail -f logs/ai-handler.log
 2. 分片内容包含完整的条目字段（name、key、keysecondary、comment、content）
 3. 其他文档上传后仍然按500字符正常分块
 4. 通过知识库和测试页面两种路径上传都正确
+
+## 11. OutlineEditor 编辑状态绑定问题
+
+### 11.1 【重点标记】编辑章节时 Input/TextArea 值不响应状态更新
+
+**问题描述:** 在 OutlineEditor 组件中编辑章节标题或摘要时，用户输入的内容无法正确显示在输入框中，修改不会反映到编辑界面
+
+**根本原因:** 编辑模式下，Input 和 TextArea 的 `value` 属性直接绑定到 `chapter.title` 和 `chapter.summary`，这些值来自 `editedOutline.chapters.map()` 遍历时的闭包变量。由于 React 的渲染机制，`chapter` 变量引用的是上一次渲染时的数组元素，而不是最新的 `editedOutline` 状态值，导致 `handleChapterEdit` 虽然正确更新了状态，但输入框的值绑定没有读取到最新状态
+
+**解决方案:**
+1. 将 Input 的 value 从 `chapter.title` 改为 `editedOutline.chapters.find(c => c.index === chapter.index)?.title ?? chapter.title`
+2. 将 TextArea 的 value 从 `chapter.summary` 改为 `editedOutline.chapters.find(c => c.index === chapter.index)?.summary ?? chapter.summary`
+3. 确保直接从当前状态读取值，而不是依赖 map 迭代中的闭包变量
+
+**修复文件:** `src/renderer/components/Creative/WritingMode/OutlineEditor.tsx`
+
+**验证要点:**
+1. 点击编辑按钮后，输入框正确显示当前章节标题和摘要
+2. 修改标题或摘要时，输入框实时反映用户输入
+3. 保存后状态正确更新并显示成功提示

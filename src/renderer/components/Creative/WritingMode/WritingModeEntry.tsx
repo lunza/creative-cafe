@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { theme } from 'antd';
 import { useWritingModeStore } from '../../../stores/writingModeStore';
 import { useWritingProjectStore } from '../../../stores/writingProjectStore';
 import { WritingModeView, WritingProject, WritingConfig, ChapterStatus, ProjectStatus } from '../../../../shared/types/writing.types';
@@ -24,6 +25,8 @@ const WritingModeEntry: React.FC = () => {
   const isLoading = useWritingProjectStore((state) => state.isLoading);
   const getCurrentProject = useWritingProjectStore((state) => state.getCurrentProject);
 
+  const { token } = theme.useToken();
+
   useEffect(() => {
     loadProjects();
   }, [loadProjects]);
@@ -40,7 +43,7 @@ const WritingModeEntry: React.FC = () => {
     setConfig(project.config);
     if (project.outline) {
       useWritingModeStore.getState().setOutline(project.outline);
-      setCurrentView(WritingModeView.CONTENT_EDITING);
+      setCurrentView(WritingModeView.CONTENT_GENERATION);
     } else {
       setCurrentView(WritingModeView.OUTLINE_EDITING);
     }
@@ -48,38 +51,22 @@ const WritingModeEntry: React.FC = () => {
 
   const handleConfigConfirm = (config: WritingConfig) => {
     setConfig(config);
-    setCurrentView(WritingModeView.OUTLINE_GENERATING);
+    setCurrentView(WritingModeView.OUTLINE_EDITING);
   };
 
-  const handleOutlineConfirm = () => {
-    if (currentProjectId) {
-      const project = getCurrentProject();
-      if (project && outline) {
-        useWritingProjectStore.getState().updateProject(currentProjectId, {
-          outline,
-          status: ProjectStatus.WRITING,
-          chapters: outline.chapters.map(ch => ({
-            index: ch.index,
-            title: ch.title,
-            outline: {
-              summary: ch.summary,
-              keyPlotPoints: ch.keyPlotPoints,
-              characters: ch.characters,
-              scenes: ch.scenes,
-              suspensePoints: ch.suspensePoints,
-              targetWordCount: ch.targetWordCount
-            },
-            content: '',
-            status: ChapterStatus.PENDING,
-            wordCount: 0,
-            versions: [],
-            lastModified: Date.now()
-          }))
-        });
-        useWritingProjectStore.getState().saveProject();
-      }
+  const handleOutlineConfirm = async () => {
+    if (!config || !outline) return;
+
+    const projectId = await useWritingProjectStore.getState().createProject(config);
+    if (projectId) {
+      useWritingProjectStore.getState().setCurrentProject(projectId);
+      await useWritingProjectStore.getState().updateProject(projectId, {
+        outline,
+        outlineRaw: useWritingModeStore.getState().outlineRaw || null,
+        status: ProjectStatus.IN_PROGRESS
+      });
     }
-    setCurrentView(WritingModeView.CONTENT_GENERATING);
+    setCurrentView(WritingModeView.CONTENT_GENERATION);
   };
 
   const handleBack = () => {
@@ -87,7 +74,7 @@ const WritingModeEntry: React.FC = () => {
       setCurrentView(WritingModeView.PROJECT_LIST);
     } else if (currentView === WritingModeView.OUTLINE_GENERATING || currentView === WritingModeView.OUTLINE_EDITING) {
       setCurrentView(WritingModeView.CONFIG);
-    } else if (currentView === WritingModeView.CONTENT_GENERATING || currentView === WritingModeView.CONTENT_EDITING) {
+    } else if (currentView === WritingModeView.CONTENT_GENERATING || currentView === WritingModeView.CONTENT_EDITING || currentView === WritingModeView.CONTENT_GENERATION) {
       setCurrentView(WritingModeView.OUTLINE_EDITING);
     }
   };
@@ -127,11 +114,12 @@ const WritingModeEntry: React.FC = () => {
           <OutlineEditor
             outline={outline}
             onConfirm={handleOutlineConfirm}
-            onRegenerate={() => setCurrentView(WritingModeView.OUTLINE_GENERATING)}
+            onRegenerate={() => setCurrentView(WritingModeView.CONFIG)}
             onBack={handleBack}
           />
         );
       case WritingModeView.CONTENT_GENERATING:
+      case WritingModeView.CONTENT_GENERATION:
       case WritingModeView.CONTENT_EDITING:
         return (
           <ContentWorkspace
@@ -146,9 +134,9 @@ const WritingModeEntry: React.FC = () => {
   };
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: '#f5f5f5' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: token.colorBgLayout }}>
       {currentView !== WritingModeView.PROJECT_LIST && (
-        <div style={{ padding: '8px 16px', background: '#fff', borderBottom: '1px solid #e8e8e8' }}>
+        <div style={{ padding: '8px 16px', background: token.colorBgContainer, borderBottom: `1px solid ${token.colorBorderSecondary}` }}>
           <button
             onClick={handleBack}
             style={{
@@ -156,7 +144,7 @@ const WritingModeEntry: React.FC = () => {
               border: 'none',
               cursor: 'pointer',
               fontSize: 14,
-              color: '#666'
+              color: token.colorTextSecondary
             }}
           >
             ← 返回

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Button, Collapse, Input, Tabs, Tag, message } from 'antd';
-import { CheckOutlined, ReloadOutlined } from '@ant-design/icons';
+import { CheckOutlined, ReloadOutlined, EditOutlined } from '@ant-design/icons';
 import { GeneratedOutline, NovelType } from '../../../../shared/types/writing.types';
 import { NOVEL_TYPE_LABELS } from '../../../../shared/constants/writing.constants';
 
@@ -20,7 +20,7 @@ const OutlineEditor: React.FC<OutlineEditorProps> = ({ outline, onConfirm, onReg
   const handleChapterEdit = (index: number, field: string, value: string) => {
     setEditedOutline(prev => ({
       ...prev,
-      chapters: prev.chapters.map(ch => 
+      chapters: prev.chapters.map(ch =>
         ch.index === index ? { ...ch, [field]: value } : ch
       )
     }));
@@ -43,6 +43,7 @@ const OutlineEditor: React.FC<OutlineEditorProps> = ({ outline, onConfirm, onReg
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
+          <Button icon={<EditOutlined />} onClick={onBack}>调整参数</Button>
           <Button icon={<ReloadOutlined />} onClick={onRegenerate}>重新生成</Button>
           <Button type="primary" icon={<CheckOutlined />} onClick={onConfirm} size="large">
             确认大纲
@@ -85,13 +86,13 @@ const OutlineEditor: React.FC<OutlineEditorProps> = ({ outline, onConfirm, onReg
                     {editingChapter === chapter.index ? (
                       <div>
                         <Input
-                          value={chapter.title}
+                          value={editedOutline.chapters.find(c => c.index === chapter.index)?.title ?? chapter.title}
                           onChange={(e) => handleChapterEdit(chapter.index, 'title', e.target.value)}
                           placeholder="章节标题"
                           style={{ marginBottom: 8 }}
                         />
                         <TextArea
-                          value={chapter.summary}
+                          value={editedOutline.chapters.find(c => c.index === chapter.index)?.summary ?? chapter.summary}
                           onChange={(e) => handleChapterEdit(chapter.index, 'summary', e.target.value)}
                           placeholder="章节概要"
                           rows={4}

@@ -87,6 +87,14 @@ export class WritingStorageService {
     return getWritingProjectsPath();
   }
 
+  getProjectDirPath(projectId: string): string | null {
+    const projectDir = getProjectDir(projectId);
+    if (fs.existsSync(projectDir)) {
+      return projectDir;
+    }
+    return null;
+  }
+
   async saveProject(project: WritingProject): Promise<boolean> {
     try {
       const projectDir = getProjectDir(project.id);

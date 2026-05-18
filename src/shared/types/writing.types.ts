@@ -60,7 +60,8 @@ export enum WritingModeView {
   OUTLINE_GENERATING = 'outline_generating',
   OUTLINE_EDITING = 'outline_editing',
   CONTENT_GENERATING = 'content_generating',
-  CONTENT_EDITING = 'content_editing'
+  CONTENT_EDITING = 'content_editing',
+  CONTENT_GENERATION = 'content_generation'
 }
 
 // 生成状态
@@ -108,6 +109,7 @@ export interface ReferenceMaterial {
 export interface WritingResourceConfig {
   worldBookIds: string[];
   characterCardIds: string[];
+  userPersonaIds?: string[];
   referenceMaterials?: ReferenceMaterial[];
 }
 
@@ -176,6 +178,7 @@ export interface ContentGenerationRequest {
     targetWordCount: number;
     style: string;
     perspective: string;
+    novelType?: string;
     constraints?: string[];
   };
   modelConfig: ModelConfig;
@@ -296,8 +299,10 @@ export interface WritingProject {
   status: ProjectStatus;
   config: WritingConfig;
   outline: GeneratedOutline | null;
+  outlineRaw: string | null;
   outlineHistory: {
     outline: GeneratedOutline;
+    rawContent?: string;
     timestamp: number;
     note?: string;
   }[];
@@ -385,6 +390,13 @@ export interface CharacterCardContext {
   personality: string;
   scenario?: string;
   firstMessage?: string;
+}
+
+export interface UserPersonaContext {
+  id: string;
+  name: string;
+  description: string;
+  avatarPath?: string;
 }
 
 // 上下文条目

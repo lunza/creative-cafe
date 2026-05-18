@@ -6,7 +6,7 @@ import {
   WritingError,
   WritingErrorCode
 } from '../../shared/types/writing.types';
-import { outlineGenerator } from './writing/OutlineGenerator';
+import { outlineGenerator, OutlineGenerationResult } from './writing/OutlineGenerator';
 import { contentGenerator } from './writing/ContentGenerator';
 
 interface ChatMessage {
@@ -21,7 +21,7 @@ interface ModelConfig {
 }
 
 export class WritingEngine {
-  async generateOutline(request: OutlineGenerationRequest): Promise<GeneratedOutline> {
+  async generateOutline(request: OutlineGenerationRequest): Promise<OutlineGenerationResult> {
     const messages = outlineGenerator.buildPrompt(request);
     return outlineGenerator.generate(messages, request.modelConfig);
   }

@@ -12,6 +12,7 @@ interface WritingModeState {
   currentView: WritingModeView;
   config: WritingConfig | null;
   outline: GeneratedOutline | null;
+  outlineRaw: string | null;
   isOutlineGenerating: boolean;
   currentChapterIndex: number;
   isContentGenerating: boolean;
@@ -25,6 +26,7 @@ interface WritingModeState {
   setCurrentView: (view: WritingModeView) => void;
   setConfig: (config: WritingConfig) => void;
   setOutline: (outline: GeneratedOutline) => void;
+  setOutlineRaw: (raw: string | null) => void;
   setOutlineGenerating: (generating: boolean) => void;
   setCurrentChapterIndex: (index: number) => void;
   setIsContentGenerating: (generating: boolean) => void;
@@ -43,6 +45,7 @@ export const useWritingModeStore = create<WritingModeState>((set) => ({
   currentView: WritingModeView.PROJECT_LIST,
   config: null,
   outline: null,
+  outlineRaw: null,
   isOutlineGenerating: false,
   currentChapterIndex: 0,
   isContentGenerating: false,
@@ -58,6 +61,8 @@ export const useWritingModeStore = create<WritingModeState>((set) => ({
   setConfig: (config) => set({ config }),
 
   setOutline: (outline) => set({ outline }),
+
+  setOutlineRaw: (outlineRaw) => set({ outlineRaw }),
 
   setOutlineGenerating: (isOutlineGenerating) => set({ isOutlineGenerating }),
 

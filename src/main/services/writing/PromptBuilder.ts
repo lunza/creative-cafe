@@ -39,7 +39,8 @@ ${perspectiveGuide}
   buildOutlinePrompt(
     creativeDescription: string,
     resources: WritingResourceConfig,
-    parameters: WritingParameters
+    parameters: WritingParameters,
+    resourceContext?: string
   ): string {
     const template = NovelTypeTemplates[parameters.novelType];
     const styleGuide = StyleGuidance[parameters.writingStyle || WritingStyle.SERIOUS];
@@ -58,6 +59,7 @@ ${creativeDescription}
 - 写作风格: ${styleGuide}
 ${parameters.additionalRequirements ? `- 额外要求: ${parameters.additionalRequirements}` : ''}
 ${parameters.forbiddenContent && parameters.forbiddenContent.length > 0 ? `- 禁止内容: ${parameters.forbiddenContent.join('、')}` : ''}
+${resourceContext ? `\n## 用户与角色信息\n${resourceContext}` : ''}
 
 ## 大纲结构要求
 请按照以下结构生成完整的大纲（使用JSON格式）：
@@ -120,7 +122,16 @@ ${parameters.forbiddenContent && parameters.forbiddenContent.length > 0 ? `- 禁
 5. 合理安排起承转合，注意节奏控制
 ${parameters.forbiddenContent && parameters.forbiddenContent.length > 0 ? `6. 绝对不要包含以下内容: ${parameters.forbiddenContent.join('、')}` : ''}
 
-请生成完整的JSON格式大纲。`;
+## 输出格式要求
+1. 只输出JSON格式的大纲，不要输出任何解释性文字、前言或后记
+2. JSON必须是合法的格式，所有字符串值中的换行符必须转义为\\n，不能使用真实的换行符
+3. 所有属性名必须使用双引号包裹
+4. 字符串值必须使用双引号包裹，不能使用单引号
+5. 不要在JSON末尾添加多余的逗号
+6. 整个输出必须被包裹在\`\`\`json和\`\`\`代码块中
+7. 确保所有字符串值都完整闭合，不要在字符串中间截断
+
+请严格按照上述格式输出完整的JSON大纲。`;
   }
 
   buildContentPrompt(

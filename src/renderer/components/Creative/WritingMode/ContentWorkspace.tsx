@@ -69,13 +69,19 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
     if (!outline) return;
     const statuses: Record<number, ChapterStatus> = {};
     const contents: Record<number, string> = {};
+    const project = getCurrentProject();
     for (const ch of outline.chapters) {
-      statuses[ch.index] = ch.content ? ChapterStatus.COMPLETED : ChapterStatus.PENDING;
-      contents[ch.index] = ch.content || '';
+      const projectChapter = project?.chapters?.find(c => c.index === ch.index);
+      const chapterContent = projectChapter?.content || '';
+      statuses[ch.index] = chapterContent ? ChapterStatus.COMPLETED : ChapterStatus.PENDING;
+      contents[ch.index] = chapterContent;
     }
     setChapterStatuses(statuses);
     setChapterContents(contents);
-    if (selectedChapterIndex >= outline.chapters.length && outline.chapters.length > 0) {
+    if (outline.chapters.length === 0) {
+      return;
+    }
+    if (selectedChapterIndex >= outline.chapters.length) {
       setSelectedChapterIndex(0);
     }
   }, [outline]);
@@ -124,6 +130,11 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
       if (generationProgress && generationProgress.mode === GenerationMode.CONTINUOUS) {
         const nextIndex = data.chapterIndex + 1;
         if (nextIndex < (outline?.chapters.length || 0)) {
+          if (isPausedRef.current) {
+            setGenerationProgress(null);
+            message.info('连续生成已暂停');
+            return;
+          }
           setGenerationProgress(prev => prev ? { ...prev, currentChapter: nextIndex } : null);
           setTimeout(() => handleGenerateChapter(nextIndex), 1000);
         } else {
@@ -188,12 +199,12 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
     };
 
     const previousChapters = outline.chapters
-      .filter(ch => ch.index < chapterIndex && (chapterContents[ch.index] || ch.content))
+      .filter(ch => ch.index < chapterIndex && chapterContents[ch.index])
       .map(ch => ({
         index: ch.index,
         title: ch.title,
-        summary: ch.outline?.summary || ch.title,
-        fullContent: (chapterContents[ch.index] || ch.content || '').substring(0, MAX_PREVIOUS_CHAPTER_CONTENT_LENGTH)
+        summary: ch.summary || ch.title,
+        fullContent: (chapterContents[ch.index] || '').substring(0, MAX_PREVIOUS_CHAPTER_CONTENT_LENGTH)
       }));
 
     const novelType = currentProject?.config?.parameters?.novelType || 'web_novel';
@@ -375,6 +386,9 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
 
   const currentChapter = outline.chapters[selectedChapterIndex];
   const currentWordCount = (streamingContent || chapterContents[selectedChapterIndex] || '').length;
+  if (!currentChapter) {
+    return <div style={{ padding: 24 }}>未找到章节信息</div>;
+  }
 
   const chapterMenuItems = outline.chapters.map(ch => ({
     key: String(ch.index),
