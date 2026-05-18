@@ -1,0 +1,50 @@
+# Tasks
+- [x] Task 1: 安装新依赖并定义类型
+  - [x] SubTask 1.1: 安装 `write-file-atomic`, `uuid`, `fuse.js`, `eventemitter3` 及其类型定义
+  - [x] SubTask 1.2: 创建 `src/shared/types/groupChat.types.ts` 定义所有群聊相关类型
+  - [x] SubTask 1.3: 创建 `src/renderer/types/groupChat.types.ts` 导出共享类型
+- [x] Task 2: 实现后端存储服务
+  - [x] SubTask 2.1: 创建 `src/main/services/GroupChat/GroupStorageService.ts` 群组定义 CRUD
+  - [x] SubTask 2.2: 创建 `src/main/services/GroupChat/GroupChatStorageService.ts` JSONL 消息存储
+  - [x] SubTask 2.3: 创建 `src/main/services/GroupChat/GroupIntegrityChecker.ts` 完整性校验
+  - [x] SubTask 2.4: 创建 `src/main/services/GroupChat/GroupBackupService.ts` 自动备份
+  - [x] SubTask 2.5: 创建 `src/main/services/GroupChat/index.ts` 统一导出
+- [x] Task 3: 实现 IPC Handler
+  - [x] SubTask 3.1: 创建 `src/main/ipc/handlers/groupHandlers.ts` 群组管理 IPC
+  - [x] SubTask 3.2: 创建 `src/main/ipc/handlers/groupChatHandlers.ts` 群聊消息 IPC
+  - [x] SubTask 3.3: 在 `src/main/ipc/index.ts` 注册新 handler（仅新增调用行）
+- [x] Task 4: 实现群聊状态管理
+  - [x] SubTask 4.1: 创建 `src/renderer/stores/groupChatStore.ts` Zustand store
+- [x] Task 5: 实现角色激活算法
+  - [x] SubTask 5.1: 创建 `src/renderer/hooks/useGroupActivation.ts` 激活策略 Hook
+  - [x] SubTask 5.2: 实现 NATURAL 模式（提及检测 + 健谈度概率 + 保底）
+  - [x] SubTask 5.3: 实现 LIST 模式（顺序遍历）
+  - [x] SubTask 5.4: 实现 POOLED 模式（未发言池随机）
+- [x] Task 6: 实现生成模式
+  - [x] SubTask 6.1: 创建 `src/renderer/hooks/useGroupGeneration.ts` 生成模式 Hook
+  - [x] SubTask 6.2: 实现 SWAP 模式（角色切换生成）
+  - [x] SubTask 6.3: 实现 APPEND 模式（多角色卡合并）
+  - [x] SubTask 6.4: 实现 APPEND_DISABLED 模式
+  - [x] SubTask 6.5: 实现 Join Prefix/Suffix 模板系统
+- [x] Task 7: 实现群聊业务逻辑
+  - [x] SubTask 7.1: 创建 `src/renderer/hooks/useGroupDialogueChat.ts` 主业务 Hook
+  - [x] SubTask 7.2: 实现 generateGroupWrapper 生成包装器
+  - [x] SubTask 7.3: 实现 AbortController 取消机制
+  - [x] SubTask 7.4: 实现自动模式工作线程
+- [x] Task 8: 实现群聊 UI 组件
+  - [x] SubTask 8.1: 创建 `GroupSelectorPanel.tsx` 群组选择器
+  - [x] SubTask 8.2: 创建 `GroupChatHeader.tsx` 群聊头部
+  - [x] SubTask 8.3: 创建 `GroupAvatarCollage.tsx` 群头像拼图
+  - [x] SubTask 8.4: 创建 `GroupMemberList.tsx` 成员列表
+  - [x] SubTask 8.5: 创建 `GroupMessageBubble.tsx` 群聊消息气泡
+  - [x] SubTask 8.6: 创建 `GroupMentionPicker.tsx` @提及选择器
+  - [x] SubTask 8.7: 创建 `GroupInputBar.tsx` 群聊输入框
+  - [x] SubTask 8.8: 创建 `GroupConfigPanel.tsx` 配置面板
+  - [x] SubTask 8.9: 创建 `GroupChatDialog.tsx` 主对话框
+  - [x] SubTask 8.10: 创建 `src/renderer/components/GroupChat/index.ts` 统一导出
+- [x] Task 9: 验证功能完整性与现有功能保护
+  - [x] SubTask 9.1: 确认现有单聊模块文件未被修改
+  - [x] SubTask 9.2: 验证群聊与单聊模块完全隔离
+
+# Task Dependencies
+所有任务已完成。

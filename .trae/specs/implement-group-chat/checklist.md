@@ -1,0 +1,28 @@
+# Checklist
+
+- [x] 所有新依赖已安装（write-file-atomic, uuid, fuse.js, eventemitter3）
+- [x] 群聊类型定义完整（Group, GroupChatMessage, ChatHeader, ActivationStrategy, GenerationMode）
+- [x] GroupStorageService 实现群组 CRUD（创建、编辑、删除、获取全部）
+- [x] GroupChatStorageService 实现 JSONL 格式读写
+- [x] GroupIntegrityChecker 实现 UUID 完整性校验
+- [x] GroupBackupService 实现自动备份功能
+- [x] groupHandlers.ts 实现群组管理 IPC 路由
+- [x] groupChatHandlers.ts 实现群聊消息 IPC 路由
+- [x] src/main/ipc/index.ts 仅新增注册调用行，不修改现有 handler
+- [x] groupChatStore.ts 实现群聊状态管理
+- [x] useGroupActivation.ts 实现 NATURAL/LIST/POOLED 三种激活策略
+- [x] useGroupGeneration.ts 实现 SWAP/APPEND/APPEND_DISABLED 三种生成模式
+- [x] useGroupDialogueChat.ts 实现 generateGroupWrapper 生成包装器
+- [x] AbortController 取消机制正常工作
+- [x] GroupSelectorPanel.tsx 群组选择器可交互
+- [x] GroupChatHeader.tsx 显示群名和群头像
+- [x] GroupAvatarCollage.tsx 支持 1-4 张头像拼图
+- [x] GroupMemberList.tsx 成员列表可排序和筛选
+- [x] GroupMessageBubble.tsx 显示角色头像和名称
+- [x] GroupMentionPicker.tsx @提及选择器工作正常
+- [x] GroupInputBar.tsx 支持 @提及输入
+- [x] GroupConfigPanel.tsx 配置面板可修改激活策略和生成模式
+- [x] GroupChatDialog.tsx 主对话框完整集成所有子组件
+- [x] 群聊数据存储使用独立目录（data/groups/, data/group-chats/）
+- [x] 现有单聊模块文件未被修改（ChatStorageService, characterChatStore, CharacterDialogueChat 等）
+- [x] 群聊模块与单聊模块完全隔离，无代码交叉依赖

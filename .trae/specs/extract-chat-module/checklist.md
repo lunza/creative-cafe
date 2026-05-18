@@ -1,0 +1,17 @@
+- [x] 在uiStore.ts中添加'chat'作为TabType类型
+- [x] 在Sidebar.tsx中添加"聊天"菜单项，位于"仪表盘"和"创意管理"之间
+- [x] 在App.tsx中添加chat路由case，渲染ChatModule组件
+- [x] 创建ChatModule.tsx主组件，包含四个模式面板的纵向布局
+- [x] 创建ChatMode.tsx组件，实现聊天模式（复用原角色卡对话功能）
+- [x] 创建GroupChatMode.tsx组件，显示"敬请期待"提示
+- [x] 创建CreativeMode.tsx组件，显示"敬请期待"提示
+- [x] 创建GameMode.tsx组件，显示"敬请期待"提示
+- [x] 从CharacterManager.tsx中移除对话功能入口（handleTestCharacter相关代码）
+- [x] 聊天模块样式文件ChatModule.css实现高品质视觉效果
+- [x] 验证导航栏中聊天模块位置正确（仪表盘和创意管理之间）
+- [x] 验证聊天模式面板点击后弹出聊天对话框
+- [x] 验证聊天对话框左侧角色卡头像选择功能正常
+- [x] 验证切换角色时聊天记录同步切换且流畅无延迟
+- [x] 验证四个面板的视觉效果和交互反馈
+- [x] 验证亮色和暗色主题下的显示效果
+- [x] 验证项目构建成功 (npm run build)
