@@ -4,6 +4,7 @@ import { setupIpcHandlers } from './ipc';
 import { registerMemoryHandlers } from './ipc/handlers/memoryHandlers';
 import { registerCreativeHandlers } from './ipc/handlers/creativeHandlers';
 import { registerCharacterChatHandlers } from './ipc/handlers/characterChatHandlers';
+import { registerWritingHandlers } from './ipc/handlers/writingHandlers';
 
 if (process.platform === 'win32') {
   try {
@@ -89,6 +90,7 @@ app.whenReady().then(async () => {
   registerMemoryHandlers();
   registerCreativeHandlers();
   registerCharacterChatHandlers();
+  registerWritingHandlers();
 
   // 初始化向量注册表服务
   (async () => {

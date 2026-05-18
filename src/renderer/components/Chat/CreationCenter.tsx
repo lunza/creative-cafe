@@ -9,8 +9,7 @@ import {
 import { Tooltip, message } from 'antd';
 import { SingleChatDialog } from './SingleChatDialog';
 import { GroupChatDialog } from '../GroupChat/GroupChatDialog';
-import { CreativeMode } from './CreativeMode';
-import { GameMode } from './GameMode';
+import { WritingModeEntry } from '../Creative/WritingMode';
 import { useDataStore } from '../../stores/dataStore';
 import { useFavoritesStore } from '../../stores/favoritesStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
@@ -51,7 +50,7 @@ const panelConfig: Record<ChatPanelType, PanelConfig> = {
     icon: <EditOutlined />,
     color: '#f59e0b',
     activeColor: '#fbbf24',
-    comingSoon: true,
+    devBadge: true,
   },
   game: {
     label: '游戏模式',
@@ -89,6 +88,7 @@ export const CreationCenter: React.FC = () => {
   const [activePanel, setActivePanel] = useState<ChatPanelType>('chat');
   const [showChatDialog, setShowChatDialog] = useState(false);
   const [showGroupChatDialog, setShowGroupChatDialog] = useState(false);
+  const [showWritingDialog, setShowWritingDialog] = useState(false);
   const [flashingPanel, setFlashingPanel] = useState<ChatPanelType | null>(null);
   const [ripples, setRipples] = useState<Record<ChatPanelType, Ripple[]>>({
     chat: [],
@@ -285,8 +285,10 @@ export const CreationCenter: React.FC = () => {
         selectGroup(existingGroup);
       }
       setShowGroupChatDialog(true);
+    } else if (panel === 'creative') {
+      setShowWritingDialog(true);
     }
-  }, []);
+  }, [groups, createGroup, selectGroup]);
 
   const handleCloseChat = useCallback(() => {
     setShowChatDialog(false);
@@ -294,6 +296,10 @@ export const CreationCenter: React.FC = () => {
 
   const handleCloseGroupChat = useCallback(() => {
     setShowGroupChatDialog(false);
+  }, []);
+
+  const handleCloseWriting = useCallback(() => {
+    setShowWritingDialog(false);
   }, []);
 
   return (
@@ -414,6 +420,56 @@ export const CreationCenter: React.FC = () => {
         open={showGroupChatDialog}
         onClose={handleCloseGroupChat}
       />
+
+      <WritingModeDialog
+        visible={showWritingDialog}
+        onClose={handleCloseWriting}
+      />
+    </div>
+  );
+};
+
+interface WritingModeDialogProps {
+  visible: boolean;
+  onClose: () => void;
+}
+
+const WritingModeDialog: React.FC<WritingModeDialogProps> = ({ visible, onClose }) => {
+  if (!visible) return null;
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 1000,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'rgba(0,0,0,0.4)'
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          width: '90vw',
+          height: '90vh',
+          background: '#fff',
+          borderRadius: 12,
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column'
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ padding: '8px 16px', background: '#f5f5f5', borderBottom: '1px solid #e8e8e8', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3 style={{ margin: 0 }}>写作模式</h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18 }}>×</button>
+        </div>
+        <div style={{ flex: 1, overflow: 'auto' }}>
+          <WritingModeEntry />
+        </div>
+      </div>
     </div>
   );
 };
