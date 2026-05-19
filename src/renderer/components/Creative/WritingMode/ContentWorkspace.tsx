@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Card, Button, Progress, message, Spin, Layout, Menu, Typography, Dropdown, Popconfirm, Empty, Modal } from 'antd';
+import { Card, Button, Progress, message, Spin, Menu, Typography, Dropdown, Popconfirm, Empty, Modal, Input, Divider, Layout } from 'antd';
+const { Sider, Content } = Layout;
+const { Text } = Typography;
 import {
   PlayCircleOutlined,
   PauseCircleOutlined,
@@ -10,7 +12,9 @@ import {
   ReloadOutlined,
   MoreOutlined,
   HistoryOutlined,
-  CopyOutlined
+  CopyOutlined,
+  DeleteOutlined,
+  SettingOutlined
 } from '@ant-design/icons';
 import {
   GeneratedOutline,
@@ -24,9 +28,7 @@ import {
 } from '../../../../shared/types/writing.types';
 import MarkdownEditor from '../../Common/MarkdownEditor';
 import { useWritingProjectStore } from '../../../stores/writingProjectStore';
-
-const { Sider, Content } = Layout;
-const { Text } = Typography;
+import WritingProgressDashboard from './WritingProgressDashboard';
 
 const MAX_PREVIOUS_CHAPTER_CONTENT_LENGTH = 5000;
 
@@ -59,11 +61,16 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
   const [currentChapterWords, setCurrentChapterWords] = useState(0);
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [versionHistory, setVersionHistory] = useState<ChapterVersion[]>([]);
+  const [comparingVersion, setComparingVersion] = useState<ChapterVersion | null>(null);
+  const [exportChapters, setExportChapters] = useState<number[]>([]);
+  const [chapterSearch, setChapterSearch] = useState('');
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const pauseRef = useRef(false);
   const stopRef = useRef(false);
   const isPausedRef = useRef(false);
+  const editorContentRef = useRef<string>('');
+  const syncTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (!outline) return;
@@ -89,6 +96,61 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
   useEffect(() => {
     currentProjectRef.current = getCurrentProject();
   }, [getCurrentProject]);
+
+  const handleEditorChange = useCallback((content: string) => {
+    editorContentRef.current = content;
+    if (syncTimerRef.current) {
+      clearTimeout(syncTimerRef.current);
+    }
+    syncTimerRef.current = setTimeout(() => {
+      const project = getCurrentProject();
+      if (project && outline) {
+        const currentChapter = outline.chapters.find(ch => ch.index === selectedChapterIndex);
+        if (currentChapter) {
+          updateProject(project.id, {
+            chapters: project.chapters.map(ch =>
+              ch.index === selectedChapterIndex
+                ? { ...ch, content, lastModified: Date.now() }
+                : ch
+            ),
+            metadata: {
+              ...project.metadata,
+              totalWordCount: project.chapters.reduce((sum, ch) =>
+                sum + (ch.index === selectedChapterIndex ? content.length : ch.wordCount), 0
+              ),
+            }
+          });
+        }
+      }
+    }, 1000);
+  }, [selectedChapterIndex, outline, getCurrentProject, updateProject]);
+
+  useEffect(() => {
+    return () => {
+      if (syncTimerRef.current) {
+        clearTimeout(syncTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleSaveChapterRef = useRef<(() => Promise<void>) | null>(null);
+  const handleContinuousGenerationRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        handleSaveChapterRef.current?.();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        handleContinuousGenerationRef.current?.();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   useEffect(() => {
     if (!window.electronAPI?.writing) return;
@@ -270,6 +332,8 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
     handleGenerateChapter(nextChapter.index);
   }, [outline, isGenerating, chapterStatuses, handleGenerateChapter]);
 
+  handleContinuousGenerationRef.current = handleContinuousGeneration;
+
   const handlePauseGeneration = useCallback(() => {
     pauseRef.current = true;
     isPausedRef.current = true;
@@ -302,7 +366,7 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
   }, []);
 
   const handleSaveChapter = useCallback(async () => {
-    const content = streamingContent || chapterContents[selectedChapterIndex] || '';
+    const content = editorContentRef.current || streamingContent || chapterContents[selectedChapterIndex] || '';
     if (!content) {
       message.warning('当前章节内容为空');
       return;
@@ -311,9 +375,27 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
     if (window.electronAPI?.writing) {
       await window.electronAPI.writing.autoSaveChapter({ projectId, chapterIndex: selectedChapterIndex, content });
       setChapterContents(prev => ({ ...prev, [selectedChapterIndex]: content }));
+      const project = getCurrentProject();
+      if (project) {
+        updateProject(project.id, {
+          chapters: project.chapters.map(ch =>
+            ch.index === selectedChapterIndex
+              ? { ...ch, content, status: ChapterStatus.COMPLETED, wordCount: content.length, lastModified: Date.now() }
+              : ch
+          ),
+          metadata: {
+            ...project.metadata,
+            totalWordCount: project.chapters.reduce((sum, ch) =>
+              sum + (ch.index === selectedChapterIndex ? content.length : ch.wordCount), 0
+            ),
+            completedChapters: project.chapters.filter(ch => ch.index === selectedChapterIndex || ch.status === ChapterStatus.COMPLETED).length
+          }
+        });
+        saveProject();
+      }
       message.success('已保存');
     }
-  }, [streamingContent, chapterContents, selectedChapterIndex, projectId]);
+  }, [streamingContent, chapterContents, selectedChapterIndex, projectId, getCurrentProject, updateProject, saveProject]);
 
   const handleSaveVersion = useCallback(async () => {
     const content = streamingContent || chapterContents[selectedChapterIndex] || '';
@@ -372,9 +454,48 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
     }
   }, [projectId]);
 
+  const handleExportWithSelection = useCallback(async (format: ExportFormat) => {
+    if (exportChapters.length === 0) {
+      await handleExport(format);
+      return;
+    }
+    
+    const project = getCurrentProject();
+    if (!project) return;
+    
+    const filteredChapters = project.chapters.filter(ch => exportChapters.includes(ch.index));
+    
+    if (window.electronAPI?.writing) {
+      try {
+        const result = await window.electronAPI.writing.exportProjectWithChapters(
+          projectId, 
+          format, 
+          filteredChapters.map(ch => ch.index)
+        );
+        if (result.success) {
+          message.success('导出成功');
+        }
+      } catch (error: any) {
+        message.error(error.message || '导出失败');
+      }
+    }
+  }, [exportChapters, getCurrentProject, handleExport, projectId]);
+
   const handleRegenerateChapter = useCallback(() => {
     handleGenerateChapter(selectedChapterIndex);
   }, [selectedChapterIndex, handleGenerateChapter]);
+
+  const handleBackToConfig = useCallback(() => {
+    Modal.confirm({
+      title: '返回修改配置',
+      content: '返回修改配置将保留当前所有内容，是否继续？',
+      okText: '继续',
+      cancelText: '取消',
+      onOk: () => {
+        onBack();
+      }
+    });
+  }, [onBack]);
 
   if (!outline) {
     return <div style={{ padding: 24 }}>未找到大纲信息</div>;
@@ -390,20 +511,15 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
     return <div style={{ padding: 24 }}>未找到章节信息</div>;
   }
 
-  const chapterMenuItems = outline.chapters.map(ch => ({
-    key: String(ch.index),
-    label: (
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-        <span style={{ flex: 1 }}>{ch.title}</span>
-        <span style={{ fontSize: 10, marginLeft: 8 }}>
-          {chapterStatuses[ch.index] === ChapterStatus.COMPLETED && <span style={{ color: '#52c41a' }}>✓</span>}
-          {chapterStatuses[ch.index] === ChapterStatus.GENERATING && <Spin size="small" />}
-          {chapterStatuses[ch.index] === ChapterStatus.FAILED && <span style={{ color: '#ff4d4f' }}>✗</span>}
-        </span>
-      </div>
-    ),
-    disabled: chapterStatuses[ch.index] === ChapterStatus.GENERATING
-  }));
+  const targetWordCount = currentChapter?.targetWordCount || 2000;
+  const wordCountPercentage = Math.min((currentWordCount / targetWordCount) * 100, 100);
+  const wordCountColor = wordCountPercentage >= 90 ? '#52c41a' : wordCountPercentage >= 50 ? '#faad14' : '#f5222d';
+
+  const filteredChapters = outline.chapters.filter(ch =>
+    !chapterSearch ||
+    ch.title.toLowerCase().includes(chapterSearch.toLowerCase()) ||
+    (ch.summary || '').toLowerCase().includes(chapterSearch.toLowerCase())
+  );
 
   return (
     <Layout style={{ height: '100%' }}>
@@ -436,12 +552,31 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
             </div>
           )}
         </div>
+        <Input.Search
+          placeholder="搜索章节"
+          value={chapterSearch}
+          onChange={(e) => setChapterSearch(e.target.value)}
+          style={{ margin: '0 16px 8px 16px', width: 'calc(100% - 32px)' }}
+        />
         <Menu
           mode="inline"
           selectedKeys={[String(selectedChapterIndex)]}
           onClick={({ key }) => setSelectedChapterIndex(parseInt(key))}
-          items={chapterMenuItems}
-          style={{ maxHeight: 'calc(100vh - 200px)', overflow: 'auto' }}
+          items={filteredChapters.map(ch => ({
+            key: String(ch.index),
+            label: (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                <span style={{ flex: 1 }}>{ch.title}</span>
+                <span style={{ fontSize: 10, marginLeft: 8 }}>
+                  {chapterStatuses[ch.index] === ChapterStatus.COMPLETED && <span style={{ color: '#52c41a' }}>✓</span>}
+                  {chapterStatuses[ch.index] === ChapterStatus.GENERATING && <Spin size="small" />}
+                  {chapterStatuses[ch.index] === ChapterStatus.FAILED && <span style={{ color: '#ff4d4f' }}>✗</span>}
+                </span>
+              </div>
+            ),
+            disabled: chapterStatuses[ch.index] === ChapterStatus.GENERATING
+          }))}
+          style={{ maxHeight: 'calc(100vh - 260px)', overflow: 'auto' }}
         />
       </Sider>
       <Layout>
@@ -514,6 +649,7 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
                 }}>
                   <Button icon={<MoreOutlined />}>版本</Button>
                 </Dropdown>
+                <Button icon={<SettingOutlined />} onClick={handleBackToConfig}>调整参数</Button>
               </div>
             }
           >
@@ -534,11 +670,18 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
                 </div>
               </div>
             ) : (
-              <MarkdownEditor
-                key={selectedChapterIndex}
-                content={chapterContents[selectedChapterIndex] || ''}
-                readOnly={false}
-              />
+              <>
+                <MarkdownEditor
+                  key={selectedChapterIndex}
+                  value={chapterContents[selectedChapterIndex] || ''}
+                  onChange={handleEditorChange}
+                  readOnly={false}
+                />
+                <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span>字数: {currentWordCount.toLocaleString()} / {targetWordCount.toLocaleString()}</span>
+                  <Progress percent={Math.round(wordCountPercentage)} size="small" style={{ width: 120 }} strokeColor={wordCountColor} />
+                </div>
+              </>
             )}
           </Card>
         </Content>

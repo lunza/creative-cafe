@@ -5,7 +5,6 @@ import { useVectorStore } from '../../stores/vectorStore';
 import { useSettingStore } from '../../stores/settingStore';
 import { rendererEmbeddingService } from '../../services/rendererEmbeddingService';
 import type { EmbeddingMode, VectorConfigGroup, VectorDefaults } from '../../types/vectorConfig';
-import { VectorScopeSelector } from './VectorScopeSelector';
 
 const { Option } = Select;
 const { Panel } = Collapse;
@@ -79,7 +78,7 @@ const MODE_FIELD_MAP: Record<EmbeddingMode, string[]> = {
 };
 
 const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
-  const { mode, isConnected, dimension, loading, testConnection, testStorage, selectedScopes } = useVectorStore();
+  const { mode, isConnected, dimension, loading, testConnection, testStorage } = useVectorStore();
   const { setting } = useSettingStore();
   const [form] = Form.useForm();
   const [activeEmbeddingMode, setActiveEmbeddingMode] = useState<EmbeddingMode>('remote');
@@ -226,8 +225,7 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
   const handleTestStorage = async () => {
     setStorageTestResult(null);
     setTestStorageLoading(true);
-    const selectedScopeIds = selectedScopes.length > 0 ? selectedScopes : undefined;
-    const result = await testStorage(selectedScopeIds);
+    const result = await testStorage();
     setTestStorageLoading(false);
 
     if (result.success) {
@@ -506,10 +504,6 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
             {renderAutomationSection}
           </Panel>
         </Collapse>
-
-        <Divider />
-
-        <VectorScopeSelector />
 
         <Divider />
 

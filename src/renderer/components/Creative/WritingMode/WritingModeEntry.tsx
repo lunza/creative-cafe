@@ -1,160 +1,382 @@
-import React, { useEffect } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
+import { Layout, Menu, Button, Avatar, Badge, Input, Divider, Tooltip, Space, Tag, Popconfirm, message } from 'antd';
+import {
+  PlusOutlined,
+  FileTextOutlined,
+  EditOutlined,
+  BookOutlined,
+  ExportOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
+  FolderOutlined,
+  CheckCircleOutlined,
+  ClockCircleOutlined,
+  MinusCircleOutlined,
+  CloseOutlined,
+  DeleteOutlined,
+  AppstoreOutlined,
+} from '@ant-design/icons';
 import { theme } from 'antd';
-import { useWritingModeStore } from '../../../stores/writingModeStore';
 import { useWritingProjectStore } from '../../../stores/writingProjectStore';
-import { WritingModeView, WritingProject, WritingConfig, ChapterStatus, ProjectStatus } from '../../../../shared/types/writing.types';
-import WritingProjectList from './WritingProjectList';
-import WritingConfigPanel from './WritingConfigPanel';
+import { useWritingModeUIStore, LayoutMode, ActivePanel, RightPanelTab } from '../../../stores/writingModeUIStore';
+import { useWritingModeStore } from '../../../stores/writingModeStore';
+import { WritingProject, ProjectStatus, ChapterStatus } from '../../../../shared/types/writing.types';
+import { PROJECT_STATUS_LABELS } from '../../../../shared/constants/writing.constants';
+import WritingModeRightPanel from './WritingModeRightPanel';
+import WritingConfigModal from './WritingConfigModal';
 import OutlineEditor from './OutlineEditor';
 import ContentWorkspace from './ContentWorkspace';
-import { Spin, Alert } from 'antd';
+
+const { Sider, Content } = Layout;
+const { Search } = Input;
+
+interface StageItem {
+  key: ActivePanel;
+  icon: React.ReactNode;
+  label: string;
+}
+
+const STAGES: StageItem[] = [
+  { key: ActivePanel.PROJECTS, icon: <FolderOutlined />, label: '项目列表' },
+  { key: ActivePanel.OUTLINE, icon: <FileTextOutlined />, label: '大纲设计' },
+  { key: ActivePanel.CONTENT, icon: <EditOutlined />, label: '内容创作' },
+  { key: ActivePanel.EXPORT, icon: <ExportOutlined />, label: '审阅导出' },
+];
 
 const WritingModeEntry: React.FC = () => {
-  const currentView = useWritingModeStore((state) => state.currentView);
-  const setCurrentView = useWritingModeStore((state) => state.setCurrentView);
-  const setConfig = useWritingModeStore((state) => state.setConfig);
-  const config = useWritingModeStore((state) => state.config);
-  const outline = useWritingModeStore((state) => state.outline);
-  const isOutlineGenerating = useWritingModeStore((state) => state.isOutlineGenerating);
-  const reset = useWritingModeStore((state) => state.reset);
+  const { token } = theme.useToken();
+  const [searchText, setSearchText] = useState('');
+  const [showConfigModal, setShowConfigModal] = useState(false);
 
-  const currentProjectId = useWritingProjectStore((state) => state.currentProjectId);
-  const setCurrentProject = useWritingProjectStore((state) => state.setCurrentProject);
-  const loadProjects = useWritingProjectStore((state) => state.loadProjects);
   const projects = useWritingProjectStore((state) => state.projects);
   const isLoading = useWritingProjectStore((state) => state.isLoading);
+  const loadProjects = useWritingProjectStore((state) => state.loadProjects);
+  const setCurrentProject = useWritingProjectStore((state) => state.setCurrentProject);
   const getCurrentProject = useWritingProjectStore((state) => state.getCurrentProject);
 
-  const { token } = theme.useToken();
+  const layoutMode = useWritingModeUIStore((state) => state.layoutMode);
+  const sidebarCollapsed = useWritingModeUIStore((state) => state.sidebarCollapsed);
+  const rightPanelVisible = useWritingModeUIStore((state) => state.rightPanelVisible);
+  const toggleRightPanel = useWritingModeUIStore((state) => state.toggleRightPanel);
+  const activePanel = useWritingModeUIStore((state) => state.activePanel);
+  const selectedProjectId = useWritingModeUIStore((state) => state.selectedProjectId);
+  const setActivePanel = useWritingModeUIStore((state) => state.setActivePanel);
+  const setSelectedProject = useWritingModeUIStore((state) => state.setSelectedProject);
+  const toggleSidebar = useWritingModeUIStore((state) => state.toggleSidebar);
+  const updateWindowWidth = useWritingModeUIStore((state) => state.updateWindowWidth);
+  const detectLayoutMode = useWritingModeUIStore((state) => state.detectLayoutMode);
 
   useEffect(() => {
     loadProjects();
-  }, [loadProjects]);
+    const handleResize = () => {
+      const width = window.innerWidth;
+      updateWindowWidth(width);
+      detectLayoutMode(width);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
-  const handleNewProject = () => {
-    setCurrentProject(null);
-    reset();
-    setCurrentView(WritingModeView.CONFIG);
-  };
-
-  const handleContinueProject = (project: WritingProject) => {
-    setCurrentProject(project.id);
-    reset();
-    setConfig(project.config);
-    if (project.outline) {
-      useWritingModeStore.getState().setOutline(project.outline);
-      setCurrentView(WritingModeView.CONTENT_GENERATION);
-    } else {
-      setCurrentView(WritingModeView.OUTLINE_EDITING);
+  useEffect(() => {
+    if (selectedProjectId) {
+      const project = projects.find(p => p.id === selectedProjectId);
+      if (project) {
+        if (project.outline) {
+          setActivePanel(ActivePanel.CONTENT);
+        } else {
+          setActivePanel(ActivePanel.OUTLINE);
+        }
+      }
     }
-  };
+  }, [selectedProjectId]);
 
-  const handleConfigConfirm = (config: WritingConfig) => {
-    setConfig(config);
-    setCurrentView(WritingModeView.OUTLINE_EDITING);
-  };
+  const handleNewProject = useCallback(() => {
+    setShowConfigModal(true);
+  }, []);
 
-  const handleOutlineConfirm = async () => {
-    if (!config || !outline) return;
-
+  const handleConfigConfirm = useCallback(async (config) => {
     const projectId = await useWritingProjectStore.getState().createProject(config);
     if (projectId) {
-      useWritingProjectStore.getState().setCurrentProject(projectId);
-      await useWritingProjectStore.getState().updateProject(projectId, {
-        outline,
-        outlineRaw: useWritingModeStore.getState().outlineRaw || null,
-        status: ProjectStatus.IN_PROGRESS
-      });
+      setCurrentProject(projectId);
+      setSelectedProject(projectId);
+      loadProjects();
     }
-    setCurrentView(WritingModeView.CONTENT_GENERATION);
+    setShowConfigModal(false);
+  }, []);
+
+  const handleSelectProject = useCallback((project: WritingProject) => {
+    setCurrentProject(project.id);
+    setSelectedProject(project.id);
+    if (project.outline) {
+      setActivePanel(ActivePanel.CONTENT);
+    } else {
+      setActivePanel(ActivePanel.OUTLINE);
+    }
+  }, []);
+
+  const handleDeleteProject = useCallback(async (projectId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (!window.electronAPI?.writing) return;
+    try {
+      await window.electronAPI.writing.deleteProject(projectId);
+      loadProjects();
+      setSelectedProject(null);
+      setCurrentProject(null);
+      setActivePanel(ActivePanel.PROJECTS);
+    } catch (err) {
+      message.error('删除项目失败');
+    }
+  }, []);
+
+  const handleStageClick = useCallback((key: string) => {
+    if (key === ActivePanel.PROJECTS) {
+      setSelectedProject(null);
+      setActivePanel(ActivePanel.PROJECTS);
+    } else {
+      if (!selectedProjectId) return;
+      setActivePanel(key as ActivePanel);
+    }
+  }, [selectedProjectId]);
+
+  const currentProject = selectedProjectId ? getCurrentProject() : null;
+
+  const filteredProjects = projects.filter(p =>
+    !searchText ||
+    p.config.parameters.creativeDescription.toLowerCase().includes(searchText.toLowerCase())
+  );
+
+  const getProjectProgress = (project: WritingProject): number => {
+    if (!project.chapters || project.chapters.length === 0) return 0;
+    const completed = project.chapters.filter(ch => ch.status === ChapterStatus.COMPLETED).length;
+    return Math.round((completed / project.chapters.length) * 100);
   };
 
-  const handleBack = () => {
-    if (currentView === WritingModeView.CONFIG) {
-      setCurrentView(WritingModeView.PROJECT_LIST);
-    } else if (currentView === WritingModeView.OUTLINE_GENERATING || currentView === WritingModeView.OUTLINE_EDITING) {
-      setCurrentView(WritingModeView.CONFIG);
-    } else if (currentView === WritingModeView.CONTENT_GENERATING || currentView === WritingModeView.CONTENT_EDITING || currentView === WritingModeView.CONTENT_GENERATION) {
-      setCurrentView(WritingModeView.OUTLINE_EDITING);
+  const getProjectStatusIcon = (status: ProjectStatus) => {
+    switch (status) {
+      case ProjectStatus.COMPLETED:
+        return <CheckCircleOutlined style={{ color: '#52c41a' }} />;
+      case ProjectStatus.IN_PROGRESS:
+      case ProjectStatus.WRITING:
+        return <ClockCircleOutlined style={{ color: '#faad14' }} />;
+      default:
+        return <MinusCircleOutlined style={{ color: '#d9d9d9' }} />;
     }
   };
 
-  const renderView = () => {
-    switch (currentView) {
-      case WritingModeView.PROJECT_LIST:
-        return (
-          <WritingProjectList
-            projects={projects}
-            isLoading={isLoading}
-            onNewProject={handleNewProject}
-            onContinueProject={handleContinueProject}
-          />
-        );
-      case WritingModeView.CONFIG:
-        return (
-          <WritingConfigPanel
-            onConfirm={handleConfigConfirm}
-            onCancel={handleBack}
-          />
-        );
-      case WritingModeView.OUTLINE_GENERATING:
-        return (
-          <div style={{ padding: '40px', textAlign: 'center' }}>
-            <Spin size="large" tip="正在生成大纲..." />
-            <div style={{ marginTop: 16 }}>
-              AI 正在分析创意并生成结构化大纲，请稍候...
-            </div>
+  const renderMainContent = () => {
+    if (activePanel === ActivePanel.PROJECTS) {
+      return (
+        <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: token.colorBgLayout }}>
+          <div style={{ textAlign: 'center' }}>
+            <BookOutlined style={{ fontSize: 64, color: token.colorTextTertiary, marginBottom: 16 }} />
+            <h3 style={{ color: token.colorTextSecondary, margin: 0 }}>选择一个项目开始创作</h3>
+            <p style={{ color: token.colorTextTertiary }}>从左侧列表选择项目，或创建新项目</p>
           </div>
-        );
-      case WritingModeView.OUTLINE_EDITING:
-        if (!outline) {
-          return <Alert message="未找到大纲" type="warning" />;
-        }
+        </div>
+      );
+    }
+
+    if (!currentProject) {
+      return (
+        <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: token.colorBgLayout }}>
+          <div style={{ textAlign: 'center' }}>
+            <FolderOutlined style={{ fontSize: 64, color: token.colorTextTertiary, marginBottom: 16 }} />
+            <h3 style={{ color: token.colorTextSecondary, margin: 0 }}>暂无选中项目</h3>
+            <p style={{ color: token.colorTextTertiary }}>请先从左侧列表选择一个项目</p>
+          </div>
+        </div>
+      );
+    }
+
+    switch (activePanel) {
+      case ActivePanel.OUTLINE:
         return (
           <OutlineEditor
-            outline={outline}
-            onConfirm={handleOutlineConfirm}
-            onRegenerate={() => setCurrentView(WritingModeView.CONFIG)}
-            onBack={handleBack}
+            outline={currentProject.outline || null}
+            onConfirm={() => setActivePanel(ActivePanel.CONTENT)}
+            onRegenerate={() => {}}
+            onBack={() => setActivePanel(ActivePanel.PROJECTS)}
+            projectId={currentProject.id}
+            initialMode={currentProject.config.manualMode ? 'manual' : 'ai'}
           />
         );
-      case WritingModeView.CONTENT_GENERATING:
-      case WritingModeView.CONTENT_GENERATION:
-      case WritingModeView.CONTENT_EDITING:
+      case ActivePanel.CONTENT:
         return (
           <ContentWorkspace
-            outline={outline}
-            projectId={currentProjectId || 'current'}
-            onBack={handleBack}
+            outline={currentProject.outline || null}
+            projectId={currentProject.id}
+            onBack={() => setActivePanel(ActivePanel.OUTLINE)}
           />
         );
+      case ActivePanel.EXPORT:
+        return (
+          <div style={{ padding: 24 }}>
+            <h2>审阅导出</h2>
+            <p>此功能开发中...</p>
+          </div>
+        );
       default:
-        return <div>未知视图</div>;
+        return null;
     }
   };
 
+  const rightPanelWidth = layoutMode === LayoutMode.WIDE ? 300 : 0;
+  const sidebarWidth = sidebarCollapsed ? 60 : 220;
+
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: token.colorBgLayout }}>
-      {currentView !== WritingModeView.PROJECT_LIST && (
-        <div style={{ padding: '8px 16px', background: token.colorBgContainer, borderBottom: `1px solid ${token.colorBorderSecondary}` }}>
-          <button
-            onClick={handleBack}
-            style={{
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-              fontSize: 14,
-              color: token.colorTextSecondary
-            }}
-          >
-            ← 返回
-          </button>
+    <Layout style={{ height: '100vh', overflow: 'hidden' }}>
+      <Sider
+        width={sidebarWidth}
+        collapsed={sidebarCollapsed}
+        collapsedWidth={60}
+        theme="light"
+        style={{ borderRight: `1px solid ${token.colorBorderSecondary}`, overflow: 'auto' }}
+      >
+        <div style={{ padding: sidebarCollapsed ? '16px 8px' : '16px', display: 'flex', flexDirection: 'column', height: '100%' }}>
+          {!sidebarCollapsed && (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <span style={{ fontWeight: 600, fontSize: 14 }}>写作模式</span>
+                <Button size="small" type="primary" icon={<PlusOutlined />} onClick={handleNewProject}>
+                  新建
+                </Button>
+              </div>
+              <Search
+                size="small"
+                placeholder="搜索项目"
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                style={{ marginBottom: 12 }}
+              />
+            </>
+          )}
+
+          {sidebarCollapsed && (
+            <Tooltip title="新建项目">
+              <Button
+                size="small"
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={handleNewProject}
+                style={{ marginBottom: 12 }}
+              />
+            </Tooltip>
+          )}
+
+          <Divider style={{ margin: '8px 0' }} />
+
+          {!sidebarCollapsed && (
+            <div style={{ flex: 1, overflow: 'auto' }}>
+              {filteredProjects.map(project => {
+                const progress = getProjectProgress(project);
+                const isSelected = selectedProjectId === project.id;
+                return (
+                  <div
+                    key={project.id}
+                    onClick={() => handleSelectProject(project)}
+                    style={{
+                      padding: '10px 12px',
+                      marginBottom: 4,
+                      borderRadius: 6,
+                      cursor: 'pointer',
+                      background: isSelected ? token.colorPrimaryBg : 'transparent',
+                      border: `1px solid ${isSelected ? token.colorPrimary : 'transparent'}`,
+                      transition: 'all 0.2s',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                      {getProjectStatusIcon(project.status)}
+                      <span style={{ fontSize: 13, fontWeight: 500, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {project.config.parameters.creativeDescription.substring(0, 12)}
+                      </span>
+                      <Tag style={{ fontSize: 10, margin: 0, padding: '0 4px' }}>{progress}%</Tag>
+                      <Popconfirm
+                        title="删除项目"
+                        description="确定要删除此项目吗？此操作不可撤销。"
+                        onConfirm={(e) => handleDeleteProject(project.id, e)}
+                        onCancel={(e) => e?.stopPropagation()}
+                        okText="确定"
+                        cancelText="取消"
+                      >
+                        <DeleteOutlined
+                          onClick={(e) => e.stopPropagation()}
+                          style={{ color: token.colorError, cursor: 'pointer', fontSize: 14, flexShrink: 0 }}
+                        />
+                      </Popconfirm>
+                    </div>
+                    <div style={{ fontSize: 11, color: token.colorTextTertiary }}>
+                      {PROJECT_STATUS_LABELS[project.status]} · {project.chapters?.length || 0} 章
+                    </div>
+                  </div>
+                );
+              })}
+              {filteredProjects.length === 0 && (
+                <div style={{ textAlign: 'center', padding: 24, color: token.colorTextTertiary }}>
+                  <FileTextOutlined style={{ fontSize: 24, marginBottom: 8 }} />
+                  <div style={{ fontSize: 12 }}>暂无项目</div>
+                </div>
+              )}
+            </div>
+          )}
+
+          <Divider style={{ margin: '8px 0' }} />
+
+          <Menu
+            mode="inline"
+            selectedKeys={[activePanel]}
+            onClick={({ key }) => handleStageClick(key)}
+            style={{ border: 'none', flex: sidebarCollapsed ? 'none' : 1 }}
+            items={STAGES.map(stage => ({
+              key: stage.key,
+              icon: stage.icon,
+              label: sidebarCollapsed ? null : stage.label,
+              disabled: stage.key !== ActivePanel.PROJECTS && !selectedProjectId,
+            }))}
+          />
+
+          <div style={{ marginTop: 'auto', paddingTop: 8 }}>
+            {!sidebarCollapsed && layoutMode === LayoutMode.WIDE && (
+              <Tooltip title={rightPanelVisible ? '关闭辅助面板' : '打开辅助面板'}>
+                <Button
+                  type="text"
+                  icon={rightPanelVisible ? <CloseOutlined /> : <AppstoreOutlined />}
+                  onClick={() => toggleRightPanel()}
+                  block
+                  size="small"
+                  style={{ marginBottom: 4 }}
+                />
+              </Tooltip>
+            )}
+            <Tooltip title={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'}>
+              <Button
+                type="text"
+                icon={sidebarCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+                onClick={toggleSidebar}
+                block
+                size="small"
+              />
+            </Tooltip>
+          </div>
         </div>
+      </Sider>
+
+      <Content style={{ overflow: 'auto', position: 'relative' }}>
+        {renderMainContent()}
+      </Content>
+
+      {layoutMode === LayoutMode.WIDE && rightPanelVisible && (
+        <WritingModeRightPanel
+          width={rightPanelWidth}
+          onClose={() => toggleRightPanel()}
+        />
       )}
-      <div style={{ flex: 1, overflow: 'auto' }}>
-        {renderView()}
-      </div>
-    </div>
+
+      <WritingConfigModal
+        open={showConfigModal}
+        onConfirm={handleConfigConfirm}
+        onCancel={() => setShowConfigModal(false)}
+      />
+    </Layout>
   );
 };
 

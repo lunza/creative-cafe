@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Card, Form, Input, Select, InputNumber, Button, Row, Col, message, Checkbox, Collapse, Tag, Spin, Modal, List } from 'antd';
-import { BookOutlined, UserOutlined, EditOutlined, IdcardOutlined, SaveOutlined, FolderOpenOutlined, DeleteOutlined } from '@ant-design/icons';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Card, Form, Input, Select, InputNumber, Button, Row, Col, message, Checkbox, Collapse, Tag, Spin, Modal, List, Slider } from 'antd';
+import { BookOutlined, UserOutlined, EditOutlined, IdcardOutlined, SaveOutlined, FolderOpenOutlined, DeleteOutlined, SettingOutlined } from '@ant-design/icons';
 import {
   NovelType,
   NarrativePerspective,
@@ -49,6 +49,11 @@ const WritingConfigPanel: React.FC<WritingConfigPanelProps> = ({ onConfirm, onCa
   const [showSavedConfigs, setShowSavedConfigs] = useState(false);
   const [saveModalVisible, setSaveModalVisible] = useState(false);
   const [saveName, setSaveName] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const lastConfigRef = useRef<{ values: any; config: WritingConfig } | null>(null);
+  const [pendingRawJson, setPendingRawJson] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [generationAborted, setGenerationAborted] = useState(false);
 
   const CONFIG_STORAGE_KEY = 'writing-config-saved';
 
@@ -227,9 +232,9 @@ const WritingConfigPanel: React.FC<WritingConfigPanelProps> = ({ onConfirm, onCa
     }
 
     const modelConfig = {
-      model: aiConfig?.model || DEFAULT_WRITING_CONFIG.model,
-      temperature: aiConfig?.temperature ?? DEFAULT_WRITING_CONFIG.temperature,
-      maxTokens: aiConfig?.maxTokens ?? DEFAULT_WRITING_CONFIG.maxTokens
+      model: values.model || aiConfig?.model || DEFAULT_WRITING_CONFIG.model,
+      temperature: values.temperature ?? aiConfig?.temperature ?? DEFAULT_WRITING_CONFIG.temperature,
+      maxTokens: values.maxTokens ?? aiConfig?.maxTokens ?? DEFAULT_WRITING_CONFIG.maxTokens
     };
 
     const config: WritingConfig = {
@@ -254,6 +259,8 @@ const WritingConfigPanel: React.FC<WritingConfigPanelProps> = ({ onConfirm, onCa
     setLoading(true);
     setIsGenerating(true);
     setStreamContent('');
+    setError(null);
+    lastConfigRef.current = { values, config };
     try {
       if (!window.electronAPI?.writing) {
         message.error('写作模块未加载');
@@ -317,12 +324,85 @@ const WritingConfigPanel: React.FC<WritingConfigPanelProps> = ({ onConfirm, onCa
     } catch (error: any) {
       console.error('[WritingConfig] Outline generation error:', error);
       const errorMessage = error?.message || error?.toString() || '大纲生成出错';
+      setError(errorMessage);
       message.error(errorMessage);
     } finally {
       setLoading(false);
       setIsGenerating(false);
     }
   };
+
+  const handleCancelGeneration = useCallback(() => {
+    setLoading(false);
+    setIsGenerating(false);
+    setStreamContent('');
+    message.info('已取消生成');
+  }, []);
+
+  const handleRetryGeneration = useCallback(async () => {
+    if (!lastConfigRef.current) {
+      message.error('无法重试：未找到上次生成的配置');
+      return;
+    }
+    setError(null);
+    const { values, config: savedConfig } = lastConfigRef.current;
+    
+    setLoading(true);
+    setIsGenerating(true);
+    setStreamContent('');
+    try {
+      if (!window.electronAPI?.writing) {
+        message.error('写作模块未加载');
+        return;
+      }
+
+      const unsubscribeChunk = window.electronAPI.writing.onStreamChunk((data: any) => {
+        setStreamContent(prev => prev + data.chunk);
+      });
+
+      const unsubscribeComplete = window.electronAPI.writing.onStreamComplete((_data: any) => {
+        // Stream complete
+      });
+
+      const unsubscribeError = window.electronAPI.writing.onStreamError((data: any) => {
+        console.error('[WritingConfig] Stream error:', data.error);
+      });
+
+      const result = await window.electronAPI.writing.generateOutline({
+        resources: savedConfig.resources,
+        parameters: savedConfig.parameters,
+        modelConfig: savedConfig.modelConfig
+      });
+
+      unsubscribeChunk();
+      unsubscribeComplete();
+      unsubscribeError();
+
+      if (result.success && result.outline) {
+        useWritingModeStore.getState().setOutline(result.outline);
+        useWritingModeStore.getState().setConfig(savedConfig);
+        if (result.outlineRaw) {
+          useWritingModeStore.getState().setOutlineRaw(result.outlineRaw);
+        }
+        onConfirm(savedConfig);
+      } else if (result.outlineRaw) {
+        message.warning({
+          content: result.error || '大纲解析失败，但原始内容已保留',
+          duration: 8
+        });
+      } else {
+        message.error(result.error || '大纲生成失败');
+      }
+    } catch (retryError: any) {
+      console.error('[WritingConfig] Retry error:', retryError);
+      const errorMessage = retryError?.message || retryError?.toString() || '大纲生成出错';
+      setError(errorMessage);
+      message.error(errorMessage);
+    } finally {
+      setLoading(false);
+      setIsGenerating(false);
+    }
+  }, [onConfirm]);
 
   return (
     <Spin spinning={loadingResources}>
@@ -467,11 +547,26 @@ const WritingConfigPanel: React.FC<WritingConfigPanelProps> = ({ onConfirm, onCa
                 <TextArea rows={2} placeholder="每行一个禁止出现的内容" />
               </Form.Item>
             </Collapse.Panel>
+
+            <Collapse.Panel key="model" header="模型参数" icon={<SettingOutlined />}>
+              <Form.Item name="temperature" label="Temperature" initialValue={DEFAULT_WRITING_CONFIG.temperature}>
+                <Slider min={0} max={2} step={0.1} tooltip={{ formatter: (v) => v?.toFixed(1) }} />
+              </Form.Item>
+              <Form.Item name="maxTokens" label="最大 Token" initialValue={DEFAULT_WRITING_CONFIG.maxTokens}>
+                <Slider min={1000} max={32000} step={1000} tooltip={{ formatter: (v) => v?.toLocaleString() }} />
+              </Form.Item>
+              <div style={{ fontSize: 12, color: '#999', marginTop: 8 }}>
+                AI 模型使用全局引擎设置中的配置，可在「设置 → AI引擎设置」中修改
+              </div>
+            </Collapse.Panel>
           </Collapse>
 
           {isGenerating && (
             <div style={{ marginTop: 16 }}>
-              <div style={{ marginBottom: 8, fontWeight: 600, fontSize: 14 }}>AI 生成中...</div>
+              <div style={{ marginBottom: 8, fontWeight: 600, fontSize: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>AI 生成中...</span>
+                <Button danger onClick={handleCancelGeneration}>取消生成</Button>
+              </div>
               <TextArea
                 ref={streamRef}
                 value={streamContent}
@@ -479,6 +574,13 @@ const WritingConfigPanel: React.FC<WritingConfigPanelProps> = ({ onConfirm, onCa
                 rows={12}
                 style={{ fontFamily: 'monospace', fontSize: 13, lineHeight: 1.6, resize: 'vertical' }}
               />
+            </div>
+          )}
+
+          {error && !isGenerating && (
+            <div style={{ marginTop: 16, textAlign: 'center', padding: '20px 0' }}>
+              <div style={{ marginBottom: 16, color: '#ff4d4f' }}>{error}</div>
+              <Button type="primary" onClick={handleRetryGeneration}>重试</Button>
             </div>
           )}
 
@@ -493,6 +595,38 @@ const WritingConfigPanel: React.FC<WritingConfigPanelProps> = ({ onConfirm, onCa
               <div style={{ display: 'flex', gap: 8 }}>
                 <Button icon={<SaveOutlined />} onClick={handleSaveConfig}>
                   保存配置
+                </Button>
+                <Button onClick={() => {
+                  form.validateFields().then(values => {
+                    const config: WritingConfig = {
+                      resources: {
+                        worldBookIds: selectedWorldBooks.map(wb => wb.id),
+                        characterCardIds: selectedCharacters.map(c => c.id),
+                        userPersonaIds: selectedPersonas.length > 0 ? selectedPersonas.map(p => p.id) : undefined
+                      },
+                      parameters: {
+                        creativeDescription: values.creativeDescription,
+                        novelType: values.novelType,
+                        targetWordCount: values.targetWordCount,
+                        chapterCount: values.chapterCount,
+                        narrativePerspective: values.narrativePerspective,
+                        writingStyle: values.writingStyle,
+                        additionalRequirements: values.additionalRequirements,
+                        forbiddenContent: values.forbiddenContent?.split('\n').filter(Boolean) || []
+                      },
+                      modelConfig: {
+                        model: values.model || aiConfig?.model || DEFAULT_WRITING_CONFIG.model,
+                        temperature: values.temperature ?? aiConfig?.temperature ?? DEFAULT_WRITING_CONFIG.temperature,
+                        maxTokens: values.maxTokens ?? aiConfig?.maxTokens ?? DEFAULT_WRITING_CONFIG.maxTokens
+                      },
+                      manualMode: true
+                    };
+                    onConfirm(config);
+                  }).catch(() => {
+                    message.warning('请先填写必填项后再继续');
+                  });
+                }}>
+                  手动创建大纲
                 </Button>
                 <Button type="primary" htmlType="submit" loading={loading} size="large">
                   生成大纲

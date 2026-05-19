@@ -47,6 +47,23 @@ export enum ChapterStatus {
   FAILED = 'failed'
 }
 
+// 章节类型
+export enum ChapterType {
+  MAIN_PLOT = 'main_plot',
+  SUB_PLOT = 'sub_plot',
+  TRANSITION = 'transition',
+  CLIMAX = 'climax',
+  ENDING = 'ending'
+}
+
+// 重要程度
+export enum ImportanceLevel {
+  LOW = 'low',
+  MEDIUM = 'medium',
+  HIGH = 'high',
+  CRITICAL = 'critical'
+}
+
 // 生成模式
 export enum GenerationMode {
   SINGLE = 'single',
@@ -137,6 +154,7 @@ export interface WritingConfig {
   resources: WritingResourceConfig;
   parameters: WritingParameters;
   modelConfig: ModelConfig;
+  manualMode?: boolean;
 }
 
 // 大纲生成请求
@@ -214,6 +232,11 @@ export interface ChapterOutline {
   scenes: string[];
   suspensePoints?: string[];
   targetWordCount: number;
+  // 手动大纲编辑新增字段
+  chapterType?: ChapterType;
+  importance?: ImportanceLevel;
+  children?: ChapterOutline[];
+  content?: string;
 }
 
 // 角色关系
@@ -424,4 +447,41 @@ export interface GenerationMetadata {
   tokensUsed: number;
   generationTime: number;
   finishReason: string;
+}
+
+// 大纲操作类型（用于撤销/重做）
+export enum OutlineActionType {
+  ADD_CHAPTER = 'add_chapter',
+  DELETE_CHAPTER = 'delete_chapter',
+  UPDATE_CHAPTER = 'update_chapter',
+  MOVE_CHAPTER = 'move_chapter',
+  MERGE_CHAPTERS = 'merge_chapters',
+  SPLIT_CHAPTER = 'split_chapter',
+  ADD_SUB_CHAPTER = 'add_sub_chapter',
+  DELETE_SUB_CHAPTER = 'delete_sub_chapter',
+  MOVE_SUB_CHAPTER = 'move_sub_chapter'
+}
+
+// 大纲操作记录
+export interface OutlineAction {
+  type: OutlineActionType;
+  timestamp: number;
+  // 操作前的状态（用于撤销）
+  before: any;
+  // 操作后的状态（用于重做）
+  after: any;
+  // 操作描述（用于UI显示）
+  description: string;
+}
+
+// 大纲历史状态
+export interface OutlineHistoryState {
+  // 章节列表快照
+  chapters: ChapterOutline[];
+  // 时间戳
+  timestamp: number;
+  // 操作描述
+  description: string;
+  // 是否自动保存
+  isAutoSave?: boolean;
 }

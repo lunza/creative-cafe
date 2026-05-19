@@ -13,6 +13,7 @@ interface WritingModeState {
   config: WritingConfig | null;
   outline: GeneratedOutline | null;
   outlineRaw: string | null;
+  outlineMode: 'ai' | 'manual';
   isOutlineGenerating: boolean;
   currentChapterIndex: number;
   isContentGenerating: boolean;
@@ -27,6 +28,7 @@ interface WritingModeState {
   setConfig: (config: WritingConfig) => void;
   setOutline: (outline: GeneratedOutline) => void;
   setOutlineRaw: (raw: string | null) => void;
+  setOutlineMode: (mode: 'ai' | 'manual') => void;
   setOutlineGenerating: (generating: boolean) => void;
   setCurrentChapterIndex: (index: number) => void;
   setIsContentGenerating: (generating: boolean) => void;
@@ -46,6 +48,7 @@ export const useWritingModeStore = create<WritingModeState>((set) => ({
   config: null,
   outline: null,
   outlineRaw: null,
+  outlineMode: 'ai',
   isOutlineGenerating: false,
   currentChapterIndex: 0,
   isContentGenerating: false,
@@ -63,6 +66,8 @@ export const useWritingModeStore = create<WritingModeState>((set) => ({
   setOutline: (outline) => set({ outline }),
 
   setOutlineRaw: (outlineRaw) => set({ outlineRaw }),
+
+  setOutlineMode: (outlineMode) => set({ outlineMode }),
 
   setOutlineGenerating: (isOutlineGenerating) => set({ isOutlineGenerating }),
 
@@ -96,6 +101,7 @@ export const useWritingModeStore = create<WritingModeState>((set) => ({
     currentView: WritingModeView.PROJECT_LIST,
     config: null,
     outline: null,
+    outlineMode: 'ai',
     isOutlineGenerating: false,
     currentChapterIndex: 0,
     isContentGenerating: false,
@@ -110,6 +116,7 @@ export const useWritingModeStore = create<WritingModeState>((set) => ({
   resetForNewProject: () => set({
     config: null,
     outline: null,
+    outlineMode: 'ai',
     isOutlineGenerating: false,
     currentChapterIndex: 0,
     isContentGenerating: false,
