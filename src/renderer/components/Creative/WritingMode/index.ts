@@ -1,5 +1,9 @@
 export { default as WritingModeEntry } from './WritingModeEntry';
 export { default as WritingProjectList } from './WritingProjectList';
 export { default as WritingConfigPanel } from './WritingConfigPanel';
+export { default as WritingConfigModal } from './WritingConfigModal';
 export { default as OutlineEditor } from './OutlineEditor';
 export { default as ContentWorkspace } from './ContentWorkspace';
+export { default as ManualOutlineEditor } from './ManualOutlineEditor';
+export { default as WritingModeRightPanel } from './WritingModeRightPanel';
+export { default as WritingProgressDashboard } from './WritingProgressDashboard';

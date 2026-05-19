@@ -1,10 +1,15 @@
 import { create } from 'zustand';
-import { WritingProject, WritingConfig, ExportFormat } from '../../shared/types/writing.types';
+import { WritingProject, WritingConfig, ExportFormat, ChapterOutline } from '../../shared/types/writing.types';
+import { MAX_UNDO_HISTORY, AUTO_SAVE_DELAY } from '../../shared/constants/writing.constants';
 
 interface WritingProjectState {
   projects: WritingProject[];
   currentProjectId: string | null;
   isLoading: boolean;
+  outlineHistory: ChapterOutline[][];
+  outlineHistoryIndex: number;
+  isSaving: boolean;
+  autoSaveTimer: NodeJS.Timeout | null;
 
   loadProjects: () => Promise<void>;
   createProject: (config: WritingConfig) => Promise<string>;
@@ -15,12 +20,23 @@ interface WritingProjectState {
   exportProject: (id: string, format: ExportFormat) => Promise<void>;
   getCurrentProject: () => WritingProject | null;
   getProjectById: (id: string) => WritingProject | null;
+  pushOutlineHistory: (chapters: ChapterOutline[], description: string) => void;
+  undoOutline: () => ChapterOutline[] | null;
+  redoOutline: () => ChapterOutline[] | null;
+  canUndo: () => boolean;
+  canRedo: () => boolean;
+  updateOutline: (chapters: ChapterOutline[]) => void;
+  triggerAutoSave: () => void;
 }
 
 export const useWritingProjectStore = create<WritingProjectState>((set, get) => ({
   projects: [],
   currentProjectId: null,
   isLoading: false,
+  outlineHistory: [],
+  outlineHistoryIndex: -1,
+  isSaving: false,
+  autoSaveTimer: null,
 
   loadProjects: async () => {
     set({ isLoading: true });
@@ -106,5 +122,61 @@ export const useWritingProjectStore = create<WritingProjectState>((set, get) => 
   getProjectById: (id) => {
     const { projects } = get();
     return projects.find((p) => p.id === id) || null;
+  },
+
+  pushOutlineHistory: (chapters, description) => {
+    const { outlineHistory, outlineHistoryIndex } = get();
+    const newHistory = outlineHistory.slice(0, outlineHistoryIndex + 1);
+    newHistory.push(chapters.map(c => ({ ...c })));
+    if (newHistory.length > MAX_UNDO_HISTORY) {
+      newHistory.shift();
+    }
+    set({
+      outlineHistory: newHistory,
+      outlineHistoryIndex: newHistory.length - 1
+    });
+  },
+
+  undoOutline: () => {
+    const { outlineHistory, outlineHistoryIndex } = get();
+    if (outlineHistoryIndex <= 0) return null;
+    const newIndex = outlineHistoryIndex - 1;
+    set({ outlineHistoryIndex: newIndex });
+    return outlineHistory[newIndex].map(c => ({ ...c }));
+  },
+
+  redoOutline: () => {
+    const { outlineHistory, outlineHistoryIndex } = get();
+    if (outlineHistoryIndex >= outlineHistory.length - 1) return null;
+    const newIndex = outlineHistoryIndex + 1;
+    set({ outlineHistoryIndex: newIndex });
+    return outlineHistory[newIndex].map(c => ({ ...c }));
+  },
+
+  canUndo: () => {
+    return get().outlineHistoryIndex > 0;
+  },
+
+  canRedo: () => {
+    const { outlineHistory, outlineHistoryIndex } = get();
+    return outlineHistoryIndex < outlineHistory.length - 1;
+  },
+
+  updateOutline: (chapters) => {
+    get().pushOutlineHistory(chapters, '更新大纲');
+    get().triggerAutoSave();
+  },
+
+  triggerAutoSave: () => {
+    const { autoSaveTimer } = get();
+    if (autoSaveTimer) {
+      clearTimeout(autoSaveTimer);
+    }
+    set({ isSaving: true });
+    const timer = setTimeout(async () => {
+      await get().saveProject();
+      set({ isSaving: false, autoSaveTimer: null });
+    }, AUTO_SAVE_DELAY);
+    set({ autoSaveTimer: timer });
   }
 }));

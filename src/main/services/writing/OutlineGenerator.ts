@@ -54,10 +54,12 @@ export class OutlineGenerator {
 
   async generate(
     messages: ChatMessage[],
-    modelConfig: ModelConfig
+    modelConfig: ModelConfig,
+    abortSignal?: AbortSignal
   ): Promise<OutlineGenerationResult> {
     const baseUrl = await this.getBaseUrl();
     const apiKey = await this.getApiKey();
+    const apiKeyTransmission = await this.getApiKeyTransmission();
     const modelName = await this.getModelName(modelConfig.model);
     const engineSystemPrompt = await this.getEngineSystemPrompt();
 
@@ -66,25 +68,44 @@ export class OutlineGenerator {
     }
 
     const enrichedMessages = this.enrichSystemPrompt(messages, engineSystemPrompt);
-    
-    console.log('[OutlineGenerator] Request messages:', JSON.stringify(enrichedMessages.map(m => ({
-      role: m.role,
-      contentPreview: m.content.substring(0, 200) + '...'
-    }))));
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    const requestBody: Record<string, any> = {
+      model: modelName,
+      messages: enrichedMessages,
+      temperature: modelConfig.temperature,
+      max_tokens: modelConfig.maxTokens,
+      stream: true,
+    };
+
+    if (apiKey) {
+      if (apiKeyTransmission === 'header') {
+        const authValue = apiKey.trim().startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
+        headers['Authorization'] = authValue;
+      } else {
+        requestBody.api_key = apiKey;
+      }
+    }
+
+    console.log('[OutlineGenerator] Full request debug:', {
+      baseUrl,
+      fullUrl: `${baseUrl}/v1/chat/completions`,
+      apiKeyTransmission,
+      apiKeyLength: apiKey?.length || 0,
+      apiKeyPreview: apiKey ? `${apiKey.substring(0, 8)}...${apiKey.substring(apiKey.length - 4)}` : 'none',
+      modelName,
+      requestBodyModel: requestBody.model,
+      hasApiKeyInBody: 'api_key' in requestBody,
+    });
+    console.log('[OutlineGenerator] Request body keys:', Object.keys(requestBody));
 
     const response = await fetch(`${baseUrl}/v1/chat/completions`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: modelName,
-        messages: enrichedMessages,
-        temperature: modelConfig.temperature,
-        max_tokens: modelConfig.maxTokens,
-        stream: true
-      })
+      headers,
+      body: JSON.stringify(requestBody),
+      signal: abortSignal
     });
 
     if (!response.ok) {
@@ -98,11 +119,11 @@ export class OutlineGenerator {
     }
 
     console.log('[OutlineGenerator] Starting stream read...');
-    const rawContent = await this.readStreamResponse(response);
+    const rawContent = await this.readStreamResponse(response, abortSignal);
     console.log('[OutlineGenerator] Raw AI response (length):', rawContent.length);
     console.log('[OutlineGenerator] Raw AI response (preview):', rawContent.substring(0, 500));
 
-    if (!rawContent) {
+    if (!rawContent && !abortSignal?.aborted) {
       throw this.createError(
         WritingErrorCode.OUTLINE_GENERATION_FAILED,
         'AI 返回内容为空'
@@ -120,7 +141,7 @@ export class OutlineGenerator {
     }
   }
 
-  private async readStreamResponse(response: Response): Promise<string> {
+  private async readStreamResponse(response: Response, abortSignal?: AbortSignal): Promise<string> {
     const reader = response.body?.getReader();
     if (!reader) {
       throw new Error('Stream reader not available');
@@ -136,7 +157,6 @@ export class OutlineGenerator {
       while (true) {
         const { done, value } = await reader.read();
         if (done) {
-          // Process any remaining data in accumulated buffer after stream ends
           if (accumulatedData.length > 0) {
             const lines = accumulatedData.split('\n');
             const remainingLines = lines.slice(lastProcessedLineCount);
@@ -157,14 +177,12 @@ export class OutlineGenerator {
         const chunk = decoder.decode(value, { stream: true });
         accumulatedData += chunk;
 
-        // Split accumulated data into lines and filter data: lines
         const lines = accumulatedData.split('\n');
         const dataLines = lines.filter(line => {
           const trimmed = line.trim();
           return trimmed.startsWith('data: ') && trimmed.substring(6).trim() !== '[DONE]';
         });
 
-        // Only process complete lines (skip the last one which may be partial)
         const completeDataLines = dataLines.length > 0 ? dataLines.slice(0, -1) : [];
         const newLines = completeDataLines.slice(lastProcessedLineCount);
         lastProcessedLineCount = dataLines.length - 1;
@@ -180,11 +198,16 @@ export class OutlineGenerator {
           }
         }
       }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        console.log('[OutlineGenerator] Stream aborted, returning accumulated content (length:', fullContent.length, ')');
+        return fullContent;
+      }
+      throw error;
     } finally {
       reader.releaseLock();
     }
 
-    // Fallback: if parsed content is too short, try extracting from full accumulated data
     if (fullContent.length < 100 && accumulatedData.length > 0) {
       const fallbackContent = this.extractContentFromRawData(accumulatedData);
       if (fallbackContent.length > fullContent.length) {
@@ -651,21 +674,28 @@ export class OutlineGenerator {
       const storageService = getStorageService();
       const settings = storageService.getSettings();
       
-      console.log('[OutlineGenerator] getBaseUrl - full settings:', JSON.stringify({
-        hasSettings: !!settings,
-        hasAiEngines: !!settings?.aiEngines,
-        aiEnginesCount: settings?.aiEngines?.length || 0,
-        aiEngines: settings?.aiEngines?.map((e: any) => ({ id: e.id, name: e.name, url: e.api_url })),
-        activeEngineId: settings?.activeEngineId,
-        aiObject: settings?.ai ? Object.keys(settings.ai) : null,
-        rawBaseUrl: settings?.baseUrl
-      }, null, 2));
+      console.log('[OutlineGenerator] getBaseUrl - raw settings type:', typeof settings);
+      console.log('[OutlineGenerator] getBaseUrl - has aiEngines:', Array.isArray(settings?.aiEngines));
+      console.log('[OutlineGenerator] getBaseUrl - aiEngines count:', settings?.aiEngines?.length || 0);
+      console.log('[OutlineGenerator] getBaseUrl - activeEngineId:', settings?.activeEngineId);
+      
+      if (Array.isArray(settings?.aiEngines)) {
+        settings.aiEngines.forEach((e: any, i: number) => {
+          console.log(`[OutlineGenerator] Engine[${i}]:`, {
+            id: e.id,
+            name: e.name,
+            api_url: e.api_url,
+            api_key_len: e.api_key?.length || 0,
+            api_key_tx: e.api_key_transmission
+          });
+        });
+      }
       
       const engines = settings?.aiEngines || [];
       if (engines.length > 0) {
         const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
         const url = activeEngine?.api_url;
-        console.log('[OutlineGenerator] getBaseUrl - using engine:', activeEngine?.name, 'url:', url);
+        console.log('[OutlineGenerator] getBaseUrl - SELECTED engine:', activeEngine?.name, 'url:', url);
         return url;
       }
       
@@ -686,14 +716,38 @@ export class OutlineGenerator {
       if (engines.length > 0) {
         const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
         const key = activeEngine?.api_key;
-        console.log('[OutlineGenerator] getApiKey - using engine:', activeEngine?.name, 'hasKey:', !!key);
+        console.log('[OutlineGenerator] getApiKey - engine name:', activeEngine?.name, 'hasKey:', !!key, 'keyLen:', key?.length || 0);
+        if (key && key.length > 20) {
+          console.log('[OutlineGenerator] getApiKey - key preview:', `${key.substring(0, 10)}...${key.substring(key.length - 4)}`);
+        }
         return key;
       }
       
+      console.warn('[OutlineGenerator] getApiKey - no aiEngines, fallback to legacy');
       return settings?.ai?.apiKey || settings?.ai?.apiToken || settings?.apiKey;
     } catch (error) {
       console.error('[OutlineGenerator] getApiKey error:', error);
       return undefined;
+    }
+  }
+
+  private async getApiKeyTransmission(): Promise<string> {
+    try {
+      const storageService = getStorageService();
+      const settings = storageService.getSettings();
+      
+      const engines = settings?.aiEngines || [];
+      if (engines.length > 0) {
+        const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
+        const transmission = activeEngine?.api_key_transmission || 'body';
+        console.log('[OutlineGenerator] getApiKeyTransmission - using:', transmission);
+        return transmission;
+      }
+      
+      return 'body';
+    } catch (error) {
+      console.error('[OutlineGenerator] getApiKeyTransmission error:', error);
+      return 'body';
     }
   }
 

@@ -348,6 +348,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     deleteProject: (projectId: string) => ipcRenderer.invoke('writing:deleteProject', projectId),
     exportProject: (projectId: string, format: string) => ipcRenderer.invoke('writing:exportProject', projectId, format),
     generateOutline: (request: any) => ipcRenderer.invoke('writing:generateOutline', request),
+    saveOutline: (rawContent: string, config: any) => ipcRenderer.invoke('writing:saveOutline', { rawContent, config }),
     generateChapter: (request: any) => ipcRenderer.invoke('writing:generateChapter', request),
     cancelGeneration: (projectId: string) => ipcRenderer.invoke('writing:cancelGeneration', projectId),
     loadResources: (params: { worldBookIds: string[]; characterCardIds: string[] }) => ipcRenderer.invoke('writing:loadResources', params),

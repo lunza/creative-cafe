@@ -61,6 +61,7 @@ export class ContentGenerator {
   ): Promise<GeneratedContent> {
     const baseUrl = await this.getBaseUrl();
     const apiKey = await this.getApiKey();
+    const apiKeyTransmission = await this.getApiKeyTransmission();
     const modelName = await this.getModelName(modelConfig.model);
     const engineSystemPrompt = await this.getEngineSystemPrompt();
 
@@ -72,19 +73,30 @@ export class ContentGenerator {
     let fullContent = '';
     const startTime = Date.now();
 
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    const requestBody: Record<string, any> = {
+      model: modelName,
+      messages,
+      temperature: modelConfig.temperature,
+      max_tokens: modelConfig.maxTokens,
+      stream: true,
+    };
+
+    if (apiKey) {
+      if (apiKeyTransmission === 'header') {
+        const authValue = apiKey.trim().startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
+        headers['Authorization'] = authValue;
+      } else {
+        requestBody.api_key = apiKey;
+      }
+    }
+
     const response = await fetch(`${baseUrl}/v1/chat/completions`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: modelName,
-        messages,
-        temperature: modelConfig.temperature,
-        max_tokens: modelConfig.maxTokens,
-        stream: true
-      }),
+      headers,
+      body: JSON.stringify(requestBody),
       signal: abortSignal
     });
 
@@ -323,6 +335,26 @@ export class ContentGenerator {
     } catch (error) {
       console.error('[ContentGenerator] getApiKey error:', error);
       return undefined;
+    }
+  }
+
+  private async getApiKeyTransmission(): Promise<string> {
+    try {
+      const storageService = getStorageService();
+      const settings = storageService.getSettings();
+      
+      const engines = settings?.aiEngines || [];
+      if (engines.length > 0) {
+        const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
+        const transmission = activeEngine?.api_key_transmission || 'body';
+        console.log('[ContentGenerator] getApiKeyTransmission - using:', transmission);
+        return transmission;
+      }
+      
+      return 'body';
+    } catch (error) {
+      console.error('[ContentGenerator] getApiKeyTransmission error:', error);
+      return 'body';
     }
   }
 

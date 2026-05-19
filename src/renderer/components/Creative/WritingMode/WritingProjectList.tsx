@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Card, Button, List, Tag, Empty, Spin, Input, Select, Popconfirm, message } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, DeleteOutlined, SearchOutlined } from '@ant-design/icons';
+import { Card, Button, List, Tag, Empty, Spin, Input, Select, Popconfirm, message, Modal } from 'antd';
+import { PlusOutlined, FolderOpenOutlined, DeleteOutlined, SearchOutlined, EditOutlined } from '@ant-design/icons';
 import { WritingProject, ProjectStatus } from '../../../../shared/types/writing.types';
 import { useWritingProjectStore } from '../../../stores/writingProjectStore';
 
@@ -29,7 +29,11 @@ const WritingProjectList: React.FC<WritingProjectListProps> = ({ projects, isLoa
   const [searchText, setSearchText] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [sortBy, setSortBy] = useState<string>('updatedAt');
+  const [renameModalVisible, setRenameModalVisible] = useState(false);
+  const [renamingProject, setRenamingProject] = useState<WritingProject | null>(null);
+  const [newTitle, setNewTitle] = useState('');
   const deleteProject = useWritingProjectStore((state) => state.deleteProject);
+  const updateProject = useWritingProjectStore((state) => state.updateProject);
 
   const filteredProjects = projects
     .filter(p => {
@@ -50,6 +54,27 @@ const WritingProjectList: React.FC<WritingProjectListProps> = ({ projects, isLoa
       message.success('已删除');
     } else {
       message.error('删除失败');
+    }
+  };
+
+  const handleRename = (project: WritingProject) => {
+    setRenamingProject(project);
+    setNewTitle(project.title);
+    setRenameModalVisible(true);
+  };
+
+  const handleRenameConfirm = async () => {
+    if (!newTitle.trim() || !renamingProject) {
+      message.warning('请输入项目名称');
+      return;
+    }
+    const success = await updateProject(renamingProject.id, { title: newTitle.trim() });
+    if (success) {
+      message.success('重命名成功');
+      setRenameModalVisible(false);
+      setRenamingProject(null);
+    } else {
+      message.error('重命名失败');
     }
   };
 
@@ -129,7 +154,19 @@ const WritingProjectList: React.FC<WritingProjectListProps> = ({ projects, isLoa
                 <Card.Meta
                   title={
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: 16 }}>{project.title}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontSize: 16 }}>{project.title}</span>
+                        <Button
+                          size="small"
+                          type="text"
+                          icon={<EditOutlined />}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRename(project);
+                          }}
+                          style={{ padding: '0 4px' }}
+                        />
+                      </div>
                       <Tag color={statusColors[project.status]}>{statusLabels[project.status]}</Tag>
                     </div>
                   }
@@ -161,6 +198,26 @@ const WritingProjectList: React.FC<WritingProjectListProps> = ({ projects, isLoa
           )}
         />
       )}
+      <Modal
+        title="重命名项目"
+        open={renameModalVisible}
+        onOk={handleRenameConfirm}
+        onCancel={() => {
+          setRenameModalVisible(false);
+          setRenamingProject(null);
+        }}
+        okText="保存"
+        cancelText="取消"
+      >
+        <Input
+          value={newTitle}
+          onChange={(e) => setNewTitle(e.target.value)}
+          onPressEnter={handleRenameConfirm}
+          autoFocus
+          maxLength={50}
+          showCount
+        />
+      </Modal>
     </div>
   );
 };

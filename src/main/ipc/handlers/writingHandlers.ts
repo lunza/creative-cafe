@@ -13,7 +13,9 @@ import {
   ProjectMetadata,
   GenerationMetadata,
   WritingErrorCode,
-  ExportFormat
+  ExportFormat,
+  GeneratedOutline,
+  ChapterOutline
 } from '../../../shared/types/writing.types';
 
 const activeAbortControllers = new Map<string, AbortController>();
@@ -157,8 +159,8 @@ export function registerWritingHandlers(): void {
       }
 
       const abortController = new AbortController();
-      const requestId = `outline_${Date.now()}`;
-      activeAbortControllers.set(requestId, abortController);
+      const outlineKey = 'outline_generate';
+      activeAbortControllers.set(outlineKey, abortController);
 
       try {
         const resources = request.resources || { worldBookIds: [], characterCardIds: [] };
@@ -181,48 +183,34 @@ export function registerWritingHandlers(): void {
 
         const resourceContext = writingResourceManager.buildResourceContextSummary(worldBooks, characters, userPersonas);
         console.log('[Writing] Resource context (length):', resourceContext.length);
-        console.log('[Writing] Resource context (preview):', resourceContext.substring(0, 300));
 
         outlineGenerator.onStreamChunk((chunk: string) => {
-          event.sender.send('writing:stream:chunk', { requestId, chunk });
+          event.sender.send('writing:stream:chunk', { chunk });
         });
 
         const result = await outlineGenerator.generate(
           outlineGenerator.buildPrompt({ ...request, resources, _resourceContext: resourceContext }),
-          request.modelConfig
+          request.modelConfig,
+          abortController.signal
         );
 
-        activeAbortControllers.delete(requestId);
-
-        try {
-          event.sender.send('writing:stream:complete', { requestId, outline: result.outline });
-        } catch (sendError) {
-          console.warn('[Writing] Failed to send stream:complete event:', sendError);
-        }
+        activeAbortControllers.delete(outlineKey);
 
         return {
           success: true,
-          outline: result.outline,
+          outline: null,
           outlineRaw: result.rawContent
         };
       } catch (error) {
-        activeAbortControllers.delete(requestId);
+        activeAbortControllers.delete(outlineKey);
         console.error('[Writing] Outline generation error:', error);
 
         if (error instanceof Error && 'rawContent' in error && error.rawContent) {
-          console.warn('[Writing] Parse failed but raw content available, preserving...');
-          try {
-            event.sender.send('writing:stream:error', {
-              requestId: `outline_${Date.now()}`,
-              error: error.message
-            });
-          } catch {}
           return {
             success: false,
             outline: null,
             outlineRaw: error.rawContent as string,
-            parseError: error.message,
-            error: '大纲解析失败，但原始内容已保留。你可以在下方查看并手动修正。'
+            error: '大纲解析失败，但原始内容已保留'
           };
         }
 
@@ -231,14 +219,86 @@ export function registerWritingHandlers(): void {
     } catch (error) {
       console.error('[Writing] Outline generation failed:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
-      try {
-        event.sender.send('writing:stream:error', { requestId: `outline_${Date.now()}`, error: errorMessage });
-      } catch {}
       return {
         success: false,
         outline: null,
         outlineRaw: null,
         error: errorMessage || '大纲生成失败，请稍后重试'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:saveOutline', async (_event, { rawContent, config }) => {
+    try {
+      if (!rawContent) {
+        return { success: false, error: '原始内容为空', outline: null, outlineRaw: null };
+      }
+
+      const outline = outlineGenerator.parseOutlineResponse(rawContent);
+
+      const projectId = `writing_project_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const chapters = config.parameters.chapterCount > 0
+        ? Array.from({ length: config.parameters.chapterCount }, (_, i) => ({
+            index: i,
+            title: outline.chapters[i]?.title || `第${i + 1}章`,
+            outline: {
+              summary: outline.chapters[i]?.summary || '',
+              keyPlotPoints: outline.chapters[i]?.keyPlotPoints || [],
+              characters: outline.chapters[i]?.characters || [],
+              scenes: outline.chapters[i]?.scenes || [],
+              targetWordCount: outline.chapters[i]?.targetWordCount || Math.round(config.parameters.targetWordCount / config.parameters.chapterCount)
+            },
+            content: '',
+            status: ChapterStatus.PENDING,
+            wordCount: 0,
+            versions: [],
+            lastModified: Date.now()
+          }))
+        : [];
+
+      const project: WritingProject = {
+        id: projectId,
+        title: outline.workInfo?.suggestedTitle || config.parameters.creativeDescription.substring(0, 20) || '新作品',
+        status: ProjectStatus.OUTLINING,
+        config,
+        outline,
+        outlineRaw: rawContent,
+        outlineHistory: [],
+        chapters,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        lastSavedAt: Date.now(),
+        metadata: {
+          totalWordCount: 0,
+          completedChapters: 0,
+          generationSettings: {
+            model: config.modelConfig?.model || '',
+            temperature: config.modelConfig?.temperature || 0.7
+          },
+          continuityInfo: {
+            foreshadowing: [],
+            plotThreads: [],
+            characterDevelopment: {}
+          }
+        }
+      };
+
+      await writingStorageService.saveProject(project);
+
+      return {
+        success: true,
+        outline,
+        outlineRaw: rawContent,
+        projectId
+      };
+    } catch (error) {
+      console.error('[Writing] Save outline failed:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return {
+        success: false,
+        outline: null,
+        outlineRaw: rawContent,
+        error: errorMessage || '解析失败'
       };
     }
   });
@@ -302,7 +362,7 @@ export function registerWritingHandlers(): void {
   ipcMain.handle('writing:cancelGeneration', async (_event, projectId: string) => {
     const keysToDelete: string[] = [];
     for (const [key, controller] of activeAbortControllers) {
-      if (key.startsWith(projectId)) {
+      if (key === 'outline_generate' || key.startsWith(projectId)) {
         controller.abort();
         keysToDelete.push(key);
       }
@@ -369,6 +429,56 @@ export function registerWritingHandlers(): void {
     try {
       const success = await writingStorageService.restoreVersion(projectId, chapterIndex, versionId);
       return { success };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:outline:update', async (_event, { projectId, chapters }) => {
+    try {
+      const project = await writingStorageService.loadProject(projectId);
+      if (!project) return { success: false, error: 'Project not found' };
+      project.outline = { ...project.outline, chapters } as GeneratedOutline;
+      project.updatedAt = Date.now();
+      await writingStorageService.saveProject(project);
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:outline:save', async (_event, { projectId, outline, note }) => {
+    try {
+      const project = await writingStorageService.loadProject(projectId);
+      if (!project) return { success: false, error: 'Project not found' };
+      project.outlineHistory = project.outlineHistory || [];
+      project.outlineHistory.push({
+        outline,
+        timestamp: Date.now(),
+        note
+      });
+      project.updatedAt = Date.now();
+      await writingStorageService.saveProject(project);
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:outline:load', async (_event, { projectId }) => {
+    try {
+      const project = await writingStorageService.loadProject(projectId);
+      if (!project) return { success: false, error: 'Project not found' };
+      return { success: true, outline: project.outline, outlineRaw: project.outlineRaw };
     } catch (error) {
       return {
         success: false,

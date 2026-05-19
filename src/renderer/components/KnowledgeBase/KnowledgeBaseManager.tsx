@@ -3,7 +3,6 @@ import { Table, Button, Input, Modal, Form, Select, Tag, Space, Popconfirm, mess
 import { PlusOutlined, SearchOutlined, EditOutlined, DeleteOutlined, CloudUploadOutlined, FileTextOutlined, InfoCircleOutlined, EyeOutlined, ExperimentOutlined, FolderOutlined } from '@ant-design/icons';
 import { useKnowledgeBaseStore } from '../../stores/knowledgeBaseStore';
 import { useVectorStore } from '../../stores/vectorStore';
-import { VectorScopeSelector } from '../Vector/VectorScopeSelector';
 import type { ColumnsType } from 'antd/es/table';
 import type { TableRowSelection } from 'antd/es/table/interface';
 import type { KnowledgeItem } from '../../types/knowledgeBase';
@@ -1151,8 +1150,6 @@ export const KnowledgeBaseManager: React.FC = () => {
           
           <Card title="测试 1: 相似性语义查询" style={{ marginBottom: 16 }}>
             <Space direction="vertical" style={{ width: '100%' }} size="middle">
-              <VectorScopeSelector />
-              
               <div style={{ display: 'flex', gap: 16 }}>
                 <div style={{ flex: 1 }}>
                   <label style={{ display: 'block', marginBottom: 8, fontWeight: 500 }}>查询文本</label>

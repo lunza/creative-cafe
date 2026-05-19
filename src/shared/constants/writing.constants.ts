@@ -1,4 +1,13 @@
-import { NovelType, NarrativePerspective, WritingStyle } from '../types/writing.types';
+import { NovelType, NarrativePerspective, WritingStyle, ChapterType, ImportanceLevel, ProjectStatus } from '../types/writing.types';
+
+export const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
+  [ProjectStatus.DRAFT]: '草稿',
+  [ProjectStatus.IN_PROGRESS]: '进行中',
+  [ProjectStatus.WRITING]: '创作中',
+  [ProjectStatus.REVIEWING]: '审阅中',
+  [ProjectStatus.COMPLETED]: '已完成',
+  [ProjectStatus.ARCHIVED]: '已归档'
+};
 
 export const NOVEL_TYPE_LABELS: Record<NovelType, string> = {
   [NovelType.WEB_NOVEL]: '网文',
@@ -59,3 +68,42 @@ export const MIN_CHAPTER_COUNT = 1;
 export const MAX_CHAPTER_COUNT = 200;
 export const MIN_DESCRIPTION_LENGTH = 10;
 export const MAX_DESCRIPTION_LENGTH = 2000;
+
+export const CHAPTER_TYPE_LABELS: Record<ChapterType, string> = {
+  [ChapterType.MAIN_PLOT]: '主线剧情',
+  [ChapterType.SUB_PLOT]: '支线剧情',
+  [ChapterType.TRANSITION]: '过渡章节',
+  [ChapterType.CLIMAX]: '高潮章节',
+  [ChapterType.ENDING]: '结尾章节'
+};
+
+export const CHAPTER_TYPE_OPTIONS = Object.entries(CHAPTER_TYPE_LABELS).map(([value, label]) => ({
+  value,
+  label
+}));
+
+export const IMPORTANCE_LEVEL_LABELS: Record<ImportanceLevel, string> = {
+  [ImportanceLevel.LOW]: '低',
+  [ImportanceLevel.MEDIUM]: '中',
+  [ImportanceLevel.HIGH]: '高',
+  [ImportanceLevel.CRITICAL]: '关键'
+};
+
+export const IMPORTANCE_LEVEL_OPTIONS = Object.entries(IMPORTANCE_LEVEL_LABELS).map(([value, label]) => ({
+  value,
+  label
+}));
+
+export const IMPORTANCE_COLORS: Record<ImportanceLevel, string> = {
+  [ImportanceLevel.LOW]: '#52c41a',
+  [ImportanceLevel.MEDIUM]: '#faad14',
+  [ImportanceLevel.HIGH]: '#f5222d',
+  [ImportanceLevel.CRITICAL]: '#722ed1'
+};
+
+export const MAX_CHAPTER_TITLE_LENGTH = 100;
+export const MAX_CHAPTER_SUMMARY_LENGTH = 2000;
+export const MIN_CHAPTER_WORD_COUNT = 100;
+export const MAX_CHAPTER_WORD_COUNT = 50000;
+export const MAX_UNDO_HISTORY = 20;
+export const AUTO_SAVE_DELAY = 500;

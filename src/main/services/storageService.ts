@@ -536,15 +536,79 @@ class StorageService {
     }
   }
 
+  // 清理配置中的向量数据，防止配置文件膨胀
+  private sanitizeSettings(settings: any): any {
+    const sanitized = { ...settings };
+    
+    // 移除可能错误存储的顶级向量数据数组
+    const vectorDataKeys = ['vectors', 'vectorData', 'embeddings', 'vectorArray', 'vectors_data'];
+    for (const key of vectorDataKeys) {
+      if (sanitized[key] && Array.isArray(sanitized[key])) {
+        console.warn(`[StorageService] 检测到配置中包含向量数据字段 "${key}"，已自动移除`);
+        delete sanitized[key];
+      }
+    }
+    
+    // 检查 vector 配置字段是否包含异常大的数据
+    if (sanitized.vector) {
+      const vectorConfig = sanitized.vector;
+      const vectorConfigStr = JSON.stringify(vectorConfig);
+      const vectorConfigSize = vectorConfigStr.length;
+      
+      // 如果vector配置超过10KB，视为异常
+      if (vectorConfigSize > 10000) {
+        console.warn(`[StorageService] vector配置异常大: ${vectorConfigSize} bytes，执行清理`);
+        
+        // 仅保留合法配置字段，移除可能的数据字段
+        const allowedFields = [
+          'embeddingMode', 'remoteModel', 'remoteApiUrl', 'remoteApiKey',
+          'remoteApiKeyTransmission', 'localModel', 'vectorStoreMode',
+          'cacheEnabled', 'cacheL1Size', 'cacheL1TTL', 'cacheL2TTL',
+          'defaultTopK', 'minSimilarityScore', 'contextWindowTokens',
+          'autoVectorizeWorldBook', 'autoVectorizeKnowledge',
+          'autoRetrieveContext', 'contextTopK', 'contextMinScore',
+          'dimension'
+        ];
+        
+        const cleanedVectorConfig: any = {};
+        for (const field of allowedFields) {
+          if (field in vectorConfig) {
+            cleanedVectorConfig[field] = vectorConfig[field];
+          }
+        }
+        
+        // 检查是否包含向量数据字段并移除
+        const vectorDataInConfig = ['vectors', 'vectorData', 'embeddings', 'items', 'records'];
+        for (const key of vectorDataInConfig) {
+          if (cleanedVectorConfig[key]) {
+            console.warn(`[StorageService] 从vector配置中移除数据字段 "${key}"`);
+            delete cleanedVectorConfig[key];
+          }
+        }
+        
+        sanitized.vector = cleanedVectorConfig;
+        console.log(`[StorageService] vector配置已清理，新大小: ${JSON.stringify(cleanedVectorConfig).length} bytes`);
+      }
+    }
+    
+    return sanitized;
+  }
+
   // 直接写入 settings.json 文件（兼容旧数据格式）
   setSettings(settings: any): void {
     try {
+      // 清理配置中的向量数据
+      const cleanedSettings = this.sanitizeSettings(settings);
+      
       const settingsPath = path.join(this.storageManager['baseDataPath'], 'settings.json');
       const settingsDir = path.dirname(settingsPath);
       if (!fs.existsSync(settingsDir)) {
         fs.mkdirSync(settingsDir, { recursive: true });
       }
-      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+      fs.writeFileSync(settingsPath, JSON.stringify(cleanedSettings, null, 2), 'utf-8');
+      
+      // 同时更新存储管理器中的配置
+      this.set(STORAGE_KEYS.SETTINGS, cleanedSettings);
     } catch (error) {
       console.error('写入 settings.json 失败:', error);
       this.set(STORAGE_KEYS.SETTINGS, settings);

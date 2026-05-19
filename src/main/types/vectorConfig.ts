@@ -91,6 +91,15 @@ export const VectorSourceTypeStorageConfig: Record<VectorSourceType, SourceTypeS
   },
 };
 
+/**
+ * 向量配置接口 - 仅包含配置参数，不包含向量数据
+ * 
+ * 重要说明：
+ * - 此接口用于存储向量化的配置参数（模型、API、缓存等设置）
+ * - 向量数据（vector arrays）必须存储在独立的 vecstore.json 文件中
+ * - 严禁在此配置中包含 vectors、embeddings、items 等数据字段
+ * - 配置大小应保持在 10KB 以下
+ */
 export interface VectorConfig {
   embeddingMode: EmbeddingMode;
   remoteModel: string;
@@ -107,6 +116,13 @@ export interface VectorConfig {
   autoVectorizeWorldBook: boolean;
   autoVectorizeKnowledge: boolean;
   dimension?: number;
+  
+  // 禁止字段说明（以下字段不应出现在此配置中）：
+  // - vectors: number[][] - 向量数组，应存储在 vecstore.json
+  // - vectorData: any[] - 向量数据，应存储在 vecstore.json  
+  // - embeddings: any[] - 嵌入向量，应存储在 vecstore.json
+  // - items: VectorItem[] - 向量项，应存储在 vecstore.json
+  // - records: any[] - 记录数据，应存储在 vecstore.json
 }
 
 export interface EmbeddingResult {
