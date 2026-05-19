@@ -24,6 +24,7 @@ import { WorldBookVectorPanel } from './WorldBookVectorPanel';
 import WorldBookList from './WorldBookList';
 import WorldBookEntryList from './WorldBookEntryList';
 import WorldBookCreateModal from './WorldBookCreateModal';
+import WorldBookGenerateModal from './WorldBookGenerateModal';
 import WorldBookAddEntryModal from './WorldBookAddEntryModal';
 import { StoragePathDisplay } from '../common/StoragePathDisplay';
 import { 
@@ -43,6 +44,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { useSettingStore } from '../../stores/settingStore';
 import { useLogStore } from '../../stores/logStore';
 import { AppSetting } from '../../settings';
+import { sendCharacterAIRequest } from '../../utils/characterAIUtils';
 import type { ColumnsType } from 'antd/es/table';
 import '../../styles/list-common.css';
 import './WorldBookManager.css';
@@ -136,6 +138,8 @@ const WorldBookManager: React.FC = () => {
   const [generatedEntries, setGeneratedEntries] = useState<any[]>([]);
   const [generatedWorldBookName, setGeneratedWorldBookName] = useState<string>('');
   const [generatedWorldBookDescription, setGeneratedWorldBookDescription] = useState<string>('');
+  const [isGenerateModalOpen, setIsGenerateModalOpen] = useState(false);
+  const [isGeneratingFromChars, setIsGeneratingFromChars] = useState(false);
   // 添加条目模态框状态
   const [isAddEntryModalOpen, setIsAddEntryModalOpen] = useState(false);
   const [addEntryForm] = Form.useForm();
@@ -3193,6 +3197,124 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
     }
   };
 
+  // AI基于角色卡生成世界书
+  const handleGenerateFromCharacters = async (charactersInfo: string): Promise<{ name: string; description: string; entries: any[] }> => {
+    addLog('[WorldBook] 开始基于角色卡生成世界书');
+    setIsGeneratingFromChars(true);
+    try {
+      const activeEngine = getActiveEngineConfig();
+      if (!activeEngine) {
+        throw new Error('请先在配置管理中设置AI引擎');
+      }
+      if (!activeEngine.api_url) {
+        throw new Error('API地址不能为空');
+      }
+
+      const systemPrompt = `你是一个专业的世界书创建助手。你的任务是根据用户提供的角色卡信息，自动生成配套的世界书。
+世界书应该包含与角色卡相关的场景、地点、规则、物品等条目。
+
+【输出格式要求】
+你必须返回JSON格式数据，包含以下字段：
+{
+  "name": "世界书名称（根据角色卡信息推断合适的名称）",
+  "description": "世界书简介（描述这个世界书的用途和范围）",
+  "entries": [
+    {
+      "comment": "条目标题/注释",
+      "key": ["关键词1", "关键词2"],
+      "content": "条目详细内容"
+    }
+  ]
+}
+
+【要求】
+1. 生成至少3-5个条目
+2. 条目内容应该与角色卡信息相关
+3. 关键词应该包含主要触发词和同义词
+4. 条目内容应该详细、连贯
+5. 请只返回JSON数据，不要包含其他说明文字`;
+
+      const userPrompt = `请根据以下角色卡信息，生成配套的世界书：
+
+${charactersInfo}
+
+请只返回JSON数据。`;
+
+      const result = await sendCharacterAIRequest(activeEngine, systemPrompt, userPrompt);
+      if (!result) {
+        throw new Error('AI未返回有效内容');
+      }
+
+      const cleaned = cleanAIThoughts(result);
+      const parsedData = parseAIJsonResponse(cleaned);
+
+      return {
+        name: parsedData.name || '未命名世界书',
+        description: parsedData.description || '',
+        entries: Array.isArray(parsedData.entries) ? parsedData.entries : []
+      };
+    } catch (error) {
+      addLog(`[WorldBook] 基于角色卡生成世界书失败: ${error instanceof Error ? error.message : '未知错误'}`, 'error');
+      throw error;
+    } finally {
+      setIsGeneratingFromChars(false);
+    }
+  };
+
+  // 从AI生成创建世界书
+  const handleCreateFromAI = async (name: string, description: string, entries: any[]) => {
+    addLog(`[WorldBook] 开始从AI生成创建世界书: ${name}`);
+    try {
+      const worldBookData = {
+        name,
+        description,
+        entries: entries.reduce((acc: any, entry: any, index: number) => {
+          acc[index.toString()] = entry;
+          return acc;
+        }, {})
+      };
+
+      const worldBookDir = await window.electronAPI.worldBook.getDirectory();
+      const targetPath = `${worldBookDir}/${name}.json`;
+
+      const existingWorldBooks = await window.electronAPI.worldBook.list();
+      const existingFile = existingWorldBooks.find((wb: any) => wb.path === targetPath);
+
+      if (existingFile) {
+        Modal.confirm({
+          title: '文件已存在',
+          content: `世界书"${name}"已存在，是否覆盖？`,
+          okText: '覆盖',
+          cancelText: '取消',
+          onOk: async () => {
+            const result = await window.electronAPI.worldBook.write(targetPath, worldBookData);
+            if (result.success) {
+              addLog(`[WorldBook] AI生成世界书创建成功（覆盖）: ${name}`, 'info');
+              message.success('世界书创建成功（已覆盖）');
+              setIsGenerateModalOpen(false);
+              fetchWorldBooks();
+            } else {
+              message.error(`创建失败: ${result.error}`);
+            }
+          }
+        });
+      } else {
+        const result = await window.electronAPI.worldBook.write(targetPath, worldBookData);
+        if (result.success) {
+          addLog(`[WorldBook] AI生成世界书创建成功: ${name}`, 'info');
+          message.success('世界书创建成功');
+          setIsGenerateModalOpen(false);
+          fetchWorldBooks();
+        } else {
+          message.error(`创建失败: ${result.error}`);
+        }
+      }
+    } catch (error) {
+      addLog(`[WorldBook] 从AI生成创建世界书失败: ${error instanceof Error ? error.message : '未知错误'}`, 'error');
+      message.error(`创建失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    }
+  };
+
   // 提取世界书中已存在的所有关键词
   const extractExistingKeywords = () => {
     if (!worldBookContent || !worldBookContent.entries) {
@@ -4112,6 +4234,9 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsCreateModalOpen(true)}>
             新建世界书
+          </Button>
+          <Button icon={<ThunderboltOutlined />} onClick={() => setIsGenerateModalOpen(true)}>
+            AI生成世界书
           </Button>
         </Space>
       </div>
@@ -5531,6 +5656,13 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
           />
         </div>
       </Modal>
+
+      <WorldBookGenerateModal
+        open={isGenerateModalOpen}
+        onCancel={() => setIsGenerateModalOpen(false)}
+        onCreateWorldBook={handleCreateFromAI}
+        onGenerateFromCharacters={handleGenerateFromCharacters}
+      />
 
     </div>
   );

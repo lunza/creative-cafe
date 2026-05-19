@@ -127,7 +127,22 @@ export interface WritingResourceConfig {
   worldBookIds: string[];
   characterCardIds: string[];
   userPersonaIds?: string[];
+  knowledgeItemIds?: string[];
   referenceMaterials?: ReferenceMaterial[];
+}
+
+// 素材类型
+export type MaterialType = 'worldbook' | 'character' | 'persona' | 'knowledge';
+
+// 素材项
+export interface MaterialItem {
+  id: string;
+  name: string;
+  type: MaterialType;
+  description?: string;
+  path: string;
+  isSelected: boolean;
+  metadata?: Record<string, any>;
 }
 
 // 创作参数

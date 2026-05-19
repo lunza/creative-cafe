@@ -1,16 +1,13 @@
-import React, { useState, useEffect } from 'react';
-import { Tabs, Input, Button, Empty, List, Avatar, Card, Tooltip } from 'antd';
-import { BookOutlined, RobotOutlined, EyeOutlined, SearchOutlined, UserOutlined, IdcardOutlined, GlobalOutlined } from '@ant-design/icons';
+import React, { useState, useCallback } from 'react';
+import { Tabs, Input, Button, Empty, Tag, Tooltip, Typography, Spin, Badge } from 'antd';
+import { BookOutlined, RobotOutlined, EyeOutlined, SearchOutlined, ReloadOutlined, GlobalOutlined, IdcardOutlined, UserOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import { theme } from 'antd';
-import { useWritingProjectStore } from '../../../stores/writingProjectStore';
+import { MaterialType } from '../../../shared/types/writing.types';
+import { useWritingMaterials } from './useWritingMaterials';
+import MaterialList from './MaterialList';
 
 const { TextArea } = Input;
-
-interface ResourceItem {
-  id: string;
-  name: string;
-  description?: string;
-}
+const { Text } = Typography;
 
 interface WritingModeRightPanelProps {
   width: number;
@@ -19,133 +16,228 @@ interface WritingModeRightPanelProps {
 
 const WritingModeRightPanel: React.FC<WritingModeRightPanelProps> = ({ width, onClose }) => {
   const { token } = theme.useToken();
-  const projects = useWritingProjectStore((state) => state.projects);
-  const currentProjectId = useWritingProjectStore((state) => state.currentProjectId);
-  const currentProject = currentProjectId ? projects.find((p) => p.id === currentProjectId) || null : null;
+  const {
+    loading,
+    searchQuery,
+    setSearchQuery,
+    filteredWorldBooks,
+    filteredCharacters,
+    filteredPersonas,
+    filteredKnowledgeItems,
+    toggleMaterial,
+    getSelectedCount,
+    refreshMaterials,
+  } = useWritingMaterials();
 
-  const [worldBooks, setWorldBooks] = useState<ResourceItem[]>([]);
-  const [characters, setCharacters] = useState<ResourceItem[]>([]);
-  const [personas, setPersonas] = useState<ResourceItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [activeMaterialTab, setActiveMaterialTab] = useState<string>('worldbook');
+  const [selectedSummaryVisible, setSelectedSummaryVisible] = useState(false);
 
-  useEffect(() => {
-    if (!currentProject) {
-      setWorldBooks([]);
-      setCharacters([]);
-      setPersonas([]);
-      setLoading(false);
-      return;
-    }
+  const handleRefresh = useCallback(() => {
+    refreshMaterials();
+  }, [refreshMaterials]);
 
-    setLoading(true);
-    const config = currentProject.config;
-    const worldBookIds = config.resources?.worldBookIds || [];
-    const characterCardIds = config.resources?.characterCardIds || [];
-    const userPersonaIds = config.resources?.userPersonaIds || [];
-
-    Promise.all([
-      worldBookIds.length > 0 && window.electronAPI?.worldBook?.list()
-        ? window.electronAPI.worldBook.list()
-        : Promise.resolve([]),
-      characterCardIds.length > 0 && window.electronAPI?.character?.list()
-        ? window.electronAPI.character.list()
-        : Promise.resolve([]),
-      userPersonaIds.length > 0 && window.electronAPI?.avatar?.list()
-        ? window.electronAPI.avatar.list()
-        : Promise.resolve([]),
-    ]).then(([worldBooksResult, charactersResult, personasResult]) => {
-      const wbList = Array.isArray(worldBooksResult) ? worldBooksResult : [];
-      const chList = Array.isArray(charactersResult) ? charactersResult : [];
-      const paList = Array.isArray(personasResult) ? personasResult : [];
-
-      const matchedWorldBooks = wbList
-        .filter((wb: any) => worldBookIds.includes(wb.path))
-        .map((wb: any) => ({
-          id: wb.path,
-          name: wb.name.replace(/\.(json|json5)$/i, ''),
-          description: '',
-        }));
-
-      const matchedCharacters = chList
-        .filter((ch: any) => characterCardIds.includes(ch.path))
-        .map((ch: any) => ({
-          id: ch.path,
-          name: ch.characterName || ch.name.replace(/\.(png|jpg|jpeg|webp)$/i, ''),
-          description: '',
-        }));
-
-      const matchedPersonas = paList
-        .filter((p: any) => userPersonaIds.includes(p.path))
-        .map((p: any) => ({
-          id: p.path,
-          name: p.name || p.path.replace(/\.json$/i, ''),
-          description: p.description || '',
-        }));
-
-      setWorldBooks(matchedWorldBooks);
-      setCharacters(matchedCharacters);
-      setPersonas(matchedPersonas);
-      setLoading(false);
-    }).catch((err) => {
-      console.error('[WritingModeRightPanel] Load resources error:', err);
-      setLoading(false);
-    });
-  }, [currentProject]);
-
-  const renderResourceList = (items: ResourceItem[], emptyText: string, icon: React.ReactNode) => (
-    <List
-      locale={{ emptyText }}
-      dataSource={items}
-      loading={loading}
-      renderItem={(item: ResourceItem) => (
-        <List.Item>
-          <List.Item.Meta
-            avatar={<Avatar icon={icon} />}
-            title={item.name}
-            description={item.description || '暂无描述'}
-          />
-        </List.Item>
-      )}
-    />
+  const handleToggleMaterial = useCallback(
+    (type: MaterialType, id: string) => {
+      toggleMaterial(type, id);
+    },
+    [toggleMaterial]
   );
+
+  const selectedWorldBookCount = getSelectedCount('worldbook');
+  const selectedCharacterCount = getSelectedCount('character');
+  const selectedPersonaCount = getSelectedCount('persona');
+  const selectedKnowledgeCount = getSelectedCount('knowledge');
+  const totalSelected = selectedWorldBookCount + selectedCharacterCount + selectedPersonaCount + selectedKnowledgeCount;
+
+  const materialSubTabs = [
+    {
+      key: 'worldbook',
+      label: (
+        <Badge count={selectedWorldBookCount} showZero size="small" offset={[-4, 0]}>
+          <span>
+            <GlobalOutlined />
+            世界书
+          </span>
+        </Badge>
+      ),
+      children: (
+        <MaterialList
+          materials={filteredWorldBooks}
+          loading={loading}
+          onToggle={handleToggleMaterial}
+          type="worldbook"
+          emptyText={searchQuery ? '未匹配的世界书' : '暂无世界书'}
+        />
+      ),
+    },
+    {
+      key: 'character',
+      label: (
+        <Badge count={selectedCharacterCount} showZero size="small" offset={[-4, 0]}>
+          <span>
+            <IdcardOutlined />
+            角色卡
+          </span>
+        </Badge>
+      ),
+      children: (
+        <MaterialList
+          materials={filteredCharacters}
+          loading={loading}
+          onToggle={handleToggleMaterial}
+          type="character"
+          emptyText={searchQuery ? '未匹配的角色卡' : '暂无角色卡'}
+        />
+      ),
+    },
+    {
+      key: 'persona',
+      label: (
+        <Badge count={selectedPersonaCount} showZero size="small" offset={[-4, 0]}>
+          <span>
+            <UserOutlined />
+            用户人设
+          </span>
+        </Badge>
+      ),
+      children: (
+        <MaterialList
+          materials={filteredPersonas}
+          loading={loading}
+          onToggle={handleToggleMaterial}
+          type="persona"
+          emptyText={searchQuery ? '未匹配的用户人设' : '暂无用户人设'}
+        />
+      ),
+    },
+    {
+      key: 'knowledge',
+      label: (
+        <Badge count={selectedKnowledgeCount} showZero size="small" offset={[-4, 0]}>
+          <span>
+            <BookOutlined />
+            知识库
+          </span>
+        </Badge>
+      ),
+      children: (
+        <MaterialList
+          materials={filteredKnowledgeItems}
+          loading={loading}
+          onToggle={handleToggleMaterial}
+          type="knowledge"
+          emptyText={searchQuery ? '未匹配的知识库条目' : '暂无知识库条目'}
+        />
+      ),
+    },
+  ];
 
   const tabItems = [
     {
       key: 'materials',
       label: (
-        <span>
-          <BookOutlined />
-          素材库
-        </span>
+        <Badge count={totalSelected} showZero size="small" offset={[-4, 0]}>
+          <span>
+            <BookOutlined />
+            素材库
+          </span>
+        </Badge>
       ),
       children: (
-        <div style={{ padding: '16px 0' }}>
-          <Input
-            placeholder="搜索素材..."
-            prefix={<SearchOutlined />}
-            style={{ marginBottom: 16 }}
-          />
-          <div style={{ marginBottom: 16 }}>
-            <h4 style={{ marginBottom: 8 }}>
-              <GlobalOutlined style={{ marginRight: 4 }} />
-              世界书
-            </h4>
-            {renderResourceList(worldBooks, currentProject ? '暂无世界书' : '请先选择或创建项目', <GlobalOutlined />)}
+        <div style={{ padding: '12px 0', height: '100%', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+            <Input
+              placeholder="搜索素材名称或描述..."
+              prefix={<SearchOutlined />}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              allowClear
+              size="small"
+              style={{ flex: 1 }}
+            />
+            <Tooltip title="刷新素材列表">
+              <Button
+                icon={<ReloadOutlined />}
+                size="small"
+                onClick={handleRefresh}
+                loading={loading}
+              />
+            </Tooltip>
           </div>
-          <div style={{ marginBottom: 16 }}>
-            <h4 style={{ marginBottom: 8 }}>
-              <IdcardOutlined style={{ marginRight: 4 }} />
-              角色卡
-            </h4>
-            {renderResourceList(characters, currentProject ? '暂无角色卡' : '请先选择或创建项目', <IdcardOutlined />)}
-          </div>
-          <div>
-            <h4 style={{ marginBottom: 8 }}>
-              <UserOutlined style={{ marginRight: 4 }} />
-              用户人设
-            </h4>
-            {renderResourceList(personas, currentProject ? '暂无用户人设' : '请先选择或创建项目', <UserOutlined />)}
-          </div>
+
+          {totalSelected > 0 && (
+            <div
+              style={{
+                marginBottom: 12,
+                padding: '8px 12px',
+                background: token.colorFillQuaternary,
+                borderRadius: 6,
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  cursor: 'pointer',
+                }}
+                onClick={() => setSelectedSummaryVisible(!selectedSummaryVisible)}
+              >
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  <UnorderedListOutlined style={{ marginRight: 4 }} />
+                  已选素材 ({totalSelected})
+                </Text>
+                <Text type="secondary" style={{ fontSize: 11 }}>
+                  {selectedSummaryVisible ? '收起' : '展开'}
+                </Text>
+              </div>
+
+              {selectedSummaryVisible && (
+                <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {selectedWorldBookCount > 0 && (
+                    <Tag color="blue" closable onClose={() => {
+                      filteredWorldBooks.filter(w => w.isSelected).forEach(w => toggleMaterial('worldbook', w.id));
+                    }}>
+                      世界书 {selectedWorldBookCount}
+                    </Tag>
+                  )}
+                  {selectedCharacterCount > 0 && (
+                    <Tag color="green" closable onClose={() => {
+                      filteredCharacters.filter(c => c.isSelected).forEach(c => toggleMaterial('character', c.id));
+                    }}>
+                      角色卡 {selectedCharacterCount}
+                    </Tag>
+                  )}
+                  {selectedPersonaCount > 0 && (
+                    <Tag color="purple" closable onClose={() => {
+                      filteredPersonas.filter(p => p.isSelected).forEach(p => toggleMaterial('persona', p.id));
+                    }}>
+                      用户人设 {selectedPersonaCount}
+                    </Tag>
+                  )}
+                  {selectedKnowledgeCount > 0 && (
+                    <Tag color="orange" closable onClose={() => {
+                      filteredKnowledgeItems.filter(k => k.isSelected).forEach(k => toggleMaterial('knowledge', k.id));
+                    }}>
+                      知识库 {selectedKnowledgeCount}
+                    </Tag>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          <Spin spinning={loading} size="small">
+            <div style={{ flex: 1, overflow: 'auto' }}>
+              <Tabs
+                activeKey={activeMaterialTab}
+                onChange={setActiveMaterialTab}
+                size="small"
+                items={materialSubTabs}
+                style={{ height: '100%' }}
+              />
+            </div>
+          </Spin>
         </div>
       ),
     },
@@ -195,23 +287,18 @@ const WritingModeRightPanel: React.FC<WritingModeRightPanelProps> = ({ width, on
       children: (
         <div style={{ padding: '16px 0' }}>
           <Empty description="选择章节进行预览" />
-          <Card
-            style={{ marginTop: 16 }}
-            title="章节内容预览"
-            bordered={false}
+          <div
+            style={{
+              marginTop: 16,
+              minHeight: 200,
+              padding: 16,
+              border: `1px dashed ${token.colorBorder}`,
+              borderRadius: token.borderRadius,
+              color: token.colorTextSecondary,
+            }}
           >
-            <div
-              style={{
-                minHeight: 200,
-                padding: 16,
-                border: `1px dashed ${token.colorBorder}`,
-                borderRadius: token.borderRadius,
-                color: token.colorTextSecondary,
-              }}
-            >
-              章节预览内容将在这里显示...
-            </div>
-          </Card>
+            章节预览内容将在这里显示...
+          </div>
         </div>
       ),
     },

@@ -29,6 +29,7 @@ import type { ColumnsType } from 'antd/es/table';
 import ReactMarkdown from 'react-markdown';
 import { UnifiedChatDialog } from '../Chat/UnifiedChatDialog';
 import { WorldBookRelationPanel } from './WorldBookRelationPanel';
+import CharacterCardGenerateModal from './CharacterCardGenerateModal';
 import { useWorldBookStore } from '../../stores/worldBookStore';
 import { FieldEditor } from './FieldEditor';
 import { StoragePathDisplay } from '../common/StoragePathDisplay';
@@ -287,6 +288,7 @@ const CharacterManager: React.FC = () => {
   const { addLog } = useLogStore();
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isCharacterGenerateModalOpen, setIsCharacterGenerateModalOpen] = useState(false);
   const [viewingItem, setViewingItem] = useState<Character | null>(null);
   const [editingItem, setEditingItem] = useState<Character | null>(null);
   const [characterContent, setCharacterContent] = useState<any>(null);
@@ -519,6 +521,65 @@ const setGeneratingField = (field: string | null) => {
     setOriginalValues({});
     setWorldBookRelations([]);
     setIsEditModalOpen(true);
+  };
+
+  const handleCreateCharacterFromAI = async (characterCardData: any) => {
+    addLog('[Character] 开始从AI生成创建角色卡');
+    try {
+      const characterName = characterCardData.name || 'AI生成角色';
+      const characterDir = await window.electronAPI.character.getDirectory();
+      const targetPath = `${characterDir}/${characterName}.png`;
+
+      const existingCharacters = await window.electronAPI.character.list();
+      const existingFile = existingCharacters.find((c: any) => c.path === targetPath);
+
+      let finalPath = targetPath;
+      if (existingFile) {
+        let counter = 1;
+        while (existingCharacters.find((c: any) => c.path === `${characterDir}/${characterName}_${counter}.png`)) {
+          counter++;
+        }
+        finalPath = `${characterDir}/${characterName}_${counter}.png`;
+        addLog(`[Character] 文件名冲突，使用新名称: ${characterName}_${counter}`, 'info');
+      }
+
+      const cardData = {
+        name: characterCardData.name || '新角色',
+        description: characterCardData.description || '',
+        personality: characterCardData.personality || '',
+        scenario: characterCardData.scenario || '',
+        first_mes: characterCardData.first_mes || '',
+        mes_example: Array.isArray(characterCardData.mes_example) ? characterCardData.mes_example : [],
+        creator_notes: characterCardData.creator_notes || '',
+        nickname: characterCardData.nickname || '',
+        source: characterCardData.source || '',
+        character_version: characterCardData.character_version || '1.0',
+        creator: characterCardData.creator || 'AI',
+        post_history_instructions: characterCardData.post_history_instructions || '',
+        tags: Array.isArray(characterCardData.tags) ? characterCardData.tags : [],
+        alternate_greetings: Array.isArray(characterCardData.alternate_greetings) ? characterCardData.alternate_greetings : [],
+        extensions: characterCardData.extensions || {},
+        group_only_greetings: Array.isArray(characterCardData.group_only_greetings) ? characterCardData.group_only_greetings : [],
+        spec: 'chara_card_v3',
+        spec_version: '3.0'
+      };
+
+      const writeData = {
+        data: cardData,
+        spec: 'chara_card_v3',
+        spec_version: '3.0'
+      };
+
+      await window.electronAPI.character.write(finalPath, writeData);
+
+      addLog(`[Character] AI生成角色卡创建成功: ${characterName}`, 'info');
+      message.success('角色卡创建成功');
+      setIsCharacterGenerateModalOpen(false);
+      fetchCharacters();
+    } catch (error) {
+      addLog(`[Character] 从AI生成创建角色卡失败: ${error instanceof Error ? error.message : '未知错误'}`, 'error');
+      message.error(`创建失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    }
   };
 
   const handleEditModalOk = async () => {
@@ -1213,6 +1274,9 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={handleCreateCharacter}>
             新建角色卡
+          </Button>
+          <Button icon={<ThunderboltOutlined />} onClick={() => setIsCharacterGenerateModalOpen(true)}>
+            AI生成角色卡
           </Button>
         </Space>
       </div>
@@ -2040,6 +2104,12 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
         initialCharacter={selectedCharacter || undefined}
         showCharacterSelector={true}
         characters={characters}
+      />
+
+      <CharacterCardGenerateModal
+        open={isCharacterGenerateModalOpen}
+        onCancel={() => setIsCharacterGenerateModalOpen(false)}
+        onCreateCharacterCard={handleCreateCharacterFromAI}
       />
     </div>
   );
