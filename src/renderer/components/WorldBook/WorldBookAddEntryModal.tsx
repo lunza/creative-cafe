@@ -99,11 +99,11 @@ const WorldBookAddEntryModal: React.FC<WorldBookAddEntryModalProps> = ({
         </Button>
       ]}
       style={{
-        backgroundColor: 'var(--bg-color, #fff)',
-        color: 'var(--text-color, #000)'
+        backgroundColor: 'var(--bg-container, #1f1f1f)',
+        color: 'var(--text-primary, #ffffff)'
       }}
     >
-      <div style={{ color: 'var(--text-color, #000)' }}>
+      <div style={{ color: 'var(--text-primary, #ffffff)' }}>
         <Form form={form} layout="vertical">
           <Form.Item
             name="expectedContent"
@@ -157,7 +157,7 @@ const WorldBookAddEntryModal: React.FC<WorldBookAddEntryModalProps> = ({
                       <Text type="secondary">关键词: </Text>
                       {entry.key?.join(', ') || '无'}
                     </div>
-                    <div style={{ fontSize: '13px', color: 'var(--text-color, #666)' }}>
+                    <div style={{ fontSize: '13px', color: 'var(--text-secondary, #8c8c8c)' }}>
                       {entry.content?.substring(0, 100)}{entry.content?.length > 100 ? '...' : ''}
                     </div>
                   </Card>

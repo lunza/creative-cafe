@@ -200,6 +200,150 @@ class CharacterService {
     }
   }
 
+  /**
+   * 从图片创建角色卡PNG（用于新建角色卡）
+   * @param filePath 输出文件路径
+   * @param imageDataBase64 图片的base64数据（不含data:image/png;base64,前缀）
+   * @param characterData 角色卡数据
+   */
+  async createCharacterFromImage(
+    filePath: string, 
+    imageDataBase64: string, 
+    characterData: any
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      console.log(`[CharacterService] createCharacterFromImage 开始`);
+      console.log(`[CharacterService] filePath: ${filePath}`);
+      console.log(`[CharacterService] imageDataBase64 长度: ${imageDataBase64.length}`);
+      console.log(`[CharacterService] characterData.data 字段: ${Object.keys(characterData.data || {}).join(', ')}`);
+      
+      if (!filePath.endsWith('.png')) {
+        console.error(`[CharacterService] 文件不是PNG格式: ${filePath}`);
+        return { success: false, error: '仅支持PNG格式的角色卡' };
+      }
+
+      // 检查并创建目录
+      const dir = path.dirname(filePath);
+      console.log(`[CharacterService] 目标目录: ${dir}`);
+      
+      try {
+        await fs.access(dir);
+        console.log(`[CharacterService] 目录存在，可访问`);
+      } catch (accessError) {
+        console.log(`[CharacterService] 目录不存在，尝试创建: ${dir}`);
+        await fs.mkdir(dir, { recursive: true });
+        console.log(`[CharacterService] 目录创建成功`);
+      }
+
+      // 检查文件是否已存在
+      try {
+        await fs.access(filePath);
+        console.log(`[CharacterService] 警告: 文件已存在，将被覆盖: ${filePath}`);
+      } catch {
+        console.log(`[CharacterService] 文件不存在，将创建新文件`);
+      }
+
+      // 解码base64图片数据
+      console.log(`[CharacterService] 步骤1: 解码base64图片数据...`);
+      let imageBuffer: Buffer;
+      try {
+        imageBuffer = Buffer.from(imageDataBase64, 'base64');
+        console.log(`[CharacterService] 图片Buffer大小: ${imageBuffer.length} bytes`);
+        
+        // 验证PNG魔数
+        if (imageBuffer.length < 8) {
+          throw new Error(`图片数据太小: ${imageBuffer.length} bytes`);
+        }
+        const pngMagic = imageBuffer.slice(0, 8).toString('hex');
+        console.log(`[CharacterService] PNG魔数: ${pngMagic}`);
+        if (pngMagic !== '89504e470d0a1a0a') {
+          throw new Error(`不是有效的PNG文件，魔数: ${pngMagic}`);
+        }
+      } catch (decodeError) {
+        console.error(`[CharacterService] 图片解码失败:`, decodeError);
+        return { success: false, error: `图片解码失败: ${decodeError instanceof Error ? decodeError.message : String(decodeError)}` };
+      }
+      
+      // 提取PNG chunks
+      console.log(`[CharacterService] 步骤2: 提取PNG chunks...`);
+      let chunks: PngChunk[];
+      try {
+        chunks = extract(new Uint8Array(imageBuffer));
+        console.log(`[CharacterService] 提取到 ${chunks.length} 个chunks`);
+      } catch (extractError) {
+        console.error(`[CharacterService] PNG chunks提取失败:`, extractError);
+        return { success: false, error: `PNG解析失败: ${extractError instanceof Error ? extractError.message : String(extractError)}` };
+      }
+      
+      // 移除已有的chara和ccv3 chunks（如果存在）
+      console.log(`[CharacterService] 步骤3: 移除已有角色数据chunks...`);
+      const tEXtChunks = chunks.filter(chunk => chunk.name === 'tEXt');
+      console.log(`[CharacterService] 找到 ${tEXtChunks.length} 个tEXt chunks`);
+      let removedCount = 0;
+      for (const tEXtChunk of tEXtChunks) {
+        const chunkData = PNGtext.decode(tEXtChunk.data);
+        if (chunkData.keyword.toLowerCase() === 'chara' || chunkData.keyword.toLowerCase() === 'ccv3') {
+          chunks.splice(chunks.indexOf(tEXtChunk), 1);
+          removedCount++;
+          console.log(`[CharacterService] 移除已有chunk: ${chunkData.keyword}`);
+        }
+      }
+      console.log(`[CharacterService] 共移除 ${removedCount} 个角色数据chunks`);
+
+      // 添加v2 chara chunk
+      console.log(`[CharacterService] 步骤4: 添加v2 chara chunk...`);
+      try {
+        const v2Data = JSON.stringify(characterData.data);
+        console.log(`[CharacterService] v2数据大小: ${v2Data.length} 字符`);
+        const base64EncodedV2 = Buffer.from(v2Data, 'utf8').toString('base64');
+        console.log(`[CharacterService] v2 base64长度: ${base64EncodedV2.length}`);
+        chunks.splice(-1, 0, PNGtext.encode('chara', base64EncodedV2));
+        console.log(`[CharacterService] v2 chara chunk添加成功`);
+      } catch (v2Error) {
+        console.error(`[CharacterService] 添加v2 chunk失败:`, v2Error);
+        return { success: false, error: `添加v2角色数据失败: ${v2Error instanceof Error ? v2Error.message : String(v2Error)}` };
+      }
+
+      // 添加v3 ccv3 chunk
+      console.log(`[CharacterService] 步骤5: 添加v3 ccv3 chunk...`);
+      try {
+        const v3Data = {
+          spec: 'chara_card_v3',
+          spec_version: '3.0',
+          data: characterData.data
+        };
+        const base64EncodedV3 = Buffer.from(JSON.stringify(v3Data), 'utf8').toString('base64');
+        chunks.splice(-1, 0, PNGtext.encode('ccv3', base64EncodedV3));
+        console.log(`[CharacterService] v3 ccv3 chunk添加成功`);
+      } catch (v3Error) {
+        console.error(`[CharacterService] 添加v3 chunk失败:`, v3Error);
+        return { success: false, error: `添加v3角色数据失败: ${v3Error instanceof Error ? v3Error.message : String(v3Error)}` };
+      }
+
+      // 编码并保存PNG
+      console.log(`[CharacterService] 步骤6: 编码PNG并保存...`);
+      try {
+        const newBuffer = Buffer.from(encode(chunks));
+        console.log(`[CharacterService] 编码后PNG大小: ${newBuffer.length} bytes`);
+        await fs.writeFile(filePath, newBuffer);
+        console.log(`[CharacterService] 文件写入成功: ${filePath}`);
+        
+        // 验证文件写入
+        const writtenStats = await fs.stat(filePath);
+        console.log(`[CharacterService] 写入文件大小: ${writtenStats.size} bytes`);
+        console.log(`[CharacterService] Character card created from image: ${filePath}`);
+        
+        return { success: true };
+      } catch (writeError) {
+        console.error(`[CharacterService] 文件写入失败:`, writeError);
+        return { success: false, error: `文件保存失败: ${writeError instanceof Error ? writeError.message : String(writeError)}` };
+      }
+    } catch (error) {
+      console.error('[CharacterService] createCharacterFromImage 总异常:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  }
+
   async importCharacter(sourcePath: string, fileName: string): Promise<{ success: boolean; targetPath?: string; error?: string }> {
     try {
       await fs.mkdir(this.characterDir, { recursive: true });

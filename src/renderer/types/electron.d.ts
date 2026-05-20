@@ -41,6 +41,7 @@ interface ElectronAPI {
     list: () => Promise<any[]>;
     read: (path: string) => Promise<any>;
     write: (path: string, data: any) => Promise<any>;
+    createFromImage: (filePath: string, imageDataBase64: string, characterData: any) => Promise<{ success: boolean; error?: string }>;
     delete: (path: string) => Promise<any>;
     optimize: (path: string) => Promise<any>;
     getDirectory: () => Promise<string>;

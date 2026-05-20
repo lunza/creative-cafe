@@ -462,7 +462,7 @@ const WritingModeDialog: React.FC<WritingModeDialogProps> = ({ visible, onClose 
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ padding: '8px 16px', background: '#f5f5f5', borderBottom: '1px solid #e8e8e8', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ padding: '8px 16px', background: 'var(--card-bg-color, #f5f5f5)', borderBottom: '1px solid var(--border-color, #e8e8e8)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h3 style={{ margin: 0 }}>写作模式</h3>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18 }}>×</button>
         </div>

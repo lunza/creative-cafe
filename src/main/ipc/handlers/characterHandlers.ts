@@ -60,6 +60,10 @@ export function characterHandlers() {
     return await characterService.writeCharacter(filePath, data);
   });
 
+  ipcMain.handle('character:createFromImage', async (_event, filePath: string, imageDataBase64: string, characterData: any) => {
+    return await characterService.createCharacterFromImage(filePath, imageDataBase64, characterData);
+  });
+
   ipcMain.handle('character:delete', async (_event, filePath: string) => {
     return await characterService.deleteCharacter(filePath);
   });

@@ -80,7 +80,7 @@ const WorldBookExport: React.FC<WorldBookExportProps> = ({ creativeId }) => {
         </Button>
 
         {selectedWorldBook && (
-          <div style={{ marginTop: 16, padding: 12, backgroundColor: '#f5f5f5', borderRadius: 4 }}>
+          <div style={{ marginTop: 16, padding: 12, backgroundColor: 'var(--card-bg-color, #f5f5f5)', borderRadius: 4 }}>
             <Text strong>名称：</Text>
             <Text>{selectedWorldBook.name}</Text>
             <br />

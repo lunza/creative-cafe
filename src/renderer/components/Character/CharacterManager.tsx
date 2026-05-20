@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Card, Table, Button, Space, Modal, message, Popconfirm, Tag, Typography, Input, Checkbox } from 'antd';
 import {
   TranslationOutlined,
@@ -16,7 +16,8 @@ import {
   ExperimentOutlined,
   FolderOpenOutlined,
   CopyOutlined,
-  MessageOutlined
+  MessageOutlined,
+  StopOutlined
 } from '@ant-design/icons';
 import { useDataStore } from '../../stores/dataStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -157,7 +158,7 @@ const ThumbnailImage: React.FC<{ filePath: string; name: string; size?: number }
 
   if (loading) {
     return (
-      <div style={{ width: size, height: size, borderRadius: 4, backgroundColor: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ width: size, height: size, borderRadius: 4, backgroundColor: 'var(--bg-container, #1f1f1f)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <LoadingOutlined style={{ fontSize: 16, color: '#999' }} spin />
       </div>
     );
@@ -165,7 +166,7 @@ const ThumbnailImage: React.FC<{ filePath: string; name: string; size?: number }
 
   if (error || !imageSrc) {
     return (
-      <div style={{ width: size, height: size, borderRadius: 4, backgroundColor: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ width: size, height: size, borderRadius: 4, backgroundColor: 'var(--bg-container, #1f1f1f)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <UserOutlined style={{ fontSize: 24, color: '#999' }} />
       </div>
     );
@@ -258,7 +259,7 @@ const AvatarImage: React.FC<{ filePath: string; name: string; fallbackSrc?: stri
 
   if (loading) {
     return (
-      <div style={{ flex: '0 0 200px', borderRadius: 12, overflow: 'hidden', boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)', minHeight: 150, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f0f0f0' }}>
+      <div style={{ flex: '0 0 200px', borderRadius: 12, overflow: 'hidden', boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)', minHeight: 150, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--bg-container, #1f1f1f)' }}>
         <LoadingOutlined style={{ fontSize: 24, color: '#999' }} spin />
       </div>
     );
@@ -323,6 +324,12 @@ const setGeneratingField = (field: string | null) => {
   const [pageSize, setPageSize] = useState(10);
   const [isTestChatOpen, setIsTestChatOpen] = useState<boolean>(false);
   const [selectedCharacter, setSelectedCharacter] = useState<Character | null>(null);
+  const [uploadedImage, setUploadedImage] = useState<string | null>(null);
+  const [uploadedImageName, setUploadedImageName] = useState<string>('');
+  const [imageUploadLoading, setImageUploadLoading] = useState<boolean>(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageCacheRef = useRef<Map<string, string>>(new Map());
+  const isProcessingRef = useRef<boolean>(false);
 
   // 获取当前激活的AI引擎配置
   const getActiveEngineConfig = () => {
@@ -583,36 +590,134 @@ const setGeneratingField = (field: string | null) => {
   };
 
   const handleEditModalOk = async () => {
-    addLog(`[Character] 保存角色卡编辑: ${editingItem!.name}`);
+    addLog(`[Character] 开始保存角色卡: ${editingItem?.name || '未命名'}`);
     try {
-      if (editingContent && editingItem) {
-        // 处理表单数据
-        const updatedData = {
-          ...editingContent.data,
-          name: formValues.name,
-          description: formValues.description,
-          personality: formValues.personality,
-          scenario: formValues.scenario,
-          first_mes: formValues.first_mes,
-          mes_example: formValues.mes_example.split('\n\n').filter((item: string) => item),
-          creator_notes: formValues.creator_notes,
-          nickname: formValues.nickname,
-          source: formValues.source,
-          character_version: formValues.character_version,
-          creator: formValues.creator,
-          tags: formValues.tags.split(/[,，]/).map((item: string) => item.trim()).filter((item: string) => item),
-          system_prompt: formValues.system_prompt,
-          post_history_instructions: formValues.post_history_instructions,
-          alternate_greetings: formValues.alternate_greetings.split('\n\n').filter((item: string) => item),
-          group_only_greetings: formValues.group_only_greetings
-        };
-        
-        // 更新编辑内容
-        const updatedContent = {
-          ...editingContent,
-          data: updatedData
-        };
-        
+      if (!editingItem) {
+        addLog(`[Character] 错误: editingItem 为空`, 'error');
+        message.error('保存失败: 编辑项为空');
+        return;
+      }
+      
+      addLog(`[Character] editingItem.path: ${editingItem.path || '(空，新建模式)'}`);
+      addLog(`[Character] 已上传图片: ${uploadedImage ? '是' : '否'}`);
+      addLog(`[Character] uploadedImageName: ${uploadedImageName || '(空)'}`);
+      
+      // 处理表单数据
+      const updatedData = {
+        ...(editingContent?.data || {}),
+        name: formValues.name || '',
+        description: formValues.description || '',
+        personality: formValues.personality || '',
+        scenario: formValues.scenario || '',
+        first_mes: formValues.first_mes || '',
+        mes_example: (formValues.mes_example || '').split('\n\n').filter((item: string) => item),
+        creator_notes: formValues.creator_notes || '',
+        nickname: formValues.nickname || '',
+        source: formValues.source || '',
+        character_version: formValues.character_version || '',
+        creator: formValues.creator || '',
+        tags: (formValues.tags || '').split(/[,，]/).map((item: string) => item.trim()).filter((item: string) => item),
+        system_prompt: formValues.system_prompt || '',
+        post_history_instructions: formValues.post_history_instructions || '',
+        alternate_greetings: (formValues.alternate_greetings || '').split('\n\n').filter((item: string) => item),
+        group_only_greetings: formValues.group_only_greetings || ''
+      };
+      
+      addLog(`[Character] 处理后的表单数据字段数: ${Object.keys(updatedData).length}`);
+      
+      const updatedContent = {
+        ...(editingContent || {}),
+        data: updatedData
+      };
+      
+      // 如果是新建角色卡且有上传的图片，需要先处理图片
+      if (!editingItem.path && uploadedImage) {
+        try {
+          addLog(`[Character] === 新建角色卡流程 ===`);
+          addLog(`[Character] 步骤1: 提取图片base64数据...`);
+          
+          // 直接从Data URL中提取base64数据，不通过fetch
+          const dataUrlPrefix = 'data:';
+          if (!uploadedImage.startsWith(dataUrlPrefix)) {
+            throw new Error('无效的图片数据格式');
+          }
+          
+          // 提取base64部分（去掉 "data:image/png;base64," 前缀）
+          const commaIndex = uploadedImage.indexOf(',');
+          if (commaIndex === -1) {
+            throw new Error('图片数据格式错误: 未找到逗号分隔符');
+          }
+          const base64String = uploadedImage.substring(commaIndex + 1);
+          addLog(`[Character] Base64字符串长度: ${base64String.length}`);
+          
+          // 生成文件名
+          const charName = formValues.name || 'unnamed';
+          const fileName = charName.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_') + '.png';
+          addLog(`[Character] 生成的文件名: ${fileName}`);
+          
+          // 获取角色卡目录
+          addLog(`[Character] 步骤2: 获取角色卡目录...`);
+          const charDir = characterDir || (await window.electronAPI.setting.getCharacterDir());
+          addLog(`[Character] 角色卡目录: ${charDir}`);
+          
+          if (!charDir) {
+            throw new Error('角色卡目录为空');
+          }
+          
+          // 构建完整路径 (使用简单拼接代替path.join，因为path模块在浏览器中不可用)
+          const fullPath = charDir.replace(/[/\\]+$/, '') + '/' + fileName;
+          addLog(`[Character] 完整保存路径: ${fullPath}`);
+          
+          // 写入带有角色数据的PNG文件
+          addLog(`[Character] 步骤3: 调用createFromImage...`);
+          const createResult = await window.electronAPI.character.createFromImage(fullPath, base64String, updatedContent);
+          addLog(`[Character] createFromImage 返回结果: ${JSON.stringify(createResult)}`);
+          
+          if (!createResult.success) {
+            throw new Error(`创建角色卡PNG失败: ${createResult.error || '未知错误'}`);
+          }
+          addLog(`[Character] 角色卡PNG创建成功`);
+          
+          // 保存世界书关联
+          addLog(`[Character] 步骤4: 保存世界书关联...`);
+          const relationsToSave = worldBookRelations.map(rel => ({
+            worldBookPath: rel.worldBookPath,
+            enabled: rel.enabled,
+            priority: rel.priority,
+            filterTags: rel.filterTags
+          }));
+          addLog(`[Character] 世界书关联数量: ${relationsToSave.length}`);
+          
+          const relationsResult = await window.electronAPI.character.setWorldBookRelations(fullPath, relationsToSave);
+          addLog(`[Character] setWorldBookRelations 返回结果: ${JSON.stringify(relationsResult)}`);
+          
+          addLog(`[Character] === 新建角色卡流程完成 ===`, 'info');
+          message.success('角色卡创建成功');
+          
+          // 关闭编辑模态框
+          setIsEditModalOpen(false);
+          setEditingItem(null);
+          setEditingContent(null);
+          setFormValues({});
+          setOriginalValues({});
+          setUploadedImage(null);
+          setUploadedImageName('');
+          
+          // 刷新角色卡列表
+          fetchCharacters();
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          const errorStack = error instanceof Error ? error.stack : '';
+          addLog(`[Character] === 新建角色卡失败 ===`, 'error');
+          addLog(`[Character] 错误信息: ${errorMsg}`, 'error');
+          if (errorStack) {
+            addLog(`[Character] 错误堆栈: ${errorStack.substring(0, 500)}`, 'error');
+          }
+          message.error(`保存角色卡失败: ${errorMsg}`);
+          throw error; // Re-throw to be caught by outer catch
+        }
+      } else if (editingItem.path) {
+        // 已有路径的编辑模式
         addLog(`[Character] 写入文件: ${editingItem.path}`);
         await window.electronAPI.character.write(editingItem.path, updatedContent);
         
@@ -625,7 +730,6 @@ const setGeneratingField = (field: string | null) => {
         await window.electronAPI.character.setWorldBookRelations(editingItem.path, relationsToSave);
         
         addLog(`[Character] 角色卡编辑保存成功: ${editingItem.name}`, 'info');
-        
         message.success('编辑成功');
         
         // 关闭编辑模态框
@@ -634,6 +738,8 @@ const setGeneratingField = (field: string | null) => {
         setEditingContent(null);
         setFormValues({});
         setOriginalValues({});
+        setUploadedImage(null);
+        setUploadedImageName('');
         
         // 刷新角色卡列表
         fetchCharacters();
@@ -643,16 +749,32 @@ const setGeneratingField = (field: string | null) => {
           const content = await window.electronAPI.character.read(editingItem.path);
           setCharacterContent(content);
         }
+      } else {
+        // 新建角色卡但没有上传图片
+        message.warning('请上传一张PNG格式的图片作为角色卡载体');
       }
     } catch (error) {
-      addLog(`[Character] 保存角色卡失败: ${editingItem?.path}`, 'error');
-      message.error('保存角色卡失败');
+      // 检查是否已经处理过的错误（从内层重新抛出的）
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      addLog(`[Character] === 保存角色卡异常 ===`, 'error');
+      addLog(`[Character] 编辑项: ${editingItem?.name || '未命名'}`, 'error');
+      addLog(`[Character] 编辑项路径: ${editingItem?.path || '(空，新建)'}`, 'error');
+      addLog(`[Character] 错误信息: ${errorMsg}`, 'error');
+      if (error instanceof Error && error.stack) {
+        addLog(`[Character] 错误堆栈: ${error.stack.substring(0, 500)}`, 'error');
+      }
+      
+      // 只有当错误信息还没有被内层处理时才显示message
+      if (!errorMsg.includes('请上传') && !errorMsg.includes('新建角色卡')) {
+        message.error(`保存角色卡失败: ${errorMsg}`);
+      }
     }
   };
 
   const handleTranslate = async (field: string) => {
     const startTime = Date.now();
     addLog(`[Character] 开始翻译字段: ${field}`);
+    isProcessingRef.current = true;
     
     try {
       setTranslatingField(field);
@@ -662,6 +784,7 @@ const setGeneratingField = (field: string | null) => {
       if (!text) {
         message.warning('请先输入要翻译的内容');
         setTranslatingField(null);
+        isProcessingRef.current = false;
         return;
       }
 
@@ -672,12 +795,14 @@ const setGeneratingField = (field: string | null) => {
       if (!activeEngine) {
         message.error('请先在配置管理中设置AI引擎');
         setTranslatingField(null);
+        isProcessingRef.current = false;
         return;
       }
 
       if (!activeEngine.api_url) {
         message.error('API地址不能为空');
         setTranslatingField(null);
+        isProcessingRef.current = false;
         return;
       }
 
@@ -697,9 +822,15 @@ const setGeneratingField = (field: string | null) => {
 
       const translatedText = await sendCharacterAIRequest(activeEngine, finalSystemPrompt, text);
 
+      if (!isProcessingRef.current) {
+        addLog('[Character] 翻译请求已被用户中断', 'warn');
+        return;
+      }
+
       if (!translatedText) {
         message.error('AI未返回有效内容，请重试');
         setTranslatingField(null);
+        isProcessingRef.current = false;
         return;
       }
 
@@ -747,10 +878,12 @@ const setGeneratingField = (field: string | null) => {
 
       message.success('翻译成功');
       setTranslatingField(null);
+      isProcessingRef.current = false;
     } catch (error) {
       addLog(`[Character] 翻译失败: ${error instanceof Error ? error.message : '未知错误'}`, 'error');
       message.error(`翻译失败: ${error instanceof Error ? error.message : '未知错误'}`);
       setTranslatingField(null);
+      isProcessingRef.current = false;
     }
   };
 
@@ -765,6 +898,7 @@ const setGeneratingField = (field: string | null) => {
 
   const handleGenerate = async (field: string) => {
     addLog(`[Character] 开始AI生成字段: ${field}`);
+    isProcessingRef.current = true;
     setGeneratingField(field);
 
     try {
@@ -772,12 +906,14 @@ const setGeneratingField = (field: string | null) => {
       if (!activeEngine) {
         message.error('请先在配置管理中设置AI引擎');
         setGeneratingField(null);
+        isProcessingRef.current = false;
         return;
       }
 
       if (!activeEngine.api_url) {
         message.error('API地址不能为空');
         setGeneratingField(null);
+        isProcessingRef.current = false;
         return;
       }
 
@@ -831,6 +967,7 @@ const setGeneratingField = (field: string | null) => {
       if (!targetField) {
         message.error(`不支持的字段: ${field}`);
         setGeneratingField(null);
+        isProcessingRef.current = false;
         return;
       }
 
@@ -889,9 +1026,15 @@ ${characterData.character_version ? `【角色版本】${characterData.character
 
       const generatedContent = await sendCharacterAIRequest(activeEngine, finalSystemPrompt, userPrompt);
 
+      if (!isProcessingRef.current) {
+        addLog('[Character] 生成请求已被用户中断', 'warn');
+        return;
+      }
+
       if (!generatedContent) {
         message.error('AI未返回有效内容，请重试');
         setGeneratingField(null);
+        isProcessingRef.current = false;
         return;
       }
 
@@ -903,9 +1046,11 @@ ${characterData.character_version ? `【角色版本】${characterData.character
       }));
 
       message.success('生成成功');
+      isProcessingRef.current = false;
     } catch (error) {
       addLog(`[Character] 生成失败: ${error instanceof Error ? error.message : '未知错误'}`, 'error');
       message.error(`生成失败: ${error instanceof Error ? error.message : '未知错误'}`);
+      isProcessingRef.current = false;
     } finally {
       setGeneratingField(null);
     }
@@ -913,6 +1058,14 @@ ${characterData.character_version ? `【角色版本】${characterData.character
 
   const [currentPolishField, setCurrentPolishField] = useState<string | null>(null);
   const [currentPolishText, setCurrentPolishText] = useState<string>('');
+
+  const handleCancelAIRequest = () => {
+    isProcessingRef.current = false;
+    window.electronAPI?.ai?.cancel?.();
+    setAiOperation(null);
+    message.info('已中断AI请求');
+    addLog('[Character] 用户主动中断AI请求', 'warn');
+  };
 
   const handlePolish = (field: string) => {
     addLog(`[Character] 准备润色字段: ${field}`);
@@ -967,6 +1120,7 @@ ${characterData.character_version ? `【角色版本】${characterData.character
 
     const startTime = Date.now();
     addLog(`[Character] 开始润色字段: ${currentPolishField}`);
+    isProcessingRef.current = true;
     
     setPolishingField(currentPolishField);
     
@@ -976,6 +1130,7 @@ ${characterData.character_version ? `【角色版本】${characterData.character
       if (!activeEngine) {
         message.error('请先在配置管理中设置AI引擎');
         setPolishingField(null);
+        isProcessingRef.current = false;
         setIsPolishModalOpen(false);
         return;
       }
@@ -983,6 +1138,7 @@ ${characterData.character_version ? `【角色版本】${characterData.character
       if (!activeEngine.api_url) {
         message.error('API地址不能为空');
         setPolishingField(null);
+        isProcessingRef.current = false;
         setIsPolishModalOpen(false);
         return;
       }
@@ -1019,6 +1175,18 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
       addLog(`[Character] 系统提示词长度: ${finalSystemPrompt.length} 字符`, 'info');
 
       const polishedText = await sendCharacterAIRequest(activeEngine, finalSystemPrompt, currentPolishText);
+
+      if (!isProcessingRef.current) {
+        addLog('[Character] 润色请求已被用户中断', 'warn');
+        return;
+      }
+
+      if (!polishedText) {
+        message.error('AI未返回有效内容，请重试');
+        setPolishingField(null);
+        isProcessingRef.current = false;
+        return;
+      }
 
       addLog(`[Character] 收到润色响应，原始长度: ${polishedText.length} 字符`);
 
@@ -1063,6 +1231,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
 
       message.success('润色成功');
       setPolishingField(null);
+      isProcessingRef.current = false;
       setIsPolishModalOpen(false);
       setCurrentPolishField(null);
       setCurrentPolishText('');
@@ -1072,6 +1241,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
       addLog(`[Character] 润色失败: ${error instanceof Error ? error.message : '未知错误'}`, 'error');
       message.error(`润色失败: ${error instanceof Error ? error.message : '未知错误'}`);
       setPolishingField(null);
+      isProcessingRef.current = false;
     }
   };
 
@@ -1123,7 +1293,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
           return <ThumbnailImage filePath={record.path} name={record.name} />;
         } else {
           return (
-            <div style={{ width: 60, height: 60, borderRadius: 4, backgroundColor: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ width: 60, height: 60, borderRadius: 4, backgroundColor: 'var(--card-bg-color, #f0f0f0)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <UserOutlined style={{ fontSize: 24, color: '#999' }} />
             </div>
           );
@@ -1328,10 +1498,10 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
             <Card 
               style={{ 
                 marginBottom: 20, 
-                border: '1px solid var(--border-color, #e0e0e0)', 
-                borderRadius: 12, 
-                backgroundColor: 'var(--card-bg-color, #fff)', 
-                color: 'var(--text-color, #000)',
+                border: '1px solid var(--border-base, #333)', 
+                borderRadius: 8,
+                backgroundColor: 'var(--bg-elevated, #2a2a2a)', 
+                color: 'var(--text-primary, #ffffff)',
                 boxShadow: '0 2px 8px rgba(0, 0, 0, 0.08)'
               }}
             >
@@ -1354,7 +1524,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
                 
                 {/* 基本信息 */}
                 <div style={{ flex: 1, minWidth: 300 }}>
-                  <h3 style={{ marginBottom: 20, fontSize: 24, fontWeight: 700, color: 'var(--text-color, #000)', borderBottom: '2px solid #1890ff', paddingBottom: 8 }}>
+                  <h3 style={{ marginBottom: 20, fontSize: 24, fontWeight: 700, color: 'var(--text-primary, #ffffff)', borderBottom: '2px solid #1890ff', paddingBottom: 8 }}>
                     {characterContent.data?.name || '无名称'}
                     {characterContent.spec && (
                       <Tag style={{ marginLeft: 12 }} color={characterContent.spec === 'chara_card_v3' ? 'green' : characterContent.spec === 'chara_card_v2' ? 'blue' : 'default'}>
@@ -1366,7 +1536,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
                   <div>
                     <div style={{ marginBottom: 16, lineHeight: 1.6 }}>
                       <h3 style={{ marginBottom: 8, fontSize: 18, fontWeight: 600, color: '#1890ff' }}>描述</h3>
-                      <div style={{ color: 'var(--text-color, #000)' }}>
+                      <div style={{ color: 'var(--text-primary, #ffffff)' }}>
                         <ReactMarkdown>{String(characterContent.data?.description || '无描述')}</ReactMarkdown>
                       </div>
                     </div>
@@ -1374,44 +1544,44 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 16, marginBottom: 16 }}>
                       <div>
                         <span style={{ display: 'inline-block', width: 80, fontWeight: 600, color: '#1890ff' }}>昵称:</span>
-                        <span style={{ color: 'var(--text-color, #000)' }}>{characterContent.data?.nickname || '无昵称'}</span>
+                        <span style={{ color: 'var(--text-primary, #ffffff)' }}>{characterContent.data?.nickname || '无昵称'}</span>
                       </div>
                       <div>
                         <span style={{ display: 'inline-block', width: 80, fontWeight: 600, color: '#1890ff' }}>来源:</span>
-                        <span style={{ color: 'var(--text-color, #000)' }}>{characterContent.data?.source || '无来源'}</span>
+                        <span style={{ color: 'var(--text-primary, #ffffff)' }}>{characterContent.data?.source || '无来源'}</span>
                       </div>
                       <div>
                         <span style={{ display: 'inline-block', width: 80, fontWeight: 600, color: '#1890ff' }}>创建日期:</span>
-                        <span style={{ color: 'var(--text-color, #000)' }}>{characterContent.data?.creation_date || '无创建日期'}</span>
+                        <span style={{ color: 'var(--text-primary, #ffffff)' }}>{characterContent.data?.creation_date || '无创建日期'}</span>
                       </div>
                       <div>
                         <span style={{ display: 'inline-block', width: 80, fontWeight: 600, color: '#1890ff' }}>修改日期:</span>
-                        <span style={{ color: 'var(--text-color, #000)' }}>{characterContent.data?.modification_date || '无修改日期'}</span>
+                        <span style={{ color: 'var(--text-primary, #ffffff)' }}>{characterContent.data?.modification_date || '无修改日期'}</span>
                       </div>
                     </div>
                     
                     <div style={{ marginBottom: 16, lineHeight: 1.6 }}>
                       <span style={{ display: 'inline-block', width: 80, fontWeight: 600, color: '#1890ff' }}>个性:</span>
-                      <div style={{ display: 'inline-block', color: 'var(--text-color, #000)', maxWidth: 'calc(100% - 80px)' }}>
+                      <div style={{ display: 'inline-block', color: 'var(--text-primary, #ffffff)', maxWidth: 'calc(100% - 80px)' }}>
                         <ReactMarkdown>{String(characterContent.data?.personality || '无个性')}</ReactMarkdown>
                       </div>
                     </div>
                     <div style={{ marginBottom: 16, lineHeight: 1.6 }}>
                       <span style={{ display: 'inline-block', width: 80, fontWeight: 600, color: '#1890ff' }}>场景:</span>
-                      <div style={{ display: 'inline-block', color: 'var(--text-color, #000)', maxWidth: 'calc(100% - 80px)' }}>
+                      <div style={{ display: 'inline-block', color: 'var(--text-primary, #ffffff)', maxWidth: 'calc(100% - 80px)' }}>
                         <ReactMarkdown>{String(characterContent.data?.scenario || '无场景')}</ReactMarkdown>
                       </div>
                     </div>
                   </div>
                   
                   {/* 其他信息 */}
-                  <div style={{ marginTop: 16, padding: 12, backgroundColor: 'var(--bg-color, #f9f9f9)', borderRadius: 8, border: '1px solid #e0e0e0' }}>
+                  <div style={{ marginTop: 16, padding: 12, backgroundColor: 'var(--bg-elevated, #2a2a2a)', borderRadius: 8, border: '1px solid var(--border-base, #333)' }}>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
                       {characterContent.data?.creator && (
                         <div>
                           <p style={{ margin: 0, lineHeight: 1.6 }}>
                             <span style={{ fontWeight: 600, color: '#1890ff', marginRight: 8 }}>创建者:</span>
-                            <span style={{ color: 'var(--text-color, #000)' }}>{characterContent.data?.creator || '无创建者'}</span>
+                            <span style={{ color: 'var(--text-primary, #ffffff)' }}>{characterContent.data?.creator || '无创建者'}</span>
                           </p>
                         </div>
                       )}
@@ -1419,7 +1589,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
                         <div>
                           <p style={{ margin: 0, lineHeight: 1.6 }}>
                             <span style={{ fontWeight: 600, color: '#1890ff', marginRight: 8 }}>角色版本:</span>
-                            <span style={{ color: 'var(--text-color, #000)' }}>{characterContent.data?.character_version || '无版本'}</span>
+                            <span style={{ color: 'var(--text-primary, #ffffff)' }}>{characterContent.data?.character_version || '无版本'}</span>
                           </p>
                         </div>
                       )}
@@ -1427,7 +1597,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
                         <div>
                           <p style={{ margin: 0, lineHeight: 1.6 }}>
                             <span style={{ fontWeight: 600, color: '#1890ff', marginRight: 8 }}>仅群组问候:</span>
-                            <span style={{ color: 'var(--text-color, #000)' }}>{characterContent.data?.group_only_greetings ? '是' : '否'}</span>
+                            <span style={{ color: 'var(--text-primary, #ffffff)' }}>{characterContent.data?.group_only_greetings ? '是' : '否'}</span>
                           </p>
                         </div>
                       )}
@@ -1458,10 +1628,10 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
               <Card 
                 style={{ 
                   marginBottom: 20, 
-                  border: '1px solid var(--border-color, #e0e0e0)', 
+                  border: '1px solid var(--border-base, #333)', 
                   borderRadius: 12, 
-                  backgroundColor: 'var(--card-bg-color, #fff)', 
-                  color: 'var(--text-color, #000)',
+                  backgroundColor: 'var(--bg-elevated, #2a2a2a)', 
+                  color: 'var(--text-primary, #ffffff)',
                   boxShadow: '0 2px 8px rgba(0, 0, 0, 0.08)'
                 }}
               >
@@ -1469,15 +1639,15 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
                   marginBottom: 16, 
                   fontSize: 18, 
                   fontWeight: 600, 
-                  color: 'var(--text-color, #000)',
-                  borderBottom: '1px solid #f0f0f0',
+                  color: 'var(--text-primary, #ffffff)',
+                  borderBottom: '1px solid var(--border-base, #333)',
                   paddingBottom: 8
                 }}>
                   初始消息
                 </h3>
                 <div style={{ 
                   padding: 20, 
-                  backgroundColor: 'var(--bg-color, #f9f9f9)', 
+                  backgroundColor: 'var(--bg-elevated, #2a2a2a)', 
                   borderRadius: 8, 
                   lineHeight: 1.6,
                   borderLeft: '4px solid #1890ff'
@@ -1492,10 +1662,10 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
               <Card 
                 style={{ 
                   marginBottom: 20, 
-                  border: '1px solid var(--border-color, #e0e0e0)', 
+                  border: '1px solid var(--border-base, #333)', 
                   borderRadius: 12, 
-                  backgroundColor: 'var(--card-bg-color, #fff)', 
-                  color: 'var(--text-color, #000)',
+                  backgroundColor: 'var(--bg-elevated, #2a2a2a)', 
+                  color: 'var(--text-primary, #ffffff)',
                   boxShadow: '0 2px 8px rgba(0, 0, 0, 0.08)'
                 }}
               >
@@ -1503,15 +1673,15 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
                   marginBottom: 16, 
                   fontSize: 18, 
                   fontWeight: 600, 
-                  color: 'var(--text-color, #000)',
-                  borderBottom: '1px solid #f0f0f0',
+                  color: 'var(--text-primary, #ffffff)',
+                  borderBottom: '1px solid var(--border-base, #333)',
                   paddingBottom: 8
                 }}>
                   示例消息
                 </h3>
                 <div style={{ 
                   padding: 20, 
-                  backgroundColor: 'var(--bg-color, #f9f9f9)', 
+                  backgroundColor: 'var(--bg-elevated, #2a2a2a)', 
                   borderRadius: 8, 
                   lineHeight: 1.6,
                   borderLeft: '4px solid #52c41a'
@@ -1526,10 +1696,10 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
               <Card 
                 style={{ 
                   marginBottom: 20, 
-                  border: '1px solid var(--border-color, #e0e0e0)', 
+                  border: '1px solid var(--border-base, #333)', 
                   borderRadius: 12, 
-                  backgroundColor: 'var(--card-bg-color, #fff)', 
-                  color: 'var(--text-color, #000)',
+                  backgroundColor: 'var(--bg-elevated, #2a2a2a)', 
+                  color: 'var(--text-primary, #ffffff)',
                   boxShadow: '0 2px 8px rgba(0, 0, 0, 0.08)'
                 }}
               >
@@ -1537,15 +1707,15 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
                   marginBottom: 16, 
                   fontSize: 18, 
                   fontWeight: 600, 
-                  color: 'var(--text-color, #000)',
-                  borderBottom: '1px solid #f0f0f0',
+                  color: 'var(--text-primary, #ffffff)',
+                  borderBottom: '1px solid var(--border-base, #333)',
                   paddingBottom: 8
                 }}>
                   系统提示
                 </h3>
                 <div style={{ 
                   padding: 20, 
-                  backgroundColor: 'var(--bg-color, #f9f9f9)', 
+                  backgroundColor: 'var(--bg-elevated, #2a2a2a)', 
                   borderRadius: 8, 
                   lineHeight: 1.6,
                   borderLeft: '4px solid #722ed1'
@@ -1560,10 +1730,10 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
               <Card 
                 style={{ 
                   marginBottom: 20, 
-                  border: '1px solid var(--border-color, #e0e0e0)', 
+                  border: '1px solid var(--border-base, #333)', 
                   borderRadius: 12, 
-                  backgroundColor: 'var(--card-bg-color, #fff)', 
-                  color: 'var(--text-color, #000)',
+                  backgroundColor: 'var(--bg-elevated, #2a2a2a)', 
+                  color: 'var(--text-primary, #ffffff)',
                   boxShadow: '0 2px 8px rgba(0, 0, 0, 0.08)'
                 }}
               >
@@ -1571,15 +1741,15 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
                   marginBottom: 16, 
                   fontSize: 18, 
                   fontWeight: 600, 
-                  color: 'var(--text-color, #000)',
-                  borderBottom: '1px solid #f0f0f0',
+                  color: 'var(--text-primary, #ffffff)',
+                  borderBottom: '1px solid var(--border-base, #333)',
                   paddingBottom: 8
                 }}>
                   历史记录后指令
                 </h3>
                 <div style={{ 
                   padding: 20, 
-                  backgroundColor: 'var(--bg-color, #f9f9f9)', 
+                  backgroundColor: 'var(--bg-elevated, #2a2a2a)', 
                   borderRadius: 8, 
                   lineHeight: 1.6,
                   borderLeft: '4px solid #fa541c'
@@ -1594,10 +1764,10 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
               <Card 
                 style={{ 
                   marginBottom: 20, 
-                  border: '1px solid var(--border-color, #e0e0e0)', 
+                  border: '1px solid var(--border-base, #333)', 
                   borderRadius: 12, 
-                  backgroundColor: 'var(--card-bg-color, #fff)', 
-                  color: 'var(--text-color, #000)',
+                  backgroundColor: 'var(--bg-elevated, #2a2a2a)', 
+                  color: 'var(--text-primary, #ffffff)',
                   boxShadow: '0 2px 8px rgba(0, 0, 0, 0.08)'
                 }}
               >
@@ -1605,15 +1775,15 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
                   marginBottom: 16, 
                   fontSize: 18, 
                   fontWeight: 600, 
-                  color: 'var(--text-color, #000)',
-                  borderBottom: '1px solid #f0f0f0',
+                  color: 'var(--text-primary, #ffffff)',
+                  borderBottom: '1px solid var(--border-base, #333)',
                   paddingBottom: 8
                 }}>
                   替代问候
                 </h3>
                 <div style={{ 
                   padding: 20, 
-                  backgroundColor: 'var(--bg-color, #f9f9f9)', 
+                  backgroundColor: 'var(--bg-elevated, #2a2a2a)', 
                   borderRadius: 8, 
                   lineHeight: 1.6,
                   borderLeft: '4px solid #13c2c2'
@@ -1628,10 +1798,10 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
               <Card 
                 style={{ 
                   marginBottom: 20, 
-                  border: '1px solid var(--border-color, #e0e0e0)', 
+                  border: '1px solid var(--border-base, #333)', 
                   borderRadius: 12, 
-                  backgroundColor: 'var(--card-bg-color, #fff)', 
-                  color: 'var(--text-color, #000)',
+                  backgroundColor: 'var(--bg-elevated, #2a2a2a)', 
+                  color: 'var(--text-primary, #ffffff)',
                   boxShadow: '0 2px 8px rgba(0, 0, 0, 0.08)'
                 }}
               >
@@ -1639,8 +1809,8 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
                   marginBottom: 16, 
                   fontSize: 18, 
                   fontWeight: 600, 
-                  color: 'var(--text-color, #000)',
-                  borderBottom: '1px solid #f0f0f0',
+                  color: 'var(--text-primary, #ffffff)',
+                  borderBottom: '1px solid var(--border-base, #333)',
                   paddingBottom: 8
                 }}>
                   创建者笔记
@@ -1650,7 +1820,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
                 {characterContent.data?.creator_notes && (
                   <div style={{ 
                     padding: 20, 
-                    backgroundColor: 'var(--bg-color, #f9f9f9)', 
+                    backgroundColor: 'var(--bg-elevated, #2a2a2a)', 
                     borderRadius: 8, 
                     lineHeight: 1.6,
                     borderLeft: '4px solid #faad14',
@@ -1667,14 +1837,14 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
                       marginBottom: 12, 
                       fontSize: 16, 
                       fontWeight: 600, 
-                      color: 'var(--text-color, #000)'
+                      color: 'var(--text-primary, #ffffff)'
                     }}>
                       多语言笔记
                     </h4>
                     {Object.entries(characterContent.data?.creator_notes_multilingual).map(([lang, note]) => (
                       <div key={lang} style={{ 
                         padding: 16, 
-                        backgroundColor: 'var(--bg-color, #f9f9f9)', 
+                        backgroundColor: 'var(--bg-elevated, #2a2a2a)', 
                         borderRadius: 8, 
                         lineHeight: 1.6,
                         borderLeft: '4px solid #faad14',
@@ -1694,10 +1864,10 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
               <Card 
                 style={{ 
                   marginBottom: 20, 
-                  border: '1px solid var(--border-color, #e0e0e0)', 
+                  border: '1px solid var(--border-base, #333)', 
                   borderRadius: 12, 
-                  backgroundColor: 'var(--card-bg-color, #fff)', 
-                  color: 'var(--text-color, #000)',
+                  backgroundColor: 'var(--bg-elevated, #2a2a2a)', 
+                  color: 'var(--text-primary, #ffffff)',
                   boxShadow: '0 2px 8px rgba(0, 0, 0, 0.08)'
                 }}
               >
@@ -1705,36 +1875,36 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
                   marginBottom: 16, 
                   fontSize: 18, 
                   fontWeight: 600, 
-                  color: 'var(--text-color, #000)',
-                  borderBottom: '1px solid #f0f0f0',
+                  color: 'var(--text-primary, #ffffff)',
+                  borderBottom: '1px solid var(--border-base, #333)',
                   paddingBottom: 8
                 }}>
                   角色书
                 </h3>
                 <div style={{ marginBottom: 20 }}>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
-                    <div style={{ padding: 12, backgroundColor: 'var(--bg-color, #f9f9f9)', borderRadius: 8, border: '1px solid #e0e0e0' }}>
-                      <p style={{ marginBottom: 4, fontSize: 14, color: '#666' }}>名称</p>
-                      <p style={{ margin: 0, fontWeight: 500, color: 'var(--text-color, #000)' }}>{characterContent.data?.character_book?.name || '无名称'}</p>
+                    <div style={{ padding: 12, backgroundColor: 'var(--bg-container, #1f1f1f)', borderRadius: 8, border: '1px solid var(--border-base, #333)' }}>
+                      <p style={{ marginBottom: 4, fontSize: 14, color: 'var(--text-secondary, #8c8c8c)' }}>名称</p>
+                      <p style={{ margin: 0, fontWeight: 500, color: 'var(--text-primary, #ffffff)' }}>{characterContent.data?.character_book?.name || '无名称'}</p>
                     </div>
-                    <div style={{ padding: 12, backgroundColor: 'var(--bg-color, #f9f9f9)', borderRadius: 8, border: '1px solid #e0e0e0' }}>
-                      <p style={{ marginBottom: 4, fontSize: 14, color: '#666' }}>扫描深度</p>
-                      <p style={{ margin: 0, fontWeight: 500, color: 'var(--text-color, #000)' }}>{characterContent.data?.character_book?.scan_depth || 0}</p>
+                    <div style={{ padding: 12, backgroundColor: 'var(--bg-container, #1f1f1f)', borderRadius: 8, border: '1px solid var(--border-base, #333)' }}>
+                      <p style={{ marginBottom: 4, fontSize: 14, color: 'var(--text-secondary, #8c8c8c)' }}>扫描深度</p>
+                      <p style={{ margin: 0, fontWeight: 500, color: 'var(--text-primary, #ffffff)' }}>{characterContent.data?.character_book?.scan_depth || 0}</p>
                     </div>
-                    <div style={{ padding: 12, backgroundColor: 'var(--bg-color, #f9f9f9)', borderRadius: 8, border: '1px solid #e0e0e0' }}>
-                      <p style={{ marginBottom: 4, fontSize: 14, color: '#666' }}>令牌预算</p>
-                      <p style={{ margin: 0, fontWeight: 500, color: 'var(--text-color, #000)' }}>{characterContent.data?.character_book?.token_budget || 0}</p>
+                    <div style={{ padding: 12, backgroundColor: 'var(--bg-container, #1f1f1f)', borderRadius: 8, border: '1px solid var(--border-base, #333)' }}>
+                      <p style={{ marginBottom: 4, fontSize: 14, color: 'var(--text-secondary, #8c8c8c)' }}>令牌预算</p>
+                      <p style={{ margin: 0, fontWeight: 500, color: 'var(--text-primary, #ffffff)' }}>{characterContent.data?.character_book?.token_budget || 0}</p>
                     </div>
-                    <div style={{ padding: 12, backgroundColor: 'var(--bg-color, #f9f9f9)', borderRadius: 8, border: '1px solid #e0e0e0' }}>
-                      <p style={{ marginBottom: 4, fontSize: 14, color: '#666' }}>递归扫描</p>
-                      <p style={{ margin: 0, fontWeight: 500, color: 'var(--text-color, #000)' }}>{characterContent.data?.character_book?.recursive_scanning ? '是' : '否'}</p>
+                    <div style={{ padding: 12, backgroundColor: 'var(--bg-container, #1f1f1f)', borderRadius: 8, border: '1px solid var(--border-base, #333)' }}>
+                      <p style={{ marginBottom: 4, fontSize: 14, color: 'var(--text-secondary, #8c8c8c)' }}>递归扫描</p>
+                      <p style={{ margin: 0, fontWeight: 500, color: 'var(--text-primary, #ffffff)' }}>{characterContent.data?.character_book?.recursive_scanning ? '是' : '否'}</p>
                     </div>
                   </div>
                   
                   {characterContent.data?.character_book?.description && (
-                    <div style={{ marginTop: 16, padding: 12, backgroundColor: 'var(--bg-color, #f9f9f9)', borderRadius: 8, border: '1px solid #e0e0e0' }}>
-                      <p style={{ marginBottom: 4, fontSize: 14, color: '#666' }}>描述</p>
-                      <p style={{ margin: 0, color: 'var(--text-color, #000)' }}>{characterContent.data?.character_book?.description}</p>
+                    <div style={{ marginTop: 16, padding: 12, backgroundColor: 'var(--bg-container, #1f1f1f)', borderRadius: 8, border: '1px solid var(--border-base, #333)' }}>
+                      <p style={{ marginBottom: 4, fontSize: 14, color: 'var(--text-secondary, #8c8c8c)' }}>描述</p>
+                      <p style={{ margin: 0, color: 'var(--text-primary, #ffffff)' }}>{characterContent.data?.character_book?.description}</p>
                     </div>
                   )}
                 </div>
@@ -1808,6 +1978,8 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
           setEditingItem(null);
           setEditingContent(null);
           setFormValues({});
+          setUploadedImage(null);
+          setUploadedImageName('');
         }}
         onOk={handleEditModalOk}
         width={1200}
@@ -1817,6 +1989,88 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
         }}
       >
         <div style={{ maxHeight: 600, overflowY: 'auto' }}>
+          {/* 图片上传区域 */}
+          <div style={{ marginBottom: 20 }}>
+            <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1890ff' }}>角色图片（必需）</label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              style={{ display: 'none' }}
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  setImageUploadLoading(true);
+                  try {
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                      setUploadedImage(ev.target?.result as string);
+                      setUploadedImageName(file.name);
+                      setImageUploadLoading(false);
+                    };
+                    reader.onerror = () => {
+                      message.error('图片读取失败');
+                      setImageUploadLoading(false);
+                    };
+                    reader.readAsDataURL(file);
+                  } catch (error) {
+                    message.error('图片读取失败');
+                    setImageUploadLoading(false);
+                  }
+                }
+                if (e.target) e.target.value = '';
+              }}
+            />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+              {uploadedImage ? (
+                <>
+                  <img
+                    src={uploadedImage}
+                    alt="角色图片"
+                    style={{ width: 80, height: 80, borderRadius: 8, objectFit: 'cover', border: '1px solid var(--border-base, #333)' }}
+                  />
+                  <div>
+                    <div style={{ color: 'var(--text-primary, #ffffff)', marginBottom: 4 }}>
+                      {uploadedImageName}
+                    </div>
+                    <Space>
+                      <Button
+                        size="small"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={imageUploadLoading}
+                      >
+                        {imageUploadLoading ? '加载中...' : '更换图片'}
+                      </Button>
+                      <Button
+                        size="small"
+                        danger
+                        onClick={() => {
+                          setUploadedImage(null);
+                          setUploadedImageName('');
+                        }}
+                      >
+                        移除图片
+                      </Button>
+                    </Space>
+                  </div>
+                </>
+              ) : (
+                <div>
+                  <Button
+                    icon={<PlusOutlined />}
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={imageUploadLoading}
+                  >
+                    {imageUploadLoading ? '加载图片中...' : '上传角色图片'}
+                  </Button>
+                  <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-secondary, #8c8c8c)' }}>
+                    保存角色卡需要PNG格式的图片载体
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+          
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
             <div>
               <FieldEditor
@@ -1827,6 +2081,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
                 onTranslate={handleTranslate}
                 onPolish={handlePolish}
                 onRestore={handleRestore}
+                onCancelAIRequest={handleCancelAIRequest}
                 translatingField={translatingField}
                 polishingField={polishingField}
                 generatingField={generatingField}
@@ -1839,6 +2094,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
                 onTranslate={handleTranslate}
                 onPolish={handlePolish}
                 onRestore={handleRestore}
+                onCancelAIRequest={handleCancelAIRequest}
                 translatingField={translatingField}
                 polishingField={polishingField}
                 generatingField={generatingField}
@@ -1851,6 +2107,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
                 onTranslate={handleTranslate}
                 onPolish={handlePolish}
                 onRestore={handleRestore}
+                onCancelAIRequest={handleCancelAIRequest}
                 translatingField={translatingField}
                 polishingField={polishingField}
                 generatingField={generatingField}
@@ -1863,6 +2120,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
                 onTranslate={handleTranslate}
                 onPolish={handlePolish}
                 onRestore={handleRestore}
+                onCancelAIRequest={handleCancelAIRequest}
                 translatingField={translatingField}
                 polishingField={polishingField}
                 generatingField={generatingField}
@@ -1875,6 +2133,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
                 onTranslate={handleTranslate}
                 onPolish={handlePolish}
                 onRestore={handleRestore}
+                onCancelAIRequest={handleCancelAIRequest}
                 translatingField={translatingField}
                 polishingField={polishingField}
                 generatingField={generatingField}
@@ -1887,6 +2146,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
                 onTranslate={handleTranslate}
                 onPolish={handlePolish}
                 onRestore={handleRestore}
+                onCancelAIRequest={handleCancelAIRequest}
                 translatingField={translatingField}
                 polishingField={polishingField}
                 generatingField={generatingField}
@@ -1914,6 +2174,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
                 onPolish={handlePolish}
                 onGenerate={handleGenerate}
                 onRestore={handleRestore}
+                onCancelAIRequest={handleCancelAIRequest}
                 translatingField={translatingField}
                 polishingField={polishingField}
                 generatingField={generatingField}
@@ -1930,6 +2191,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
                 onPolish={handlePolish}
                 onGenerate={handleGenerate}
                 onRestore={handleRestore}
+                onCancelAIRequest={handleCancelAIRequest}
                 translatingField={translatingField}
                 polishingField={polishingField}
                 generatingField={generatingField}
@@ -1949,6 +2211,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
             onPolish={handlePolish}
             onGenerate={handleGenerate}
             onRestore={handleRestore}
+            onCancelAIRequest={handleCancelAIRequest}
             translatingField={translatingField}
             polishingField={polishingField}
             generatingField={generatingField}
@@ -1966,6 +2229,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
             onPolish={handlePolish}
             onGenerate={handleGenerate}
             onRestore={handleRestore}
+            onCancelAIRequest={handleCancelAIRequest}
             translatingField={translatingField}
             polishingField={polishingField}
             generatingField={generatingField}
@@ -1983,6 +2247,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
             onPolish={handlePolish}
             onGenerate={handleGenerate}
             onRestore={handleRestore}
+            onCancelAIRequest={handleCancelAIRequest}
             translatingField={translatingField}
             polishingField={polishingField}
             generatingField={generatingField}
@@ -2000,6 +2265,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
             onPolish={handlePolish}
             onGenerate={handleGenerate}
             onRestore={handleRestore}
+            onCancelAIRequest={handleCancelAIRequest}
             translatingField={translatingField}
             polishingField={polishingField}
             generatingField={generatingField}
@@ -2017,6 +2283,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
             onPolish={handlePolish}
             onGenerate={handleGenerate}
             onRestore={handleRestore}
+            onCancelAIRequest={handleCancelAIRequest}
             translatingField={translatingField}
             polishingField={polishingField}
             generatingField={generatingField}
@@ -2034,6 +2301,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
             onPolish={handlePolish}
             onGenerate={handleGenerate}
             onRestore={handleRestore}
+            onCancelAIRequest={handleCancelAIRequest}
             translatingField={translatingField}
             polishingField={polishingField}
             generatingField={generatingField}
@@ -2051,6 +2319,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
             onPolish={handlePolish}
             onGenerate={handleGenerate}
             onRestore={handleRestore}
+            onCancelAIRequest={handleCancelAIRequest}
             translatingField={translatingField}
             polishingField={polishingField}
             generatingField={generatingField}
@@ -2072,15 +2341,32 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
         title="AI润色"
         open={isPolishModalOpen}
         onCancel={() => {
-          setIsPolishModalOpen(false);
-          setCurrentPolishField(null);
-          setCurrentPolishText('');
-          setPolishRequirements('');
+          if (!polishingField) {
+            setIsPolishModalOpen(false);
+            setCurrentPolishField(null);
+            setCurrentPolishText('');
+            setPolishRequirements('');
+          }
         }}
-        onOk={performPolish}
-        okText="开始润色"
-        cancelText="取消"
-        confirmLoading={polishingField !== null}
+        closable={!polishingField}
+        maskClosable={!polishingField}
+        footer={polishingField ? [
+          <Button key="interrupt" danger icon={<StopOutlined />} onClick={handleCancelAIRequest}>
+            中断请求
+          </Button>
+        ] : [
+          <Button key="cancel" onClick={() => {
+            setIsPolishModalOpen(false);
+            setCurrentPolishField(null);
+            setCurrentPolishText('');
+            setPolishRequirements('');
+          }}>
+            取消
+          </Button>,
+          <Button key="ok" type="primary" onClick={performPolish}>
+            开始润色
+          </Button>
+        ]}
       >
         <div>
           <p>请输入润色要求（例如：风格偏向可爱、更加正式、增加细节等）：</p>
@@ -2090,6 +2376,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
             value={polishRequirements}
             onChange={(e) => setPolishRequirements(e.target.value)}
             autoFocus
+            disabled={polishingField !== null}
           />
         </div>
       </Modal>

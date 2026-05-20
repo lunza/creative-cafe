@@ -4,7 +4,8 @@ import {
   EditOutlined,
   DeleteOutlined,
   TagOutlined,
-  LoadingOutlined
+  LoadingOutlined,
+  StopOutlined
 } from '@ant-design/icons';
 
 interface WorldBookEntryListProps {
@@ -24,6 +25,7 @@ interface WorldBookEntryListProps {
   onDeleteEntry: (uid: number | string) => void;
   onGenerateKeywords: (uid: string | number) => void;
   onEditEntryTags: (uid: number | string) => void;
+  onCancelAIRequest?: () => void;
 }
 
 const WorldBookEntryList: React.FC<WorldBookEntryListProps> = ({
@@ -42,7 +44,8 @@ const WorldBookEntryList: React.FC<WorldBookEntryListProps> = ({
   onEditEntry,
   onDeleteEntry,
   onGenerateKeywords,
-  onEditEntryTags
+  onEditEntryTags,
+  onCancelAIRequest
 }) => {
   const displayedProps = ['uid', 'key', 'keysecondary', 'comment', 'content', 'constant', 'selective', 'order', 'position', 'disable', 'displayIndex', 'addMemo', 'group', 'groupOverride', 'groupWeight', 'sticky', 'cooldown', 'delay', 'probability', 'depth', 'useProbability', 'role', 'vectorized', 'excludeRecursion', 'preventRecursion', 'delayUntilRecursion', 'scanDepth', 'caseSensitive', 'matchWholeWords', 'useGroupScoring', 'automationId'];
 
@@ -109,7 +112,7 @@ const WorldBookEntryList: React.FC<WorldBookEntryListProps> = ({
           style={{ transform: 'scale(1.2)' }}
         />
         <span style={{ fontWeight: 'bold' }}>全选</span>
-        <span style={{ color: 'var(--text-color, #666)' }}>已选择 {selectedEntries.size} 个条目</span>
+        <span style={{ color: 'var(--text-secondary, #8c8c8c)' }}>已选择 {selectedEntries.size} 个条目</span>
       </div>
 
       {sortedTagIds.map(tagId => {
@@ -125,10 +128,10 @@ const WorldBookEntryList: React.FC<WorldBookEntryListProps> = ({
               alignItems: 'center', 
               marginBottom: 12,
               paddingBottom: 8,
-              borderBottom: '2px solid var(--border-color, #e8e8e8)'
+              borderBottom: '2px solid var(--border-base, #333)'
             }}>
               <Tag color={tagColor} style={{ fontSize: 16, padding: '4px 12px', marginRight: 8 }}>{tagName}</Tag>
-              <span style={{ color: 'var(--text-color, #666)', fontSize: 14 }}>共 {groupEntries.length} 个条目</span>
+              <span style={{ color: 'var(--text-secondary, #8c8c8c)', fontSize: 14 }}>共 {groupEntries.length} 个条目</span>
             </div>
             {groupEntries.map((entry: any) => {
               const uid = entry.uid;
@@ -136,7 +139,7 @@ const WorldBookEntryList: React.FC<WorldBookEntryListProps> = ({
               const additionalProps = Object.entries(entry).filter(([key]) => !displayedProps.includes(key));
 
               return (
-                <Card key={uid} style={{ marginBottom: 16, border: '1px solid var(--border-color, #f0f0f0)', backgroundColor: 'var(--card-bg-color, #fff)', color: 'var(--text-color, #000)' }}>
+                <Card key={uid} style={{ marginBottom: 16, border: '1px solid var(--border-base, #333)', backgroundColor: 'var(--bg-elevated, #2a2a2a)', color: 'var(--text-primary, #ffffff)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <input
@@ -153,15 +156,26 @@ const WorldBookEntryList: React.FC<WorldBookEntryListProps> = ({
                       <div>
                         <strong>关键词:</strong> {entry.key?.join(', ') || '无'}
                       </div>
-                      <Button 
-                        type="link" 
-                        size="small"
-                        icon={generatingKeywordsUid === uid ? <LoadingOutlined /> : <TagOutlined />}
-                        loading={generatingKeywordsUid === uid}
-                        onClick={() => onGenerateKeywords(uid)}
-                      >
-                        AI生成关键词
-                      </Button>
+                      {generatingKeywordsUid === uid ? (
+                        <Button 
+                          type="link" 
+                          size="small"
+                          danger
+                          icon={<StopOutlined />}
+                          onClick={onCancelAIRequest}
+                        >
+                          中断
+                        </Button>
+                      ) : (
+                        <Button 
+                          type="link" 
+                          size="small"
+                          icon={<TagOutlined />}
+                          onClick={() => onGenerateKeywords(uid)}
+                        >
+                          AI生成关键词
+                        </Button>
+                      )}
                     </div>
                     {entry.keysecondary && entry.keysecondary.length > 0 && (
                       <p style={{ marginBottom: 8 }}>
@@ -173,8 +187,8 @@ const WorldBookEntryList: React.FC<WorldBookEntryListProps> = ({
                     </p>
                     <div style={{ 
                       padding: 12, 
-                      backgroundColor: 'var(--card-bg-color, #1f1f1f)', 
-                      color: 'var(--text-color, #ffffff)',
+                      backgroundColor: 'var(--bg-elevated, #2a2a2a)', 
+                      color: 'var(--text-primary, #ffffff)',
                       borderRadius: 4, 
                       whiteSpace: 'pre-wrap',
                       fontFamily: 'monospace'

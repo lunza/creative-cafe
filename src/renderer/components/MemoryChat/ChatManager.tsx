@@ -1246,7 +1246,7 @@ const ChatManager: React.FC = () => {
                   </span>
                 )}
               </div>
-              <div style={{ width: '100%', height: 10, background: '#f0f0f0', borderRadius: 5 }}>
+              <div style={{ width: '100%', height: 10, background: 'var(--bg-container, #1f1f1f)', borderRadius: 5 }}>
                 <div
                   style={{
                     width: `${processingProgress}%`,
