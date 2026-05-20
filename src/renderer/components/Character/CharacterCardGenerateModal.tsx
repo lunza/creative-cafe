@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Modal,
   Form,
@@ -18,7 +18,9 @@ import {
 import {
   ThunderboltOutlined,
   CheckCircleOutlined,
-  FileTextOutlined
+  FileTextOutlined,
+  StopOutlined,
+  LoadingOutlined
 } from '@ant-design/icons';
 import { useSettingStore } from '../../stores/settingStore';
 import { sendCharacterAIRequest } from '../../utils/characterAIUtils';
@@ -75,6 +77,7 @@ const CharacterCardGenerateModal: React.FC<CharacterCardGenerateModalProps> = ({
   const [editingCard, setEditingCard] = useState<CharacterCardData | null>(null);
   const [isLoadingWorldBooks, setIsLoadingWorldBooks] = useState(false);
   const { setting, fetchSetting } = useSettingStore();
+  const isGeneratingRef = useRef(false);
 
   useEffect(() => {
     if (open) {
@@ -198,6 +201,7 @@ const CharacterCardGenerateModal: React.FC<CharacterCardGenerateModalProps> = ({
     }
 
     setIsGenerating(true);
+    isGeneratingRef.current = true;
     try {
       const systemPrompt = `你是一个专业的SillyTavern角色卡创建助手。你的任务是根据用户提供的参考信息和参数，生成高质量的角色卡数据。
 
@@ -213,6 +217,11 @@ const CharacterCardGenerateModal: React.FC<CharacterCardGenerateModalProps> = ({
       const userPrompt = buildGenerationPrompt();
 
       const result = await sendCharacterAIRequest(activeEngine, systemPrompt, userPrompt);
+
+      if (!isGeneratingRef.current) {
+        message.info('已中断生成');
+        return;
+      }
 
       if (!result) {
         message.error('AI未返回有效内容，请重试');
@@ -267,10 +276,21 @@ const CharacterCardGenerateModal: React.FC<CharacterCardGenerateModalProps> = ({
       setCurrentStep(1);
       message.success('角色卡生成成功！请在下一步中预览和调整');
     } catch (error) {
+      if (!isGeneratingRef.current) {
+        message.info('已中断生成');
+        return;
+      }
       message.error(`生成失败: ${error instanceof Error ? error.message : '未知错误'}`);
     } finally {
       setIsGenerating(false);
+      isGeneratingRef.current = false;
     }
+  };
+
+  const handleCancelGeneration = () => {
+    isGeneratingRef.current = false;
+    window.electronAPI?.ai?.cancel?.();
+    message.info('正在中断AI请求...');
   };
 
   const handleCreate = () => {
@@ -514,15 +534,34 @@ const CharacterCardGenerateModal: React.FC<CharacterCardGenerateModalProps> = ({
           }}>
             取消
           </Button>,
-          <Button
-            key="generate"
-            type="primary"
-            icon={<ThunderboltOutlined />}
-            loading={isGenerating}
-            onClick={handleGenerate}
-          >
-            {isGenerating ? '生成中...' : 'AI生成角色卡'}
-          </Button>
+          isGenerating ? (
+            <Space key="generate">
+              <Button
+                type="primary"
+                icon={<LoadingOutlined />}
+                loading
+                disabled
+              >
+                生成中...
+              </Button>
+              <Button
+                danger
+                icon={<StopOutlined />}
+                onClick={handleCancelGeneration}
+              >
+                中断
+              </Button>
+            </Space>
+          ) : (
+            <Button
+              key="generate"
+              type="primary"
+              icon={<ThunderboltOutlined />}
+              onClick={handleGenerate}
+            >
+              AI生成角色卡
+            </Button>
+          )
         ] : currentStep === 1 ? [
           <Button key="back" onClick={() => setCurrentStep(0)}>
             返回修改
@@ -533,11 +572,11 @@ const CharacterCardGenerateModal: React.FC<CharacterCardGenerateModalProps> = ({
         ] : null
       }
       style={{
-        backgroundColor: 'var(--bg-color, #fff)',
-        color: 'var(--text-color, #000)'
+        backgroundColor: 'var(--bg-container, #1f1f1f)',
+        color: 'var(--text-primary, #ffffff)'
       }}
     >
-      <div style={{ color: 'var(--text-color, #000)' }}>
+      <div style={{ color: 'var(--text-primary, #ffffff)' }}>
         <Steps
           current={currentStep}
           style={{ marginBottom: 24 }}

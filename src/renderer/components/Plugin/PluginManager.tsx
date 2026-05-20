@@ -791,8 +791,8 @@ const PluginManager: React.FC = () => {
           </Button>
         ]}
         style={{
-          backgroundColor: 'var(--bg-color, #fff)',
-          color: 'var(--text-color, #000)'
+          backgroundColor: 'var(--bg-container, #1f1f1f)',
+          color: 'var(--text-primary, #ffffff)'
         }}
         className={appTheme === 'dark' ? 'dark' : ''}
       >

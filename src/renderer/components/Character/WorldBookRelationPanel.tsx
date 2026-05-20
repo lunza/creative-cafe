@@ -188,8 +188,8 @@ export const WorldBookRelationPanel: React.FC<WorldBookRelationPanelProps> = ({
           scroll={{ y: 300 }}
         />
       )}
-      <div style={{ marginTop: 12, padding: '8px 12px', background: '#f5f5f5', borderRadius: 4 }}>
-        <p style={{ margin: 0, fontSize: 12, color: '#666' }}>
+      <div style={{ marginTop: 12, padding: '8px 12px', background: 'var(--card-bg-color, #f5f5f5)', borderRadius: 4 }}>
+        <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary-color, #666)' }}>
           <strong>说明:</strong> 在与此角色对话时，系统会自动检索关联世界书的条目。优先级越高，检索权重越大。
         </p>
       </div>

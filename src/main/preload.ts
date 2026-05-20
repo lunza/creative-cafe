@@ -58,6 +58,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     list: () => ipcRenderer.invoke('character:list'),
     read: (path: string) => ipcRenderer.invoke('character:read', path),
     write: (path: string, data: any) => ipcRenderer.invoke('character:write', path, data),
+    createFromImage: (filePath: string, imageDataBase64: string, characterData: any) => ipcRenderer.invoke('character:createFromImage', filePath, imageDataBase64, characterData),
     delete: (path: string) => ipcRenderer.invoke('character:delete', path),
     optimize: (path: string) => ipcRenderer.invoke('character:optimize', path),
     getDirectory: () => ipcRenderer.invoke('character:getDirectory'),

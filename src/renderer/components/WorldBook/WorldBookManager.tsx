@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Card, Table, Button, Space, Modal, Form, Input, message, Popconfirm, Tag, Typography, Switch, Radio, Select, Pagination } from 'antd';
 import MarkdownEditor from '../Common/MarkdownEditor';
 import {
@@ -17,7 +17,8 @@ import {
   DownOutlined,
   TagOutlined,
   FolderOpenOutlined,
-  CopyOutlined
+  CopyOutlined,
+  StopOutlined
 } from '@ant-design/icons';
 import TagManager from './TagManager';
 import { WorldBookVectorPanel } from './WorldBookVectorPanel';
@@ -26,6 +27,7 @@ import WorldBookEntryList from './WorldBookEntryList';
 import WorldBookCreateModal from './WorldBookCreateModal';
 import WorldBookGenerateModal from './WorldBookGenerateModal';
 import WorldBookAddEntryModal from './WorldBookAddEntryModal';
+import WorldBookTemplateSelector from './WorldBookTemplateSelector';
 import { StoragePathDisplay } from '../common/StoragePathDisplay';
 import { 
   sanitizeFileName, 
@@ -38,6 +40,7 @@ import {
   sortEntriesByOrder,
   moveEntry
 } from '../../utils/worldBookUtils';
+import { WorldBookTemplate } from '../../utils/worldBookTemplates';
 import { useModal } from '../../hooks/useModal';
 import { useWorldBookStore } from '../../stores/worldBookStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -155,6 +158,16 @@ const WorldBookManager: React.FC = () => {
   const [currentPolishText, setCurrentPolishText] = useState<string>('');
   const [polishAllRequirements, setPolishAllRequirements] = useState<string>('');
   const [isPolishAllModalOpen, setIsPolishAllModalOpen] = useState<boolean>(false);
+
+  // Ref to track if AI operation should be cancelled
+  const isProcessingRef = useRef<boolean>(false);
+
+  const handleCancelAIRequest = () => {
+    isProcessingRef.current = false;
+    window.electronAPI?.ai?.cancel?.();
+    message.info('已中断AI请求');
+    addLog('[WorldBook] 用户主动中断AI请求', 'warn');
+  };
 
   useEffect(() => {
     fetchSetting();
@@ -1050,6 +1063,7 @@ const WorldBookManager: React.FC = () => {
   const handleTranslate = async (field: string) => {
     const startTime = Date.now();
     addLog(`[WorldBook] 开始翻译字段: ${field}`);
+    isProcessingRef.current = true;
     
     try {
       // 设置正在翻译的字段
@@ -1061,6 +1075,7 @@ const WorldBookManager: React.FC = () => {
       if (!text) {
         message.warning('请先输入要翻译的内容');
         setTranslatingField(null);
+        isProcessingRef.current = false;
         return;
       }
 
@@ -1072,6 +1087,7 @@ const WorldBookManager: React.FC = () => {
       if (!activeEngine) {
         message.error('请先在配置管理中设置AI引擎');
         setTranslatingField(null);
+        isProcessingRef.current = false;
         return;
       }
 
@@ -1089,6 +1105,7 @@ const WorldBookManager: React.FC = () => {
       if (!apiUrl) {
         message.error('API地址不能为空');
         setTranslatingField(null);
+        isProcessingRef.current = false;
         return;
       }
 
@@ -1097,6 +1114,11 @@ const WorldBookManager: React.FC = () => {
 
       // 调用翻译函数
       let cleanedText = await translateText(text, apiUrl, apiKey, apiMode, modelName, apiKeyTransmission, worldBookDescription, maxTokens, temperature, topP, activeEngine.system_prompt || '');
+
+      if (!isProcessingRef.current) {
+        addLog('[WorldBook] 翻译请求已被用户中断', 'warn');
+        return;
+      }
 
       // 如果翻译的是关键词字段（key 或 keysecondary），处理顿号分隔的情况
       if (field === 'key' || field === 'keysecondary') {
@@ -1120,9 +1142,15 @@ const WorldBookManager: React.FC = () => {
 
       message.success('翻译成功');
       setTranslatingField(null);
+      isProcessingRef.current = false;
     } catch (error) {
+      if (!isProcessingRef.current) {
+        addLog('[WorldBook] 翻译请求已被用户中断', 'warn');
+        return;
+      }
       message.error(`翻译失败: ${error instanceof Error ? error.message : '未知错误'}`);
       setTranslatingField(null);
+      isProcessingRef.current = false;
     }
   };
 
@@ -1141,9 +1169,11 @@ const WorldBookManager: React.FC = () => {
     }
     
     addLog(`[WorldBook] 开始翻译选中的 ${selectedEntries.size} 个条目`);
+    isProcessingRef.current = true;
     
     if (!worldBookContent || !worldBookContent.entries) {
       message.error('没有可翻译的条目');
+      isProcessingRef.current = false;
       return;
     }
 
@@ -1156,6 +1186,7 @@ const WorldBookManager: React.FC = () => {
       if (!activeEngine) {
         message.error('请先在配置管理中设置AI引擎');
         setIsTranslatingAll(false);
+        isProcessingRef.current = false;
         return;
       }
 
@@ -1173,6 +1204,7 @@ const WorldBookManager: React.FC = () => {
       if (!apiUrl) {
         message.error('API地址不能为空');
         setIsTranslatingAll(false);
+        isProcessingRef.current = false;
         return;
       }
 
@@ -1190,6 +1222,12 @@ const WorldBookManager: React.FC = () => {
       let translatedCount = 0;
       
       for (const entry of entries) {
+        if (!isProcessingRef.current) {
+          addLog(`[WorldBook] 一键翻译已被用户中断`, 'warn');
+          message.info('已中断翻译');
+          return;
+        }
+        
         const entryAny = entry as any;
         const entryStartTime = Date.now();
         const entryUid = entryAny.uid || entryAny.comment || '未知';
@@ -1271,9 +1309,15 @@ const WorldBookManager: React.FC = () => {
       addLog(`[WorldBook] 一键翻译全部完成: 共${translatedCount}个条目, 总耗时=${totalDuration}秒, 平均每个条目=${(totalDuration/translatedCount).toFixed(2)}秒`, 'info');
       
       message.success(`成功翻译 ${translatedCount} 个条目，总耗时 ${totalDuration.toFixed(2)} 秒`);
+      isProcessingRef.current = false;
     } catch (error) {
+      if (!isProcessingRef.current) {
+        addLog(`[WorldBook] 一键翻译已被用户中断`, 'warn');
+        return;
+      }
       addLog(`[WorldBook] 一键翻译失败: ${error instanceof Error ? error.message : '未知错误'}`, 'error');
       message.error(`一键翻译失败: ${error instanceof Error ? error.message : '未知错误'}`);
+      isProcessingRef.current = false;
     } finally {
       setIsTranslatingAll(false);
     }
@@ -1314,9 +1358,11 @@ const WorldBookManager: React.FC = () => {
   const performPolishAll = async () => {
     const totalStartTime = Date.now();
     addLog(`[WorldBook] 开始润色选中的 ${selectedEntries.size} 个条目`);
+    isProcessingRef.current = true;
     
     if (!worldBookContent || !worldBookContent.entries) {
       message.error('没有可润色的条目');
+      isProcessingRef.current = false;
       return;
     }
 
@@ -1330,6 +1376,7 @@ const WorldBookManager: React.FC = () => {
       if (!activeEngine) {
         message.error('请先在配置管理中设置AI引擎');
         setIsPolishingAll(false);
+        isProcessingRef.current = false;
         return;
       }
 
@@ -1348,6 +1395,7 @@ const WorldBookManager: React.FC = () => {
       if (!apiUrl) {
         message.error('API地址不能为空');
         setIsPolishingAll(false);
+        isProcessingRef.current = false;
         return;
       }
 
@@ -1366,6 +1414,12 @@ const WorldBookManager: React.FC = () => {
       let polishedCount = 0;
       
       for (const entry of entries) {
+        if (!isProcessingRef.current) {
+          addLog(`[WorldBook] 一键润色已被用户中断`, 'warn');
+          message.info('已中断润色');
+          return;
+        }
+        
         const entryAny = entry as any;
         const entryStartTime = Date.now();
         const entryUid = entryAny.uid || entryAny.comment || '未知';
@@ -1403,12 +1457,17 @@ const WorldBookManager: React.FC = () => {
       addLog(`[WorldBook] 一键润色全部完成: 共${polishedCount}个条目, 总耗时=${totalDuration}秒, 平均每个条目=${(totalDuration/polishedCount).toFixed(2)}秒`, 'info');
       
       message.success(`成功润色 ${polishedCount} 个条目，总耗时 ${totalDuration.toFixed(2)} 秒`);
+      isProcessingRef.current = false;
     } catch (error) {
+      if (!isProcessingRef.current) {
+        addLog(`[WorldBook] 一键润色已被用户中断`, 'warn');
+        return;
+      }
       addLog(`[WorldBook] 一键润色失败: ${error instanceof Error ? error.message : '未知错误'}`, 'error');
       message.error(`一键润色失败: ${error instanceof Error ? error.message : '未知错误'}`);
+      isProcessingRef.current = false;
     } finally {
       setIsPolishingAll(false);
-      setPolishAllRequirements('');
     }
   };
 
@@ -2815,6 +2874,181 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
     }
   };
 
+  const handleTemplateGenerateEntries = async (template: WorldBookTemplate, params: Record<string, any>, theme: string): Promise<any[]> => {
+    addLog(`[WorldBook] 开始基于模板生成世界书条目: ${template.name}`);
+    try {
+      if (!setting) {
+        message.error('请先在配置管理中设置API连接');
+        return [];
+      }
+
+      const activeEngine = getActiveEngineConfig();
+      
+      if (!activeEngine) {
+        message.error('请先在配置管理中设置AI引擎');
+        return [];
+      }
+
+      const apiUrl = activeEngine.api_url;
+      const apiKey = activeEngine.api_key;
+      const apiMode = activeEngine.api_mode;
+      const modelName = activeEngine.model_name || 'gpt-3.5-turbo';
+      const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
+      const maxTokens = Number(activeEngine.max_tokens) || 10240;
+      const temperature = Number(activeEngine.temperature) || 0.7;
+      const topP = Number(activeEngine.top_p) || 0.95;
+      
+      if (!apiUrl) {
+        message.error('API地址不能为空');
+        return [];
+      }
+
+      const userPrompt = template.generatePrompt(params, theme);
+
+      let systemPrompt = `你是一个专业的世界书（Lorebook）数据生成助手。你只输出符合指定Schema的JSON数据。
+
+【输出格式强制要求】
+- 你的响应必须且只能是一个合法的JSON对象
+- 不要输出任何分析、推理、说明、解释文字
+- 不要使用任何Markdown标记（如反引号代码块等）
+- 不要输出代码块标记（三个反引号开头和结尾）
+- 响应的第一个字符必须是 "{"，最后一个字符必须是 "}"
+- 不要在任何位置包含 "让我..."、"好的..."、"以下是..." 等引导语
+
+【JSON Schema 定义】
+生成一个符合以下Schema的JSON对象：
+{
+  "type": "object",
+  "required": ["entries"],
+  "properties": {
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["comment", "key", "content"],
+        "properties": {
+          "comment": { "type": "string", "description": "条目标题/注释" },
+          "key": { "type": "array", "items": { "type": "string" }, "description": "主要关键词列表，3-5个" },
+          "content": { "type": "string", "description": "条目详细内容描述" },
+          "keysecondary": { "type": "array", "items": { "type": "string" } },
+          "order": { "type": "number" },
+          "probability": { "type": "number" },
+          "depth": { "type": "number" },
+          "position": { "type": "string" },
+          "group": { "type": "string" },
+          "constant": { "type": "boolean" },
+          "selective": { "type": "boolean" },
+          "disable": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}
+
+【正确示例】
+{"entries":[{"comment":"规则_1: 战斗系统","key":["战斗","规则","系统"],"content":"战斗系统的详细描述..."}]}`;
+
+      let finalSystemPrompt = systemPrompt;
+      if (activeEngine.system_prompt && activeEngine.system_prompt.trim()) {
+        finalSystemPrompt = activeEngine.system_prompt.trim() + '\n\n' + systemPrompt;
+      }
+
+      let requestUrl;
+      let requestBody;
+      let requestHeaders = { 'Content-Type': 'application/json' };
+
+      if (apiMode === 'chat_completion') {
+        requestUrl = apiUrl.endsWith('/v1/chat/completions') ? apiUrl : (apiUrl.endsWith('/') ? apiUrl + 'v1/chat/completions' : apiUrl + '/v1/chat/completions');
+        requestBody = {
+          model: modelName,
+          messages: [
+            { role: 'system', content: finalSystemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          max_tokens: maxTokens,
+          temperature: temperature,
+          top_p: topP,
+          n: 1,
+          stream: false
+        };
+      } else {
+        requestUrl = apiUrl.endsWith('/v1/completions') ? apiUrl : (apiUrl.endsWith('/') ? apiUrl + 'v1/completions' : apiUrl + '/v1/completions');
+        requestBody = {
+          model: modelName,
+          prompt: finalSystemPrompt + '\n\n' + userPrompt,
+          max_tokens: maxTokens,
+          temperature: temperature,
+          top_p: topP,
+          n: 1,
+          stream: false
+        };
+      }
+
+      if (apiKey) {
+        if (apiKeyTransmission === 'header') {
+          const trimmedApiKey = apiKey.trim();
+          if (trimmedApiKey.startsWith('Bearer ')) {
+            requestHeaders['Authorization'] = trimmedApiKey;
+          } else {
+            requestHeaders['Authorization'] = `Bearer ${trimmedApiKey}`;
+          }
+        } else {
+          requestBody.api_key = apiKey;
+        }
+      }
+
+      addLog(`[WorldBook] 模板生成: 发送请求到 ${requestUrl}`);
+
+      const result = await window.electronAPI.ai.request({
+        url: requestUrl,
+        method: 'POST',
+        headers: requestHeaders,
+        body: requestBody
+      });
+
+      if (!result.success) {
+        addLog(`[WorldBook] 模板生成: API请求失败 ${result.error}`, 'error');
+        throw new Error(`API请求失败: ${result.error}`);
+      }
+
+      const data = result.data;
+      let aiResponse = data.choices?.[0]?.message?.content || data.choices?.[0]?.text || '';
+
+      aiResponse = aiResponse.trim();
+      aiResponse = aiResponse.replace(/^```json\s*|\s*```$/g, '');
+
+      let parsedData;
+      try {
+        parsedData = JSON.parse(aiResponse);
+      } catch (parseError) {
+        throw new Error(`JSON解析失败: ${parseError instanceof Error ? parseError.message : '未知错误'}`);
+      }
+
+      const rawEntries = Array.isArray(parsedData.entries) ? parsedData.entries : [];
+
+      let maxUid = 0;
+      if (worldBookContent && worldBookContent.entries) {
+        const existingUids = Object.values(worldBookContent.entries).map((entry: any) => entry.uid).filter((uid: any) => uid !== undefined);
+        maxUid = existingUids.length > 0 ? Math.max(...existingUids) : 0;
+      }
+
+      const entriesArray = rawEntries.map((entry: any, index: number) => {
+        return createDefaultEntry(
+          maxUid + index + 1,
+          entry.key || [],
+          entry.comment || '',
+          entry.content || ''
+        );
+      });
+
+      addLog(`[WorldBook] 模板生成成功，共 ${entriesArray.length} 个条目`, 'info');
+      return entriesArray;
+    } catch (error) {
+      addLog(`[WorldBook] 模板生成失败: ${error instanceof Error ? error.message : '未知错误'}`, 'error');
+      throw error;
+    }
+  };
+
   // AI扩写关键词
   const handleExpandKeywords = async (keywords: string, fieldName: 'key' | 'keysecondary') => {
     addLog(`[WorldBook] 开始AI扩写关键词: ${fieldName}`);
@@ -3198,7 +3432,7 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
   };
 
   // AI基于角色卡生成世界书
-  const handleGenerateFromCharacters = async (charactersInfo: string): Promise<{ name: string; description: string; entries: any[] }> => {
+  const handleGenerateFromCharacters = async (charactersInfo: string, instructions: string): Promise<{ name: string; description: string; entries: any[] }> => {
     addLog('[WorldBook] 开始基于角色卡生成世界书');
     setIsGeneratingFromChars(true);
     try {
@@ -3232,7 +3466,8 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
 2. 条目内容应该与角色卡信息相关
 3. 关键词应该包含主要触发词和同义词
 4. 条目内容应该详细、连贯
-5. 请只返回JSON数据，不要包含其他说明文字`;
+5. 请只返回JSON数据，不要包含其他说明文字
+${instructions ? `\n【用户指令】\n${instructions}` : ''}`;
 
       const userPrompt = `请根据以下角色卡信息，生成配套的世界书：
 
@@ -4151,49 +4386,48 @@ ${charactersInfo}
     <Button 
       key="generateKeywordsAll" 
       type="primary"
-      icon={isGeneratingKeywordsAll ? <LoadingOutlined /> : <TagOutlined />}
-      loading={isGeneratingKeywordsAll}
-      onClick={handleGenerateKeywordsAll}
-      disabled={isGeneratingKeywordsAll || isTranslatingAll || isPolishingAll}
+      icon={isGeneratingKeywordsAll ? <StopOutlined /> : <TagOutlined />}
+      danger={isGeneratingKeywordsAll}
+      onClick={isGeneratingKeywordsAll ? handleCancelAIRequest : handleGenerateKeywordsAll}
+      disabled={!isGeneratingKeywordsAll && (isTranslatingAll || isPolishingAll)}
       style={{ marginRight: 8 }}
     >
-      {isGeneratingKeywordsAll ? '正在生成中...' : 'AI生成关键词'}
+      {isGeneratingKeywordsAll ? '中断生成' : 'AI生成关键词'}
     </Button>,
     <Button 
       key="translateAll" 
       type="primary"
-      icon={isTranslatingAll ? <LoadingOutlined /> : <TranslationOutlined />}
-      loading={isTranslatingAll}
-      onClick={handleTranslateAll}
-      disabled={isTranslatingAll || isPolishingAll || isGeneratingKeywordsAll || selectedEntries.size === 0}
+      icon={isTranslatingAll ? <StopOutlined /> : <TranslationOutlined />}
+      danger={isTranslatingAll}
+      onClick={isTranslatingAll ? handleCancelAIRequest : handleTranslateAll}
+      disabled={!isTranslatingAll && (isPolishingAll || isGeneratingKeywordsAll || selectedEntries.size === 0)}
       style={{ marginRight: 8 }}
     >
-      {isTranslatingAll ? '正在翻译中...' : `一键翻译选中条目 (${selectedEntries.size})`}
+      {isTranslatingAll ? '中断翻译' : `一键翻译选中条目 (${selectedEntries.size})`}
     </Button>,
     <Button 
       key="polishAll" 
       type="primary"
-      icon={isPolishingAll ? <LoadingOutlined /> : <EditOutlined />}
-      loading={isPolishingAll}
-      onClick={handlePolishAll}
-      disabled={isPolishingAll || isTranslatingAll || isGeneratingKeywordsAll || selectedEntries.size === 0}
+      icon={isPolishingAll ? <StopOutlined /> : <EditOutlined />}
+      danger={isPolishingAll}
+      onClick={isPolishingAll ? handleCancelAIRequest : handlePolishAll}
+      disabled={!isPolishingAll && (isTranslatingAll || isGeneratingKeywordsAll || selectedEntries.size === 0)}
       style={{ marginRight: 8 }}
     >
-      {isPolishingAll ? '正在润色中...' : `一键润色选中条目 (${selectedEntries.size})`}
+      {isPolishingAll ? '中断润色' : `一键润色选中条目 (${selectedEntries.size})`}
     </Button>,
     <Button 
       key="organizeEntries" 
       type="primary"
-      icon={isAISorting ? <LoadingOutlined /> : <SortAscendingOutlined />}
-      loading={isAISorting}
-      onClick={() => {
+      icon={isAISorting ? <StopOutlined /> : <SortAscendingOutlined />}
+      danger={isAISorting}
+      onClick={isAISorting ? handleCancelAIRequest : () => {
         setSelectedSortMethod('title');
         setIsSortModalOpen(true);
       }}
-      disabled={isAISorting}
       style={{ marginRight: 8 }}
     >
-      {isAISorting ? '正在AI排序中...' : '整理条目'}
+      {isAISorting ? '中断排序' : '整理条目'}
     </Button>,
     <Button 
       key="tagManager" 
@@ -4271,8 +4505,8 @@ ${charactersInfo}
         styles={{ body: { padding: '16px 24px', maxHeight: '600px', overflowY: 'auto' } }}
         footer={modalFooter}
         style={{
-          backgroundColor: 'var(--bg-color, #fff)',
-          color: 'var(--text-color, #000)'
+          backgroundColor: 'var(--bg-container, #1f1f1f)',
+          color: 'var(--text-primary, #ffffff)'
         }}
         className={appTheme === 'dark' ? 'dark' : ''}
       >
@@ -4286,8 +4520,8 @@ ${charactersInfo}
           />
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontWeight: 500, minWidth: 50 }}>主题：</span>
-            <div style={{ flex: 1, padding: '8px 12px', background: 'var(--bg-color, #fafafa)', border: '1px solid var(--border-color, #d9d9d9)', borderRadius: 4, minHeight: 40, maxHeight: 80, overflow: 'hidden' }}>
-              <span style={{ fontSize: 12, color: 'var(--text-color-secondary, #666)' }}>
+            <div style={{ flex: 1, padding: '8px 12px', background: 'var(--bg-elevated, #2a2a2a)', border: '1px solid var(--border-base, #333)', borderRadius: 4, minHeight: 40, maxHeight: 80, overflow: 'hidden' }}>
+              <span style={{ fontSize: 12, color: 'var(--text-secondary, #8c8c8c)' }}>
                 {worldBookContent?.description
                   ? (worldBookContent.description.length > 200
                       ? worldBookContent.description.substring(0, 200) + '...'
@@ -4312,7 +4546,7 @@ ${charactersInfo}
         <WorldBookVectorPanel worldBook={viewingItem ? { ...viewingItem, entries: worldBookContent?.entries || [] } : null} />
 
         {worldBookContent && worldBookContent.entries && (
-          <div style={{ maxHeight: '600px', overflowY: 'auto', backgroundColor: 'var(--bg-color, #fff)', color: 'var(--text-color, #000)' }}>
+          <div style={{ maxHeight: '600px', overflowY: 'auto', backgroundColor: 'var(--bg-container, #1f1f1f)', color: 'var(--text-primary, #ffffff)' }}>
             <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-start', alignItems: 'center', gap: 8 }}>
               <input
                 type="checkbox"
@@ -4334,7 +4568,7 @@ ${charactersInfo}
                 style={{ transform: 'scale(1.2)' }}
               />
               <span style={{ fontWeight: 'bold' }}>全选</span>
-              <span style={{ color: 'var(--text-color, #666)' }}>已选择 {selectedEntries.size} 个条目</span>
+              <span style={{ color: 'var(--text-primary, #ffffff)' }}>已选择 {selectedEntries.size} 个条目</span>
             </div>
             {(() => {
               // 获取所有条目
@@ -4408,10 +4642,10 @@ ${charactersInfo}
                       alignItems: 'center', 
                       marginBottom: 12,
                       paddingBottom: 8,
-                      borderBottom: '2px solid var(--border-color, #e8e8e8)'
+                      borderBottom: '2px solid var(--border-base, #333)'
                     }}>
                       <Tag color={tagColor} style={{ fontSize: 16, padding: '4px 12px', marginRight: 8 }}>{tagName}</Tag>
-                      <span style={{ color: 'var(--text-color, #666)', fontSize: 14 }}>共 {groupEntries.length} 个条目</span>
+                      <span style={{ color: 'var(--text-secondary, #8c8c8c)', fontSize: 14 }}>共 {groupEntries.length} 个条目</span>
                     </div>
                     {groupEntries.map((entry: any) => {
                       const uid = entry.uid;
@@ -4424,7 +4658,7 @@ ${charactersInfo}
                       const additionalProps = Object.entries(entry).filter(([key]) => !displayedProps.includes(key));
                       
                       return (
-                        <Card key={uid} style={{ marginBottom: 16, border: '1px solid var(--border-color, #f0f0f0)', backgroundColor: 'var(--card-bg-color, #fff)', color: 'var(--text-color, #000)' }}>
+                        <Card key={uid} style={{ marginBottom: 16, border: '1px solid var(--border-base, #333)', backgroundColor: 'var(--bg-elevated, #2a2a2a)', color: 'var(--text-primary, #ffffff)' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                               <input
@@ -4444,20 +4678,31 @@ ${charactersInfo}
                               <h3 style={{ margin: 0, fontSize: 16, fontWeight: 'bold' }}>条目 {entry.uid}: {entry.comment || '无注释'}</h3>
                             </div>
                           </div>
-                          <div style={{ color: 'var(--text-color, #000)' }}>
+                          <div style={{ color: 'var(--text-primary, #ffffff)' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                                   <div>
                                     <strong>关键词:</strong> {entry.key?.join(', ') || '无'}
                                   </div>
-                                  <Button 
-                                    type="link" 
-                                    size="small"
-                                    icon={generatingKeywordsUid === uid ? <LoadingOutlined /> : <TagOutlined />}
-                                    loading={generatingKeywordsUid === uid}
-                                    onClick={() => handleGenerateKeywordsForEntry(uid)}
-                                  >
-                                    AI生成关键词
-                                  </Button>
+                                  {generatingKeywordsUid === uid ? (
+                                    <Button 
+                                      type="link" 
+                                      size="small"
+                                      danger
+                                      icon={<StopOutlined />}
+                                      onClick={handleCancelAIRequest}
+                                    >
+                                      中断
+                                    </Button>
+                                  ) : (
+                                    <Button 
+                                      type="link" 
+                                      size="small"
+                                      icon={<TagOutlined />}
+                                      onClick={() => handleGenerateKeywordsForEntry(uid)}
+                                    >
+                                      AI生成关键词
+                                    </Button>
+                                  )}
                                 </div>
                                 {entry.keysecondary && entry.keysecondary.length > 0 && (
                                   <p style={{ marginBottom: 8 }}>
@@ -4469,8 +4714,8 @@ ${charactersInfo}
                                 </p>
                                 <div style={{ 
                                   padding: 12, 
-                                  backgroundColor: 'var(--card-bg-color, #1f1f1f)', 
-                                  color: 'var(--text-color, #ffffff)',
+                                  backgroundColor: 'var(--bg-elevated, #2a2a2a)', 
+                                  color: 'var(--text-primary, #ffffff)',
                                   borderRadius: 4, 
                                   whiteSpace: 'pre-wrap',
                                   fontFamily: 'monospace'
@@ -4514,7 +4759,7 @@ ${charactersInfo}
                                   </div>
                                 </div>
                                 {additionalProps.length > 0 && (
-                                  <div style={{ marginTop: 12, borderTop: '1px solid var(--border-color, #e8e8e8)', paddingTop: 12 }}>
+                                  <div style={{ marginTop: 12, borderTop: '1px solid var(--border-base, #333)', paddingTop: 12 }}>
                                     <Button 
                                       type="link" 
                                       onClick={() => handleToggleExpand(uid)}
@@ -4526,12 +4771,12 @@ ${charactersInfo}
                                       <div style={{ 
                                         marginTop: 12,
                                         padding: 16, 
-                                        backgroundColor: 'var(--bg-color, #fafafa)', 
-                                        color: 'var(--text-color, #000)',
-                                        borderRadius: 8,
-                                        border: '1px solid var(--border-color, #e8e8e8)'
+                                        backgroundColor: 'var(--bg-elevated, #2a2a2a)', 
+                                        color: 'var(--text-primary, #ffffff)',
+                                        borderRadius: 4,
+                                        border: '1px solid var(--border-base, #333)'
                                       }}>
-                                        <p style={{ marginBottom: 12, fontWeight: 'bold', color: 'var(--text-color, #333)', fontSize: 14 }}>更多属性:</p>
+                                        <p style={{ marginBottom: 12, fontWeight: 'bold', color: 'var(--text-primary, #ffffff)', fontSize: 14 }}>更多属性:</p>
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                                           {additionalProps.map(([key, value]) => {
                                             // 映射属性名称到SillyTavern对应的名称
@@ -4588,10 +4833,10 @@ ${charactersInfo}
                                                 display: 'flex', 
                                                 alignItems: 'flex-start',
                                                 padding: '8px 12px',
-                                                backgroundColor: 'var(--card-bg-color, #fff)', 
-                                                color: 'var(--text-color, #000)',
-                                                borderRadius: 6,
-                                                border: '1px solid var(--border-color, #f0f0f0)'
+                                                backgroundColor: 'var(--bg-elevated, #2a2a2a)', 
+                                                color: 'var(--text-primary, #ffffff)',
+                                                borderRadius: 4,
+                                                border: '1px solid var(--border-base, #333)'
                                               }}>
                                                 <span style={{ 
                                                   fontWeight: 'bold', 
@@ -4601,7 +4846,7 @@ ${charactersInfo}
                                                   flexShrink: 0
                                                 }}>{displayName}:</span>
                                                 <span style={{ 
-                                                  color: 'var(--text-color, #666)',
+                                                  color: 'var(--text-secondary, #8c8c8c)',
                                                   wordBreak: 'break-all',
                                                   fontFamily: 'monospace',
                                                   fontSize: 13
@@ -4649,7 +4894,7 @@ ${charactersInfo}
             })()}
             
             {/* 分页控件 */}
-            <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--border-color, #e8e8e8)' }}>
+            <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--border-base, #333)' }}>
               <Pagination
                 current={currentPage}
                 pageSize={pageSize}
@@ -4663,7 +4908,7 @@ ${charactersInfo}
                     setPageSize(size);
                   }
                 }}
-                style={{ color: 'var(--text-color, #000)' }}
+                style={{ color: 'var(--text-primary, #ffffff)' }}
               />
             </div>
           </div>
@@ -4685,21 +4930,21 @@ ${charactersInfo}
           </Button>
         ]}
         style={{
-          backgroundColor: 'var(--bg-color, #fff)',
-          color: 'var(--text-color, #000)'
+          backgroundColor: 'var(--bg-container, #1f1f1f)',
+          color: 'var(--text-primary, #ffffff)'
         }}
       >
-        <div style={{ color: 'var(--text-color, #000)' }}>
+        <div style={{ color: 'var(--text-primary, #ffffff)' }}>
           {worldBookContent && worldBookContent.entries && (
             <div style={{ maxHeight: '500px', overflowY: 'auto' }}>
               {Object.entries(worldBookContent.entries)
                 .map(([key, entry]) => ({ key, entry }))
                 .map(({ key, entry }, index) => (
-                  <Card key={key} style={{ marginBottom: 8, border: '1px solid var(--border-color, #f0f0f0)', backgroundColor: 'var(--card-bg-color, #fff)', color: 'var(--text-color, #000)' }}>
+                  <Card key={key} style={{ marginBottom: 8, border: '1px solid var(--border-base, #333)', backgroundColor: 'var(--bg-elevated, #2a2a2a)', color: 'var(--text-primary, #ffffff)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 'bold' }}>{entry.comment || '无注释'}</div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-color, #666)', marginTop: 4 }}>
+                        <div style={{ fontSize: '12px', color: 'var(--text-secondary, #8c8c8c)', marginTop: 4 }}>
                           关键词: {entry.key?.join(', ') || '无'}
                         </div>
                       </div>
@@ -4754,13 +4999,13 @@ ${charactersInfo}
           </Button>
         ]}
         style={{
-          backgroundColor: 'var(--bg-color, #fff)',
-          color: 'var(--text-color, #000)',
+          backgroundColor: 'var(--bg-container, #1f1f1f)',
+          color: 'var(--text-primary, #ffffff)',
           zIndex: 3000
         }}
         className={appTheme === 'dark' ? 'dark' : ''}
       >
-        <div style={{ color: 'var(--text-color, #000)' }}>
+        <div style={{ color: 'var(--text-primary, #ffffff)' }}>
           <MarkdownEditor
             value={editingDescriptionTemp}
             onChange={(value) => setEditingDescriptionTemp(value || '')}
@@ -4804,11 +5049,11 @@ ${charactersInfo}
           </Button>
         ]}
         style={{
-          backgroundColor: 'var(--bg-color, #fff)',
-          color: 'var(--text-color, #000)'
+          backgroundColor: 'var(--bg-container, #1f1f1f)',
+          color: 'var(--text-primary, #ffffff)'
         }}
       >
-        <div style={{ color: 'var(--text-color, #000)' }}>
+        <div style={{ color: 'var(--text-primary, #ffffff)' }}>
           <p>请选择整理方式：</p>
           <Radio.Group 
             value={selectedSortMethod} 
@@ -4837,12 +5082,12 @@ ${charactersInfo}
           </Button>
         ]}
         style={{
-          backgroundColor: 'var(--bg-color, #fff)',
-          color: 'var(--text-color, #000)',
+          backgroundColor: 'var(--bg-container, #1f1f1f)',
+          color: 'var(--text-primary, #ffffff)',
           zIndex: 2000
         }}
       >
-        <div style={{ color: 'var(--text-color, #000)' }}>
+        <div style={{ color: 'var(--text-primary, #ffffff)' }}>
           {viewingItem && worldBookContent && (
             <TagManager 
               worldBookPath={viewingItem.path}
@@ -4868,12 +5113,12 @@ ${charactersInfo}
           </Button>
         ]}
         style={{
-          backgroundColor: 'var(--bg-color, #fff)',
-          color: 'var(--text-color, #000)',
+          backgroundColor: 'var(--bg-container, #1f1f1f)',
+          color: 'var(--text-primary, #ffffff)',
           zIndex: 2000
         }}
       >
-        <div style={{ color: 'var(--text-color, #000)' }}>
+        <div style={{ color: 'var(--text-primary, #ffffff)' }}>
           {currentEditEntryUid !== null && worldBookContent && (
             <div>
               {(() => {
@@ -5005,41 +5250,62 @@ ${charactersInfo}
         zIndex={3000}
         maskStyle={{ zIndex: 3000 }}
         style={{
-          backgroundColor: 'var(--bg-color, #fff)',
-          color: 'var(--text-color, #000)',
+          backgroundColor: 'var(--bg-container, #1f1f1f)',
+          color: 'var(--text-primary, #ffffff)',
           zIndex: 3000
         }}
       >
-        <div style={{ color: 'var(--text-color, #000)' }}>
+        <div style={{ color: 'var(--text-primary, #ffffff)' }}>
           {/* SillyTavern 核心字段 */}
           <div style={{ marginBottom: 16 }}>
             <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>注释 (Comment)</label>
             <Space orientation="vertical" style={{ width: '100%' }}>
               <Input 
-                style={{ backgroundColor: 'var(--card-bg-color, #fff)', color: 'var(--text-color, #000)' }}
                 value={formValues.comment}
                 onChange={(e) => setFormValues(prev => ({ ...prev, comment: e.target.value }))}
                 placeholder="条目备注说明"
               />
               <Space>
-                <Button 
-                  type="link" 
-                  icon={translatingField === 'comment' ? <LoadingOutlined /> : <TranslationOutlined />}
-                  onClick={() => handleTranslate('comment')}
-                  loading={translatingField === 'comment'}
-                  size="small"
-                >
-                  {translatingField === 'comment' ? '翻译中' : 'AI翻译'}
-                </Button>
-                <Button 
-                  type="link" 
-                  icon={polishingField === 'comment' ? <LoadingOutlined /> : <EditOutlined />}
-                  onClick={() => handlePolish('comment')}
-                  loading={polishingField === 'comment'}
-                  size="small"
-                >
-                  {polishingField === 'comment' ? '润色中' : 'AI润色'}
-                </Button>
+                {translatingField === 'comment' ? (
+                  <Button 
+                    type="link" 
+                    danger
+                    icon={<StopOutlined />}
+                    onClick={handleCancelAIRequest}
+                    size="small"
+                  >
+                    中断翻译
+                  </Button>
+                ) : (
+                  <Button 
+                    type="link" 
+                    icon={<TranslationOutlined />}
+                    onClick={() => handleTranslate('comment')}
+                    size="small"
+                  >
+                    AI翻译
+                  </Button>
+                )}
+                {polishingField === 'comment' ? (
+                  <Button 
+                    type="link" 
+                    danger
+                    icon={<StopOutlined />}
+                    onClick={handleCancelAIRequest}
+                    size="small"
+                  >
+                    中断润色
+                  </Button>
+                ) : (
+                  <Button 
+                    type="link" 
+                    icon={<EditOutlined />}
+                    onClick={() => handlePolish('comment')}
+                    size="small"
+                  >
+                    AI润色
+                  </Button>
+                )}
               </Space>
             </Space>
           </div>
@@ -5048,7 +5314,7 @@ ${charactersInfo}
             <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>主要关键词 (Key) - 输入后按回车添加</label>
             <Select
               mode="tags"
-              style={{ width: '100%', backgroundColor: 'var(--card-bg-color, #fff)', color: 'var(--text-color, #000)' }}
+              style={{ width: '100%' }}
               value={formValues.key}
               onChange={(value) => setFormValues(prev => ({ ...prev, key: value }))}
               placeholder="输入关键词后按回车添加"
@@ -5061,7 +5327,7 @@ ${charactersInfo}
             <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>次要关键词 (Secondary Key) - 输入后按回车添加</label>
             <Select
               mode="tags"
-              style={{ width: '100%', backgroundColor: 'var(--card-bg-color, #fff)', color: 'var(--text-color, #000)' }}
+              style={{ width: '100%' }}
               value={formValues.keysecondary}
               onChange={(value) => setFormValues(prev => ({ ...prev, keysecondary: value }))}
               placeholder="输入次要关键词后按回车添加"
@@ -5075,30 +5341,51 @@ ${charactersInfo}
             <Space orientation="vertical" style={{ width: '100%' }}>
               <Input.TextArea 
                 rows={6} 
-                style={{ backgroundColor: 'var(--card-bg-color, #fff)', color: 'var(--text-color, #000)' }}
                 value={formValues.content}
                 onChange={(e) => setFormValues(prev => ({ ...prev, content: e.target.value }))}
                 placeholder="条目注入的内容"
               />
               <Space>
-                <Button 
-                  type="link" 
-                  icon={translatingField === 'content' ? <LoadingOutlined /> : <TranslationOutlined />}
-                  onClick={() => handleTranslate('content')}
-                  loading={translatingField === 'content'}
-                  size="small"
-                >
-                  {translatingField === 'content' ? '翻译中' : 'AI翻译'}
-                </Button>
-                <Button 
-                  type="link" 
-                  icon={polishingField === 'content' ? <LoadingOutlined /> : <EditOutlined />}
-                  onClick={() => handlePolish('content')}
-                  loading={polishingField === 'content'}
-                  size="small"
-                >
-                  {polishingField === 'content' ? '润色中' : 'AI润色'}
-                </Button>
+                {translatingField === 'content' ? (
+                  <Button 
+                    type="link" 
+                    danger
+                    icon={<StopOutlined />}
+                    onClick={handleCancelAIRequest}
+                    size="small"
+                  >
+                    中断翻译
+                  </Button>
+                ) : (
+                  <Button 
+                    type="link" 
+                    icon={<TranslationOutlined />}
+                    onClick={() => handleTranslate('content')}
+                    size="small"
+                  >
+                    AI翻译
+                  </Button>
+                )}
+                {polishingField === 'content' ? (
+                  <Button 
+                    type="link" 
+                    danger
+                    icon={<StopOutlined />}
+                    onClick={handleCancelAIRequest}
+                    size="small"
+                  >
+                    中断润色
+                  </Button>
+                ) : (
+                  <Button 
+                    type="link" 
+                    icon={<EditOutlined />}
+                    onClick={() => handlePolish('content')}
+                    size="small"
+                  >
+                    AI润色
+                  </Button>
+                )}
               </Space>
             </Space>
           </div>
@@ -5108,22 +5395,22 @@ ${charactersInfo}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
             <div>
               <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>排序权重 (Order)</label>
-              <Input type="number" style={{ backgroundColor: 'var(--card-bg-color, #fff)', color: 'var(--text-color, #000)' }} value={formValues.order} onChange={(e) => setFormValues(prev => ({ ...prev, order: parseInt(e.target.value) || 0 }))} />
+              <Input type="number" value={formValues.order} onChange={(e) => setFormValues(prev => ({ ...prev, order: parseInt(e.target.value) || 0 }))} />
             </div>
             <div>
               <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>激活概率 (Probability %)</label>
-              <Input type="number" min={0} max={100} style={{ backgroundColor: 'var(--card-bg-color, #fff)', color: 'var(--text-color, #000)' }} value={formValues.probability} onChange={(e) => { const val = Math.min(100, Math.max(0, parseInt(e.target.value) || 0)); setFormValues(prev => ({ ...prev, probability: val })); }} />
+              <Input type="number" min={0} max={100} value={formValues.probability} onChange={(e) => { const val = Math.min(100, Math.max(0, parseInt(e.target.value) || 0)); setFormValues(prev => ({ ...prev, probability: val })); }} />
             </div>
             <div>
               <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>递归深度 (Depth)</label>
-              <Input type="number" min={0} style={{ backgroundColor: 'var(--card-bg-color, #fff)', color: 'var(--text-color, #000)' }} value={formValues.depth} onChange={(e) => setFormValues(prev => ({ ...prev, depth: parseInt(e.target.value) || 0 }))} />
+              <Input type="number" min={0} value={formValues.depth} onChange={(e) => setFormValues(prev => ({ ...prev, depth: parseInt(e.target.value) || 0 }))} />
             </div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
             <div>
               <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>注入位置 (Position)</label>
               <Select
-                style={{ width: '100%', backgroundColor: 'var(--card-bg-color, #fff)', color: 'var(--text-color, #000)' }}
+                style={{ width: '100%' }}
                 value={formValues.position}
                 onChange={(value) => setFormValues(prev => ({ ...prev, position: value }))}
                 options={[
@@ -5136,7 +5423,7 @@ ${charactersInfo}
             </div>
             <div>
               <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>分组 (Group)</label>
-              <Input style={{ backgroundColor: 'var(--card-bg-color, #fff)', color: 'var(--text-color, #000)' }} value={formValues.group} onChange={(e) => setFormValues(prev => ({ ...prev, group: e.target.value }))} placeholder="分组名称" />
+              <Input value={formValues.group} onChange={(e) => setFormValues(prev => ({ ...prev, group: e.target.value }))} placeholder="分组名称" />
             </div>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginBottom: 16 }}>
@@ -5171,15 +5458,15 @@ ${charactersInfo}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
             <div>
               <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>自动化ID</label>
-              <Input style={{ backgroundColor: 'var(--card-bg-color, #fff)', color: 'var(--text-color, #000)' }} value={formValues.automationId} onChange={(e) => setFormValues(prev => ({ ...prev, automationId: e.target.value }))} placeholder="可选" />
+              <Input value={formValues.automationId} onChange={(e) => setFormValues(prev => ({ ...prev, automationId: e.target.value }))} placeholder="可选" />
             </div>
             <div>
               <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>扫描深度</label>
-              <Input type="number" style={{ backgroundColor: 'var(--card-bg-color, #fff)', color: 'var(--text-color, #000)' }} value={formValues.scanDepth} onChange={(e) => setFormValues(prev => ({ ...prev, scanDepth: parseInt(e.target.value) || 0 }))} />
+              <Input type="number" value={formValues.scanDepth} onChange={(e) => setFormValues(prev => ({ ...prev, scanDepth: parseInt(e.target.value) || 0 }))} />
             </div>
             <div>
               <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>显示索引</label>
-              <Input type="number" style={{ backgroundColor: 'var(--card-bg-color, #fff)', color: 'var(--text-color, #000)' }} value={formValues.displayIndex} onChange={(e) => setFormValues(prev => ({ ...prev, displayIndex: parseInt(e.target.value) || 0 }))} />
+              <Input type="number" value={formValues.displayIndex} onChange={(e) => setFormValues(prev => ({ ...prev, displayIndex: parseInt(e.target.value) || 0 }))} />
             </div>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
@@ -5215,6 +5502,8 @@ ${charactersInfo}
           setIsCreateModalOpen(false);
           createForm.resetFields();
           setGeneratedEntries([]);
+          setGeneratedWorldBookName('');
+          setGeneratedWorldBookDescription('');
         }}
         width={1000}
         footer={[
@@ -5222,6 +5511,8 @@ ${charactersInfo}
             setIsCreateModalOpen(false);
             createForm.resetFields();
             setGeneratedEntries([]);
+            setGeneratedWorldBookName('');
+            setGeneratedWorldBookDescription('');
           }}>
             取消
           </Button>,
@@ -5230,11 +5521,11 @@ ${charactersInfo}
           </Button>
         ]}
         style={{
-          backgroundColor: 'var(--bg-color, #fff)',
-          color: 'var(--text-color, #000)'
+          backgroundColor: 'var(--bg-container, #1f1f1f)',
+          color: 'var(--text-primary, #ffffff)'
         }}
       >
-        <div style={{ color: 'var(--text-color, #000)' }}>
+        <div style={{ color: 'var(--text-primary, #ffffff)' }}>
           <Form form={createForm} layout="vertical">
             <Form.Item
               name="worldBookName"
@@ -5249,8 +5540,8 @@ ${charactersInfo}
               label="世界书简介"
             >
               <Input.TextArea 
-                rows={4} 
-                placeholder="请输入世界书简介（支持富文本格式）"
+                rows={3} 
+                placeholder="请输入世界书简介"
                 value={generatedWorldBookDescription}
                 onChange={(e) => setGeneratedWorldBookDescription(e.target.value)}
               />
@@ -5262,139 +5553,129 @@ ${charactersInfo}
               rules={[{ required: true, message: '请输入主题描述' }]}
             >
               <Input.TextArea 
-                rows={4} 
-                placeholder="例如：我想生成一个基于奇幻世界RPG的世界书，包含魔法和科技等"
+                rows={3} 
+                placeholder="例如：奇幻世界RPG、剑与魔法的世界、末日废土生存..."
               />
             </Form.Item>
-
-            <div style={{ marginBottom: 16 }}>
-              <Button 
-                type="primary" 
-                icon={isGeneratingEntries ? <LoadingOutlined /> : <ThunderboltOutlined />}
-                loading={isGeneratingEntries}
-                onClick={async () => {
-                  const theme = createForm.getFieldValue('themeDescription');
-                  if (theme) {
-                    await handleGenerateEntries(theme);
-                  } else {
-                    message.warning('请先输入主题描述');
-                  }
-                }}
-                style={{ marginBottom: 16 }}
-              >
-                {isGeneratingEntries ? 'AI生成中...' : 'AI生成条目'}
-              </Button>
-
-              {generatedEntries.length > 0 && (
-                <Card title={`已生成 ${generatedEntries.length} 个条目`} style={{ marginBottom: 16 }}>
-                  {generatedEntries.map((entry, index) => (
-                    <Card key={index} size="small" style={{ marginBottom: 8 }}>
-                      <div style={{ fontWeight: 'bold', marginBottom: 4 }}>
-                        条目 {index + 1}: {entry.comment || '无注释'}
-                      </div>
-                      <div style={{ marginBottom: 4 }}>
-                        <Text type="secondary">关键词: </Text>
-                        {entry.key?.join(', ') || '无'}
-                      </div>
-                      <div style={{ fontSize: '13px', color: 'var(--text-color, #666)' }}>
-                        {entry.content?.substring(0, 100)}{entry.content?.length > 100 ? '...' : ''}
-                      </div>
-                    </Card>
-                  ))}
-                </Card>
-              )}
-            </div>
-
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ marginBottom: 8, fontWeight: 'bold' }}>手动添加条目</div>
-              
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ display: 'block', marginBottom: 8, fontWeight: 'bold' }}>注释</label>
-                <Input 
-                  placeholder="输入注释"
-                  id="manual-comment"
-                />
-              </div>
-              
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ display: 'block', marginBottom: 8, fontWeight: 'bold' }}>主要关键词 (逗号分隔)</label>
-                <Space orientation="vertical" style={{ width: '100%' }}>
-                  <Input.TextArea 
-                    placeholder="输入关键词，用逗号分隔"
-                    id="manual-key"
-                  />
-                  <Button 
-                    type="link" 
-                    onClick={async () => {
-                      const keywords = (document.getElementById('manual-key') as HTMLTextAreaElement)?.value;
-                      if (keywords) {
-                        const expanded = await handleExpandKeywords(keywords, 'key');
-                        if (expanded) {
-                          (document.getElementById('manual-key') as HTMLTextAreaElement).value = expanded;
-                        }
-                      } else {
-                        message.warning('请先输入关键词');
-                      }
-                    }}
-                  >
-                    AI扩写
-                  </Button>
-                </Space>
-              </div>
-              
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ display: 'block', marginBottom: 8, fontWeight: 'bold' }}>内容</label>
-                <Space orientation="vertical" style={{ width: '100%' }}>
-                  <Input.TextArea 
-                    rows={6}
-                    placeholder="输入条目内容"
-                    id="manual-content"
-                  />
-                  <Button 
-                    type="link" 
-                    onClick={async () => {
-                      const keywords = (document.getElementById('manual-key') as HTMLTextAreaElement)?.value;
-                      const theme = createForm.getFieldValue('themeDescription');
-                      if (keywords && theme) {
-                        const description = await handleGenerateDescription(keywords, theme);
-                        if (description) {
-                          (document.getElementById('manual-content') as HTMLTextAreaElement).value = description;
-                        }
-                      } else {
-                        message.warning('请先输入关键词和主题描述');
-                      }
-                    }}
-                  >
-                    AI生成描述
-                  </Button>
-                </Space>
-              </div>
-              
-              <Button 
-                type="default" 
-                icon={<PlusOutlined />}
-                onClick={() => {
-                  const comment = (document.getElementById('manual-comment') as HTMLInputElement)?.value || '';
-                  const keyStr = (document.getElementById('manual-key') as HTMLTextAreaElement)?.value || '';
-                  const content = (document.getElementById('manual-content') as HTMLTextAreaElement)?.value || '';
-                  
-                  const key = keyStr.split(/[,，]/).map(k => k.trim()).filter(k => k);
-                  
-                  const newEntry = createDefaultEntry(generatedEntries.length, key, comment, content);
-                  setGeneratedEntries([...generatedEntries, newEntry]);
-                  
-                  // 清空输入框
-                  (document.getElementById('manual-comment') as HTMLInputElement).value = '';
-                  (document.getElementById('manual-key') as HTMLTextAreaElement).value = '';
-                  (document.getElementById('manual-content') as HTMLTextAreaElement).value = '';
-                  
-                  message.success('条目添加成功');
-                }}
-              >
-                添加手动条目
-              </Button>
-            </div>
           </Form>
+
+          <div style={{ marginTop: 16 }}>
+            <WorldBookTemplateSelector
+              onGenerateEntries={handleTemplateGenerateEntries}
+              theme={createForm.getFieldValue('themeDescription') || ''}
+            />
+          </div>
+
+          {generatedEntries.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <Card title={`已生成 ${generatedEntries.length} 个条目`} size="small" style={{ marginBottom: 16 }}>
+                {generatedEntries.map((entry, index) => (
+                  <Card key={index} size="small" style={{ marginBottom: 8 }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: 4 }}>
+                      条目 {index + 1}: {entry.comment || '无注释'}
+                    </div>
+                    <div style={{ marginBottom: 4 }}>
+                      <Text type="secondary">关键词: </Text>
+                      {entry.key?.join(', ') || '无'}
+                    </div>
+                    <div style={{ fontSize: '13px', color: 'var(--text-secondary, #8c8c8c)' }}>
+                      {entry.content?.substring(0, 100)}{entry.content?.length > 100 ? '...' : ''}
+                    </div>
+                  </Card>
+                ))}
+              </Card>
+            </div>
+          )}
+
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 8, fontWeight: 'bold' }}>手动添加条目</div>
+            
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: 'block', marginBottom: 8, fontWeight: 'bold' }}>注释</label>
+              <Input 
+                placeholder="输入注释"
+                id="manual-comment"
+              />
+            </div>
+            
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: 'block', marginBottom: 8, fontWeight: 'bold' }}>主要关键词 (逗号分隔)</label>
+              <Space orientation="vertical" style={{ width: '100%' }}>
+                <Input.TextArea 
+                  placeholder="输入关键词，用逗号分隔"
+                  id="manual-key"
+                />
+                <Button 
+                  type="link" 
+                  onClick={async () => {
+                    const keywords = (document.getElementById('manual-key') as HTMLTextAreaElement)?.value;
+                    if (keywords) {
+                      const expanded = await handleExpandKeywords(keywords, 'key');
+                      if (expanded) {
+                        (document.getElementById('manual-key') as HTMLTextAreaElement).value = expanded;
+                      }
+                    } else {
+                      message.warning('请先输入关键词');
+                    }
+                  }}
+                >
+                  AI扩写
+                </Button>
+              </Space>
+            </div>
+            
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: 'block', marginBottom: 8, fontWeight: 'bold' }}>内容</label>
+              <Space orientation="vertical" style={{ width: '100%' }}>
+                <Input.TextArea 
+                  rows={6}
+                  placeholder="输入条目内容"
+                  id="manual-content"
+                />
+                <Button 
+                  type="link" 
+                  onClick={async () => {
+                    const keywords = (document.getElementById('manual-key') as HTMLTextAreaElement)?.value;
+                    const theme = createForm.getFieldValue('themeDescription');
+                    if (keywords && theme) {
+                      const description = await handleGenerateDescription(keywords, theme);
+                      if (description) {
+                        (document.getElementById('manual-content') as HTMLTextAreaElement).value = description;
+                      }
+                    } else {
+                      message.warning('请先输入关键词和主题描述');
+                    }
+                  }}
+                >
+                  AI生成描述
+                </Button>
+              </Space>
+            </div>
+            
+            <Button 
+              type="default" 
+              icon={<PlusOutlined />}
+              onClick={() => {
+                const comment = (document.getElementById('manual-comment') as HTMLInputElement)?.value || '';
+                const keyStr = (document.getElementById('manual-key') as HTMLTextAreaElement)?.value || '';
+                const content = (document.getElementById('manual-content') as HTMLTextAreaElement)?.value || '';
+                
+                const key = keyStr.split(/[,，]/).map(k => k.trim()).filter(k => k);
+                
+                const newEntry = createDefaultEntry(generatedEntries.length, key, comment, content);
+                setGeneratedEntries([...generatedEntries, newEntry]);
+                
+                // 清空输入框
+                (document.getElementById('manual-comment') as HTMLInputElement).value = '';
+                (document.getElementById('manual-key') as HTMLTextAreaElement).value = '';
+                (document.getElementById('manual-content') as HTMLTextAreaElement).value = '';
+                
+                message.success('条目添加成功');
+              }}
+            >
+              添加手动条目
+            </Button>
+          </div>
         </div>
       </Modal>
 
@@ -5424,12 +5705,12 @@ ${charactersInfo}
           </Button>
         ]}
         style={{
-          backgroundColor: 'var(--bg-color, #fff)',
-          color: 'var(--text-color, #000)',
+          backgroundColor: 'var(--bg-container, #1f1f1f)',
+          color: 'var(--text-primary, #ffffff)',
           zIndex: 3000
         }}
       >
-        <div style={{ color: 'var(--text-color, #000)' }}>
+        <div style={{ color: 'var(--text-primary, #ffffff)' }}>
           <Form form={addEntryForm} layout="vertical">
             <Form.Item
               name="expectedContent"
@@ -5490,7 +5771,7 @@ ${charactersInfo}
                         <Text type="secondary">关键词: </Text>
                         {entry.key?.join(', ') || '无'}
                       </div>
-                      <div style={{ fontSize: '13px', color: 'var(--text-color, #666)' }}>
+                      <div style={{ fontSize: '13px', color: 'var(--text-secondary, #8c8c8c)' }}>
                         {entry.content?.substring(0, 100)}{entry.content?.length > 100 ? '...' : ''}
                       </div>
                     </Card>
@@ -5597,15 +5878,32 @@ ${charactersInfo}
         title="AI润色"
         open={isPolishModalOpen}
         onCancel={() => {
-          setIsPolishModalOpen(false);
-          setCurrentPolishField(null);
-          setCurrentPolishText('');
-          setPolishRequirements('');
+          if (!polishingField) {
+            setIsPolishModalOpen(false);
+            setCurrentPolishField(null);
+            setCurrentPolishText('');
+            setPolishRequirements('');
+          }
         }}
-        onOk={performPolish}
-        okText="开始润色"
-        cancelText="取消"
-        confirmLoading={polishingField !== null}
+        closable={!polishingField}
+        maskClosable={!polishingField}
+        footer={polishingField ? [
+          <Button key="interrupt" danger icon={<StopOutlined />} onClick={handleCancelAIRequest}>
+            中断请求
+          </Button>
+        ] : [
+          <Button key="cancel" onClick={() => {
+            setIsPolishModalOpen(false);
+            setCurrentPolishField(null);
+            setCurrentPolishText('');
+            setPolishRequirements('');
+          }}>
+            取消
+          </Button>,
+          <Button key="ok" type="primary" onClick={performPolish}>
+            开始润色
+          </Button>
+        ]}
         width={800}
         getContainer={() => document.body}
         zIndex={4000}
@@ -5622,6 +5920,7 @@ ${charactersInfo}
             value={polishRequirements}
             onChange={(e) => setPolishRequirements(e.target.value)}
             autoFocus
+            disabled={polishingField !== null}
           />
         </div>
       </Modal>
@@ -5631,13 +5930,28 @@ ${charactersInfo}
         title="一键润色"
         open={isPolishAllModalOpen}
         onCancel={() => {
-          setIsPolishAllModalOpen(false);
-          setPolishAllRequirements('');
+          if (!isPolishingAll) {
+            setIsPolishAllModalOpen(false);
+            setPolishAllRequirements('');
+          }
         }}
-        onOk={performPolishAll}
-        okText="开始润色"
-        cancelText="取消"
-        confirmLoading={isPolishingAll}
+        closable={!isPolishingAll}
+        maskClosable={!isPolishingAll}
+        footer={isPolishingAll ? [
+          <Button key="interrupt" danger icon={<StopOutlined />} onClick={handleCancelAIRequest}>
+            中断请求
+          </Button>
+        ] : [
+          <Button key="cancel" onClick={() => {
+            setIsPolishAllModalOpen(false);
+            setPolishAllRequirements('');
+          }}>
+            取消
+          </Button>,
+          <Button key="ok" type="primary" onClick={performPolishAll}>
+            开始润色
+          </Button>
+        ]}
         getContainer={() => document.body}
         zIndex={3000}
         maskStyle={{ zIndex: 3000 }}
@@ -5653,6 +5967,7 @@ ${charactersInfo}
             value={polishAllRequirements}
             onChange={(e) => setPolishAllRequirements(e.target.value)}
             autoFocus
+            disabled={isPolishingAll}
           />
         </div>
       </Modal>

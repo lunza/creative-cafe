@@ -68,6 +68,10 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
   const originalContentRef = useRef<string>('');
   const replacementStartIndexRef = useRef<number>(-1);
 
+  // 用于中断请求
+  const currentRequestIdRef = useRef<string | null>(null);
+  const aiServiceRef = useRef<AIService | null>(null);
+
   // 初始化 AIService
   const getAIServiceConfig = useCallback((): { config: AIServiceConfig | null; error: string | null } => {
     addLog(`[MarkdownAI] 构建 AIService 配置...`);
@@ -283,6 +287,27 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
     replacementStartIndexRef.current = -1;
   }, []);
 
+  // 中断AI请求
+  const handleCancelRequest = useCallback(() => {
+    if (currentRequestIdRef.current && aiServiceRef.current) {
+      aiServiceRef.current.cancelRequest(currentRequestIdRef.current);
+      currentRequestIdRef.current = null;
+      aiServiceRef.current = null;
+    }
+    
+    setIsStreaming(false);
+    setStreamingContent('');
+    setProcessingText('');
+    setToolState({
+      isProcessing: false,
+      currentTool: null,
+      error: null
+    });
+    
+    message.info('已中断AI请求');
+    addLog(`[MarkdownAI] ⚠️ 用户主动中断AI请求`, 'warn');
+  }, [addLog]);
+
   // 使用默认设置
   const handleUseDefault = useCallback(async () => {
     if (!modalState.toolType) return;
@@ -363,6 +388,8 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
     saveToHistory();
     addLog(`[MarkdownAI] 已保存当前内容到历史记录`, 'debug');
 
+    currentRequestIdRef.current = requestId;
+
     try {
       addLog(`[MarkdownAI] 正在构建 AIService 配置...`, 'debug');
       const configResult = getAIServiceConfig();
@@ -384,6 +411,7 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
       let aiService: AIService;
       try {
         aiService = new AIService(aiConfig);
+        aiServiceRef.current = aiService;
         addLog(`[MarkdownAI] ✅ AIService 初始化完成`, 'debug');
       } catch (configError) {
         const configErrorMsg = configError instanceof Error ? configError.message : '配置验证失败';
@@ -574,6 +602,7 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
       setIsStreaming(false);
       setStreamingContent('');
       setProcessingText('');
+      currentRequestIdRef.current = null;
       
       message.success(`${toolName}成功 (流式)`);
       
@@ -584,6 +613,21 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
       addLog(`[MarkdownAI] 错误类型: ${error instanceof Error ? error.name : 'Unknown Error'}`, 'error');
       
       const errorMessage = error instanceof Error ? error.message : '未知错误';
+      
+      if (error instanceof Error && (error.name === 'AbortError' || errorMessage.includes('aborted'))) {
+        addLog(`[MarkdownAI] ⚠️ AI请求已被中断`, 'warn');
+        setToolState({
+          isProcessing: false,
+          currentTool: null,
+          error: null
+        });
+        setIsStreaming(false);
+        setStreamingContent('');
+        setProcessingText('');
+        currentRequestIdRef.current = null;
+        message.info('已中断AI请求');
+        return;
+      }
       
       if (errorMessage.includes('未配置 AI 引擎')) {
         addLog(`[MarkdownAI] 💡 提示: 请前往设置页面配置 AI 引擎`, 'error');
@@ -608,6 +652,7 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
       setIsStreaming(false);
       setStreamingContent('');
       setProcessingText('');
+      currentRequestIdRef.current = null;
     }
   }, [getEditorContent, setEditorContent, saveToHistory, targetLanguage, getAIServiceConfig, addLog, replaceByPosition]);
 
@@ -711,6 +756,15 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
                 strokeColor="#1890ff"
               />
             )}
+            <Button
+              type="link"
+              size="small"
+              danger
+              onClick={handleCancelRequest}
+              style={{ padding: '0 4px', fontSize: '12px' }}
+            >
+              中断
+            </Button>
           </span>
         )}
       </div>
@@ -735,15 +789,21 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
         onCancel={handleCancel}
         mask={{ closable: false }}
         footer={[
-          <Button key="default" onClick={handleUseDefault} style={{ marginRight: 'auto' }}>
+          <Button key="default" onClick={handleUseDefault} style={{ marginRight: 'auto' }} loading={toolState.isProcessing && toolState.currentTool === modalState.toolType}>
             使用默认设置
           </Button>,
-          <Button key="cancel" onClick={handleCancel}>
+          <Button key="cancel" onClick={handleCancel} disabled={toolState.isProcessing && toolState.currentTool === modalState.toolType}>
             取消
           </Button>,
-          <Button key="confirm" type="primary" onClick={handleConfirm} loading={toolState.isProcessing}>
-            确认
-          </Button>
+          toolState.isProcessing && toolState.currentTool === modalState.toolType ? (
+            <Button key="interrupt" danger onClick={handleCancelRequest}>
+              中断请求
+            </Button>
+          ) : (
+            <Button key="confirm" type="primary" onClick={handleConfirm}>
+              确认
+            </Button>
+          )
         ]}
         centered
         destroyOnHidden
@@ -756,11 +816,11 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
             maxHeight: '120px',
             overflow: 'auto',
             padding: '12px',
-            backgroundColor: '#f5f5f5',
+            backgroundColor: 'var(--card-bg-color, #f5f5f5)',
             borderRadius: '6px',
             fontSize: '13px',
-            color: '#333',
-            border: '1px solid #e8e8e8'
+            color: 'var(--text-color, #333)',
+            border: '1px solid var(--border-color, #e8e8e8)'
           }}>
             {modalState.selectedText}
           </div>

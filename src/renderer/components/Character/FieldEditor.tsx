@@ -1,10 +1,12 @@
 import React from 'react';
-import { Input, Space, Button } from 'antd';
+import { Input, Space, Button, Popconfirm } from 'antd';
 import {
   TranslationOutlined,
   EditOutlined,
   LoadingOutlined,
-  RobotOutlined
+  RobotOutlined,
+  StopOutlined,
+  CloseOutlined
 } from '@ant-design/icons';
 
 interface FieldEditorProps {
@@ -19,6 +21,7 @@ interface FieldEditorProps {
   onPolish: (field: string) => void;
   onGenerate?: (field: string) => void;
   onRestore: (field: string) => void;
+  onCancelAIRequest?: () => void;
   translatingField: string | null;
   polishingField: string | null;
   generatingField: string | null;
@@ -36,6 +39,7 @@ export const FieldEditor: React.FC<FieldEditorProps> = ({
   onPolish,
   onGenerate,
   onRestore,
+  onCancelAIRequest,
   translatingField,
   polishingField,
   generatingField,
@@ -43,6 +47,7 @@ export const FieldEditor: React.FC<FieldEditorProps> = ({
   const isTranslating = translatingField === field;
   const isPolishing = polishingField === field;
   const isGenerating = generatingField === field;
+  const isProcessing = isTranslating || isPolishing || isGenerating;
 
   const InputComponent = inputType === 'textarea' ? Input.TextArea : Input;
 
@@ -59,31 +64,58 @@ export const FieldEditor: React.FC<FieldEditorProps> = ({
       </div>
       <Space>
         {showGenerate && onGenerate && (
+          isGenerating ? (
+            <Button
+              danger
+              icon={<StopOutlined />}
+              onClick={onCancelAIRequest}
+            >
+              中断
+            </Button>
+          ) : (
+            <Button
+              type="primary"
+              icon={<RobotOutlined />}
+              onClick={() => onGenerate(field)}
+            >
+              生成
+            </Button>
+          )
+        )}
+        {isTranslating ? (
+          <Button
+            danger
+            icon={<StopOutlined />}
+            onClick={onCancelAIRequest}
+          >
+            中断
+          </Button>
+        ) : (
           <Button
             type="primary"
-            icon={isGenerating ? <LoadingOutlined spin /> : <RobotOutlined />}
-            onClick={() => onGenerate(field)}
-            loading={isGenerating}
+            icon={<TranslationOutlined />}
+            onClick={() => onTranslate(field)}
           >
-            生成
+            翻译
           </Button>
         )}
-        <Button
-          type="primary"
-          icon={isTranslating ? <LoadingOutlined spin /> : <TranslationOutlined />}
-          onClick={() => onTranslate(field)}
-          loading={isTranslating}
-        >
-          翻译
-        </Button>
-        <Button
-          type="primary"
-          icon={isPolishing ? <LoadingOutlined spin /> : <EditOutlined />}
-          onClick={() => onPolish(field)}
-          loading={isPolishing}
-        >
-          润色
-        </Button>
+        {isPolishing ? (
+          <Button
+            danger
+            icon={<StopOutlined />}
+            onClick={onCancelAIRequest}
+          >
+            中断
+          </Button>
+        ) : (
+          <Button
+            type="primary"
+            icon={<EditOutlined />}
+            onClick={() => onPolish(field)}
+          >
+            润色
+          </Button>
+        )}
         <Button
           type="text"
           onClick={() => onRestore(field)}
