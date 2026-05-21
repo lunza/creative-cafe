@@ -61,6 +61,20 @@ const WritingConfigPanel: React.FC<WritingConfigPanelProps> = ({ onConfirm, onCa
     loadSavedConfigs();
   }, []);
 
+  const prevIncludeEndingRef = useRef<boolean | undefined>(undefined);
+
+  useEffect(() => {
+    const currentIncludeEnding = form.getFieldValue('includeEnding');
+    if (currentIncludeEnding === false && prevIncludeEndingRef.current !== false) {
+      const chapterCount = form.getFieldValue('chapterCount') || DEFAULT_WRITING_CONFIG.chapterCount;
+      form.setFieldsValue({
+        chapterRangeStart: 1,
+        chapterRangeEnd: chapterCount
+      });
+    }
+    prevIncludeEndingRef.current = currentIncludeEnding;
+  }, [form]);
+
   useEffect(() => {
     if (streamRef.current) {
       streamRef.current.scrollTop = streamRef.current.scrollHeight;
@@ -251,7 +265,10 @@ const WritingConfigPanel: React.FC<WritingConfigPanelProps> = ({ onConfirm, onCa
         narrativePerspective: values.narrativePerspective,
         writingStyle: values.writingStyle,
         additionalRequirements: values.additionalRequirements,
-        forbiddenContent: values.forbiddenContent?.split('\n').filter(Boolean) || []
+        forbiddenContent: values.forbiddenContent?.split('\n').filter(Boolean) || [],
+        includeEnding: values.includeEnding !== false,
+        chapterRangeStart: values.includeEnding === false ? values.chapterRangeStart || 1 : undefined,
+        chapterRangeEnd: values.includeEnding === false ? values.chapterRangeEnd || values.chapterCount : undefined
       },
       modelConfig
     };
@@ -538,6 +555,82 @@ const WritingConfigPanel: React.FC<WritingConfigPanelProps> = ({ onConfirm, onCa
                   </Form.Item>
                 </Col>
               </Row>
+
+              <Form.Item
+                name="includeEnding"
+                valuePropName="checked"
+                initialValue={true}
+              >
+                <Checkbox>是否包含结局（取消勾选为连载模式）</Checkbox>
+              </Form.Item>
+
+              <Form.Item noStyle shouldUpdate={(prevValues, currentValues) =>
+                prevValues.includeEnding !== currentValues.includeEnding ||
+                prevValues.chapterCount !== currentValues.chapterCount
+              }>
+                {({ getFieldValue }) => {
+                  const includeEnding = getFieldValue('includeEnding');
+                  const chapterCount = getFieldValue('chapterCount');
+                  if (includeEnding === false) {
+                    return (
+                      <Row gutter={16}>
+                        <Col span={12}>
+                          <Form.Item
+                            label="起始章节"
+                            name="chapterRangeStart"
+                            rules={[
+                              { required: true, message: '请输入起始章节' },
+                              ({ getFieldValue }) => ({
+                                validator(_, value) {
+                                  const end = getFieldValue('chapterRangeEnd');
+                                  if (value && end && value > end) {
+                                    return Promise.reject('起始章节不能大于结束章节');
+                                  }
+                                  return Promise.resolve();
+                                }
+                              })
+                            ]}
+                          >
+                            <InputNumber
+                              min={1}
+                              max={chapterCount || MAX_CHAPTER_COUNT}
+                              style={{ width: '100%' }}
+                            />
+                          </Form.Item>
+                        </Col>
+                        <Col span={12}>
+                          <Form.Item
+                            label="结束章节"
+                            name="chapterRangeEnd"
+                            rules={[
+                              { required: true, message: '请输入结束章节' },
+                              ({ getFieldValue }) => ({
+                                validator(_, value) {
+                                  const start = getFieldValue('chapterRangeStart');
+                                  if (value && start && value < start) {
+                                    return Promise.reject('结束章节不能小于起始章节');
+                                  }
+                                  if (value && value > chapterCount) {
+                                    return Promise.reject(`结束章节不能超过总章节数(${chapterCount})`);
+                                  }
+                                  return Promise.resolve();
+                                }
+                              })
+                            ]}
+                          >
+                            <InputNumber
+                              min={1}
+                              max={chapterCount || MAX_CHAPTER_COUNT}
+                              style={{ width: '100%' }}
+                            />
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                    );
+                  }
+                  return null;
+                }}
+              </Form.Item>
 
               <Form.Item label="额外要求" name="additionalRequirements">
                 <TextArea rows={2} placeholder="其他特殊要求或说明" />

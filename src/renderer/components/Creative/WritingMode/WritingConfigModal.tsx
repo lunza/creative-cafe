@@ -26,7 +26,7 @@ const { TextArea } = Input;
 
 interface WritingConfigModalProps {
   open: boolean;
-  onConfirm: (config: any) => void;
+  onConfirm: (config: any, projectId?: string) => void;
   onCancel: () => void;
 }
 
@@ -52,6 +52,7 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
   const [error, setError] = useState<string | null>(null);
   const lastConfigRef = useRef<{ values: any; config: WritingConfig } | null>(null);
   const [pendingRawJson, setPendingRawJson] = useState<string | null>(null);
+  const [editableJson, setEditableJson] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [generationAborted, setGenerationAborted] = useState(false);
 
@@ -64,6 +65,20 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
       loadResources();
     }
   }, [open]);
+
+  const prevIncludeEndingRef = useRef<boolean | undefined>(undefined);
+
+  useEffect(() => {
+    const currentIncludeEnding = form.getFieldValue('includeEnding');
+    if (currentIncludeEnding === false && prevIncludeEndingRef.current !== false) {
+      const chapterCount = form.getFieldValue('chapterCount') || DEFAULT_WRITING_CONFIG.chapterCount;
+      form.setFieldsValue({
+        chapterRangeStart: 1,
+        chapterRangeEnd: chapterCount
+      });
+    }
+    prevIncludeEndingRef.current = currentIncludeEnding;
+  }, [form]);
 
   useEffect(() => {
     if (streamRef.current) {
@@ -250,7 +265,10 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
         narrativePerspective: values.narrativePerspective,
         writingStyle: values.writingStyle,
         additionalRequirements: values.additionalRequirements,
-        forbiddenContent: values.forbiddenContent?.split('\n').filter(Boolean) || []
+        forbiddenContent: values.forbiddenContent?.split('\n').filter(Boolean) || [],
+        includeEnding: values.includeEnding !== false,
+        chapterRangeStart: values.includeEnding === false ? values.chapterRangeStart || 1 : undefined,
+        chapterRangeEnd: values.includeEnding === false ? values.chapterRangeEnd || values.chapterCount : undefined
       },
       modelConfig
     };
@@ -288,6 +306,7 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
       if (result.outlineRaw) {
         setPendingRawJson(result.outlineRaw);
         setStreamContent(result.outlineRaw);
+        setEditableJson(result.outlineRaw);
       } else if (!result.success) {
         setError(result.error || '大纲生成失败');
         message.error(result.error || '大纲生成失败');
@@ -312,12 +331,13 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
   };
 
   const handleSaveOutline = async () => {
-    if (!pendingRawJson || !lastConfigRef.current) return;
+    const jsonToSave = editableJson || pendingRawJson;
+    if (!jsonToSave || !lastConfigRef.current) return;
 
     setSaving(true);
     try {
       const result = await window.electronAPI.writing.saveOutline(
-        pendingRawJson,
+        jsonToSave,
         lastConfigRef.current.config
       );
 
@@ -325,7 +345,7 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
         useWritingModeStore.getState().setOutline(result.outline);
         useWritingModeStore.getState().setConfig(lastConfigRef.current.config);
         useWritingModeStore.getState().setOutlineRaw(pendingRawJson);
-        onConfirm(lastConfigRef.current.config);
+        onConfirm(lastConfigRef.current.config, result.projectId);
       } else {
         message.warning({
           content: `解析失败: ${result.error || '未知错误'}，但原始内容已保留`,
@@ -346,6 +366,7 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
     }
     setError(null);
     setPendingRawJson(null);
+    setEditableJson('');
     setGenerationAborted(false);
     const { values, config: savedConfig } = lastConfigRef.current;
     
@@ -378,6 +399,7 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
       if (result.outlineRaw) {
         setPendingRawJson(result.outlineRaw);
         setStreamContent(result.outlineRaw);
+        setEditableJson(result.outlineRaw);
       } else if (!result.success) {
         setError(result.error || '大纲生成失败');
         message.error(result.error || '大纲生成失败');
@@ -424,25 +446,12 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
     });
   };
 
-  const handleOk = () => {
-    form.validateFields().then(values => {
-      handleGenerateOutline(values);
-    }).catch(() => {
-      message.warning('请先填写必填项');
-    });
-  };
-
   return (
     <Modal
       title="新建创作项目"
       open={open}
-      onOk={handleOk}
       onCancel={onCancel}
-      okText="开始创作"
-      cancelText="取消"
       width={800}
-      confirmLoading={loading}
-      okButtonProps={{ disabled: isGenerating }}
       footer={null}
     >
       <Spin spinning={loadingResources}>
@@ -578,6 +587,82 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
                   </Col>
                 </Row>
 
+                <Form.Item
+                  name="includeEnding"
+                  valuePropName="checked"
+                  initialValue={true}
+                >
+                  <Checkbox>是否包含结局（取消勾选为连载模式）</Checkbox>
+                </Form.Item>
+
+                <Form.Item noStyle shouldUpdate={(prevValues, currentValues) =>
+                  prevValues.includeEnding !== currentValues.includeEnding ||
+                  prevValues.chapterCount !== currentValues.chapterCount
+                }>
+                  {({ getFieldValue }) => {
+                    const includeEnding = getFieldValue('includeEnding');
+                    const chapterCount = getFieldValue('chapterCount');
+                    if (includeEnding === false) {
+                      return (
+                        <Row gutter={16}>
+                          <Col span={12}>
+                            <Form.Item
+                              label="起始章节"
+                              name="chapterRangeStart"
+                              rules={[
+                                { required: true, message: '请输入起始章节' },
+                                ({ getFieldValue }) => ({
+                                  validator(_, value) {
+                                    const end = getFieldValue('chapterRangeEnd');
+                                    if (value && end && value > end) {
+                                      return Promise.reject('起始章节不能大于结束章节');
+                                    }
+                                    return Promise.resolve();
+                                  }
+                                })
+                              ]}
+                            >
+                              <InputNumber
+                                min={1}
+                                max={chapterCount || MAX_CHAPTER_COUNT}
+                                style={{ width: '100%' }}
+                              />
+                            </Form.Item>
+                          </Col>
+                          <Col span={12}>
+                            <Form.Item
+                              label="结束章节"
+                              name="chapterRangeEnd"
+                              rules={[
+                                { required: true, message: '请输入结束章节' },
+                                ({ getFieldValue }) => ({
+                                  validator(_, value) {
+                                    const start = getFieldValue('chapterRangeStart');
+                                    if (value && start && value < start) {
+                                      return Promise.reject('结束章节不能小于起始章节');
+                                    }
+                                    if (value && value > chapterCount) {
+                                      return Promise.reject(`结束章节不能超过总章节数(${chapterCount})`);
+                                    }
+                                    return Promise.resolve();
+                                  }
+                                })
+                              ]}
+                            >
+                              <InputNumber
+                                min={1}
+                                max={chapterCount || MAX_CHAPTER_COUNT}
+                                style={{ width: '100%' }}
+                              />
+                            </Form.Item>
+                          </Col>
+                        </Row>
+                      );
+                    }
+                    return null;
+                  }}
+                </Form.Item>
+
                 <Form.Item label="额外要求" name="additionalRequirements">
                   <TextArea rows={2} placeholder="其他特殊要求或说明" />
                 </Form.Item>
@@ -619,12 +704,12 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
             {pendingRawJson && !isGenerating && (
               <div style={{ marginTop: 16 }}>
                 <div style={{ marginBottom: 8, fontWeight: 600, fontSize: 14, color: '#52c41a' }}>
-                  AI 生成完成 — 请查看后保存
+                  AI 生成完成 — 请编辑后保存
                 </div>
                 <TextArea
                   ref={streamRef}
-                  value={streamContent}
-                  readOnly
+                  value={editableJson}
+                  onChange={(e) => setEditableJson(e.target.value)}
                   rows={12}
                   style={{ fontFamily: 'monospace', fontSize: 13, lineHeight: 1.6, resize: 'vertical' }}
                 />
@@ -719,14 +804,6 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
           </Form>
         </div>
       </Spin>
-
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16, paddingTop: 16, borderTop: '1px solid #f0f0f0' }}>
-        <Button onClick={onCancel}>取消</Button>
-        <Button onClick={handleManualCreateOutline}>手动创建大纲</Button>
-        <Button type="primary" loading={loading} onClick={handleOk} size="large">
-          开始创作
-        </Button>
-      </div>
     </Modal>
   );
 };

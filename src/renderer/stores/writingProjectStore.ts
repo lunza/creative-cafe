@@ -44,7 +44,15 @@ export const useWritingProjectStore = create<WritingProjectState>((set, get) => 
       if (window.electronAPI && window.electronAPI.writing) {
         const result = await window.electronAPI.writing.loadProjects();
         if (result.success) {
-          set({ projects: result.projects, isLoading: false });
+          const seenIds = new Set<string>();
+          const uniqueProjects = result.projects.filter((p) => {
+            if (seenIds.has(p.id)) {
+              return false;
+            }
+            seenIds.add(p.id);
+            return true;
+          });
+          set({ projects: uniqueProjects, isLoading: false });
         } else {
           set({ isLoading: false });
         }

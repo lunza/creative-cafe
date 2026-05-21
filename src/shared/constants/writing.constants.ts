@@ -19,6 +19,8 @@ export const NOVEL_TYPE_LABELS: Record<NovelType, string> = {
   [NovelType.SCI_FI]: '科幻',
   [NovelType.HISTORICAL]: '历史',
   [NovelType.URBAN]: '都市',
+  [NovelType.DOCUMENTARY]: '纪实',
+  [NovelType.EROTIC]: '色情文学',
   [NovelType.OTHER]: '其他'
 };
 
@@ -44,7 +46,8 @@ export const WRITING_STYLE_LABELS: Record<WritingStyle, string> = {
   [WritingStyle.HUMOROUS]: '幽默',
   [WritingStyle.SUSPENSEFUL]: '悬疑',
   [WritingStyle.ROMANTIC]: '浪漫',
-  [WritingStyle.EPIC]: '史诗'
+  [WritingStyle.EPIC]: '史诗',
+  [WritingStyle.DETAILED]: '细节'
 };
 
 export const WRITING_STYLE_OPTIONS = Object.entries(WRITING_STYLE_LABELS).map(([value, label]) => ({
@@ -67,7 +70,7 @@ export const MAX_TARGET_WORD_COUNT = 1000000;
 export const MIN_CHAPTER_COUNT = 1;
 export const MAX_CHAPTER_COUNT = 200;
 export const MIN_DESCRIPTION_LENGTH = 10;
-export const MAX_DESCRIPTION_LENGTH = 2000;
+export const MAX_DESCRIPTION_LENGTH = 100000;
 
 export const CHAPTER_TYPE_LABELS: Record<ChapterType, string> = {
   [ChapterType.MAIN_PLOT]: '主线剧情',

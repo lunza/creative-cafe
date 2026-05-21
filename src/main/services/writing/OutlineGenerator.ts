@@ -365,7 +365,8 @@ export class OutlineGenerator {
         suggestedTitle: data.workInfo.suggestedTitle || '未命名',
         novelType: data.workInfo.novelType || 'web_novel',
         estimatedWordCount: data.workInfo.estimatedWordCount || 10000,
-        chapterCount: data.workInfo.chapterCount || 10
+        chapterCount: data.workInfo.chapterCount || 10,
+        isComplete: data.workInfo.isComplete === false ? false : true
       },
       storyLine: {
         coreConflict: data.storyLine.coreConflict || '',
@@ -664,6 +665,8 @@ export class OutlineGenerator {
       sci_fi: 'serious',
       historical: 'serious',
       urban: 'relaxed',
+      documentary: 'serious',
+      erotic: 'romantic',
       other: 'serious'
     };
     return styleMap[novelType] || 'serious';

@@ -94,11 +94,14 @@ const WritingModeEntry: React.FC = () => {
     setShowConfigModal(true);
   }, []);
 
-  const handleConfigConfirm = useCallback(async (config) => {
-    const projectId = await useWritingProjectStore.getState().createProject(config);
-    if (projectId) {
-      setCurrentProject(projectId);
-      setSelectedProject(projectId);
+  const handleConfigConfirm = useCallback(async (config, projectId?: string) => {
+    let finalProjectId = projectId;
+    if (!finalProjectId) {
+      finalProjectId = await useWritingProjectStore.getState().createProject(config);
+    }
+    if (finalProjectId) {
+      setCurrentProject(finalProjectId);
+      setSelectedProject(finalProjectId);
       loadProjects();
     }
     setShowConfigModal(false);

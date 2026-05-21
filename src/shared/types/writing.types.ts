@@ -11,6 +11,8 @@ export enum NovelType {
   SCI_FI = 'sci_fi',
   HISTORICAL = 'historical',
   URBAN = 'urban',
+  DOCUMENTARY = 'documentary',
+  EROTIC = 'erotic',
   OTHER = 'other'
 }
 
@@ -28,7 +30,8 @@ export enum WritingStyle {
   HUMOROUS = 'humorous',
   SUSPENSEFUL = 'suspenseful',
   ROMANTIC = 'romantic',
-  EPIC = 'epic'
+  EPIC = 'epic',
+  DETAILED = 'detailed'
 }
 
 // 项目状态
@@ -155,6 +158,9 @@ export interface WritingParameters {
   writingStyle?: WritingStyle;
   additionalRequirements?: string;
   forbiddenContent?: string[];
+  includeEnding?: boolean;
+  chapterRangeStart?: number;
+  chapterRangeEnd?: number;
 }
 
 // 模型配置
@@ -223,6 +229,8 @@ export interface WorkInfo {
   novelType: NovelType;
   estimatedWordCount: number;
   chapterCount: number;
+  creativeDescription?: string;
+  isComplete?: boolean;
 }
 
 // 故事主线

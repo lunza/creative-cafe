@@ -485,6 +485,36 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
     handleGenerateChapter(selectedChapterIndex);
   }, [selectedChapterIndex, handleGenerateChapter]);
 
+  const handleClearChapter = useCallback(() => {
+    const chapterIndex = outline.chapters.findIndex(ch => ch.index === outline.chapters[selectedChapterIndex]?.index);
+    if (chapterIndex < 0) return;
+    const ch = outline.chapters[selectedChapterIndex];
+    setChapterContents(prev => ({ ...prev, [ch.index]: '' }));
+    setChapterStatuses(prev => ({ ...prev, [ch.index]: ChapterStatus.PENDING }));
+    setCurrentChapterWords(0);
+    setStreamingContent('');
+
+    const project = getCurrentProject();
+    if (project) {
+      updateProject(project.id, {
+        chapters: project.chapters.map(c =>
+          c.index === ch.index
+            ? { ...c, content: '', status: ChapterStatus.PENDING, wordCount: 0, lastModified: Date.now() }
+            : c
+        ),
+        metadata: {
+          ...project.metadata,
+          totalWordCount: project.chapters.reduce((sum, c) =>
+            sum + (c.index === ch.index ? 0 : c.wordCount), 0
+          ),
+          completedChapters: project.chapters.filter(c => c.index !== ch.index && c.status === ChapterStatus.COMPLETED).length
+        }
+      });
+      saveProject();
+    }
+    message.success('章节内容已清空');
+  }, [selectedChapterIndex, outline, getCurrentProject, updateProject, saveProject]);
+
   const handleBackToConfig = useCallback(() => {
     Modal.confirm({
       title: '返回修改配置',
@@ -514,12 +544,6 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
   const targetWordCount = currentChapter?.targetWordCount || 2000;
   const wordCountPercentage = Math.min((currentWordCount / targetWordCount) * 100, 100);
   const wordCountColor = wordCountPercentage >= 90 ? '#52c41a' : wordCountPercentage >= 50 ? '#faad14' : '#f5222d';
-
-  const filteredChapters = outline.chapters.filter(ch =>
-    !chapterSearch ||
-    ch.title.toLowerCase().includes(chapterSearch.toLowerCase()) ||
-    (ch.summary || '').toLowerCase().includes(chapterSearch.toLowerCase())
-  );
 
   return (
     <Layout style={{ height: '100%' }}>
@@ -562,20 +586,29 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
           mode="inline"
           selectedKeys={[String(selectedChapterIndex)]}
           onClick={({ key }) => setSelectedChapterIndex(parseInt(key))}
-          items={filteredChapters.map(ch => ({
-            key: String(ch.index),
-            label: (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                <span style={{ flex: 1 }}>{ch.title}</span>
-                <span style={{ fontSize: 10, marginLeft: 8 }}>
-                  {chapterStatuses[ch.index] === ChapterStatus.COMPLETED && <span style={{ color: '#52c41a' }}>✓</span>}
-                  {chapterStatuses[ch.index] === ChapterStatus.GENERATING && <Spin size="small" />}
-                  {chapterStatuses[ch.index] === ChapterStatus.FAILED && <span style={{ color: '#ff4d4f' }}>✗</span>}
-                </span>
-              </div>
-            ),
-            disabled: chapterStatuses[ch.index] === ChapterStatus.GENERATING
-          }))}
+          items={outline.chapters
+            .map((ch, arrayIdx) => {
+              if (chapterSearch &&
+                !ch.title.toLowerCase().includes(chapterSearch.toLowerCase()) &&
+                !(ch.summary || '').toLowerCase().includes(chapterSearch.toLowerCase())) {
+                return null;
+              }
+              return {
+                key: String(arrayIdx),
+                label: (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                    <span style={{ flex: 1 }}>{ch.title}</span>
+                    <span style={{ fontSize: 10, marginLeft: 8 }}>
+                      {chapterStatuses[ch.index] === ChapterStatus.COMPLETED && <span style={{ color: '#52c41a' }}>✓</span>}
+                      {chapterStatuses[ch.index] === ChapterStatus.GENERATING && <Spin size="small" />}
+                      {chapterStatuses[ch.index] === ChapterStatus.FAILED && <span style={{ color: '#ff4d4f' }}>✗</span>}
+                    </span>
+                  </div>
+                ),
+                disabled: chapterStatuses[ch.index] === ChapterStatus.GENERATING
+              };
+            })
+            .filter(Boolean) as any[]}
           style={{ maxHeight: 'calc(100vh - 260px)', overflow: 'auto' }}
         />
       </Sider>
@@ -614,6 +647,46 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
                     >
                       重新生成
                     </Button>
+                    <Popconfirm
+                      title="确定要清空此章节吗？"
+                      description="清空后该章节内容将被删除，可重新生成。"
+                      onConfirm={() => {
+                        const ch = outline.chapters[selectedChapterIndex];
+                        setChapterContents(prev => ({ ...prev, [ch.index]: '' }));
+                        setChapterStatuses(prev => ({ ...prev, [ch.index]: ChapterStatus.PENDING }));
+                        setCurrentChapterWords(0);
+                        setStreamingContent('');
+                        const project = getCurrentProject();
+                        if (project) {
+                          updateProject(project.id, {
+                            chapters: project.chapters.map(c =>
+                              c.index === ch.index
+                                ? { ...c, content: '', status: ChapterStatus.PENDING, wordCount: 0, lastModified: Date.now() }
+                                : c
+                            ),
+                            metadata: {
+                              ...project.metadata,
+                              totalWordCount: project.chapters.reduce((sum, c) =>
+                                sum + (c.index === ch.index ? 0 : c.wordCount), 0
+                              ),
+                              completedChapters: project.chapters.filter(c => c.index !== ch.index && c.status === ChapterStatus.COMPLETED).length
+                            }
+                          });
+                          saveProject();
+                        }
+                        message.success('章节内容已清空');
+                      }}
+                      okText="确定清空"
+                      cancelText="取消"
+                    >
+                      <Button
+                        danger
+                        icon={<DeleteOutlined />}
+                        disabled={!chapterContents[selectedChapterIndex] && !streamingContent}
+                      >
+                        清空
+                      </Button>
+                    </Popconfirm>
                     <Dropdown menu={{
                       items: [
                         { key: 'txt', label: 'TXT', onClick: () => handleExport(ExportFormat.TXT) },
