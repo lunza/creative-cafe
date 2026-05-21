@@ -5,6 +5,7 @@ import { writingStorageService } from '../../services/WritingStorageService';
 import { writingResourceManager } from '../../services/WritingResourceManager';
 import { outlineGenerator } from '../../services/writing/OutlineGenerator';
 import { contentGenerator } from '../../services/writing/ContentGenerator';
+import { logRequest, logResponse, logErrorWithContext, logInfo } from '../../services/AiLogger';
 import {
   WritingConfig,
   WritingProject,
@@ -148,6 +149,22 @@ export function registerWritingHandlers(): void {
 
   ipcMain.handle('writing:generateOutline', async (event, request) => {
     try {
+      logRequest('writing:generateOutline', {
+        parameters: {
+          creativeDescription: request.parameters.creativeDescription,
+          novelType: request.parameters.novelType,
+          targetWordCount: request.parameters.targetWordCount,
+          chapterCount: request.parameters.chapterCount,
+          writingStyle: request.parameters.writingStyle,
+          narrativePerspective: request.parameters.narrativePerspective,
+          includeEnding: request.parameters.includeEnding,
+          chapterRangeStart: request.parameters.chapterRangeStart,
+          chapterRangeEnd: request.parameters.chapterRangeEnd
+        },
+        modelConfig: request.modelConfig,
+        resources: request.resources
+      });
+
       if (!request || !request.parameters || !request.modelConfig) {
         console.error('[Writing] Invalid request format:', JSON.stringify(request, null, 2));
         return {
@@ -196,6 +213,11 @@ export function registerWritingHandlers(): void {
 
         activeAbortControllers.delete(outlineKey);
 
+        logResponse('writing:generateOutline', 'success', {
+          rawContentLength: result.rawContent?.length || 0,
+          success: true
+        });
+
         return {
           success: true,
           outline: null,
@@ -217,6 +239,7 @@ export function registerWritingHandlers(): void {
         throw error;
       }
     } catch (error) {
+      logErrorWithContext('writing:generateOutline', error, { parameters: request?.parameters });
       console.error('[Writing] Outline generation failed:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
       return {
@@ -230,6 +253,16 @@ export function registerWritingHandlers(): void {
 
   ipcMain.handle('writing:saveOutline', async (_event, { rawContent, config }) => {
     try {
+      logRequest('writing:saveOutline', {
+        rawContentLength: rawContent?.length || 0,
+        config: {
+          parameters: {
+            creativeDescription: config.parameters.creativeDescription,
+            chapterCount: config.parameters.chapterCount
+          }
+        }
+      });
+
       if (!rawContent) {
         return { success: false, error: '原始内容为空', outline: null, outlineRaw: null };
       }
@@ -285,6 +318,11 @@ export function registerWritingHandlers(): void {
 
       await writingStorageService.saveProject(project);
 
+      logResponse('writing:saveOutline', 'success', {
+        projectId,
+        chaptersCount: config.parameters.chapterCount
+      });
+
       return {
         success: true,
         outline,
@@ -292,6 +330,7 @@ export function registerWritingHandlers(): void {
         projectId
       };
     } catch (error) {
+      logErrorWithContext('writing:saveOutline', error, { rawContentLength: rawContent?.length || 0 });
       console.error('[Writing] Save outline failed:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
       return {
@@ -305,6 +344,14 @@ export function registerWritingHandlers(): void {
 
   ipcMain.handle('writing:generateChapter', async (event, request) => {
     try {
+      logRequest('writing:generateChapter', {
+        chapterIndex: request.chapterIndex,
+        chapterInfo: request.chapterInfo,
+        modelConfig: request.modelConfig,
+        generationParams: request.generationParams,
+        previousChaptersCount: request.previousChapters?.length || 0
+      });
+
       const abortController = new AbortController();
       const { projectId, chapterIndex } = request;
       activeAbortControllers.set(`${projectId}_${chapterIndex}`, abortController);
@@ -332,6 +379,12 @@ export function registerWritingHandlers(): void {
           metadata: result.metadata
         });
 
+        logResponse('writing:generateChapter', 'success', {
+          chapterIndex: request.chapterIndex,
+          contentLength: result.content?.length || 0,
+          generationTime: result.metadata?.generationTime || 0
+        });
+
         return { success: true };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -347,11 +400,14 @@ export function registerWritingHandlers(): void {
           error: errorObj
         });
 
+        logErrorWithContext('writing:generateChapter', error, { chapterIndex: request?.chapterIndex });
+
         return { success: false, error: errorMessage };
       } finally {
         activeAbortControllers.delete(`${projectId}_${chapterIndex}`);
       }
     } catch (error) {
+      logErrorWithContext('writing:generateChapter', error, { chapterIndex: request?.chapterIndex });
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error'
