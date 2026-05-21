@@ -46,6 +46,33 @@ ${perspectiveGuide}
     const styleGuide = StyleGuidance[parameters.writingStyle || WritingStyle.SERIOUS];
     const perspectiveGuide = PerspectiveGuidance[parameters.narrativePerspective];
 
+    const includeEnding = parameters.includeEnding !== false;
+    const rangeStart = parameters.chapterRangeStart || 1;
+    const rangeEnd = parameters.chapterRangeEnd || parameters.chapterCount;
+    const effectiveChapterCount = rangeEnd - rangeStart + 1;
+    const wordsPerChapter = Math.round(parameters.targetWordCount / parameters.chapterCount);
+
+    let chapterGenerationInstruction = '';
+    if (!includeEnding) {
+      chapterGenerationInstruction = `
+## 重要说明：本大纲为"未完结"状态
+1. 本作品为连载式创作，**不要生成结局章节**
+2. 故事弧线中的"合"（结局）部分请标记为"待定"
+3. 最后一章应为开放式结尾或悬念收尾，为后续章节留出空间
+4. workInfo.isComplete 请设置为 false
+5. storyArc.resolution 请设置为"待定"
+`;
+    }
+
+    let chapterRangeInstruction = '';
+    if (rangeStart > 1 || rangeEnd < parameters.chapterCount) {
+      chapterRangeInstruction = `
+## 章节范围说明
+本次仅生成第 ${rangeStart} 章至第 ${rangeEnd} 章的大纲（共 ${effectiveChapterCount} 章）
+请专注于指定范围内的章节，不要生成范围之外的章节
+`;
+    }
+
     return `# 小说大纲生成任务
 
 ## 创意描述
@@ -55,6 +82,8 @@ ${creativeDescription}
 - 小说类型: ${template.name}
 - 目标字数: ${parameters.targetWordCount}字
 - 章节数量: ${parameters.chapterCount}章
+${!includeEnding ? '- 连载状态: 未完结（不生成结局）' : '- 连载状态: 完整（包含结局）'}
+${chapterRangeInstruction ? `- 生成范围: 第${rangeStart}章至第${rangeEnd}章` : '- 生成范围: 全部章节'}
 - 叙事视角: ${perspectiveGuide}
 - 写作风格: ${styleGuide}
 ${parameters.additionalRequirements ? `- 额外要求: ${parameters.additionalRequirements}` : ''}
@@ -69,28 +98,27 @@ ${resourceContext ? `\n## 用户与角色信息\n${resourceContext}` : ''}
     "suggestedTitle": "建议标题",
     "novelType": "${parameters.novelType}",
     "estimatedWordCount": ${parameters.targetWordCount},
-    "chapterCount": ${parameters.chapterCount}
+    "chapterCount": ${parameters.chapterCount}${!includeEnding ? ',\n    "isComplete": false' : ''}
   },
   "storyLine": {
     "coreConflict": "核心冲突描述",
     "storyArc": {
       "beginning": "起：故事开端",
       "development": "承：故事发展",
-      "climax": "转：故事高潮",
-      "resolution": "合：故事结局"
+      "climax": "转：故事高潮"${!includeEnding ? ',\n      "resolution": "待定"' : ',\n      "resolution": "合：故事结局"'}
     },
     "theme": "故事主题"
   },
   "chapters": [
     {
-      "index": 1,
-      "title": "第一章标题",
+      "index": ${rangeStart - 1},
+      "title": "章节标题",
       "summary": "章节概要",
       "keyPlotPoints": ["关键情节点1", "关键情节点2"],
       "characters": ["出场角色"],
       "scenes": ["场景描述"],
       "suspensePoints": ["悬念点"],
-      "targetWordCount": ${Math.round(parameters.targetWordCount / parameters.chapterCount)}
+      "targetWordCount": ${wordsPerChapter}
     }
   ],
   "characterRelationships": [
@@ -115,12 +143,14 @@ ${resourceContext ? `\n## 用户与角色信息\n${resourceContext}` : ''}
 }
 
 ## 章节大纲生成要求
-1. 共生成 ${parameters.chapterCount} 章的章节大纲
-2. 每章目标字数约 ${Math.round(parameters.targetWordCount / parameters.chapterCount)} 字
+1. 共生成 ${effectiveChapterCount} 章的章节大纲${rangeStart > 1 || rangeEnd < parameters.chapterCount ? `（第${rangeStart}章至第${rangeEnd}章）` : ''}
+2. 每章目标字数约 ${wordsPerChapter} 字
 3. 章节之间要有连贯性，情节递进
 4. 遵循${template.name}类型的创作范式: ${template.outlineStructure.join('、')}
 5. 合理安排起承转合，注意节奏控制
-${parameters.forbiddenContent && parameters.forbiddenContent.length > 0 ? `6. 绝对不要包含以下内容: ${parameters.forbiddenContent.join('、')}` : ''}
+${!includeEnding ? '6. 不要生成结局章节，故事保持开放式发展' : ''}
+${chapterRangeInstruction ? `${!includeEnding ? '7' : '6'}. 仅生成指定范围的章节：第${rangeStart}章至第${rangeEnd}章` : ''}
+${parameters.forbiddenContent && parameters.forbiddenContent.length > 0 ? `${(!includeEnding || chapterRangeInstruction) ? '7' : '6'}. 绝对不要包含以下内容: ${parameters.forbiddenContent.join('、')}` : ''}
 
 ## 输出格式要求
 1. 只输出JSON格式的大纲，不要输出任何解释性文字、前言或后记

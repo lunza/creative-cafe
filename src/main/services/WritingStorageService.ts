@@ -173,22 +173,23 @@ export class WritingStorageService {
   }
 
   async loadAllProjects(): Promise<WritingProject[]> {
-    try {
-      const index = loadIndex();
-      const projects: WritingProject[] = [];
-      
-      for (const projectInfo of index.projects) {
-        const project = await this.loadProject(projectInfo.id);
-        if (project) {
-          projects.push(project);
-        }
+    const index = loadIndex();
+    const projects: WritingProject[] = [];
+    const seenIds = new Set<string>();
+    
+    for (const projectInfo of index.projects) {
+      if (seenIds.has(projectInfo.id)) {
+        continue;
       }
+      seenIds.add(projectInfo.id);
       
-      return projects;
-    } catch (error) {
-      console.error('[WritingStorage] Failed to load all projects:', error);
-      return [];
+      const project = await this.loadProject(projectInfo.id);
+      if (project) {
+        projects.push(project);
+      }
     }
+    
+    return projects;
   }
 
   async deleteProject(projectId: string): Promise<boolean> {

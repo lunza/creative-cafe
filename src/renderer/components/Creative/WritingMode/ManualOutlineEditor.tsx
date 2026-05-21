@@ -114,13 +114,13 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
   };
 
   const buildTreeData = useCallback((chapterList: ChapterOutline[], level: number = 0): TreeNodeData[] => {
-    return chapterList.map((chapter) => {
+    return chapterList.map((chapter, arrayIndex) => {
       const hasChildren = level < 1 && chapter.children && chapter.children.length > 0;
       const node: TreeNodeData = {
-        key: generateChapterKey(chapter.index, level),
+        key: generateChapterKey(arrayIndex, level),
         title: chapter.title || `第 ${chapter.index + 1} 章`,
         isLeaf: !hasChildren,
-        chapterIndex: chapter.index,
+        chapterIndex: arrayIndex,
         level,
       };
 
@@ -170,19 +170,22 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
   const handleSelect = useCallback((keys: React.Key[], info: { selected: boolean; selectedNodes: any; node: EventDataNode<any>; event: any }) => {
     setSelectedKeys(keys);
     if (keys.length > 0 && info.node) {
-      const result = findChapterByKeys(keys as string[], chapters);
+      const currentChapters = chaptersRef.current;
+      const result = findChapterByKeys(keys as string[], currentChapters);
       if (result) {
-        form.setFieldsValue({
-          title: result.chapter.title,
-          targetWordCount: result.chapter.targetWordCount,
-          summary: result.chapter.summary,
-          chapterType: result.chapter.chapterType,
-          importance: result.chapter.importance,
+        requestAnimationFrame(() => {
+          form.setFieldsValue({
+            title: result.chapter.title,
+            targetWordCount: result.chapter.targetWordCount,
+            summary: result.chapter.summary,
+            chapterType: result.chapter.chapterType,
+            importance: result.chapter.importance,
+          });
         });
         setValidationErrors({});
       }
     }
-  }, [chapters, form, findChapterByKeys]);
+  }, [form, findChapterByKeys]);
 
   const handleExpand = useCallback((keys: React.Key[]) => {
     setExpandedKeys(keys);

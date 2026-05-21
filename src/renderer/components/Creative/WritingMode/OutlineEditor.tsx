@@ -142,6 +142,9 @@ const OutlineEditor: React.FC<OutlineEditorProps> = ({
             <Tag>{NOVEL_TYPE_LABELS[(targetOutline as GeneratedOutline).workInfo.novelType as NovelType]}</Tag>
             <Tag>目标 {(targetOutline as GeneratedOutline).workInfo.estimatedWordCount} 字</Tag>
             <Tag>{(targetOutline as GeneratedOutline).workInfo.chapterCount} 章</Tag>
+            {(targetOutline as GeneratedOutline).workInfo.isComplete === false && (
+              <Tag color="orange">未完结</Tag>
+            )}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
