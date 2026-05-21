@@ -9,6 +9,7 @@ import {
 } from '../../../shared/types/writing.types';
 import { promptBuilder } from './PromptBuilder';
 import { getStorageService } from '../storageService';
+import { logRequest, logResponse, logErrorWithContext } from '../AiLogger';
 
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -92,6 +93,16 @@ export class ContentGenerator {
         requestBody.api_key = apiKey;
       }
     }
+
+    logRequest('writing:generateChapter:api', {
+      chapterIndex: request.chapterInfo?.index,
+      chapterTitle: request.chapterInfo?.title,
+      model: modelName,
+      temperature: modelConfig.temperature,
+      maxTokens: modelConfig.maxTokens,
+      messagesCount: messages.length,
+      baseUrl
+    });
 
     const response = await fetch(`${baseUrl}/v1/chat/completions`, {
       method: 'POST',
@@ -179,6 +190,14 @@ export class ContentGenerator {
     });
 
     const generationTime = Date.now() - startTime;
+
+    logResponse('writing:generateChapter:api', 'success', {
+      chapterIndex: request.chapterInfo?.index,
+      chapterTitle: request.chapterInfo?.title,
+      contentLength: fullContent.length,
+      generationTime,
+      model: modelConfig.model
+    });
 
     return {
       chapter: {
