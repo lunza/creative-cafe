@@ -64,13 +64,22 @@ export class WritingResourceManager {
         const data = await characterService.readCharacter(id);
         if (data && data.data) {
           const charData = data.data;
+          
+          let mesExample: string | undefined;
+          if (Array.isArray(charData.mes_example)) {
+            mesExample = charData.mes_example.join('\n\n');
+          } else if (charData.mes_example && typeof charData.mes_example === 'string') {
+            mesExample = charData.mes_example;
+          }
+          
           contexts.push({
             id,
             name: charData.name || '',
             description: charData.description || '',
             personality: charData.personality || '',
             scenario: charData.scenario,
-            firstMessage: charData.first_mes
+            firstMessage: charData.first_mes,
+            mesExample
           });
         }
       } catch (error) {
@@ -177,6 +186,7 @@ export class WritingResourceManager {
         parts.push(`### ${char.name}`);
         if (char.description) parts.push(`描述: ${char.description}`);
         if (char.personality) parts.push(`性格: ${char.personality}`);
+        if (char.mesExample) parts.push(`对话示例:\n${char.mesExample}`);
         parts.push('');
       }
     }

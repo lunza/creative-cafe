@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Card, Button, Progress, message, Spin, Menu, Typography, Dropdown, Popconfirm, Empty, Modal, Input, Divider, Layout, InputNumber, Form, List } from 'antd';
+import { Card, Button, Progress, message, Spin, Menu, Typography, Dropdown, Popconfirm, Empty, Modal, Input, Divider, Layout, InputNumber, Form, List, Table } from 'antd';
 const { Sider, Content } = Layout;
 const { Text } = Typography;
 import {
@@ -16,7 +16,9 @@ import {
   DeleteOutlined,
   SettingOutlined,
   PartitionOutlined,
-  MergeCellsOutlined
+  MergeCellsOutlined,
+  SearchOutlined,
+  FileTextOutlined
 } from '@ant-design/icons';
 import {
   GeneratedOutline,
@@ -26,7 +28,9 @@ import {
   ExportFormat,
   WritingProject,
   ProjectStatus,
-  ChapterVersion
+  ChapterVersion,
+  PlotCheckReport,
+  PlotCheckDimension
 } from '../../../../shared/types/writing.types';
 import MarkdownEditor from '../../Common/MarkdownEditor';
 import { useWritingProjectStore } from '../../../stores/writingProjectStore';
@@ -34,6 +38,9 @@ import WritingProgressDashboard from './WritingProgressDashboard';
 import ChapterSplitModal from './ChapterSplitModal';
 import ChapterMergeModal from './ChapterMergeModal';
 import AIGenerationHistoryModal from './AIGenerationHistoryModal';
+import PlotCheckReportModal from './PlotCheckReportModal';
+import ChunkedCheckPanel from './ChunkedCheckPanel';
+import AutoFixResultModal from './AutoFixResultModal';
 import {
   AISplitSuggestion,
   AIMergeSuggestion,
@@ -86,6 +93,22 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
   const [aiMergeSuggestion, setAiMergeSuggestion] = useState<AIMergeSuggestion | null>(null);
   const [aiGenerationHistory, setAiGenerationHistory] = useState<AIGenerationHistory[]>([]);
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+
+  const [showPlotCheckModal, setShowPlotCheckModal] = useState(false);
+  const [plotCheckReport, setPlotCheckReport] = useState<PlotCheckReport | null>(null);
+  const [plotCheckLoading, setPlotCheckLoading] = useState(false);
+
+  const [showLogicRecordsModal, setShowLogicRecordsModal] = useState(false);
+  const [logicRecords, setLogicRecords] = useState<any[]>([]);
+  const [logicRecordsLoading, setLogicRecordsLoading] = useState(false);
+
+  const [showChunkedCheckModal, setShowChunkedCheckModal] = useState(false);
+
+  const [autoFixResult, setAutoFixResult] = useState<any>(null);
+  const [showFixResultModal, setShowFixResultModal] = useState(false);
+  const [pendingFixIssue, setPendingFixIssue] = useState<any>(null);
+  const [pendingFixType, setPendingFixType] = useState<'dimension' | 'logic'>('dimension');
+  const [pendingFixContent, setPendingFixContent] = useState('');
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const pauseRef = useRef(false);
@@ -644,6 +667,168 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
     setAiMergeSuggestion(null);
   }, [outline]);
 
+  const handlePlotCheck = async () => {
+    if (!currentChapter) return;
+    
+    const content = chapterContents[currentChapter.index] || '';
+    if (!content.trim()) {
+      message.warning('章节内容为空，无法检查');
+      return;
+    }
+
+    setPlotCheckLoading(true);
+    try {
+      const previousChapters = outline.chapters
+        .filter(ch => ch.index < currentChapter.index)
+        .map(ch => ({
+          index: ch.index,
+          title: ch.title,
+          content: chapterContents[ch.index] || ''
+        }));
+
+      const result = await window.electronAPI.writing.checkChapter({
+        projectId,
+        chapterIndex: currentChapter.index,
+        content,
+        previousChapters: previousChapters.length > 0 ? previousChapters : undefined
+      });
+
+      if (result.success && result.report) {
+        setPlotCheckReport(result.report);
+        setShowPlotCheckModal(true);
+      } else {
+        message.error(result.error || '剧情检查失败');
+      }
+    } catch (error) {
+      message.error('剧情检查失败');
+    } finally {
+      setPlotCheckLoading(false);
+    }
+  };
+
+  const handleAutoFix = async (
+    chapterContent: string,
+    issue: any,
+    issueType: 'dimension' | 'logic'
+  ): Promise<{ success: boolean; fixedContent?: string; error?: string }> => {
+    if (!currentChapter) {
+      return { success: false, error: '未找到当前章节' };
+    }
+
+    try {
+      const currentProject = getCurrentProject();
+
+      const result = await window.electronAPI.writing.autoFixIssue({
+        projectId,
+        chapterIndex: currentChapter.index,
+        content: chapterContent,
+        issue,
+      });
+
+      if (result.success) {
+        // 显示修正结果弹窗
+        setAutoFixResult(result);
+        setPendingFixIssue(issue);
+        setPendingFixType(issueType);
+        setPendingFixContent(chapterContent);
+        setShowFixResultModal(true);
+        
+        // 先更新编辑器内容
+        setChapterContents(prev => ({ ...prev, [currentChapter.index]: result.fixedContent }));
+        editorContentRef.current = result.fixedContent;
+        
+        // 持久化
+        const project = getCurrentProject();
+        if (project) {
+          updateProject(project.id, {
+            chapters: project.chapters.map(ch =>
+              ch.index === currentChapter.index
+                ? { ...ch, content: result.fixedContent, lastModified: Date.now() }
+                : ch
+            ),
+          });
+          saveProject();
+        }
+        
+        return { success: true, fixedContent: result.fixedContent };
+      } else {
+        message.error(result.error || '自动修正失败');
+        return { success: false, error: result.error };
+      }
+    } catch (error) {
+      message.error('自动修正请求失败');
+      return { success: false, error: '请求失败' };
+    }
+  };
+
+  const handleContentUpdated = (fixedContent: string) => {
+    if (!currentChapter) return;
+
+    setChapterContents(prev => ({ ...prev, [currentChapter.index]: fixedContent }));
+    editorContentRef.current = fixedContent;
+
+    const project = getCurrentProject();
+    if (project) {
+      updateProject(project.id, {
+        chapters: project.chapters.map(ch =>
+          ch.index === currentChapter.index
+            ? { ...ch, content: fixedContent, lastModified: Date.now() }
+            : ch
+        ),
+        metadata: {
+          ...project.metadata,
+          totalWordCount: project.chapters.reduce((sum, ch) =>
+            sum + (ch.index === currentChapter.index ? fixedContent.length : ch.wordCount), 0
+          ),
+        }
+      });
+    }
+  };
+
+  const handleAcceptFix = () => {
+    setShowFixResultModal(false);
+    message.success('修正已应用到编辑器');
+  };
+
+  const handleRejectFix = () => {
+    // 恢复原始内容
+    if (pendingFixContent && currentChapter) {
+      setChapterContents(prev => ({ ...prev, [currentChapter.index]: pendingFixContent }));
+      editorContentRef.current = pendingFixContent;
+      
+      const project = getCurrentProject();
+      if (project) {
+        updateProject(project.id, {
+          chapters: project.chapters.map(ch =>
+            ch.index === currentChapter.index
+              ? { ...ch, content: pendingFixContent, lastModified: Date.now() }
+              : ch
+          ),
+        });
+        saveProject();
+      }
+    }
+    setShowFixResultModal(false);
+    message.info('已拒绝修正，内容已恢复');
+  };
+
+  const handleViewLogicRecords = async () => {
+    setShowLogicRecordsModal(true);
+    setLogicRecordsLoading(true);
+    try {
+      const result = await window.electronAPI.writing.getLogicCheckRecords();
+      if (result.success) {
+        setLogicRecords(result.records || []);
+      } else {
+        message.error(result.error || '获取逻辑记录失败');
+      }
+    } catch (error) {
+      message.error('获取逻辑记录失败');
+    } finally {
+      setLogicRecordsLoading(false);
+    }
+  };
+
   const handleMergeConfirm = useCallback((mode: 'simple' | 'ai', selectedIndices: number[], suggestion?: AIMergeSuggestion) => {
     if (!outline || selectedIndices.length < 2) return;
 
@@ -765,6 +950,12 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
   const wordCountPercentage = Math.min((currentWordCount / targetWordCount) * 100, 100);
   const wordCountColor = wordCountPercentage >= 90 ? '#52c41a' : wordCountPercentage >= 50 ? '#faad14' : '#f5222d';
 
+  const currentProject = getCurrentProject();
+  const chunkedCheckResources = currentProject?.config?.resources || {};
+  const chunkedCheckNovelType = currentProject?.config?.parameters?.novelType || 'web_novel';
+  const chunkedCheckWritingStyle = currentProject?.config?.parameters?.writingStyle || 'serious';
+  const chunkedCheckModelConfig = currentProject?.config?.modelConfig;
+
   return (
     <Layout style={{ height: '100%' }}>
       <style>{`
@@ -842,127 +1033,150 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
               </div>
             }
             extra={
-              <div style={{ display: 'flex', gap: 8 }}>
-                {!isGenerating ? (
-                  <>
-                    <Button
-                      type="primary"
-                      icon={<PlayCircleOutlined />}
-                      onClick={() => handleGenerateChapter(currentChapter.index)}
-                      disabled={!currentChapter || chapterStatuses[selectedChapterIndex] === ChapterStatus.GENERATING}
-                    >
-                      生成
-                    </Button>
-                    <Button
-                      icon={<ThunderboltOutlined />}
-                      onClick={handleContinuousGeneration}
-                      disabled={completedChapters >= totalChapters}
-                    >
-                      连续生成
-                    </Button>
-                    <Button
-                      icon={<ReloadOutlined />}
-                      onClick={handleRegenerateChapter}
-                      disabled={!chapterContents[currentChapter?.index] && !streamingContent}
-                    >
-                      重新生成
-                    </Button>
-                    <Popconfirm
-                    title="确定要清空此章节吗？"
-                    description="清空后该章节内容将被删除，可重新生成。"
-                    onConfirm={() => {
-                      const ch = outline.chapters[selectedChapterIndex];
-                      if (!ch) return;
-                      setChapterContents(prev => ({ ...prev, [ch.index]: '' }));
-                      setChapterStatuses(prev => ({ ...prev, [ch.index]: ChapterStatus.PENDING }));
-                      setCurrentChapterWords(0);
-                      setStreamingContent('');
-                      const project = getCurrentProject();
-                      if (project) {
-                        updateProject(project.id, {
-                          chapters: project.chapters.map(c =>
-                            c.index === ch.index
-                              ? { ...c, content: '', status: ChapterStatus.PENDING, wordCount: 0, lastModified: Date.now() }
-                              : c
-                          ),
-                          metadata: {
-                            ...project.metadata,
-                            totalWordCount: project.chapters.reduce((sum, c) =>
-                              sum + (c.index === ch.index ? 0 : c.wordCount), 0
-                            ),
-                            completedChapters: project.chapters.filter(c => c.index !== ch.index && c.status === ChapterStatus.COMPLETED).length
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {!isGenerating ? (
+                    <>
+                      <Button
+                        type="primary"
+                        icon={<PlayCircleOutlined />}
+                        onClick={() => handleGenerateChapter(currentChapter.index)}
+                        disabled={!currentChapter || chapterStatuses[selectedChapterIndex] === ChapterStatus.GENERATING}
+                      >
+                        生成
+                      </Button>
+                      <Button
+                        icon={<ThunderboltOutlined />}
+                        onClick={handleContinuousGeneration}
+                        disabled={completedChapters >= totalChapters}
+                      >
+                        连续生成
+                      </Button>
+                      <Button
+                        icon={<ReloadOutlined />}
+                        onClick={handleRegenerateChapter}
+                        disabled={!chapterContents[currentChapter?.index] && !streamingContent}
+                      >
+                        重新生成
+                      </Button>
+                      <Popconfirm
+                        title="确定要清空此章节吗？"
+                        description="清空后该章节内容将被删除，可重新生成。"
+                        onConfirm={() => {
+                          const ch = outline.chapters[selectedChapterIndex];
+                          if (!ch) return;
+                          setChapterContents(prev => ({ ...prev, [ch.index]: '' }));
+                          setChapterStatuses(prev => ({ ...prev, [ch.index]: ChapterStatus.PENDING }));
+                          setCurrentChapterWords(0);
+                          setStreamingContent('');
+                          const project = getCurrentProject();
+                          if (project) {
+                            updateProject(project.id, {
+                              chapters: project.chapters.map(c =>
+                                c.index === ch.index
+                                  ? { ...c, content: '', status: ChapterStatus.PENDING, wordCount: 0, lastModified: Date.now() }
+                                  : c
+                              ),
+                              metadata: {
+                                ...project.metadata,
+                                totalWordCount: project.chapters.reduce((sum, c) =>
+                                  sum + (c.index === ch.index ? 0 : c.wordCount), 0
+                                ),
+                                completedChapters: project.chapters.filter(c => c.index !== ch.index && c.status === ChapterStatus.COMPLETED).length
+                              }
+                            });
+                            saveProject();
                           }
-                        });
-                        saveProject();
-                      }
-                      message.success('章节内容已清空');
-                    }}
-                    okText="确定清空"
-                    cancelText="取消"
-                  >
-                    <Button
-                      danger
-                      icon={<DeleteOutlined />}
-                    >
-                      清空
-                    </Button>
-                  </Popconfirm>
-                  <Button
-                    icon={<PartitionOutlined />}
-                    onClick={handleOpenSplitModal}
-                    disabled={isGenerating}
-                  >
-                    分解
-                  </Button>
-                  <Button
-                    icon={<MergeCellsOutlined />}
-                    onClick={handleOpenMergeModal}
-                    disabled={outline.chapters.length < 2}
-                  >
-                    合并
-                  </Button>
-                  <Button
-                    icon={<HistoryOutlined />}
-                    onClick={() => setShowHistoryModal(true)}
-                  >
-                    AI历史
-                  </Button>
-                    <Dropdown menu={{
-                      items: [
-                        { key: 'txt', label: 'TXT', onClick: () => handleExport(ExportFormat.TXT) },
-                        { key: 'md', label: 'Markdown', onClick: () => handleExport(ExportFormat.MARKDOWN) },
-                        { key: 'json', label: 'JSON', onClick: () => handleExport(ExportFormat.JSON) },
-                      ]
-                    }}>
-                      <Button icon={<ExportOutlined />}>导出</Button>
-                    </Dropdown>
-                  </>
-                ) : (
-                  <>
-                    {isPaused ? (
-                      <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleResumeGeneration}>
-                        继续
+                          message.success('章节内容已清空');
+                        }}
+                        okText="确定清空"
+                        cancelText="取消"
+                      >
+                        <Button
+                          danger
+                          icon={<DeleteOutlined />}
+                        >
+                          清空
+                        </Button>
+                      </Popconfirm>
+                      <Button
+                        icon={<PartitionOutlined />}
+                        onClick={handleOpenSplitModal}
+                        disabled={isGenerating}
+                      >
+                        分解
                       </Button>
-                    ) : (
-                      <Button icon={<PauseCircleOutlined />} onClick={handlePauseGeneration}>
-                        暂停
+                      <Button
+                        icon={<MergeCellsOutlined />}
+                        onClick={handleOpenMergeModal}
+                        disabled={outline.chapters.length < 2}
+                      >
+                        合并
                       </Button>
-                    )}
-                    <Popconfirm title="确定要停止生成吗？已生成的内容将被保留。" onConfirm={handleStopGeneration}>
-                      <Button danger icon={<StopOutlined />}>停止</Button>
-                    </Popconfirm>
-                  </>
-                )}
-                <Button icon={<SaveOutlined />} onClick={handleSaveChapter}>保存</Button>
-                <Dropdown menu={{
-                  items: [
-                    { key: 'saveVersion', label: '保存版本', icon: <HistoryOutlined />, onClick: handleSaveVersion },
-                    { key: 'versionHistory', label: '版本历史', icon: <HistoryOutlined />, onClick: handleShowVersionHistory },
-                  ]
-                }}>
-                  <Button icon={<MoreOutlined />}>版本</Button>
-                </Dropdown>
-                <Button icon={<SettingOutlined />} onClick={handleBackToConfig}>调整参数</Button>
+                      <Button
+                        icon={<HistoryOutlined />}
+                        onClick={() => setShowHistoryModal(true)}
+                      >
+                        AI历史
+                      </Button>
+                      <Dropdown menu={{
+                        items: [
+                          { key: 'txt', label: 'TXT', onClick: () => handleExport(ExportFormat.TXT) },
+                          { key: 'md', label: 'Markdown', onClick: () => handleExport(ExportFormat.MARKDOWN) },
+                          { key: 'json', label: 'JSON', onClick: () => handleExport(ExportFormat.JSON) },
+                        ]
+                      }}>
+                        <Button icon={<ExportOutlined />}>导出</Button>
+                      </Dropdown>
+                    </>
+                  ) : (
+                    <>
+                      {isPaused ? (
+                        <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleResumeGeneration}>
+                          继续
+                        </Button>
+                      ) : (
+                        <Button icon={<PauseCircleOutlined />} onClick={handlePauseGeneration}>
+                          暂停
+                        </Button>
+                      )}
+                      <Popconfirm title="确定要停止生成吗？已生成的内容将被保留。" onConfirm={handleStopGeneration}>
+                        <Button danger icon={<StopOutlined />}>停止</Button>
+                      </Popconfirm>
+                    </>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <Button icon={<SaveOutlined />} onClick={handleSaveChapter}>保存</Button>
+                  <Dropdown menu={{
+                    items: [
+                      { key: 'saveVersion', label: '保存版本', icon: <HistoryOutlined />, onClick: handleSaveVersion },
+                      { key: 'versionHistory', label: '版本历史', icon: <HistoryOutlined />, onClick: handleShowVersionHistory },
+                    ]
+                  }}>
+                    <Button icon={<MoreOutlined />}>版本</Button>
+                  </Dropdown>
+                  <Button 
+                    icon={<PartitionOutlined />} 
+                    onClick={() => setShowChunkedCheckModal(true)}
+                  >
+                    分片检查
+                  </Button>
+                  <Button 
+                    icon={<SearchOutlined />} 
+                    onClick={handlePlotCheck} 
+                    loading={plotCheckLoading}
+                  >
+                    剧情检查
+                  </Button>
+                  <Button 
+                    icon={<FileTextOutlined />} 
+                    onClick={handleViewLogicRecords}
+                  >
+                    逻辑记录
+                  </Button>
+                  <Button icon={<SettingOutlined />} onClick={handleBackToConfig}>调整参数</Button>
+                </div>
               </div>
             }
           >
@@ -1048,6 +1262,70 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
         projectId={projectId}
         onCancel={() => setShowHistoryModal(false)}
         onRestore={handleRestoreHistory}
+      />
+
+      {/* 剧情检查报告弹窗 */}
+      <PlotCheckReportModal
+        visible={showPlotCheckModal}
+        report={plotCheckReport}
+        onCancel={() => setShowPlotCheckModal(false)}
+        onAutoFix={handleAutoFix}
+        chapterContent={chapterContents[currentChapter?.index] || ''}
+        onContentUpdated={handleContentUpdated}
+      />
+
+      {/* 逻辑记录查看弹窗 */}
+      <Modal
+        title="逻辑矛盾记录"
+        open={showLogicRecordsModal}
+        onCancel={() => setShowLogicRecordsModal(false)}
+        width={900}
+        footer={null}
+      >
+        <Spin spinning={logicRecordsLoading}>
+          {logicRecords.length === 0 ? (
+            <Empty description="暂无逻辑矛盾记录" />
+          ) : (
+            <Table
+              dataSource={logicRecords}
+              pagination={{ pageSize: 10 }}
+              size="small"
+              rowKey="1"
+              columns={[
+                { title: '异常类型', dataIndex: '2', key: 'type', width: 120 },
+                { title: '情节描述', dataIndex: '3', key: 'description', ellipsis: true },
+                { title: '矛盾点', dataIndex: '4', key: 'analysis', ellipsis: true },
+                { title: '章节', dataIndex: '5', key: 'chapter', width: 100 },
+                { title: '严重程度', dataIndex: '6', key: 'severity', width: 80 },
+                { title: '检测时间', dataIndex: '8', key: 'time', width: 150 }
+              ]}
+            />
+          )}
+        </Spin>
+      </Modal>
+
+      {/* 分片检查弹窗 */}
+      <ChunkedCheckPanel
+        visible={showChunkedCheckModal}
+        projectId={projectId}
+        outline={outline}
+        chapterContents={chapterContents}
+        resources={chunkedCheckResources}
+        novelType={chunkedCheckNovelType}
+        writingStyle={chunkedCheckWritingStyle}
+        modelConfig={chunkedCheckModelConfig}
+        onCancel={() => setShowChunkedCheckModal(false)}
+      />
+
+      {/* 自动修正结果弹窗 */}
+      <AutoFixResultModal
+        visible={showFixResultModal}
+        result={autoFixResult}
+        issueTitle={pendingFixIssue?.title || ''}
+        issueType={pendingFixType === 'logic' ? '逻辑异常' : pendingFixIssue?.dimension ? '维度问题' : '问题'}
+        onAccept={handleAcceptFix}
+        onReject={handleRejectFix}
+        onCancel={() => setShowFixResultModal(false)}
       />
     </Layout>
   );

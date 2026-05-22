@@ -1,6 +1,8 @@
 import React, { useState, useCallback, useRef } from 'react';
-import { Modal, Table, Tabs, Spin, Empty, Button, Input, Popconfirm, message } from 'antd';
-import { DownloadOutlined, ClearOutlined, SaveOutlined } from '@ant-design/icons';
+import { Modal, Table, Tabs, Spin, Empty, Button, Input, Popconfirm, message, Space, Typography } from 'antd';
+import { DownloadOutlined, ClearOutlined, SaveOutlined, SyncOutlined } from '@ant-design/icons';
+
+const { Text } = Typography;
 
 interface SheetData {
   [sheetName: string]: Record<string, any>[];
@@ -32,6 +34,8 @@ const TablePreviewModal: React.FC<TablePreviewModalProps> = ({
   const [editValue, setEditValue] = useState('');
   const [error, setError] = useState<string>('');
   const [pageSize, setPageSize] = useState(20);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSynced, setLastSynced] = useState<string>('');
 
   const tableDataRef = useRef(tableData);
   const allSheetDataRef = useRef(allSheetData);
@@ -132,13 +136,14 @@ const TablePreviewModal: React.FC<TablePreviewModalProps> = ({
     setEditValue(record[colKey] || '');
   }, []);
 
-  const saveEdit = useCallback(() => {
+  const saveEdit = useCallback(async () => {
     const cell = editingCellRef.current;
     const sheet = currentSheetRef.current;
     const value = editValueRef.current;
     const headers = allSheetHeadersRef.current[sheet] || [];
     const data = tableDataRef.current;
     const allData = allSheetDataRef.current;
+    const charName = characterCardName;
 
     if (!cell || !sheet) return;
 
@@ -160,7 +165,28 @@ const TablePreviewModal: React.FC<TablePreviewModalProps> = ({
 
     setEditingCell(null);
     setEditValue('');
-  }, []);
+
+    // 同步到持久化存储
+    try {
+      setSyncing(true);
+      const result = await window.electronAPI.memory.updateRowInTable(
+        charName,
+        sheets.indexOf(sheet),
+        rowIndex,
+        updatedRow
+      );
+      if (result) {
+        setLastSynced(new Date().toLocaleTimeString());
+        message.success('已同步');
+      } else {
+        message.error('同步失败');
+      }
+    } catch (error) {
+      message.error(`同步失败: ${error}`);
+    } finally {
+      setSyncing(false);
+    }
+  }, [characterCardName, sheets]);
 
   const cancelEdit = useCallback(() => {
     setEditingCell(null);
@@ -267,6 +293,31 @@ const TablePreviewModal: React.FC<TablePreviewModalProps> = ({
     }
   }, [characterCardName, loadTableData]);
 
+  const handleManualSync = async () => {
+    if (!currentSheet || !characterCardName) return;
+    
+    setSyncing(true);
+    try {
+      const currentData = allSheetData[currentSheet] || [];
+      let successCount = 0;
+      for (let i = 0; i < currentData.length; i++) {
+        const result = await window.electronAPI.memory.updateRowInTable(
+          characterCardName,
+          sheets.indexOf(currentSheet),
+          i,
+          currentData[i]
+        );
+        if (result) successCount++;
+      }
+      setLastSynced(new Date().toLocaleTimeString());
+      message.success(`已同步 ${successCount} 行数据`);
+    } catch (error) {
+      message.error(`同步失败: ${error}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   return (
     <Modal
       title={`记忆表格预览 - ${characterCardName}`}
@@ -274,6 +325,17 @@ const TablePreviewModal: React.FC<TablePreviewModalProps> = ({
       onCancel={onClose}
       width="90vw"
       footer={[
+        <Space key="sync">
+          {lastSynced && <Text type="secondary">上次同步: {lastSynced}</Text>}
+          <Button
+            icon={<SyncOutlined spin={syncing} />}
+            onClick={handleManualSync}
+            loading={syncing}
+            disabled={!currentSheet || tableData.length === 0}
+          >
+            同步到存储
+          </Button>
+        </Space>,
         <Popconfirm
           key="clearCurrent"
           title={`确定清空表格"${currentSheet}"的所有数据？`}

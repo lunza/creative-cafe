@@ -387,6 +387,7 @@ export class ContentGenerator {
         parts.push(`### ${char.name}`);
         if (char.description) parts.push(`描述: ${char.description}`);
         if (char.personality) parts.push(`性格: ${char.personality}`);
+        if (char.mesExample) parts.push(`对话示例:\n${char.mesExample}`);
       }
     }
 

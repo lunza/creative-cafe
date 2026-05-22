@@ -114,3 +114,4 @@ export const AUTO_SAVE_DELAY = 500;
 export const MAX_AI_SUGGESTION_HISTORY = 20;
 export const AI_SPLIT_TIMEOUT = 30000;
 export const AI_MERGE_TIMEOUT = 30000;
+export const AI_CHECK_TIMEOUT = 120000;

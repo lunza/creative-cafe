@@ -1,0 +1,31 @@
+# Tasks
+- [x] Task 1: 实现分片检查服务（ChunkedCheckService）
+  - [x] SubTask 1.1: 创建 ChunkedCheckService 类，实现按章节自动分片
+  - [x] SubTask 1.2: 实现手动分片功能（按字数或段落数分片）
+  - [x] SubTask 1.3: 实现逐步检查功能，支持按顺序或指定分片检查
+  - [x] SubTask 1.4: 实现进度追踪和状态管理
+- [x] Task 2: 实现分片检查 IPC handler
+  - [x] SubTask 2.1: 在 writingHandlers.ts 中添加分片检查相关 handler
+  - [x] SubTask 2.2: 在 preload.ts 中暴露分片检查 API
+- [x] Task 3: 实现分片检查 UI 组件
+  - [x] SubTask 3.1: 创建 ChunkedCheckPanel 组件
+  - [x] SubTask 3.2: 实现分片列表和进度展示
+  - [x] SubTask 3.3: 实现逐步检查控制面板
+- [x] Task 4: 集成到 ContentWorkspace
+  - [x] SubTask 4.1: 在操作栏添加"分片检查"按钮
+  - [x] SubTask 4.2: 添加分片检查弹窗
+- [x] Task 5: 增强逻辑检查规则验证层
+  - [x] SubTask 5.1: 在 PlotCheckerService 中添加基于规则的实体状态追踪
+  - [x] SubTask 5.2: 添加状态冲突检测和数量关系验证
+- [x] Task 6: 完善 tableEdit 表格同步功能
+  - [x] SubTask 6.1: 在 TablePreviewModal 中确保编辑后同步到持久化存储
+  - [x] SubTask 6.2: 在 tableTemplateService 中添加同步事件广播
+- [x] Task 7: 构建并验证
+
+# Task Dependencies
+- Task 2 depends on Task 1
+- Task 3 is independent
+- Task 4 depends on Task 2 and Task 3
+- Task 5 is independent
+- Task 6 is independent
+- Task 7 depends on all above

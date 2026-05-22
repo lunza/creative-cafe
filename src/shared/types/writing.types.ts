@@ -214,6 +214,7 @@ export interface ContentGenerationRequest {
     name: string;
     description: string;
     personality: string;
+    mesExample?: string;
   }[];
   userPersonaContext?: {
     name: string;
@@ -459,6 +460,7 @@ export interface CharacterCardContext {
   personality: string;
   scenario?: string;
   firstMessage?: string;
+  mesExample?: string;
 }
 
 export interface UserPersonaContext {
@@ -632,3 +634,133 @@ export interface WritingStyleChunkAnalysis {
   imitableElements: Record<string, any>;
   partialReport: string;
 }
+
+// 剧情检查相关类型
+export enum PlotCheckDimension {
+  OUTLINE_CONSISTENCY = 'outline_consistency',
+  WORLDBOOK_COMPLIANCE = 'worldbook_compliance',
+  CHARACTER_CONSISTENCY = 'character_consistency',
+  WRITING_STYLE = 'writing_style',
+  PLOT_CONTINUITY = 'plot_continuity'
+}
+
+export const PLOT_CHECK_DIMENSION_LABELS: Record<PlotCheckDimension, string> = {
+  [PlotCheckDimension.OUTLINE_CONSISTENCY]: '大纲一致性',
+  [PlotCheckDimension.WORLDBOOK_COMPLIANCE]: '世界书遵循',
+  [PlotCheckDimension.CHARACTER_CONSISTENCY]: '角色符合度',
+  [PlotCheckDimension.WRITING_STYLE]: '写作风格统一性',
+  [PlotCheckDimension.PLOT_CONTINUITY]: '剧情连贯性'
+};
+
+export enum IssueSeverity {
+  HIGH = 'high',
+  MEDIUM = 'medium',
+  LOW = 'low'
+}
+
+export const ISSUE_SEVERITY_LABELS: Record<IssueSeverity, string> = {
+  [IssueSeverity.HIGH]: '高',
+  [IssueSeverity.MEDIUM]: '中',
+  [IssueSeverity.LOW]: '低'
+};
+
+export interface PlotCheckIssue {
+  dimension: PlotCheckDimension;
+  severity: IssueSeverity;
+  title: string;
+  description: string;
+  suggestion: string;
+  position?: {
+    startIndex: number;
+    endIndex: number;
+    line?: number;
+    column?: number;
+  };
+  fixable?: boolean;
+  fixed?: boolean;
+  fixResult?: string;
+}
+
+export interface DimensionScore {
+  dimension: PlotCheckDimension;
+  score: number;
+  maxScore: number;
+  issues: PlotCheckIssue[];
+  passed: boolean;
+}
+
+export interface PlotCheckReport {
+  overallScore: number;
+  dimensions: DimensionScore[];
+  totalIssues: number;
+  highSeverityCount: number;
+  mediumSeverityCount: number;
+  lowSeverityCount: number;
+  logicCheckResult?: LogicCheckResult;
+  checkedAt: number;
+  chapterIndex: number;
+}
+
+export interface PlotCheckRequest {
+  projectId: string;
+  chapterIndex: number;
+  content: string;
+}
+
+// 逻辑异常检测相关类型
+export enum LogicContradictionType {
+  ITEM_STATE = 'item_state',
+  ECONOMIC = 'economic',
+  CHARACTER_STATE = 'character_state',
+  PHYSICAL_LAW = 'physical_law',
+  PLOT_SETTING = 'plot_setting',
+  MATHEMATICAL = 'mathematical'
+}
+
+export const LOGIC_CONTRADICTION_TYPE_LABELS: Record<LogicContradictionType, string> = {
+  [LogicContradictionType.ITEM_STATE]: '物品状态矛盾',
+  [LogicContradictionType.ECONOMIC]: '经济系统矛盾',
+  [LogicContradictionType.CHARACTER_STATE]: '角色状态矛盾',
+  [LogicContradictionType.PHYSICAL_LAW]: '物理规律矛盾',
+  [LogicContradictionType.PLOT_SETTING]: '剧情设定矛盾',
+  [LogicContradictionType.MATHEMATICAL]: '数学逻辑矛盾'
+};
+
+export interface LogicCheckIssue {
+  type: LogicContradictionType;
+  severity: IssueSeverity;
+  description: string;
+  analysis: string;
+  chapterIndex: number;
+  chapterTitle?: string;
+  position?: {
+    startIndex: number;
+    endIndex: number;
+  };
+  suggestion?: string;
+}
+
+export interface LogicCheckResult {
+  issues: LogicCheckIssue[];
+  totalIssues: number;
+  highSeverityCount: number;
+  mediumSeverityCount: number;
+  lowSeverityCount: number;
+}
+
+export interface AutoFixDiff {
+  originalText: string;
+  fixedText: string;
+  position: {
+    startIndex: number;
+    endIndex: number;
+  };
+}
+
+export interface AutoFixResult {
+  success: boolean;
+  fixedContent: string;
+  diffs: AutoFixDiff[];
+  error?: string;
+}
+
