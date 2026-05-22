@@ -8,8 +8,12 @@ import { outlineGenerator } from '../../services/writing/OutlineGenerator';
 import { contentGenerator } from '../../services/writing/ContentGenerator';
 import { promptBuilder } from '../../services/writing/PromptBuilder';
 import { aiAssistedChapterService } from '../../services/writing/AIAssistedChapterService';
+import { plotCheckerService, PlotCheckRequestData } from '../../services/writing/PlotCheckerService';
+import { logicCheckRecorder } from '../../services/writing/LogicCheckRecorder';
+import { chunkedCheckService, ChunkedCheckConfig } from '../../services/writing/ChunkedCheckService';
 import { addLog } from '../../services/memory/chatLogService';
 import { worldBookService } from '../../services/worldBookService';
+import { getStorageService } from '../../services/storageService';
 import {
   WritingConfig,
   WritingProject,
@@ -22,7 +26,11 @@ import {
   GeneratedOutline,
   ChapterOutline,
   WritingStyleResource,
-  WritingStyleLearningRequest
+  WritingStyleLearningRequest,
+  PlotCheckRequest,
+  PlotCheckReport,
+  PlotCheckIssue,
+  ModelConfig
 } from '../../../shared/types/writing.types';
 
 const activeAbortControllers = new Map<string, AbortController>();
@@ -468,7 +476,8 @@ export function registerWritingHandlers(): void {
         request.characterContext = characters.map(char => ({
           name: char.name || '未知',
           description: char.description || '',
-          personality: char.personality || char.traits?.join('、') || ''
+          personality: char.personality || char.traits?.join('、') || '',
+          mesExample: (char as any).mesExample || ''
         }));
       }
 
@@ -915,6 +924,235 @@ export function registerWritingHandlers(): void {
         activeTaskIds: [],
         error: error instanceof Error ? error.message : 'Unknown error'
       };
+    }
+  });
+
+  ipcMain.handle('writing:checkChapter', async (_event, request: { projectId: string; chapterIndex: number; content: string; previousChapters?: { index: number; title: string; content: string }[] }) => {
+    try {
+      addLog('===== 写作模式: 剧情检查请求 =====', 'debug');
+      addLog(`章节索引: ${request.chapterIndex}`, 'debug');
+      addLog(`内容长度: ${request.content?.length || 0}`, 'debug');
+      addLog('===== 请求入参结束 =====', 'debug');
+
+      const project = await writingStorageService.loadProject(request.projectId);
+      if (!project) {
+        return { success: false, error: '项目不存在', report: null };
+      }
+
+      // Read model config from active AI engine settings (same logic as PlotCheckerService.getConfig)
+      const storageService = getStorageService();
+      const settings = storageService.getSettings();
+      const engines = settings?.aiEngines || [];
+      const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
+
+      const modelConfig: ModelConfig = {
+        model: activeEngine?.model_name || project.config?.modelConfig?.model || 'gpt-4o',
+        temperature: Number(activeEngine?.temperature) ?? project.config?.modelConfig?.temperature ?? 0.3,
+        maxTokens: Number(activeEngine?.max_tokens) ?? project.config?.modelConfig?.maxTokens ?? 4000
+      };
+
+      addLog(`模型配置: ${JSON.stringify(modelConfig)}`, 'debug');
+
+      if (!modelConfig.model) {
+        return { success: false, error: '未配置 AI 模型，请在设置中配置 AI 引擎', report: null };
+      }
+
+      const checkRequest: PlotCheckRequestData = {
+        projectId: request.projectId,
+        chapterIndex: request.chapterIndex,
+        content: request.content,
+        outline: project.outline,
+        resources: project.config?.resources || { worldBookIds: [], characterCardIds: [] },
+        novelType: project.config?.parameters?.novelType,
+        writingStyle: project.config?.parameters?.writingStyle,
+        modelConfig,
+        previousChapters: request.previousChapters || []
+      };
+
+      const report = await plotCheckerService.checkChapter(checkRequest);
+
+      // 记录逻辑异常到记忆表格
+      if (report.logicCheckResult && report.logicCheckResult.issues.length > 0) {
+        const chapterTitle = project.outline?.chapters?.find(ch => ch.index === request.chapterIndex)?.title;
+        await logicCheckRecorder.recordIssues(
+          report.logicCheckResult.issues,
+          request.projectId,
+          request.chapterIndex,
+          chapterTitle
+        );
+      }
+
+      addLog('===== 写作模式: 剧情检查完成 =====', 'debug');
+      addLog(`综合评分: ${report.overallScore}`, 'debug');
+      addLog(`问题总数: ${report.totalIssues}`, 'debug');
+      addLog('===== 响应结束 =====', 'debug');
+
+      return { success: true, report, error: null };
+    } catch (error) {
+      addLog('===== 写作模式: 剧情检查错误 =====', 'error');
+      addLog(`错误信息: ${error instanceof Error ? error.message : String(error)}`, 'error');
+      addLog('===== 错误详情结束 =====', 'error');
+      return {
+        success: false,
+        report: null,
+        error: error instanceof Error ? error.message : '剧情检查失败'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:autoFixIssue', async (_event, request: { projectId: string; chapterIndex: number; content: string; issue: PlotCheckIssue; modelConfig?: ModelConfig }) => {
+    try {
+      addLog('===== 写作模式: 自动修正请求 =====', 'debug');
+      addLog(`章节索引: ${request.chapterIndex}`, 'debug');
+      addLog(`问题标题: ${request.issue?.title}`, 'debug');
+      addLog('===== 请求入参结束 =====', 'debug');
+
+      // Read model config from active AI engine settings
+      const storageService = getStorageService();
+      const settings = storageService.getSettings();
+      const engines = settings?.aiEngines || [];
+      const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
+
+      const modelConfig: ModelConfig = {
+        model: activeEngine?.model_name || request.modelConfig?.model || 'gpt-4o',
+        temperature: Number(activeEngine?.temperature) ?? request.modelConfig?.temperature ?? 0.3,
+        maxTokens: Number(activeEngine?.max_tokens) ?? request.modelConfig?.maxTokens ?? 4000
+      };
+
+      addLog(`【自动修正】模型配置: ${JSON.stringify(modelConfig)}`, 'debug');
+
+      const result = await plotCheckerService.autoFixIssue(
+        request.projectId,
+        request.chapterIndex,
+        request.content,
+        request.issue,
+        modelConfig
+      );
+
+      addLog('===== 写作模式: 自动修正完成 =====', 'debug');
+      addLog(`修正成功: ${result.success}`, 'debug');
+      addLog('===== 响应结束 =====', 'debug');
+
+      return {
+        success: result.success,
+        fixedContent: result.fixedContent,
+        diffs: result.diffs || [],
+        error: result.error || null
+      };
+    } catch (error) {
+      addLog('===== 写作模式: 自动修正错误 =====', 'error');
+      addLog(`错误信息: ${error instanceof Error ? error.message : String(error)}`, 'error');
+      addLog('===== 错误详情结束 =====', 'error');
+      return {
+        success: false,
+        fixedContent: request.content,
+        diffs: [],
+        error: error instanceof Error ? error.message : '自动修正失败'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:getLogicCheckRecords', async () => {
+    try {
+      const result = logicCheckRecorder.getRecords();
+      return result;
+    } catch (error) {
+      return { success: false, records: [], error: error instanceof Error ? error.message : '获取记录失败' };
+    }
+  });
+
+  ipcMain.handle('writing:clearLogicCheckRecords', async () => {
+    try {
+      return logicCheckRecorder.clearRecords();
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : '清空记录失败' };
+    }
+  });
+
+  ipcMain.handle('writing:startChunkedCheck', async (_event, config: { projectId: string; outline: any; chapterContents: Record<string, string>; resources: any; novelType?: string; writingStyle?: string; modelConfig?: any; chunks?: any[] }) => {
+    try {
+      addLog('===== 写作模式: 开始分片检查 =====', 'debug');
+      
+      // Read model config from active AI engine settings
+      const storageService = getStorageService();
+      const settings = storageService.getSettings();
+      const engines = settings?.aiEngines || [];
+      const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
+
+      const modelConfig: ModelConfig = {
+        model: activeEngine?.model_name || config.modelConfig?.model || 'gpt-4o',
+        temperature: Number(activeEngine?.temperature) ?? config.modelConfig?.temperature ?? 0.3,
+        maxTokens: Number(activeEngine?.max_tokens) ?? config.modelConfig?.maxTokens ?? 4000
+      };
+
+      addLog(`【分片检查】模型配置: ${JSON.stringify(modelConfig)}`, 'debug');
+
+      const checkConfig: ChunkedCheckConfig = {
+        projectId: config.projectId,
+        outline: config.outline,
+        chapterContents: config.chapterContents,
+        resources: config.resources,
+        novelType: config.novelType,
+        writingStyle: config.writingStyle,
+        modelConfig
+      };
+
+      const progress = await chunkedCheckService.startCheck(checkConfig, config.chunks);
+
+      addLog('===== 写作模式: 分片检查完成 =====', 'debug');
+      return { success: true, progress, error: null };
+    } catch (error) {
+      addLog('===== 写作模式: 分片检查错误 =====', 'error');
+      return {
+        success: false,
+        progress: null,
+        error: error instanceof Error ? error.message : '分片检查失败'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:pauseChunkedCheck', async () => {
+    try {
+      chunkedCheckService.pause();
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : '暂停失败' };
+    }
+  });
+
+  ipcMain.handle('writing:resumeChunkedCheck', async () => {
+    try {
+      chunkedCheckService.resume();
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : '继续失败' };
+    }
+  });
+
+  ipcMain.handle('writing:stopChunkedCheck', async () => {
+    try {
+      chunkedCheckService.stop();
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : '停止失败' };
+    }
+  });
+
+  ipcMain.handle('writing:getChunkedCheckProgress', async () => {
+    try {
+      const progress = chunkedCheckService.getProgress();
+      return { success: true, progress, error: null };
+    } catch (error) {
+      return { success: false, progress: null, error: error instanceof Error ? error.message : '获取进度失败' };
+    }
+  });
+
+  ipcMain.handle('writing:getChunkedCheckSummary', async () => {
+    try {
+      const summary = chunkedCheckService.getSummaryReport();
+      return { success: true, summary, error: null };
+    } catch (error) {
+      return { success: false, summary: null, error: error instanceof Error ? error.message : '获取汇总失败' };
     }
   });
 

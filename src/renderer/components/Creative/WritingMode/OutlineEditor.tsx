@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { Button, Collapse, Input, Tabs, Tag, message, Modal, Empty, Space } from 'antd';
 import { CheckOutlined, ReloadOutlined, EditOutlined } from '@ant-design/icons';
-import { GeneratedOutline, NovelType, ChapterOutline } from '../../../../shared/types/writing.types';
+import { GeneratedOutline, NovelType, ChapterOutline, ProjectStatus, ChapterStatus } from '../../../../shared/types/writing.types';
 import { NOVEL_TYPE_LABELS } from '../../../../shared/constants/writing.constants';
 import ManualOutlineEditor from './ManualOutlineEditor';
 import { useWritingModeStore } from '../../../stores/writingModeStore';
+import { useWritingProjectStore } from '../../../stores/writingProjectStore';
 
 const { TextArea } = Input;
 
@@ -91,6 +92,65 @@ const OutlineEditor: React.FC<OutlineEditorProps> = ({
     message.success('大纲已更新');
   };
 
+  const handleConfirmOutline = async () => {
+    const { updateProject, getCurrentProject } = useWritingProjectStore.getState();
+    const project = getCurrentProject();
+    if (!project) {
+      message.error('未找到当前项目');
+      return;
+    }
+
+    const finalOutline = currentMode === 'manual'
+      ? {
+          workInfo: outline?.workInfo || {
+            suggestedTitle: '手动大纲',
+            novelType: 'web_novel' as NovelType,
+            estimatedWordCount: manualChapters.reduce((sum, ch) => sum + (ch.targetWordCount || 0), 0),
+            chapterCount: manualChapters.length,
+            creativeDescription: ''
+          },
+          storyLine: outline?.storyLine || {
+            coreConflict: '',
+            storyArc: { beginning: '', development: '', climax: '', resolution: '' },
+            theme: ''
+          },
+          chapters: manualChapters,
+          characterRelationships: outline?.characterRelationships || [],
+          worldbuildingNotes: outline?.worldbuildingNotes || []
+        }
+      : editedOutline;
+
+    if (!finalOutline || finalOutline.chapters.length === 0) {
+      message.error('大纲内容为空');
+      return;
+    }
+
+    await updateProject(project.id, {
+      outline: finalOutline,
+      outlineRaw: JSON.stringify(finalOutline, null, 2),
+      status: ProjectStatus.OUTLINING,
+      chapters: finalOutline.chapters.map(ch => ({
+        index: ch.index,
+        title: ch.title,
+        outline: {
+          summary: ch.summary || '',
+          keyPlotPoints: ch.keyPlotPoints || [],
+          characters: ch.characters || [],
+          scenes: ch.scenes || [],
+          targetWordCount: ch.targetWordCount || 3000
+        },
+        content: project.chapters.find(c => c.index === ch.index)?.content || '',
+        status: ChapterStatus.PENDING,
+        wordCount: project.chapters.find(c => c.index === ch.index)?.wordCount || 0,
+        versions: project.chapters.find(c => c.index === ch.index)?.versions || [],
+        lastModified: Date.now()
+      }))
+    });
+
+    message.success('大纲已保存');
+    onConfirm();
+  };
+
   if (!outline && currentMode === 'ai') {
     return (
       <div style={{ padding: 24, textAlign: 'center', minHeight: 400, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
@@ -150,7 +210,7 @@ const OutlineEditor: React.FC<OutlineEditorProps> = ({
         <div style={{ display: 'flex', gap: 8 }}>
           <Button icon={<EditOutlined />} onClick={onBack}>调整参数</Button>
           <Button icon={<ReloadOutlined />} onClick={onRegenerate}>重新生成</Button>
-          <Button type="primary" icon={<CheckOutlined />} onClick={onConfirm} size="large">
+          <Button type="primary" icon={<CheckOutlined />} onClick={handleConfirmOutline} size="large">
             确认大纲
           </Button>
         </div>

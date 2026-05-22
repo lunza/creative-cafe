@@ -430,6 +430,24 @@ export function registerMemoryHandlers() {
   });
 
   /**
+   * 更新表格中的特定行
+   */
+  ipcMain.handle('memory:updateRowInTable', async (
+    _event: IpcMainInvokeEvent,
+    chatId: string,
+    tableIndex: number,
+    rowIndex: number,
+    rowData: Record<string, string>
+  ): Promise<boolean> => {
+    try {
+      return tableTemplateService.updateRowInTable(chatId, tableIndex, rowIndex, rowData);
+    } catch (error) {
+      console.error('[IPC] 更新表格行失败:', error);
+      return false;
+    }
+  });
+
+  /**
    * 解析tableEdit命令（用于异步整理模式）
    */
   ipcMain.handle('memory:parseTableEdit', async (

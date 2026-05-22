@@ -150,7 +150,8 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
         <div className="parameter-panel-inner">
           <div className="parameter-list">
             {PARAMETER_CONFIGS.map(config => {
-              const currentValue = localValues[config.key] ?? effectiveParams[config.key] ?? config.defaultValue;
+              const rawValue = localValues[config.key] ?? effectiveParams[config.key];
+              const currentValue = typeof rawValue === 'number' ? rawValue : config.defaultValue;
               const isModified = localValues[config.key] !== undefined;
 
               return (
@@ -163,7 +164,7 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
                       </Tooltip>
                     </div>
                     <span className={`parameter-value ${isModified ? 'modified' : ''}`}>
-                      {config.key === 'max_tokens' ? Math.round(currentValue).toString() : currentValue.toFixed(2)}
+                      {config.key === 'max_tokens' ? Math.round(currentValue).toString() : Number(currentValue).toFixed(2)}
                     </span>
                   </div>
                   <Slider

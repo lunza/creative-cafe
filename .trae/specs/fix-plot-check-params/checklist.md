@@ -1,0 +1,5 @@
+- [x] Handler 从活跃 AI 引擎设置读取 model、temperature、maxTokens 参数
+- [x] 参数回退链正确（activeEngine -> project.config -> 默认值）
+- [x] 添加了 model 存在性验证和错误返回
+- [x] 添加了模型配置调试日志
+- [x] 项目构建成功
