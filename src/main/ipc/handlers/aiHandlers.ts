@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import { app } from 'electron';
 import path from 'path';
 import fs from 'fs';
+import { getLogDir, getLogFilePath } from '../../services/logPathService';
 
 /**
  * AI 请求处理器
@@ -12,7 +13,6 @@ import fs from 'fs';
 const LOG_CONFIG = {
   MAX_FILE_SIZE: 10 * 1024 * 1024, // 10MB
   MAX_FILES: 5,
-  LOG_DIR: 'logs',
   LOG_FILE: 'ai-handler.log'
 };
 
@@ -24,15 +24,8 @@ const LOG_LEVELS = {
   DEBUG: 'DEBUG'
 };
 
-// 获取日志目录路径
-const getLogDir = (): string => {
-  return path.join(process.cwd(), LOG_CONFIG.LOG_DIR);
-};
-
 // 获取日志文件路径
-const getLogPath = (): string => {
-  return path.join(getLogDir(), LOG_CONFIG.LOG_FILE);
-};
+const getLogPath = (): string => getLogFilePath(LOG_CONFIG.LOG_FILE);
 
 // 检查并执行日志文件轮转
 const rotateLogFile = () => {

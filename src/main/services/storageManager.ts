@@ -6,6 +6,7 @@ import Store from 'electron-store';
 import fs from 'fs';
 import path from 'path';
 import { app, getAppPath } from '../utils/appPath';
+import { getLogDir } from './logPathService';
 import {
   StorageModule,
   StorageOperation,
@@ -97,7 +98,7 @@ export class StorageManager {
         path.join(this.appDirPath, STORAGE_DIRECTORIES.ATTACHMENTS, STORAGE_DIRECTORIES.ATTACHMENT_AUDIO),
         path.join(this.appDirPath, STORAGE_DIRECTORIES.ATTACHMENTS, STORAGE_DIRECTORIES.ATTACHMENT_DOCUMENTS),
         path.join(this.appDirPath, STORAGE_DIRECTORIES.BACKUPS),
-        path.join(this.appDirPath, STORAGE_DIRECTORIES.LOGS)
+        getLogDir()
       ];
 
       // 为每个模块创建子目录

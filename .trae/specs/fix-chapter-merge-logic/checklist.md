@@ -1,0 +1,4 @@
+- [x] Merging 3 consecutive chapters results in correct number of chapters (original count - 2)
+- [x] Non-consecutive chapter selection is blocked with warning message
+- [x] Chapters after the merged range remain unchanged
+- [x] TypeScript build compiles successfully

@@ -31,11 +31,13 @@ export class OutlineGenerator {
     this.streamChunkCallback = callback;
   }
 
-  buildPrompt(request: OutlineGenerationRequest & { _resourceContext?: string }): ChatMessage[] {
+  buildPrompt(request: OutlineGenerationRequest & { _resourceContext?: string; _writingStyleContext?: string }): ChatMessage[] {
+    const writingStyleContext = request._writingStyleContext || '';
     const systemPrompt = promptBuilder.buildSystemPrompt(
       request.parameters.novelType,
       request.parameters.writingStyle || this.getDefaultStyle(request.parameters.novelType),
-      request.parameters.narrativePerspective
+      request.parameters.narrativePerspective,
+      writingStyleContext
     );
 
     const resourceContext = request._resourceContext || '';
@@ -43,7 +45,8 @@ export class OutlineGenerator {
       request.parameters.creativeDescription,
       request.resources,
       request.parameters,
-      resourceContext
+      resourceContext,
+      writingStyleContext
     );
 
     return [

@@ -434,16 +434,24 @@ class WorldBookService {
     return { success: true, processed, failed };
   }
 
-  async searchWorldBookEntriesByVector(worldBookPath: string, query: string, topK: number = 5): Promise<Array<{ id: string; score: number; metadata: Record<string, any> }>> {
+  async searchWorldBookEntriesByVector(query: string, topK: number = 5): Promise<Array<{ id: string; score: number; metadata: Record<string, any> }>> {
     try {
+      console.log(`[WorldBookService] 开始搜索条目: query="${query?.substring(0, 50)}...", topK=${topK}`);
+      
       const embedResult = await embeddingService.generateEmbedding(query);
       if (!embedResult.success || !embedResult.vector) {
+        console.log(`[WorldBookService] 向量嵌入失败: ${embedResult.error}`);
         return [];
       }
+      console.log(`[WorldBookService] 向量嵌入成功，维度=${embedResult.vector.length}`);
+      
+      // 只搜索条目类型，排除描述chunk
       const results = await vectorStoreService.search(embedResult.vector, topK, {
         source: VectorSourceType.WORLDBOOK,
-        worldBookPath: worldBookPath
+        sourceType: 'entry'
       });
+      console.log(`[WorldBookService] 搜索到 ${results.length} 个条目`);
+      
       return results;
     } catch (error) {
       console.error('Failed to search world book entries:', error);

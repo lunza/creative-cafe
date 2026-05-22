@@ -13,9 +13,109 @@ import { getUserDataPath } from '../../utils/appPath';
 // 导入全局日志发送函数
 import { sendLogToRenderer } from '../../index';
 
-// 记录日志的函数
-const addLog = (message: string, type: 'error' | 'warn' | 'info' | 'debug' = 'info') => {
+// 日志文件存储在项目的安装目录下的 logs 文件夹，节省 C 盘空间
+// 使用 app.getAppPath() 获取 Electron 应用根目录
+function getProjectLogsDir(): string {
+  let logsDir: string;
+  
+  try {
+    const appPath = require('electron').app.getAppPath();
+    logsDir = path.join(appPath, 'logs');
+  } catch (e) {
+    // 降级方案: 使用 __dirname 向上推导
+    const __dirNormalized = __dirname.replace(/\\/g, '/');
+    if (__dirNormalized.includes('node_modules')) {
+      // 打包后的环境
+      logsDir = path.join(__dirname, 'logs');
+    } else {
+      // 开发环境: src/main/services/memory/chatLogService.ts
+      logsDir = path.join(__dirname, '..', '..', '..', '..', 'logs');
+    }
+  }
+  
+  console.log('[WritingLog] __dirname:', __dirname);
+  console.log('[WritingLog] 最终日志目录:', logsDir);
+  
+  return logsDir;
+}
+
+const LOGS_DIR = getProjectLogsDir();
+const AI_HANDLER_LOG_DIR = LOGS_DIR;
+const AI_HANDLER_LOG_FILE = path.join(AI_HANDLER_LOG_DIR, 'ai-handler.log');
+const MAX_LOG_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_LOG_BACKUPS = 3;
+
+function ensureLogDirectoryExists(): void {
+  if (!fs.existsSync(AI_HANDLER_LOG_DIR)) {
+    fs.mkdirSync(AI_HANDLER_LOG_DIR, { recursive: true });
+  }
+}
+
+function rotateLogFile(): void {
+  try {
+    if (!fs.existsSync(AI_HANDLER_LOG_FILE)) return;
+    const stats = fs.statSync(AI_HANDLER_LOG_FILE);
+    if (stats.size < MAX_LOG_FILE_SIZE) return;
+
+    for (let i = MAX_LOG_BACKUPS - 1; i >= 1; i--) {
+      const src = i === 1 ? AI_HANDLER_LOG_FILE : `${AI_HANDLER_LOG_FILE}.${i - 1}`;
+      const dest = `${AI_HANDLER_LOG_FILE}.${i}`;
+      if (fs.existsSync(src)) {
+        if (fs.existsSync(dest)) {
+          fs.unlinkSync(dest);
+        }
+        fs.renameSync(src, dest);
+      }
+    }
+
+    fs.unlinkSync(AI_HANDLER_LOG_FILE);
+  } catch (error) {
+    console.error('[WritingLog] Log rotation failed:', error);
+  }
+}
+
+let currentRequestId = '';
+
+export function generateNewRequestId(): string {
+  currentRequestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+  return currentRequestId;
+}
+
+export function getCurrentRequestId(): string {
+  return currentRequestId;
+}
+
+export function setRequestId(id: string): void {
+  currentRequestId = id;
+}
+
+function writeToFileLog(message: string, type: 'error' | 'warn' | 'info' | 'debug' = 'info'): void {
+  try {
+    ensureLogDirectoryExists();
+    rotateLogFile();
+
+    const now = new Date();
+    const timestamp = now.toISOString().replace('T', ' ').substring(0, 23);
+    const typeUpper = type.toUpperCase();
+    const requestId = currentRequestId ? `[${currentRequestId}]` : '[no-req-id]';
+    const logLine = `[${timestamp}] [${typeUpper}] [WRITING] ${requestId} ${message}\n`;
+
+    console.log('[WritingLog] Attempting to write to:', AI_HANDLER_LOG_FILE);
+    console.log('[WritingLog] Log directory exists:', fs.existsSync(AI_HANDLER_LOG_DIR));
+    console.log('[WritingLog] Log message preview:', logLine.substring(0, 100));
+
+    fs.appendFileSync(AI_HANDLER_LOG_FILE, logLine, 'utf8');
+    console.log('[WritingLog] Successfully wrote to:', AI_HANDLER_LOG_FILE);
+  } catch (error) {
+    console.error('[WritingLog] Failed to write to file:', error);
+  }
+}
+
+// 记录日志的函数（导出供写作模式等模块使用）
+export const addLog = (message: string, type: 'error' | 'warn' | 'info' | 'debug' = 'info') => {
+  console.log('[WritingLog] addLog called:', message.substring(0, 50));
   sendLogToRenderer(message, type);
+  writeToFileLog(message, type);
 };
 
 // 定义聊天记录接口

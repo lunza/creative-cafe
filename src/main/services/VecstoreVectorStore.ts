@@ -324,11 +324,21 @@ export class VecstoreVectorStore {
   }
 
   getStoreFilePath(): string {
-    return path.join(app.getPath('userData'), 'vectors', this.source, this.getSafeSourceId(), STORE_FILE);
+    const safeSourceId = this.getSafeSourceId();
+    // 对于默认 store（source='default' 且 sourceId='default'），避免重复目录
+    if (this.source === 'default' && (safeSourceId === 'default' || !safeSourceId)) {
+      return path.join(app.getPath('userData'), 'vectors', this.source, STORE_FILE);
+    }
+    return path.join(app.getPath('userData'), 'vectors', this.source, safeSourceId, STORE_FILE);
   }
 
   getMetadataFilePath(): string {
-    return path.join(app.getPath('userData'), 'vectors', this.source, this.getSafeSourceId(), METADATA_FILE);
+    const safeSourceId = this.getSafeSourceId();
+    // 对于默认 store（source='default' 且 sourceId='default'），避免重复目录
+    if (this.source === 'default' && (safeSourceId === 'default' || !safeSourceId)) {
+      return path.join(app.getPath('userData'), 'vectors', this.source, METADATA_FILE);
+    }
+    return path.join(app.getPath('userData'), 'vectors', this.source, safeSourceId, METADATA_FILE);
   }
 
   private getSafeSourceId(): string {
@@ -364,7 +374,14 @@ export class VecstoreVectorStore {
   }
 
   private async ensureStoreDir(): Promise<void> {
-    const baseDir = path.join(app.getPath('userData'), 'vectors', this.source, this.getSafeSourceId());
+    const safeSourceId = this.getSafeSourceId();
+    let baseDir: string;
+    // 对于默认 store（source='default' 且 sourceId='default'），避免重复目录
+    if (this.source === 'default' && (safeSourceId === 'default' || !safeSourceId)) {
+      baseDir = path.join(app.getPath('userData'), 'vectors', this.source);
+    } else {
+      baseDir = path.join(app.getPath('userData'), 'vectors', this.source, safeSourceId);
+    }
     await fsPromises.mkdir(baseDir, { recursive: true });
   }
 
@@ -854,7 +871,12 @@ export class VecstoreVectorStore {
 
   private async loadMetadataFromFile(): Promise<void> {
     if (!this.metadataFilePath) {
-      this.metadataFilePath = path.join(app.getPath('userData'), 'vectors', this.source, this.getSafeSourceId(), METADATA_FILE);
+      const safeSourceId = this.getSafeSourceId();
+      if (this.source === 'default' && (safeSourceId === 'default' || !safeSourceId)) {
+        this.metadataFilePath = path.join(app.getPath('userData'), 'vectors', this.source, METADATA_FILE);
+      } else {
+        this.metadataFilePath = path.join(app.getPath('userData'), 'vectors', this.source, safeSourceId, METADATA_FILE);
+      }
     }
 
     try {
@@ -864,7 +886,6 @@ export class VecstoreVectorStore {
       }
 
       const data = await fsPromises.readFile(this.metadataFilePath, 'utf-8');
-      console.log(`[VecstoreVectorStore] Loading metadata from file (${data.length} bytes)...`);
       
       const metadataObj = JSON.parse(data);
       this.metadataCache.clear();
@@ -872,7 +893,6 @@ export class VecstoreVectorStore {
       let count = 0;
       for (const [id, metadata] of Object.entries(metadataObj)) {
         const metadataObj2 = metadata as Record<string, any>;
-        console.log(`[VecstoreVectorStore] Loading metadata for "${id}": text length = ${metadataObj2.text?.length || 0}, keys = ${Object.keys(metadataObj2).join(', ')}`);
         this.metadataCache.set(id, metadataObj2);
         count++;
       }

@@ -1,3 +1,9 @@
+import {
+  WritingStyleResource,
+  WritingStyleLearningRequest,
+  WritingStyleProgress
+} from '../../shared/types/writing.types';
+
 declare global {
   interface Window {
     electronAPI: ElectronAPI;
@@ -320,6 +326,18 @@ interface ElectronAPI {
     offStreamChunk: (callback: (data: any) => void) => void;
     offStreamComplete: (callback: (data: any) => void) => void;
     offStreamError: (callback: (data: any) => void) => void;
+    // 写作风格 API
+    style: {
+      upload: (request: WritingStyleLearningRequest) => Promise<{ success: boolean; taskId: string; error?: string }>;
+      list: () => Promise<{ success: boolean; styles: WritingStyleResource[]; error?: string }>;
+      get: (resourceId: string) => Promise<{ success: boolean; style: WritingStyleResource | null; error?: string }>;
+      delete: (resourceId: string) => Promise<{ success: boolean; error?: string }>;
+      cancel: (taskId: string) => Promise<{ success: boolean; error?: string }>;
+      getActiveTasks: () => Promise<{ success: boolean; activeTaskIds: string[]; error?: string }>;
+      onProgress: (callback: (data: { taskId: string; progress: WritingStyleProgress }) => void) => () => void;
+      onComplete: (callback: (data: { taskId: string; resource: WritingStyleResource }) => void) => () => void;
+      onError: (callback: (data: { taskId: string; error: string }) => void) => () => void;
+    };
   };
 }
 

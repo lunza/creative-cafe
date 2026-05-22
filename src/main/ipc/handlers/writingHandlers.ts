@@ -3,9 +3,13 @@ import fs from 'fs';
 import path from 'path';
 import { writingStorageService } from '../../services/WritingStorageService';
 import { writingResourceManager } from '../../services/WritingResourceManager';
+import { writingStyleLearningService } from '../../services/WritingStyleLearningService';
 import { outlineGenerator } from '../../services/writing/OutlineGenerator';
 import { contentGenerator } from '../../services/writing/ContentGenerator';
-import { logRequest, logResponse, logErrorWithContext, logInfo } from '../../services/AiLogger';
+import { promptBuilder } from '../../services/writing/PromptBuilder';
+import { aiAssistedChapterService } from '../../services/writing/AIAssistedChapterService';
+import { addLog } from '../../services/memory/chatLogService';
+import { worldBookService } from '../../services/worldBookService';
 import {
   WritingConfig,
   WritingProject,
@@ -16,7 +20,9 @@ import {
   WritingErrorCode,
   ExportFormat,
   GeneratedOutline,
-  ChapterOutline
+  ChapterOutline,
+  WritingStyleResource,
+  WritingStyleLearningRequest
 } from '../../../shared/types/writing.types';
 
 const activeAbortControllers = new Map<string, AbortController>();
@@ -149,21 +155,14 @@ export function registerWritingHandlers(): void {
 
   ipcMain.handle('writing:generateOutline', async (event, request) => {
     try {
-      logRequest('writing:generateOutline', {
-        parameters: {
-          creativeDescription: request.parameters.creativeDescription,
-          novelType: request.parameters.novelType,
-          targetWordCount: request.parameters.targetWordCount,
-          chapterCount: request.parameters.chapterCount,
-          writingStyle: request.parameters.writingStyle,
-          narrativePerspective: request.parameters.narrativePerspective,
-          includeEnding: request.parameters.includeEnding,
-          chapterRangeStart: request.parameters.chapterRangeStart,
-          chapterRangeEnd: request.parameters.chapterRangeEnd
-        },
-        modelConfig: request.modelConfig,
-        resources: request.resources
-      });
+      addLog('===== 写作模式: AI大纲生成请求 =====', 'debug');
+      addLog(`创意描述: ${request.parameters.creativeDescription}`, 'debug');
+      addLog(`小说类型: ${request.parameters.novelType}`, 'debug');
+      addLog(`目标字数: ${request.parameters.targetWordCount}`, 'debug');
+      addLog(`章节数量: ${request.parameters.chapterCount}`, 'debug');
+      addLog(`写作风格: ${request.parameters.writingStyle}`, 'debug');
+      addLog(`叙事视角: ${request.parameters.narrativePerspective}`, 'debug');
+      addLog('===== 请求入参结束 =====', 'debug');
 
       if (!request || !request.parameters || !request.modelConfig) {
         console.error('[Writing] Invalid request format:', JSON.stringify(request, null, 2));
@@ -192,31 +191,41 @@ export function registerWritingHandlers(): void {
         const characters = await writingResourceManager.loadCharacterCards(resources.characterCardIds || []);
         const userPersonas = await writingResourceManager.loadUserPersonas(userPersonaIds);
 
+        // Load writing styles
+        const writingStyleIds = resources.writingStyleIds || [];
+        const writingStyles = await writingResourceManager.loadWritingStyles(writingStyleIds);
+
         console.log('[Writing] Loaded resources:', {
           worldBooks: worldBooks.length,
           characters: characters.length,
-          personas: userPersonas.length
+          personas: userPersonas.length,
+          writingStyles: writingStyles.length
         });
 
-        const resourceContext = writingResourceManager.buildResourceContextSummary(worldBooks, characters, userPersonas);
+        const resourceContext = writingResourceManager.buildResourceContextSummary(worldBooks, characters, userPersonas, writingStyles);
         console.log('[Writing] Resource context (length):', resourceContext.length);
+
+        // Build writing style context for prompts
+        let writingStyleContext = '';
+        if (writingStyles.length > 0) {
+          writingStyleContext = promptBuilder.buildWritingStylePrompt(writingStyles);
+        }
 
         outlineGenerator.onStreamChunk((chunk: string) => {
           event.sender.send('writing:stream:chunk', { chunk });
         });
 
         const result = await outlineGenerator.generate(
-          outlineGenerator.buildPrompt({ ...request, resources, _resourceContext: resourceContext }),
+          outlineGenerator.buildPrompt({ ...request, resources, _resourceContext: resourceContext, _writingStyleContext: writingStyleContext }),
           request.modelConfig,
           abortController.signal
         );
 
         activeAbortControllers.delete(outlineKey);
 
-        logResponse('writing:generateOutline', 'success', {
-          rawContentLength: result.rawContent?.length || 0,
-          success: true
-        });
+        addLog('===== 写作模式: 大纲生成成功 =====', 'debug');
+        addLog(`原始内容长度: ${result.rawContent?.length || 0}`, 'debug');
+        addLog('===== 响应结束 =====', 'debug');
 
         return {
           success: true,
@@ -239,7 +248,9 @@ export function registerWritingHandlers(): void {
         throw error;
       }
     } catch (error) {
-      logErrorWithContext('writing:generateOutline', error, { parameters: request?.parameters });
+      addLog('===== 写作模式: 大纲生成错误 =====', 'error');
+      addLog(`错误信息: ${error instanceof Error ? error.message : String(error)}`, 'error');
+      addLog('===== 错误详情结束 =====', 'error');
       console.error('[Writing] Outline generation failed:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
       return {
@@ -253,15 +264,10 @@ export function registerWritingHandlers(): void {
 
   ipcMain.handle('writing:saveOutline', async (_event, { rawContent, config }) => {
     try {
-      logRequest('writing:saveOutline', {
-        rawContentLength: rawContent?.length || 0,
-        config: {
-          parameters: {
-            creativeDescription: config.parameters.creativeDescription,
-            chapterCount: config.parameters.chapterCount
-          }
-        }
-      });
+      addLog('===== 写作模式: 保存大纲请求 =====', 'debug');
+      addLog(`原始内容长度: ${rawContent?.length || 0}`, 'debug');
+      addLog(`章节数量: ${config.parameters.chapterCount}`, 'debug');
+      addLog('===== 请求入参结束 =====', 'debug');
 
       if (!rawContent) {
         return { success: false, error: '原始内容为空', outline: null, outlineRaw: null };
@@ -318,10 +324,10 @@ export function registerWritingHandlers(): void {
 
       await writingStorageService.saveProject(project);
 
-      logResponse('writing:saveOutline', 'success', {
-        projectId,
-        chaptersCount: config.parameters.chapterCount
-      });
+      addLog('===== 写作模式: 保存大纲成功 =====', 'debug');
+      addLog(`项目ID: ${projectId}`, 'debug');
+      addLog(`章节数量: ${config.parameters.chapterCount}`, 'debug');
+      addLog('===== 响应结束 =====', 'debug');
 
       return {
         success: true,
@@ -330,7 +336,9 @@ export function registerWritingHandlers(): void {
         projectId
       };
     } catch (error) {
-      logErrorWithContext('writing:saveOutline', error, { rawContentLength: rawContent?.length || 0 });
+      addLog('===== 写作模式: 保存大纲错误 =====', 'error');
+      addLog(`错误信息: ${error instanceof Error ? error.message : String(error)}`, 'error');
+      addLog('===== 错误详情结束 =====', 'error');
       console.error('[Writing] Save outline failed:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
       return {
@@ -344,13 +352,152 @@ export function registerWritingHandlers(): void {
 
   ipcMain.handle('writing:generateChapter', async (event, request) => {
     try {
-      logRequest('writing:generateChapter', {
-        chapterIndex: request.chapterIndex,
-        chapterInfo: request.chapterInfo,
-        modelConfig: request.modelConfig,
-        generationParams: request.generationParams,
-        previousChaptersCount: request.previousChapters?.length || 0
-      });
+      // 立即记录请求入参日志（在AI调用前持久化）
+      addLog('===== 写作模式: 章节生成请求 =====', 'debug');
+      addLog(`章节索引: ${request.chapterIndex}`, 'debug');
+      addLog(`章节信息: ${JSON.stringify(request.chapterInfo)}`, 'debug');
+      addLog(`模型配置: ${JSON.stringify(request.modelConfig)}`, 'debug');
+      addLog(`前序章节数量: ${request.previousChapters?.length || 0}`, 'debug');
+      addLog(`素材资源: worldBook=${request.resources?.worldBookIds?.length || 0}, character=${request.resources?.characterCardIds?.length || 0}, persona=${request.resources?.userPersonaIds?.length || 0}, knowledge=${request.resources?.knowledgeItemIds?.length || 0}`, 'debug');
+
+      // Load all resource materials
+      const resources = request.resources || {};
+      const worldBookIds = resources.worldBookIds || [];
+      const characterCardIds = resources.characterCardIds || [];
+      const userPersonaIds = resources.userPersonaIds || [];
+      const knowledgeItemIds = resources.knowledgeItemIds || [];
+      const writingStyleIds = resources.writingStyleIds || [];
+
+      if (worldBookIds.length > 0 || characterCardIds.length > 0 || userPersonaIds.length > 0 || knowledgeItemIds.length > 0) {
+        addLog(`[Resources] 开始加载素材资源...`, 'debug');
+      }
+
+      const worldBooks = worldBookIds.length > 0
+        ? await writingResourceManager.loadWorldBooks(worldBookIds)
+        : [];
+      const characters = characterCardIds.length > 0
+        ? await writingResourceManager.loadCharacterCards(characterCardIds)
+        : [];
+      const userPersonas = userPersonaIds.length > 0
+        ? await writingResourceManager.loadUserPersonas(userPersonaIds)
+        : [];
+
+      if (worldBooks.length > 0) {
+        addLog(`[Resources] 加载世界书: ${worldBooks.length}个`, 'debug');
+        
+        // 基于章节大纲内容进行向量检索，获取相关世界书条目
+        const chapterOutline = request.chapterInfo?.outline || request.chapterInfo?.title || '';
+        const worldBookEntries: { entryName: string; content: string; keywords: string[]; relevance: number }[] = [];
+        
+        for (const wb of worldBooks) {
+          try {
+            const searchResults = await worldBookService.searchWorldBookEntriesByVector(
+              wb.id,
+              chapterOutline,
+              5
+            );
+            
+            if (searchResults.length > 0) {
+              addLog(`[WorldBook] 世界书"${wb.name}" 检索到 ${searchResults.length} 个相关条目`, 'debug');
+              
+              for (const result of searchResults) {
+                const meta = result.metadata as any;
+                
+                // 向量存储中的字段名: entryName, entryContent, entryKeys
+                const entryName = meta.entryName || meta.name || wb.name;
+                const entryContent = meta.entryContent || meta.content || meta.value || meta.text || '';
+                const entryKeywords = meta.entryKeys || meta.entryKey || meta.keywords || [];
+                
+                addLog(`[WorldBook] 条目"${entryName}" 内容长度: ${entryContent.length}, 关键词数: ${entryKeywords.length}`, 'debug');
+                
+                // 跳过无内容的条目
+                if (!entryContent || !entryContent.trim()) {
+                  addLog(`[WorldBook] 跳过无内容的条目: ${entryName}`, 'debug');
+                  continue;
+                }
+                
+                worldBookEntries.push({
+                  entryName,
+                  content: entryContent,
+                  keywords: Array.isArray(entryKeywords) ? entryKeywords : (entryKeywords ? [entryKeywords] : []),
+                  relevance: result.score
+                });
+              }
+            } else {
+              addLog(`[WorldBook] 世界书"${wb.name}" 未检索到相关条目，回退使用原始数据`, 'warn');
+              // 回退：使用原始数据中的 entries
+              if (wb.entries && wb.entries.length > 0) {
+                for (const entry of wb.entries) {
+                  if (entry.content && entry.content.trim()) {
+                    worldBookEntries.push({
+                      entryName: entry.name || '未命名',
+                      content: entry.content,
+                      keywords: entry.keywords || [],
+                      relevance: 0.5
+                    });
+                  }
+                }
+              }
+            }
+          } catch (error) {
+            addLog(`[WorldBook] 世界书"${wb.name}" 向量检索失败: ${error instanceof Error ? error.message : String(error)}，回退使用原始数据`, 'warn');
+            // 回退：使用原始数据
+            if (wb.entries && wb.entries.length > 0) {
+              for (const entry of wb.entries) {
+                if (entry.content && entry.content.trim()) {
+                  worldBookEntries.push({
+                    entryName: entry.name || '未命名',
+                    content: entry.content,
+                    keywords: entry.keywords || [],
+                    relevance: 0.5
+                  });
+                }
+              }
+            }
+          }
+        }
+        
+        if (worldBookEntries.length > 0) {
+          addLog(`[Resources] 世界书条目提取完成: 共 ${worldBookEntries.length} 个条目`, 'debug');
+        }
+        request.worldBookContext = worldBookEntries;
+      }
+
+      if (characters.length > 0) {
+        addLog(`[Resources] 加载角色卡: ${characters.length}个`, 'debug');
+        request.characterContext = characters.map(char => ({
+          name: char.name || '未知',
+          description: char.description || '',
+          personality: char.personality || char.traits?.join('、') || ''
+        }));
+      }
+
+      if (userPersonas.length > 0) {
+        addLog(`[Resources] 加载用户人设: ${userPersonas.length}个`, 'debug');
+        (request as any).userPersonaContext = userPersonas.map(p => ({
+          name: p.name || '未知',
+          description: p.description || '',
+          traits: p.traits || []
+        }));
+      }
+
+      // Load writing styles
+      if (writingStyleIds.length > 0) {
+        const writingStyles = await writingResourceManager.loadWritingStyles(writingStyleIds);
+        if (writingStyles.length > 0) {
+          addLog(`[Resources] 加载写作风格: ${writingStyles.length}个`, 'debug');
+          request.generationParams.writingStyleContext = promptBuilder.buildWritingStylePrompt(writingStyles);
+        }
+      }
+
+      const resourceSummary = writingResourceManager.buildResourceContextSummary(
+        worldBooks, characters, userPersonas, []
+      );
+      if (resourceSummary) {
+        addLog(`[Resources] 素材上下文摘要(长度): ${resourceSummary.length}`, 'debug');
+      }
+
+      addLog('===== 请求入参结束 =====', 'debug');
 
       const abortController = new AbortController();
       const { projectId, chapterIndex } = request;
@@ -379,11 +526,11 @@ export function registerWritingHandlers(): void {
           metadata: result.metadata
         });
 
-        logResponse('writing:generateChapter', 'success', {
-          chapterIndex: request.chapterIndex,
-          contentLength: result.content?.length || 0,
-          generationTime: result.metadata?.generationTime || 0
-        });
+        addLog('===== 写作模式: 章节生成成功 =====', 'debug');
+        addLog(`章节索引: ${request.chapterIndex}`, 'debug');
+        addLog(`内容长度: ${result.content?.length || 0}`, 'debug');
+        addLog(`生成耗时: ${result.metadata?.generationTime || 0}ms`, 'debug');
+        addLog('===== 响应结束 =====', 'debug');
 
         return { success: true };
       } catch (error) {
@@ -400,14 +547,20 @@ export function registerWritingHandlers(): void {
           error: errorObj
         });
 
-        logErrorWithContext('writing:generateChapter', error, { chapterIndex: request?.chapterIndex });
+        addLog('===== 写作模式: 章节生成错误 =====', 'error');
+        addLog(`章节索引: ${request?.chapterIndex}`, 'error');
+        addLog(`错误信息: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        addLog('===== 错误详情结束 =====', 'error');
 
         return { success: false, error: errorMessage };
       } finally {
         activeAbortControllers.delete(`${projectId}_${chapterIndex}`);
       }
     } catch (error) {
-      logErrorWithContext('writing:generateChapter', error, { chapterIndex: request?.chapterIndex });
+      addLog('===== 写作模式: 章节生成外部错误 =====', 'error');
+      addLog(`章节索引: ${request?.chapterIndex}`, 'error');
+      addLog(`错误信息: ${error instanceof Error ? error.message : String(error)}`, 'error');
+      addLog('===== 错误详情结束 =====', 'error');
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error'
@@ -495,9 +648,19 @@ export function registerWritingHandlers(): void {
 
   ipcMain.handle('writing:outline:update', async (_event, { projectId, chapters }) => {
     try {
+      if (!projectId || !Array.isArray(chapters)) {
+        return { success: false, error: 'Invalid parameters' };
+      }
+
       const project = await writingStorageService.loadProject(projectId);
       if (!project) return { success: false, error: 'Project not found' };
-      project.outline = { ...project.outline, chapters } as GeneratedOutline;
+
+      const validatedChapters = chapters.filter(ch => ch && typeof ch.index === 'number').sort((a, b) => a.index - b.index);
+      if (validatedChapters.length === 0) {
+        return { success: false, error: 'No valid chapters' };
+      }
+
+      project.outline = { ...project.outline, chapters: validatedChapters } as GeneratedOutline;
       project.updatedAt = Date.now();
       await writingStorageService.saveProject(project);
       return { success: true };
@@ -538,6 +701,218 @@ export function registerWritingHandlers(): void {
     } catch (error) {
       return {
         success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:aiSuggestSplit', async (_event, request) => {
+    try {
+      addLog('===== 写作模式: AI拆分建议请求 =====', 'debug');
+      addLog(`章节标题: ${request.chapterTitle}`, 'debug');
+      addLog(`拆分数量: ${request.splitCount}`, 'debug');
+      addLog('===== 请求入参结束 =====', 'debug');
+
+      const result = await aiAssistedChapterService.suggestSplit(request);
+
+      addLog('===== 写作模式: AI拆分建议成功 =====', 'debug');
+      addLog(`拆分数量: ${result.splitCount}`, 'debug');
+      addLog(`信心度: ${result.confidence}`, 'debug');
+      addLog('===== 响应结束 =====', 'debug');
+
+      return { success: true, data: result };
+    } catch (error) {
+      addLog('===== 写作模式: AI拆分建议错误 =====', 'error');
+      addLog(`章节标题: ${request?.chapterTitle}`, 'error');
+      addLog(`错误信息: ${error instanceof Error ? error.message : String(error)}`, 'error');
+      addLog('===== 错误详情结束 =====', 'error');
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'AI拆分建议生成失败'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:aiSuggestMerge', async (_event, request) => {
+    try {
+      addLog('===== 写作模式: AI合并建议请求 =====', 'debug');
+      addLog(`章节数量: ${request.chapters?.length || 0}`, 'debug');
+      addLog(`章节索引: ${JSON.stringify(request.chapters?.map((ch: any) => ch.index) || [])}`, 'debug');
+      addLog('===== 请求入参结束 =====', 'debug');
+
+      const result = await aiAssistedChapterService.suggestMerge(request);
+
+      addLog('===== 写作模式: AI合并建议成功 =====', 'debug');
+      addLog(`合并标题: ${result.mergedTitle}`, 'debug');
+      addLog(`信心度: ${result.confidence}`, 'debug');
+      addLog('===== 响应结束 =====', 'debug');
+
+      return { success: true, data: result };
+    } catch (error) {
+      addLog('===== 写作模式: AI合并建议错误 =====', 'error');
+      addLog(`章节数量: ${request?.chapters?.length || 0}`, 'error');
+      addLog(`错误信息: ${error instanceof Error ? error.message : String(error)}`, 'error');
+      addLog('===== 错误详情结束 =====', 'error');
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'AI合并建议生成失败'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:saveAIGenerationHistory', async (_event, { projectId, history }) => {
+    try {
+      const project = await writingStorageService.loadProject(projectId);
+      if (!project) return { success: false, error: 'Project not found' };
+
+      project.aiGenerationHistory = project.aiGenerationHistory || [];
+      project.aiGenerationHistory.push(history);
+
+      const maxHistory = 20;
+      if (project.aiGenerationHistory.length > maxHistory) {
+        project.aiGenerationHistory = project.aiGenerationHistory.slice(-maxHistory);
+      }
+
+      project.updatedAt = Date.now();
+      await writingStorageService.saveProject(project);
+
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:loadAIGenerationHistory', async (_event, { projectId }) => {
+    try {
+      const project = await writingStorageService.loadProject(projectId);
+      if (!project) return { success: false, error: 'Project not found' };
+
+      return {
+        success: true,
+        history: project.aiGenerationHistory || []
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:clearAIGenerationHistory', async (_event, { projectId }) => {
+    try {
+      const project = await writingStorageService.loadProject(projectId);
+      if (!project) return { success: false, error: 'Project not found' };
+
+      project.aiGenerationHistory = [];
+      project.updatedAt = Date.now();
+      await writingStorageService.saveProject(project);
+
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  });
+
+  // File upload and start learning
+  ipcMain.handle('writing:style:upload', async (event, request: { filePath: string; fileName: string; fileSize: number }) => {
+    try {
+      const taskId = `style_learning_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      // Start learning in background (don't await)
+      writingStyleLearningService.startLearning(request, taskId).then(resource => {
+        return { success: true, taskId, resource };
+      }).catch(error => {
+        console.error('[Writing] Style learning failed:', error);
+        event.sender.send('writing:style:error', { 
+          taskId, 
+          error: error instanceof Error ? error.message : '学习失败' 
+        });
+        return { success: false, taskId, error: error instanceof Error ? error.message : '学习失败' };
+      });
+
+      return { success: true, taskId };
+    } catch (error) {
+      return {
+        success: false,
+        taskId: '',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  });
+
+  // List all learned writing styles
+  ipcMain.handle('writing:style:list', async () => {
+    try {
+      const styles = await writingStorageService.listWritingStyles();
+      return { success: true, styles };
+    } catch (error) {
+      return {
+        success: false,
+        styles: [],
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  });
+
+  // Get single writing style resource
+  ipcMain.handle('writing:style:get', async (_event, resourceId: string) => {
+    try {
+      const style = await writingStorageService.loadWritingStyle(resourceId);
+      if (!style) {
+        return { success: false, style: null, error: '写作风格不存在' };
+      }
+      return { success: true, style };
+    } catch (error) {
+      return {
+        success: false,
+        style: null,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  });
+
+  // Delete writing style
+  ipcMain.handle('writing:style:delete', async (_event, resourceId: string) => {
+    try {
+      const success = await writingStorageService.deleteWritingStyle(resourceId);
+      return { success };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  });
+
+  // Cancel learning task
+  ipcMain.handle('writing:style:cancel', async (_event, taskId: string) => {
+    try {
+      const cancelled = writingStyleLearningService.cancelLearning(taskId);
+      return { success: cancelled };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  });
+
+  // Get active learning tasks
+  ipcMain.handle('writing:style:getActiveTasks', async () => {
+    try {
+      const activeTaskIds = writingStyleLearningService.getActiveTaskIds();
+      return { success: true, activeTaskIds };
+    } catch (error) {
+      return {
+        success: false,
+        activeTaskIds: [],
         error: error instanceof Error ? error.message : 'Unknown error'
       };
     }
