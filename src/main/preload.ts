@@ -356,6 +356,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     autoSaveChapter: (params: { projectId: string; chapterIndex: number; content: string }) => ipcRenderer.invoke('writing:autoSaveChapter', params),
     saveVersion: (params: { projectId: string; chapterIndex: number; content: string; note?: string }) => ipcRenderer.invoke('writing:saveVersion', params),
     restoreVersion: (params: { projectId: string; chapterIndex: number; versionId: string }) => ipcRenderer.invoke('writing:restoreVersion', params),
+    aiSuggestSplit: (request: any) => ipcRenderer.invoke('writing:aiSuggestSplit', request),
+    aiSuggestMerge: (request: any) => ipcRenderer.invoke('writing:aiSuggestMerge', request),
+    saveAIGenerationHistory: (params: { projectId: string; history: any }) => ipcRenderer.invoke('writing:saveAIGenerationHistory', params),
+    loadAIGenerationHistory: (params: { projectId: string }) => ipcRenderer.invoke('writing:loadAIGenerationHistory', params),
+    clearAIGenerationHistory: (params: { projectId: string }) => ipcRenderer.invoke('writing:clearAIGenerationHistory', params),
     onStreamChunk: (callback: (data: any) => void) => {
       const handler = (_event: any, data: any) => callback(data);
       ipcRenderer.on('writing:stream:chunk', handler);
@@ -370,6 +375,29 @@ contextBridge.exposeInMainWorld('electronAPI', {
       const handler = (_event: any, data: any) => callback(data);
       ipcRenderer.on('writing:stream:error', handler);
       return () => ipcRenderer.removeListener('writing:stream:error', handler);
+    },
+    style: {
+      upload: (request: { filePath: string; fileName: string; fileSize: number }) => ipcRenderer.invoke('writing:style:upload', request),
+      list: () => ipcRenderer.invoke('writing:style:list'),
+      get: (resourceId: string) => ipcRenderer.invoke('writing:style:get', resourceId),
+      delete: (resourceId: string) => ipcRenderer.invoke('writing:style:delete', resourceId),
+      cancel: (taskId: string) => ipcRenderer.invoke('writing:style:cancel', taskId),
+      getActiveTasks: () => ipcRenderer.invoke('writing:style:getActiveTasks'),
+      onProgress: (callback: (data: { taskId: string; progress: any }) => void) => {
+        const handler = (_event: any, data: any) => callback(data);
+        ipcRenderer.on('writing:style:progress', handler);
+        return () => ipcRenderer.removeListener('writing:style:progress', handler);
+      },
+      onComplete: (callback: (data: { taskId: string; resource: any }) => void) => {
+        const handler = (_event: any, data: any) => callback(data);
+        ipcRenderer.on('writing:style:complete', handler);
+        return () => ipcRenderer.removeListener('writing:style:complete', handler);
+      },
+      onError: (callback: (data: { taskId: string; error: string }) => void) => {
+        const handler = (_event: any, data: any) => callback(data);
+        ipcRenderer.on('writing:style:error', handler);
+        return () => ipcRenderer.removeListener('writing:style:error', handler);
+      }
     }
   }
 });

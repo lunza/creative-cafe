@@ -6,13 +6,15 @@ import {
   WritingResourceConfig,
   ChapterOutline
 } from '../../../shared/types/writing.types';
+import { WritingStyleResource, WritingStyleAnalysis } from '../../../shared/types/writing.types';
 import { NovelTypeTemplates, PerspectiveGuidance, StyleGuidance } from './NovelTypeTemplates';
 
 export class PromptBuilder {
   buildSystemPrompt(
     type: NovelType,
     style: WritingStyle,
-    perspective: NarrativePerspective
+    perspective: NarrativePerspective,
+    writingStyleContext?: string
   ): string {
     const template = NovelTypeTemplates[type];
     const styleGuide = StyleGuidance[style];
@@ -33,14 +35,15 @@ ${perspectiveGuide}
 3. 对话自然流畅，符合人物性格和身份
 4. 注意段落和章节之间的过渡衔接
 5. 控制节奏张弛有度，高潮与铺垫交替
-6. 语言优美而不浮夸，追求文学性与可读性的平衡`;
+6. 语言优美而不浮夸，追求文学性与可读性的平衡${writingStyleContext ? `\n## 学习文风参考\n${writingStyleContext}\n\n## 重要提示\n请将上述学习文风的特征融入到本次创作中，模仿其写作风格、修辞手法和叙事特点。` : ''}`;
   }
 
   buildOutlinePrompt(
     creativeDescription: string,
     resources: WritingResourceConfig,
     parameters: WritingParameters,
-    resourceContext?: string
+    resourceContext?: string,
+    writingStyleContext?: string
   ): string {
     const template = NovelTypeTemplates[parameters.novelType];
     const styleGuide = StyleGuidance[parameters.writingStyle || WritingStyle.SERIOUS];
@@ -88,7 +91,7 @@ ${chapterRangeInstruction ? `- 生成范围: 第${rangeStart}章至第${rangeEnd
 - 写作风格: ${styleGuide}
 ${parameters.additionalRequirements ? `- 额外要求: ${parameters.additionalRequirements}` : ''}
 ${parameters.forbiddenContent && parameters.forbiddenContent.length > 0 ? `- 禁止内容: ${parameters.forbiddenContent.join('、')}` : ''}
-${resourceContext ? `\n## 用户与角色信息\n${resourceContext}` : ''}
+${resourceContext ? `\n## 用户与角色信息\n${resourceContext}` : ''}${writingStyleContext ? `\n\n## 学习文风参考\n${writingStyleContext}` : ''}
 
 ## 大纲结构要求
 请按照以下结构生成完整的大纲（使用JSON格式）：
@@ -184,6 +187,7 @@ ${parameters.forbiddenContent && parameters.forbiddenContent.length > 0 ? `${(!i
       style: string;
       perspective: string;
       constraints?: string[];
+      writingStyleContext?: string;
     }
   ): string {
     const parts: string[] = [];
@@ -242,12 +246,64 @@ ${context.continuityConstraints}`);
       parts.push(`- 特殊约束: ${parameters.constraints.join('、')}`);
     }
 
+    if (parameters.writingStyleContext) {
+      parts.push(`
+## 学习文风模仿
+请模仿以下文风特征进行创作:
+${parameters.writingStyleContext}`);
+    }
+
     parts.push(`
 ## 输出要求
 请直接生成${chapterInfo.title}的正文内容，使用Markdown格式。
 不要输出任何解释或说明，直接开始正文。`);
 
     return parts.join('\n');
+  }
+
+  buildWritingStylePrompt(styles: WritingStyleResource[]): string {
+    if (!styles || styles.length === 0) {
+      return '';
+    }
+
+    const parts: string[] = [];
+    for (const style of styles) {
+      if (!style.analysis) continue;
+      
+      parts.push(`### ${style.name} 的文风特征`);
+      
+      if (style.analysis.styleOverview) {
+        parts.push(`整体风格: ${this.formatStyleOverview(style.analysis.styleOverview)}`);
+      }
+      
+      if (style.analysis.coreTechniques && style.analysis.coreTechniques.length > 0) {
+        parts.push('核心技巧:');
+        for (const technique of style.analysis.coreTechniques) {
+          parts.push(`- ${technique}`);
+        }
+      }
+      
+      if (style.analysis.languageFeatures) {
+        parts.push(`语言特色: ${JSON.stringify(style.analysis.languageFeatures)}`);
+      }
+      
+      if (style.analysis.narrativeStructure) {
+        parts.push(`叙事结构: ${JSON.stringify(style.analysis.narrativeStructure)}`);
+      }
+      
+      if (style.analysis.imitableElements) {
+        parts.push(`可模仿要素: ${JSON.stringify(style.analysis.imitableElements)}`);
+      }
+      
+      parts.push('');
+    }
+    
+    return parts.join('\n');
+  }
+
+  private formatStyleOverview(overview: Record<string, any>): string {
+    if (typeof overview === 'string') return overview;
+    return JSON.stringify(overview);
   }
 
   buildContinuityConstraints(

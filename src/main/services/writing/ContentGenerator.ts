@@ -9,7 +9,7 @@ import {
 } from '../../../shared/types/writing.types';
 import { promptBuilder } from './PromptBuilder';
 import { getStorageService } from '../storageService';
-import { logRequest, logResponse, logErrorWithContext } from '../AiLogger';
+import { addLog, generateNewRequestId, getCurrentRequestId } from '../memory/chatLogService';
 
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -27,7 +27,8 @@ export class ContentGenerator {
     const systemPrompt = promptBuilder.buildSystemPrompt(
       this.getNovelTypeFromRequest(request),
       this.getStyleFromRequest(request),
-      this.getPerspectiveFromRequest(request)
+      this.getPerspectiveFromRequest(request),
+      request.generationParams?.writingStyleContext
     );
 
     const resourceContext = this.buildResourceContext(request);
@@ -60,19 +61,48 @@ export class ContentGenerator {
     onStream: (chunk: string) => void,
     abortSignal: AbortSignal
   ): Promise<GeneratedContent> {
+    const requestId = generateNewRequestId();
+    const chapterTitle = request.chapterInfo?.title || 'unknown';
+    const chapterIndex = request.chapterInfo?.index ?? -1;
+
+    addLog(`[Stage 1/6] 接收请求 - 章节${chapterIndex}: ${chapterTitle}`, 'debug');
+    addLog(`  项目ID: ${request.projectId || 'N/A'}`, 'debug');
+    addLog(`  章节索引: ${chapterIndex}`, 'debug');
+    addLog(`  章节标题: ${chapterTitle}`, 'debug');
+    addLog(`  前序章节数量: ${request.previousChapters?.length || 0}`, 'debug');
+    addLog(`  角色卡数量: ${request.characterContext?.length || 0}`, 'debug');
+    addLog(`  世界书数量: ${request.worldBookContext?.length || 0}`, 'debug');
+    addLog(`  用户人设数量: ${(request as any).userPersonaContext?.length || 0}`, 'debug');
+    addLog(`  知识库数量: ${(request as any).knowledgeContext?.length || 0}`, 'debug');
+
     const baseUrl = await this.getBaseUrl();
     const apiKey = await this.getApiKey();
     const apiKeyTransmission = await this.getApiKeyTransmission();
     const modelName = await this.getModelName(modelConfig.model);
     const engineSystemPrompt = await this.getEngineSystemPrompt();
 
+    addLog(`[Stage 2/6] 参数验证`, 'debug');
+    addLog(`  baseUrl: ${baseUrl || '(未配置)'}`, 'debug');
+    addLog(`  apiKey: ${apiKey ? '***已配置***' : '(未配置)'}`, 'debug');
+    addLog(`  apiKey传输方式: ${apiKeyTransmission}`, 'debug');
+    addLog(`  modelName: ${modelName}`, 'debug');
+    addLog(`  temperature: ${modelConfig.temperature}`, 'debug');
+    addLog(`  maxTokens: ${modelConfig.maxTokens}`, 'debug');
+
     if (!baseUrl) {
+      addLog(`[Stage 2/6] 参数验证失败: 未配置AI服务地址`, 'error');
       throw this.createError(WritingErrorCode.AI_SERVICE_UNAVAILABLE, '未配置 AI 服务地址');
     }
 
     const messages = this.enrichSystemPrompt(this.buildPrompt(request), engineSystemPrompt);
-    let fullContent = '';
-    const startTime = Date.now();
+    const promptString = messages.map(m => `[${m.role}]\n${m.content}`).join('\n\n---\n\n');
+
+    addLog(`[Stage 3/6] 提示词生成`, 'debug');
+    addLog(`  消息数量: ${messages.length} (system + user)`, 'debug');
+    addLog(`  system prompt长度: ${messages[0]?.content?.length || 0}字符`, 'debug');
+    addLog(`  user prompt长度: ${messages[1]?.content?.length || 0}字符`, 'debug');
+    addLog(`  完整提示词:`, 'debug');
+    addLog(promptString, 'debug');
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -94,21 +124,124 @@ export class ContentGenerator {
       }
     }
 
-    logRequest('writing:generateChapter:api', {
-      chapterIndex: request.chapterInfo?.index,
-      chapterTitle: request.chapterInfo?.title,
+    addLog(`[Stage 4/6] AI调用 - 开始请求`, 'debug');
+    addLog(`  端点: ${baseUrl}/v1/chat/completions`, 'debug');
+    addLog(`  请求体(model, temperature, max_tokens, stream, messages count): ${JSON.stringify({
       model: modelName,
       temperature: modelConfig.temperature,
-      maxTokens: modelConfig.maxTokens,
-      messagesCount: messages.length,
-      baseUrl
-    });
+      max_tokens: modelConfig.maxTokens,
+      stream: true,
+      messages_count: messages.length
+    })}`, 'debug');
+
+    let fullContent = '';
+    const startTime = Date.now();
+
+    // 动态超时: >8192 token 使用 300s, 否则 120s
+    const timeoutMs = modelConfig.maxTokens > 8192 ? 300_000 : 120_000;
+
+    const maxRetries = 2;
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      if (attempt > 0) {
+        const backoffMs = Math.pow(2, attempt - 1) * 1000;
+        addLog(`  第 ${attempt} 次重试，等待 ${backoffMs}ms...`, 'debug');
+        await new Promise<void>(resolve => setTimeout(resolve, backoffMs));
+
+        if (abortSignal.aborted) {
+          addLog(`  请求已取消`, 'warn');
+          throw this.createError(WritingErrorCode.CONTENT_GENERATION_FAILED, '操作已被取消');
+        }
+      }
+
+      try {
+        fullContent = '';
+        const result = await this.executeStreamRequest(
+          baseUrl, headers, requestBody, timeoutMs,
+          abortSignal, onStream
+        );
+        fullContent = result.content;
+
+        const generationTime = Date.now() - startTime;
+
+        addLog(`[Stage 5/6] 结果处理 - AI响应成功`, 'debug');
+        addLog(`  章节: ${chapterIndex} - ${chapterTitle}`, 'debug');
+        addLog(`  生成内容(完整): ${fullContent}`, 'debug');
+        addLog(`  生成内容长度: ${fullContent.length}字符`, 'debug');
+        addLog(`  生成耗时: ${generationTime}ms`, 'debug');
+        addLog(`  估算token: ${Math.round(fullContent.length * 0.25)}`, 'debug');
+        addLog(`  模型: ${modelName}`, 'debug');
+
+        return {
+          chapter: {
+            index: request.chapterInfo.index,
+            title: request.chapterInfo.title,
+            wordCount: fullContent.length
+          },
+          content: fullContent,
+          metadata: {
+            model: modelConfig.model,
+            temperature: modelConfig.temperature,
+            tokensUsed: Math.round(fullContent.length * 0.25),
+            generationTime,
+            finishReason: 'stop'
+          },
+          continuity: {
+            foreshadowing: [],
+            plotThreads: [],
+            characterDevelopment: []
+          }
+        };
+      } catch (error) {
+        lastError = error as Error;
+
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          addLog(`  请求超时或被取消`, 'error');
+          throw this.createError(WritingErrorCode.CONTENT_GENERATION_FAILED, '请求超时或被取消');
+        }
+
+        const isTransient = this.isTransientError(error as Error);
+        if (!isTransient || attempt === maxRetries) {
+          addLog(`[Stage 5/6] 结果处理 - AI请求失败: ${(error as Error).message}`, 'error');
+          if (error instanceof this.WritingError) throw error;
+          throw this.createError(
+            WritingErrorCode.CONTENT_GENERATION_FAILED,
+            `AI 流请求失败: ${(error as Error).message}`,
+            (error as Error).stack
+          );
+        }
+
+        addLog(`  流中断 (${isTransient ? '可重试' : '不可重试'}) - 第 ${attempt + 1}/${maxRetries + 1} 次: ${(error as Error).message}`, 'warn');
+      }
+    }
+
+    addLog(`[Stage 5/6] 结果处理 - 最终失败: ${lastError?.message}`, 'error');
+    throw this.createError(
+      WritingErrorCode.CONTENT_GENERATION_FAILED,
+      `AI 流请求最终失败: ${lastError?.message ?? '未知错误'}`
+    );
+  }
+
+  private async executeStreamRequest(
+    baseUrl: string,
+    headers: Record<string, string>,
+    requestBody: Record<string, any>,
+    timeoutMs: number,
+    abortSignal: AbortSignal,
+    onStream: (chunk: string) => void
+  ): Promise<{ content: string; generationTime: number }> {
+    const startTime = Date.now();
+
+    // 合并用户取消信号与超时信号
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    const combinedSignal = AbortSignal.any([abortSignal, timeoutSignal]);
 
     const response = await fetch(`${baseUrl}/v1/chat/completions`, {
       method: 'POST',
       headers,
       body: JSON.stringify(requestBody),
-      signal: abortSignal
+      signal: combinedSignal
     });
 
     if (!response.ok) {
@@ -129,28 +262,52 @@ export class ContentGenerator {
     }
 
     const decoder = new TextDecoder('utf-8');
-    let accumulatedData = '';
+    let fullContent = '';
+    let buffer = '';
     let lastProcessedLineCount = 0;
 
     try {
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+
+        if (done) {
+          // 处理 buffer 中残留的不完整 SSE 数据行
+          if (buffer.trim()) {
+            buffer = buffer.trim();
+            if (buffer.startsWith('data:') && !buffer.includes('[DONE]')) {
+              const jsonStr = buffer.substring(6).trim();
+              if (jsonStr) {
+                try {
+                  const chunkData = JSON.parse(jsonStr);
+                  if (chunkData.choices?.[0]) {
+                    const content = chunkData.choices[0].delta?.content || chunkData.choices[0].message?.content || '';
+                    if (content) {
+                      fullContent += content;
+                      onStream(content);
+                    }
+                  }
+                } catch {
+                  // 忽略解析错误
+                }
+              }
+            }
+          }
+          break;
+        }
 
         const chunk = decoder.decode(value, { stream: true });
-        accumulatedData += chunk;
+        buffer += chunk;
 
-        const lines = accumulatedData.split('\n');
-        const dataLines = lines.filter(line => {
+        // 按行分割，保留最后一个不完整的行在 buffer 中
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
           const trimmed = line.trim();
-          return trimmed.startsWith('data: ') && trimmed.substring(6).trim() !== '[DONE]';
-        });
+          if (!trimmed.startsWith('data:') || trimmed.substring(6).trim() === '[DONE]') {
+            continue;
+          }
 
-        const newLines = dataLines.slice(lastProcessedLineCount);
-        lastProcessedLineCount = dataLines.length;
-
-        for (const line of newLines) {
-          const trimmed = line.trim();
           const jsonStr = trimmed.substring(6).trim();
           if (!jsonStr) continue;
 
@@ -164,7 +321,7 @@ export class ContentGenerator {
               }
             }
           } catch {
-            // Ignore parse errors for incomplete lines
+            // 忽略不完整行的解析错误
           }
         }
       }
@@ -172,63 +329,59 @@ export class ContentGenerator {
       reader.releaseLock();
     }
 
-    // Fallback extraction if content is too short
-    if (fullContent.length < 100 && accumulatedData.length > 0) {
-      const fallbackContent = this.extractContentFromRawData(accumulatedData);
+    // 回退提取: 仅记录日志，不再调用 onStream 避免重复
+    if (fullContent.length < 100 && buffer.length > 0) {
+      const fallbackContent = this.extractContentFromRawData(buffer);
       if (fallbackContent.length > fullContent.length) {
         console.log('[ContentGenerator] Using fallback content extraction (length:', fallbackContent.length, ')');
         fullContent = fallbackContent;
-        onStream(fullContent);
       }
     }
 
+    const generationTime = Date.now() - startTime;
+
     console.log('[ContentGenerator] Stream complete:', {
-      accumulatedDataLength: accumulatedData.length,
-      totalDataLines: lastProcessedLineCount,
-      extractedContentLength: fullContent.length,
+      totalContentLength: fullContent.length,
       preview: fullContent.substring(0, 200)
     });
 
-    const generationTime = Date.now() - startTime;
-
-    logResponse('writing:generateChapter:api', 'success', {
-      chapterIndex: request.chapterInfo?.index,
-      chapterTitle: request.chapterInfo?.title,
-      contentLength: fullContent.length,
-      generationTime,
-      model: modelConfig.model
-    });
-
-    return {
-      chapter: {
-        index: request.chapterInfo.index,
-        title: request.chapterInfo.title,
-        wordCount: fullContent.length
-      },
-      content: fullContent,
-      metadata: {
-        model: modelConfig.model,
-        temperature: modelConfig.temperature,
-        tokensUsed: Math.round(fullContent.length * 0.25),
-        generationTime,
-        finishReason: 'stop'
-      },
-      continuity: {
-        foreshadowing: [],
-        plotThreads: [],
-        characterDevelopment: []
-      }
-    };
+    return { content: fullContent, generationTime };
   }
 
+  private isTransientError(error: Error): boolean {
+    const msg = error.message.toLowerCase();
+    return (
+      msg.includes('network') ||
+      msg.includes('fetch') ||
+      msg.includes('connection') ||
+      msg.includes('econnreset') ||
+      msg.includes('econnrefused') ||
+      msg.includes('timeout') ||
+      msg.includes('socket') ||
+      msg.includes('stream')
+    );
+  }
+
+  private WritingError = class extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = 'WritingError';
+    }
+  };
+
   private buildResourceContext(request: ContentGenerationRequest): string {
-    if (request.worldBookContext.length === 0 && request.characterContext.length === 0) {
+    const hasWorldBooks = request.worldBookContext && request.worldBookContext.length > 0;
+    const hasCharacters = request.characterContext && request.characterContext.length > 0;
+    const hasPersonas = request.userPersonaContext && request.userPersonaContext.length > 0;
+    const hasKnowledge = request.knowledgeContext && request.knowledgeContext.length > 0;
+
+    if (!hasWorldBooks && !hasCharacters && !hasPersonas && !hasKnowledge) {
       return '';
     }
 
     const parts: string[] = [];
 
-    if (request.characterContext.length > 0) {
+    if (hasCharacters) {
       parts.push('## 角色信息');
       for (const char of request.characterContext) {
         parts.push(`### ${char.name}`);
@@ -237,11 +390,35 @@ export class ContentGenerator {
       }
     }
 
-    if (request.worldBookContext.length > 0) {
+    if (hasWorldBooks) {
       parts.push('## 世界观设定');
       for (const wb of request.worldBookContext) {
         parts.push(`### ${wb.entryName}`);
-        parts.push(wb.content);
+        if (wb.keywords && wb.keywords.length > 0) {
+          parts.push(`关键词: ${wb.keywords.join('、')}`);
+        }
+        if (wb.content) {
+          parts.push(wb.content);
+        }
+      }
+    }
+
+    if (hasPersonas) {
+      parts.push('## 用户人设');
+      for (const persona of request.userPersonaContext!) {
+        parts.push(`### ${persona.name}`);
+        if (persona.description) parts.push(`描述: ${persona.description}`);
+        if (persona.traits && persona.traits.length > 0) {
+          parts.push(`特征: ${persona.traits.join('、')}`);
+        }
+      }
+    }
+
+    if (hasKnowledge) {
+      parts.push('## 知识库参考');
+      for (const item of request.knowledgeContext!) {
+        parts.push(`### ${item.title}`);
+        parts.push(item.content);
       }
     }
 

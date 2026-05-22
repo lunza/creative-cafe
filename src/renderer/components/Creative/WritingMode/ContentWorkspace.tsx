@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Card, Button, Progress, message, Spin, Menu, Typography, Dropdown, Popconfirm, Empty, Modal, Input, Divider, Layout } from 'antd';
+import { Card, Button, Progress, message, Spin, Menu, Typography, Dropdown, Popconfirm, Empty, Modal, Input, Divider, Layout, InputNumber, Form, List } from 'antd';
 const { Sider, Content } = Layout;
 const { Text } = Typography;
 import {
@@ -14,7 +14,9 @@ import {
   HistoryOutlined,
   CopyOutlined,
   DeleteOutlined,
-  SettingOutlined
+  SettingOutlined,
+  PartitionOutlined,
+  MergeCellsOutlined
 } from '@ant-design/icons';
 import {
   GeneratedOutline,
@@ -29,6 +31,15 @@ import {
 import MarkdownEditor from '../../Common/MarkdownEditor';
 import { useWritingProjectStore } from '../../../stores/writingProjectStore';
 import WritingProgressDashboard from './WritingProgressDashboard';
+import ChapterSplitModal from './ChapterSplitModal';
+import ChapterMergeModal from './ChapterMergeModal';
+import AIGenerationHistoryModal from './AIGenerationHistoryModal';
+import {
+  AISplitSuggestion,
+  AIMergeSuggestion,
+  AIGenerationHistory,
+  ChapterOutline
+} from '../../../../shared/types/writing.types';
 
 const MAX_PREVIOUS_CHAPTER_CONTENT_LENGTH = 5000;
 
@@ -64,6 +75,17 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
   const [comparingVersion, setComparingVersion] = useState<ChapterVersion | null>(null);
   const [exportChapters, setExportChapters] = useState<number[]>([]);
   const [chapterSearch, setChapterSearch] = useState('');
+  const [showSplitModal, setShowSplitModal] = useState(false);
+  const [splitCount, setSplitCount] = useState(2);
+  const [splitTitles, setSplitTitles] = useState<string[]>([]);
+  const [splitMode, setSplitMode] = useState<'content' | 'empty'>('content');
+
+  const [showMergeModal, setShowMergeModal] = useState(false);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [aiSplitSuggestion, setAiSplitSuggestion] = useState<AISplitSuggestion | null>(null);
+  const [aiMergeSuggestion, setAiMergeSuggestion] = useState<AIMergeSuggestion | null>(null);
+  const [aiGenerationHistory, setAiGenerationHistory] = useState<AIGenerationHistory[]>([]);
+  const [isGeneratingAI, setIsGeneratingAI] = useState(false);
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const pauseRef = useRef(false);
@@ -73,7 +95,7 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
   const syncTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    if (!outline) return;
+    if (!outline || !outline.chapters) return;
     const statuses: Record<number, ChapterStatus> = {};
     const contents: Record<number, string> = {};
     const project = getCurrentProject();
@@ -91,7 +113,7 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
     if (selectedChapterIndex >= outline.chapters.length) {
       setSelectedChapterIndex(0);
     }
-  }, [outline]);
+  }, [outline?.chapters?.length]);
 
   useEffect(() => {
     currentProjectRef.current = getCurrentProject();
@@ -105,18 +127,18 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
     syncTimerRef.current = setTimeout(() => {
       const project = getCurrentProject();
       if (project && outline) {
-        const currentChapter = outline.chapters.find(ch => ch.index === selectedChapterIndex);
+        const currentChapter = outline.chapters[selectedChapterIndex];
         if (currentChapter) {
           updateProject(project.id, {
             chapters: project.chapters.map(ch =>
-              ch.index === selectedChapterIndex
+              ch.index === currentChapter.index
                 ? { ...ch, content, lastModified: Date.now() }
                 : ch
             ),
             metadata: {
               ...project.metadata,
               totalWordCount: project.chapters.reduce((sum, ch) =>
-                sum + (ch.index === selectedChapterIndex ? content.length : ch.wordCount), 0
+                sum + (ch.index === currentChapter.index ? content.length : ch.wordCount), 0
               ),
             }
           });
@@ -170,7 +192,8 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
       setIsGenerating(false);
       setIsPaused(false);
       isPausedRef.current = false;
-      message.success(`第 ${data.chapterIndex + 1} 章生成完成`);
+      const chapterNum = outline?.chapters.findIndex(ch => ch.index === data.chapterIndex);
+      message.success(`第 ${(chapterNum >= 0 ? chapterNum : data.chapterIndex) + 1} 章生成完成`);
 
       const currentProject = currentProjectRef.current;
       if (currentProject) {
@@ -272,6 +295,7 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
     const novelType = currentProject?.config?.parameters?.novelType || 'web_novel';
     const writingStyle = currentProject?.config?.parameters?.writingStyle || 'serious';
     const perspective = currentProject?.config?.parameters?.narrativePerspective || 'third_person';
+    const projectResources = currentProject?.config?.resources || {};
 
     const request = {
       projectId,
@@ -280,8 +304,8 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
         index: chapter.index,
         title: chapter.title,
         outline: chapter.summary,
-        characters: chapter.characters,
-        scenes: chapter.scenes
+        characters: chapter.characters || [],
+        scenes: chapter.scenes || []
       },
       previousChapters,
       worldBookContext: [],
@@ -293,7 +317,14 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
         novelType,
         constraints: []
       },
-      modelConfig
+      modelConfig,
+      resources: {
+        worldBookIds: projectResources.worldBookIds || [],
+        characterCardIds: projectResources.characterCardIds || [],
+        userPersonaIds: projectResources.userPersonaIds || [],
+        knowledgeItemIds: projectResources.knowledgeItemIds || [],
+        writingStyleIds: projectResources.writingStyleIds || []
+      }
     };
 
     try {
@@ -366,29 +397,30 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
   }, []);
 
   const handleSaveChapter = useCallback(async () => {
-    const content = editorContentRef.current || streamingContent || chapterContents[selectedChapterIndex] || '';
-    if (!content) {
-      message.warning('当前章节内容为空');
+    const currentChapter = outline.chapters[selectedChapterIndex];
+    if (!currentChapter) {
+      message.warning('未找到当前章节');
       return;
     }
+    const content = editorContentRef.current || streamingContent || chapterContents[currentChapter.index] || '';
 
     if (window.electronAPI?.writing) {
-      await window.electronAPI.writing.autoSaveChapter({ projectId, chapterIndex: selectedChapterIndex, content });
-      setChapterContents(prev => ({ ...prev, [selectedChapterIndex]: content }));
+      await window.electronAPI.writing.autoSaveChapter({ projectId, chapterIndex: currentChapter.index, content });
+      setChapterContents(prev => ({ ...prev, [currentChapter.index]: content }));
       const project = getCurrentProject();
       if (project) {
         updateProject(project.id, {
           chapters: project.chapters.map(ch =>
-            ch.index === selectedChapterIndex
+            ch.index === currentChapter.index
               ? { ...ch, content, status: ChapterStatus.COMPLETED, wordCount: content.length, lastModified: Date.now() }
               : ch
           ),
           metadata: {
             ...project.metadata,
             totalWordCount: project.chapters.reduce((sum, ch) =>
-              sum + (ch.index === selectedChapterIndex ? content.length : ch.wordCount), 0
+              sum + (ch.index === currentChapter.index ? content.length : ch.wordCount), 0
             ),
-            completedChapters: project.chapters.filter(ch => ch.index === selectedChapterIndex || ch.status === ChapterStatus.COMPLETED).length
+            completedChapters: project.chapters.filter(ch => ch.index === currentChapter.index || ch.status === ChapterStatus.COMPLETED).length
           }
         });
         saveProject();
@@ -398,13 +430,15 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
   }, [streamingContent, chapterContents, selectedChapterIndex, projectId, getCurrentProject, updateProject, saveProject]);
 
   const handleSaveVersion = useCallback(async () => {
-    const content = streamingContent || chapterContents[selectedChapterIndex] || '';
+    const currentChapter = outline.chapters[selectedChapterIndex];
+    if (!currentChapter) return;
+    const content = streamingContent || chapterContents[currentChapter.index] || '';
     if (!content) {
       message.warning('当前章节内容为空');
       return;
     }
     if (window.electronAPI?.writing) {
-      const result = await window.electronAPI.writing.saveVersion({ projectId, chapterIndex: selectedChapterIndex, content });
+      const result = await window.electronAPI.writing.saveVersion({ projectId, chapterIndex: currentChapter.index, content });
       if (result.success) {
         message.success('版本已保存');
       }
@@ -413,33 +447,36 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
 
   const handleRestoreVersion = useCallback(async (versionId: string) => {
     if (window.electronAPI?.writing) {
-      const result = await window.electronAPI.writing.restoreVersion({ projectId, chapterIndex: selectedChapterIndex, versionId });
+      const currentChapter = outline.chapters[selectedChapterIndex];
+      if (!currentChapter) return;
+      const result = await window.electronAPI.writing.restoreVersion({ projectId, chapterIndex: currentChapter.index, versionId });
       if (result.success) {
         message.success('版本已恢复');
         const project = useWritingProjectStore.getState().getCurrentProject();
         if (project) {
-          const chapter = project.chapters.find(c => c.index === selectedChapterIndex);
+          const chapter = project.chapters.find(c => c.index === currentChapter.index);
           if (chapter) {
-            setChapterContents(prev => ({ ...prev, [selectedChapterIndex]: chapter.content }));
+            setChapterContents(prev => ({ ...prev, [currentChapter.index]: chapter.content }));
           }
         }
         setShowVersionHistory(false);
       }
     }
-  }, [selectedChapterIndex, projectId]);
+  }, [selectedChapterIndex, projectId, outline]);
 
   const handleShowVersionHistory = useCallback(() => {
     const project = useWritingProjectStore.getState().getCurrentProject();
     if (project) {
-      const chapter = project.chapters.find(c => c.index === selectedChapterIndex);
-      if (chapter && chapter.versions && chapter.versions.length > 0) {
-        setVersionHistory([...chapter.versions].reverse());
+      const chapter = outline.chapters[selectedChapterIndex];
+      const projectChapter = project.chapters.find(c => c.index === chapter?.index);
+      if (projectChapter && projectChapter.versions && projectChapter.versions.length > 0) {
+        setVersionHistory([...projectChapter.versions].reverse());
         setShowVersionHistory(true);
       } else {
         message.info('暂无版本历史');
       }
     }
-  }, [selectedChapterIndex]);
+  }, [selectedChapterIndex, outline]);
 
   const handleExport = useCallback(async (format: ExportFormat) => {
     if (window.electronAPI?.writing) {
@@ -482,8 +519,10 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
   }, [exportChapters, getCurrentProject, handleExport, projectId]);
 
   const handleRegenerateChapter = useCallback(() => {
-    handleGenerateChapter(selectedChapterIndex);
-  }, [selectedChapterIndex, handleGenerateChapter]);
+    const currentChapter = outline.chapters[selectedChapterIndex];
+    if (!currentChapter) return;
+    handleGenerateChapter(currentChapter.index);
+  }, [selectedChapterIndex, outline, handleGenerateChapter]);
 
   const handleClearChapter = useCallback(() => {
     const chapterIndex = outline.chapters.findIndex(ch => ch.index === outline.chapters[selectedChapterIndex]?.index);
@@ -515,6 +554,187 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
     message.success('章节内容已清空');
   }, [selectedChapterIndex, outline, getCurrentProject, updateProject, saveProject]);
 
+  const handleOpenSplitModal = useCallback(() => {
+    if (!outline) return;
+    const currentChapter = outline.chapters[selectedChapterIndex];
+    if (!currentChapter) return;
+    setShowSplitModal(true);
+    setSplitCount(2);
+    setAiSplitSuggestion(null);
+  }, [outline, selectedChapterIndex]);
+
+  const handleSplitConfirm = useCallback((mode: 'content' | 'ai', suggestion?: AISplitSuggestion) => {
+    if (!outline) return;
+    const currentChapter = outline.chapters[selectedChapterIndex];
+    if (!currentChapter) return;
+    const currentContent = chapterContents[currentChapter.index] || '';
+
+    const newChapters: typeof outline.chapters = [];
+    const baseIndex = currentChapter.index;
+
+    const splitContents: Record<number, string> = {};
+    const splitStatuses: Record<number, ChapterStatus> = {};
+
+    const actualSplitCount = suggestion ? suggestion.splitCount : splitCount;
+
+    for (let i = 0; i < actualSplitCount; i++) {
+      let content = '';
+      if (mode === 'content' && currentContent) {
+        const chunkSize = Math.ceil(currentContent.length / actualSplitCount);
+        content = currentContent.substring(i * chunkSize, (i + 1) * chunkSize);
+      }
+
+      const title = suggestion?.titles[i] || `${currentChapter.title}（${i + 1}/${actualSplitCount}）`;
+      const chapterIndex = parseFloat((baseIndex + (i + 1) * 0.1).toFixed(10));
+
+      splitContents[chapterIndex] = content;
+      splitStatuses[chapterIndex] = ChapterStatus.PENDING;
+
+      newChapters.push({
+        index: chapterIndex,
+        title,
+        summary: suggestion?.summaries[i] || (mode === 'content' ? `${currentChapter.summary || ''}（第 ${i + 1} 部分）` : currentChapter.summary),
+        targetWordCount: suggestion?.targetWordCounts[i] || (currentChapter.targetWordCount ? Math.ceil(currentChapter.targetWordCount / actualSplitCount) : 10000),
+        chapterType: currentChapter.chapterType,
+        importance: currentChapter.importance,
+        keyPlotPoints: suggestion?.keyPlotPoints[i] || currentChapter.keyPlotPoints,
+      });
+    }
+
+    splitContents[currentChapter.index] = '';
+    splitStatuses[currentChapter.index] = ChapterStatus.PENDING;
+
+    const updatedChapters = [
+      ...outline.chapters.slice(0, selectedChapterIndex),
+      ...newChapters,
+      ...outline.chapters.slice(selectedChapterIndex + 1)
+    ];
+
+    const newOutline: GeneratedOutline = { ...outline, chapters: updatedChapters };
+
+    setChapterContents(prev => ({ ...prev, ...splitContents }));
+    setChapterStatuses(prev => ({ ...prev, ...splitStatuses }));
+
+    const project = getCurrentProject();
+    if (project) {
+      const newProjectChapters = project.chapters.slice();
+      newProjectChapters.splice(selectedChapterIndex, 1, ...newChapters.map(ch => ({
+        index: ch.index,
+        title: ch.title,
+        content: splitContents[ch.index] || '',
+        status: ChapterStatus.PENDING,
+        wordCount: (splitContents[ch.index] || '').length,
+        lastModified: Date.now(),
+        versions: []
+      })));
+
+      updateProject(project.id, { chapters: newProjectChapters, outline: newOutline });
+      saveProject();
+    }
+
+    setShowSplitModal(false);
+    setStreamingContent('');
+    setCurrentChapterWords(0);
+    message.success(`已将章节拆分为 ${actualSplitCount} 个子章节`);
+  }, [outline, selectedChapterIndex, splitCount, chapterContents, getCurrentProject, updateProject, saveProject]);
+
+  const handleOpenMergeModal = useCallback(() => {
+    if (!outline || outline.chapters.length < 2) return;
+    setShowMergeModal(true);
+    setAiMergeSuggestion(null);
+  }, [outline]);
+
+  const handleMergeConfirm = useCallback((mode: 'simple' | 'ai', selectedIndices: number[], suggestion?: AIMergeSuggestion) => {
+    if (!outline || selectedIndices.length < 2) return;
+
+    const sortedIndices = selectedIndices.sort((a, b) => a - b);
+    const chaptersToMerge = outline.chapters.filter(ch => sortedIndices.includes(ch.index));
+    if (chaptersToMerge.length < 2) return;
+
+    const firstChapterIndex = chaptersToMerge[0].index;
+    const insertIndex = outline.chapters.findIndex(ch => ch.index === firstChapterIndex);
+
+    let mergedContent = '';
+    if (mode === 'simple') {
+      mergedContent = chaptersToMerge.map(ch => chapterContents[ch.index] || '').join('\n\n---\n\n');
+    } else {
+      mergedContent = chapterContents[chaptersToMerge[0].index] || '';
+    }
+
+    const mergedChapter: typeof outline.chapters[0] = {
+      index: firstChapterIndex,
+      title: suggestion?.mergedTitle || `合并章节（${chaptersToMerge.length}章）`,
+      summary: suggestion?.mergedSummary || chaptersToMerge.map(ch => ch.summary).join(' '),
+      targetWordCount: suggestion?.mergedTargetWordCount || chaptersToMerge.reduce((sum, ch) => sum + (ch.targetWordCount || 2000), 0),
+      chapterType: chaptersToMerge[0].chapterType,
+      importance: chaptersToMerge[0].importance,
+      keyPlotPoints: suggestion?.mergedKeyPlotPoints || chaptersToMerge.flatMap(ch => ch.keyPlotPoints || []),
+    };
+
+    const remainingChapters = outline.chapters.filter(ch => !sortedIndices.includes(ch.index));
+
+    const updatedChapters = [
+      ...outline.chapters.slice(0, insertIndex),
+      mergedChapter,
+      ...remainingChapters
+    ];
+
+    const newOutline: GeneratedOutline = { ...outline, chapters: updatedChapters };
+
+    const mergedContents: Record<number, string> = { [firstChapterIndex]: mergedContent };
+    const mergedStatuses: Record<number, ChapterStatus> = { [firstChapterIndex]: ChapterStatus.PENDING };
+
+    setChapterContents(prev => {
+      const newContents = { ...prev };
+      sortedIndices.forEach(idx => {
+        if (idx !== firstChapterIndex) delete newContents[idx];
+      });
+      return { ...newContents, ...mergedContents };
+    });
+    setChapterStatuses(prev => {
+      const newStatuses = { ...prev };
+      sortedIndices.forEach(idx => {
+        if (idx !== firstChapterIndex) delete newStatuses[idx];
+      });
+      return { ...newStatuses, ...mergedStatuses };
+    });
+
+    const project = getCurrentProject();
+    if (project) {
+      const newProjectChapters = project.chapters.slice();
+      newProjectChapters.splice(insertIndex, sortedIndices.length, {
+        index: firstChapterIndex,
+        title: mergedChapter.title,
+        content: mergedContent,
+        status: ChapterStatus.PENDING,
+        wordCount: mergedContent.length,
+        lastModified: Date.now(),
+        versions: []
+      });
+
+      updateProject(project.id, { chapters: newProjectChapters, outline: newOutline });
+      saveProject();
+    }
+
+    setShowMergeModal(false);
+    setSelectedChapterIndex(insertIndex);
+    message.success(`已合并 ${sortedIndices.length} 个章节`);
+  }, [outline, chapterContents, getCurrentProject, updateProject, saveProject]);
+
+  const handleRestoreHistory = useCallback((history: AIGenerationHistory) => {
+    if (history.type === 'split') {
+      const suggestion = history.suggestion as AISplitSuggestion;
+      setAiSplitSuggestion(suggestion);
+      setSplitCount(suggestion.splitCount);
+      setShowSplitModal(true);
+    } else {
+      const suggestion = history.suggestion as AIMergeSuggestion;
+      setAiMergeSuggestion(suggestion);
+      setShowMergeModal(true);
+    }
+    message.success('已回溯到历史方案');
+  }, []);
+
   const handleBackToConfig = useCallback(() => {
     Modal.confirm({
       title: '返回修改配置',
@@ -527,7 +747,7 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
     });
   }, [onBack]);
 
-  if (!outline) {
+  if (!outline || !outline.chapters) {
     return <div style={{ padding: 24 }}>未找到大纲信息</div>;
   }
 
@@ -536,7 +756,7 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
   const overallProgress = Math.round((completedChapters / totalChapters) * 100);
 
   const currentChapter = outline.chapters[selectedChapterIndex];
-  const currentWordCount = (streamingContent || chapterContents[selectedChapterIndex] || '').length;
+  const currentWordCount = (streamingContent || chapterContents[currentChapter?.index] || '').length;
   if (!currentChapter) {
     return <div style={{ padding: 24 }}>未找到章节信息</div>;
   }
@@ -628,7 +848,7 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
                     <Button
                       type="primary"
                       icon={<PlayCircleOutlined />}
-                      onClick={() => handleGenerateChapter(selectedChapterIndex)}
+                      onClick={() => handleGenerateChapter(currentChapter.index)}
                       disabled={!currentChapter || chapterStatuses[selectedChapterIndex] === ChapterStatus.GENERATING}
                     >
                       生成
@@ -643,50 +863,70 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
                     <Button
                       icon={<ReloadOutlined />}
                       onClick={handleRegenerateChapter}
-                      disabled={!chapterContents[selectedChapterIndex] && !streamingContent}
+                      disabled={!chapterContents[currentChapter?.index] && !streamingContent}
                     >
                       重新生成
                     </Button>
                     <Popconfirm
-                      title="确定要清空此章节吗？"
-                      description="清空后该章节内容将被删除，可重新生成。"
-                      onConfirm={() => {
-                        const ch = outline.chapters[selectedChapterIndex];
-                        setChapterContents(prev => ({ ...prev, [ch.index]: '' }));
-                        setChapterStatuses(prev => ({ ...prev, [ch.index]: ChapterStatus.PENDING }));
-                        setCurrentChapterWords(0);
-                        setStreamingContent('');
-                        const project = getCurrentProject();
-                        if (project) {
-                          updateProject(project.id, {
-                            chapters: project.chapters.map(c =>
-                              c.index === ch.index
-                                ? { ...c, content: '', status: ChapterStatus.PENDING, wordCount: 0, lastModified: Date.now() }
-                                : c
+                    title="确定要清空此章节吗？"
+                    description="清空后该章节内容将被删除，可重新生成。"
+                    onConfirm={() => {
+                      const ch = outline.chapters[selectedChapterIndex];
+                      if (!ch) return;
+                      setChapterContents(prev => ({ ...prev, [ch.index]: '' }));
+                      setChapterStatuses(prev => ({ ...prev, [ch.index]: ChapterStatus.PENDING }));
+                      setCurrentChapterWords(0);
+                      setStreamingContent('');
+                      const project = getCurrentProject();
+                      if (project) {
+                        updateProject(project.id, {
+                          chapters: project.chapters.map(c =>
+                            c.index === ch.index
+                              ? { ...c, content: '', status: ChapterStatus.PENDING, wordCount: 0, lastModified: Date.now() }
+                              : c
+                          ),
+                          metadata: {
+                            ...project.metadata,
+                            totalWordCount: project.chapters.reduce((sum, c) =>
+                              sum + (c.index === ch.index ? 0 : c.wordCount), 0
                             ),
-                            metadata: {
-                              ...project.metadata,
-                              totalWordCount: project.chapters.reduce((sum, c) =>
-                                sum + (c.index === ch.index ? 0 : c.wordCount), 0
-                              ),
-                              completedChapters: project.chapters.filter(c => c.index !== ch.index && c.status === ChapterStatus.COMPLETED).length
-                            }
-                          });
-                          saveProject();
-                        }
-                        message.success('章节内容已清空');
-                      }}
-                      okText="确定清空"
-                      cancelText="取消"
+                            completedChapters: project.chapters.filter(c => c.index !== ch.index && c.status === ChapterStatus.COMPLETED).length
+                          }
+                        });
+                        saveProject();
+                      }
+                      message.success('章节内容已清空');
+                    }}
+                    okText="确定清空"
+                    cancelText="取消"
+                  >
+                    <Button
+                      danger
+                      icon={<DeleteOutlined />}
                     >
-                      <Button
-                        danger
-                        icon={<DeleteOutlined />}
-                        disabled={!chapterContents[selectedChapterIndex] && !streamingContent}
-                      >
-                        清空
-                      </Button>
-                    </Popconfirm>
+                      清空
+                    </Button>
+                  </Popconfirm>
+                  <Button
+                    icon={<PartitionOutlined />}
+                    onClick={handleOpenSplitModal}
+                    disabled={isGenerating}
+                  >
+                    分解
+                  </Button>
+                  <Button
+                    icon={<MergeCellsOutlined />}
+                    onClick={handleOpenMergeModal}
+                    disabled={outline.chapters.length < 2}
+                  >
+                    合并
+                  </Button>
+                  <Button
+                    icon={<HistoryOutlined />}
+                    onClick={() => setShowHistoryModal(true)}
+                  >
+                    AI历史
+                  </Button>
                     <Dropdown menu={{
                       items: [
                         { key: 'txt', label: 'TXT', onClick: () => handleExport(ExportFormat.TXT) },
@@ -745,8 +985,8 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
             ) : (
               <>
                 <MarkdownEditor
-                  key={selectedChapterIndex}
-                  value={chapterContents[selectedChapterIndex] || ''}
+                  key={currentChapter.index}
+                  value={chapterContents[currentChapter.index] || ''}
                   onChange={handleEditorChange}
                   readOnly={false}
                 />
@@ -780,6 +1020,35 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
           {versionHistory.length === 0 && <Empty description="暂无版本" size="small" />}
         </div>
       </Modal>
+
+      <ChapterSplitModal
+        visible={showSplitModal}
+        chapter={currentChapter}
+        chapterContent={chapterContents[currentChapter?.index] || ''}
+        outline={outline}
+        splitCount={splitCount}
+        onSplitCountChange={setSplitCount}
+        onCancel={() => setShowSplitModal(false)}
+        onConfirm={handleSplitConfirm}
+        projectId={projectId}
+      />
+
+      <ChapterMergeModal
+        visible={showMergeModal}
+        chapters={outline.chapters}
+        chapterContents={chapterContents}
+        outline={outline}
+        onCancel={() => setShowMergeModal(false)}
+        onConfirm={handleMergeConfirm}
+        projectId={projectId}
+      />
+
+      <AIGenerationHistoryModal
+        visible={showHistoryModal}
+        projectId={projectId}
+        onCancel={() => setShowHistoryModal(false)}
+        onRestore={handleRestoreHistory}
+      />
     </Layout>
   );
 };

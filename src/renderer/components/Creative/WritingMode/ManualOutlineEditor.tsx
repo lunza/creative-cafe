@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Tree, Form, Input, Select, Button, InputNumber, message, Empty, Space, Tag, Popconfirm, Tooltip, Spin } from 'antd';
+import { theme } from 'antd';
 import {
   PlusOutlined,
   DeleteOutlined,
@@ -44,6 +45,7 @@ interface TreeNodeData extends DataNode {
 }
 
 const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onChange, projectId }) => {
+  const { token } = theme.useToken();
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
   const [expandedKeys, setExpandedKeys] = useState<React.Key[]>([]);
   const [form] = Form.useForm();
@@ -118,7 +120,7 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
       const hasChildren = level < 1 && chapter.children && chapter.children.length > 0;
       const node: TreeNodeData = {
         key: generateChapterKey(arrayIndex, level),
-        title: chapter.title || `第 ${chapter.index + 1} 章`,
+        title: chapter.title || `第 ${chapter.index} 章`,
         isLeaf: !hasChildren,
         chapterIndex: arrayIndex,
         level,
@@ -237,10 +239,10 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
   }, [chapters, selectedChapter, selectedKeys, onChange, findChapterByKeys, validateForm]);
 
   const addChapter = useCallback(() => {
-    const newIndex = chapters.length;
+    const newIndex = chapters.length + 1;
     const newChapter: ChapterOutline = {
       index: newIndex,
-      title: `第 ${newIndex + 1} 章`,
+      title: `第 ${newIndex} 章`,
       summary: '',
       keyPlotPoints: [],
       characters: [],
@@ -253,7 +255,7 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
     const updatedChapters = [...chapters, newChapter];
     triggerChangeWithHistory(updatedChapters, '添加章节');
 
-    const newKey = generateChapterKey(newIndex, 0);
+    const newKey = generateChapterKey(chapters.length, 0);
     setSelectedKeys([newKey]);
     setExpandedKeys([...expandedKeys, newKey]);
     message.success('章节已添加');
@@ -286,10 +288,10 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
       return;
     }
 
-    const newSubIndex = result.chapter.children.length;
+    const newSubIndex = result.chapter.children.length + 1;
     const newSubChapter: ChapterOutline = {
       index: newSubIndex,
-      title: `子章节 ${newSubIndex + 1}`,
+      title: `子章节 ${newSubIndex}`,
       summary: '',
       keyPlotPoints: [],
       characters: [],
@@ -324,12 +326,12 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
       if (updatedResult.parentList === updatedChapters) {
         updatedChapters.splice(updatedResult.index, 1);
         updatedChapters.forEach((ch, idx) => {
-          ch.index = idx;
+          ch.index = idx + 1;
         });
       } else {
         updatedResult.parentList!.splice(updatedResult.index, 1);
         updatedResult.parentList!.forEach((ch, idx) => {
-          ch.index = idx;
+          ch.index = idx + 1;
         });
       }
 
@@ -367,7 +369,7 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
     parentList[newIndex] = temp;
 
     parentList.forEach((ch, idx) => {
-      ch.index = idx;
+      ch.index = idx + 1;
     });
 
     triggerChangeWithHistory(updatedChapters, `移动章节${direction === 'up' ? '上' : '下'}`);
@@ -417,7 +419,7 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
     if (updatedResult) {
       updatedResult.parentList.splice(currentIndex, 2, mergedChapter);
       updatedResult.parentList.forEach((ch, idx) => {
-        ch.index = idx;
+        ch.index = idx + 1;
       });
 
       triggerChangeWithHistory(updatedChapters, '合并章节');
@@ -467,7 +469,7 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
     if (updatedResult) {
       updatedResult.parentList.splice(result.index, 1, firstChapter, secondChapter);
       updatedResult.parentList.forEach((ch, idx) => {
-        ch.index = idx;
+        ch.index = idx + 1;
       });
 
       triggerChangeWithHistory(updatedChapters, '拆分章节');
@@ -504,17 +506,18 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
   const treeData = React.useMemo(() => buildTreeData(chapters), [chapters, buildTreeData]);
 
   const renderTreeNode = (node: TreeNodeData) => {
-    const chapter = chapters[node.level === 0 ? node.chapterIndex : -1];
     let chapterData: ChapterOutline | undefined;
 
     if (node.level === 0) {
       chapterData = chapters[node.chapterIndex];
     } else {
       const findChapter = (list: ChapterOutline[], targetLevel: number, targetIndex: number, currentLevel: number = 0): ChapterOutline | undefined => {
+        let idx = 0;
         for (const ch of list) {
-          if (currentLevel === targetLevel && ch.index === targetIndex) {
+          if (currentLevel === targetLevel && idx === targetIndex) {
             return ch;
           }
+          idx++;
           if (ch.children && currentLevel < targetLevel) {
             const found = findChapter(ch.children, targetLevel, targetIndex, currentLevel + 1);
             if (found) return found;
@@ -563,14 +566,14 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
 
   return (
     <div style={{ display: 'flex', height: '100%', gap: 16 }}>
-      <div style={{ width: 320, borderRight: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ padding: '12px 16px', borderBottom: '1px solid #f0f0f0' }}>
+      <div style={{ width: 320, borderRight: `1px solid ${token.colorBorderSecondary}`, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ padding: '12px 16px', borderBottom: `1px solid ${token.colorBorderSecondary}` }}>
           <Space direction="vertical" style={{ width: '100%' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <span style={{ fontWeight: 500, fontSize: 16 }}>章节大纲</span>
               <Space>
                 {isSaving && <Spin size="small" />}
-                <UnorderedListOutlined style={{ color: '#8c8c8c' }} />
+                <UnorderedListOutlined style={{ color: token.colorTextTertiary }} />
               </Space>
             </div>
             <Space wrap>
@@ -642,7 +645,7 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
         {selectedChapter ? (
           <div>
             <div style={{ marginBottom: 24, display: 'flex', alignItems: 'center' }}>
-              <EditOutlined style={{ marginRight: 8, color: '#1890ff' }} />
+              <EditOutlined style={{ marginRight: 8, color: token.colorPrimary }} />
               <span style={{ fontSize: 18, fontWeight: 500 }}>章节属性</span>
             </div>
 

@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { MaterialItem, MaterialType } from '../../../shared/types/writing.types';
+import { MaterialItem, MaterialType, WritingStyleResource, WritingStyleProgress } from '../../../shared/types/writing.types';
 import { useWritingProjectStore } from '../../../stores/writingProjectStore';
 
 interface UseWritingMaterialsReturn {
@@ -7,6 +7,7 @@ interface UseWritingMaterialsReturn {
   characters: MaterialItem[];
   personas: MaterialItem[];
   knowledgeItems: MaterialItem[];
+  writingStyles: MaterialItem[];
   loading: boolean;
   searchQuery: string;
   setSearchQuery: (query: string) => void;
@@ -14,10 +15,20 @@ interface UseWritingMaterialsReturn {
   filteredCharacters: MaterialItem[];
   filteredPersonas: MaterialItem[];
   filteredKnowledgeItems: MaterialItem[];
+  filteredWritingStyles: MaterialItem[];
   loadAllMaterials: () => Promise<void>;
   toggleMaterial: (type: MaterialType, id: string) => void;
   getSelectedCount: (type: MaterialType) => number;
   refreshMaterials: () => void;
+  loadWritingStyles: () => Promise<void>;
+  toggleWritingStyle: (id: string) => void;
+  writingStyleLearning: {
+    taskId: string | null;
+    progress: WritingStyleProgress | null;
+    isLearning: boolean;
+  };
+  uploadWritingStyle: (filePath: string, fileName: string, fileSize: number) => Promise<{ success: boolean; taskId?: string; error?: string }>;
+  cancelLearning: (taskId: string) => Promise<void>;
 }
 
 interface KnowledgeItemData {
@@ -34,6 +45,12 @@ export function useWritingMaterials(): UseWritingMaterialsReturn {
   const [characters, setCharacters] = useState<MaterialItem[]>([]);
   const [personas, setPersonas] = useState<MaterialItem[]>([]);
   const [knowledgeItems, setKnowledgeItems] = useState<MaterialItem[]>([]);
+  const [writingStyles, setWritingStyles] = useState<MaterialItem[]>([]);
+  const [writingStyleLearning, setWritingStyleLearning] = useState<{
+    taskId: string | null;
+    progress: WritingStyleProgress | null;
+    isLearning: boolean;
+  }>({ taskId: null, progress: null, isLearning: false });
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -47,13 +64,14 @@ export function useWritingMaterials(): UseWritingMaterialsReturn {
     ? projects.find((p) => p.id === currentProjectId) || null
     : null;
 
-  const getSelectedIds = useCallback((): { worldBookIds: string[]; characterCardIds: string[]; userPersonaIds: string[]; knowledgeItemIds: string[] } => {
+  const getSelectedIds = useCallback((): { worldBookIds: string[]; characterCardIds: string[]; userPersonaIds: string[]; knowledgeItemIds: string[]; writingStyleIds: string[] } => {
     const config = currentProject?.config?.resources;
     return {
       worldBookIds: config?.worldBookIds || [],
       characterCardIds: config?.characterCardIds || [],
       userPersonaIds: config?.userPersonaIds || [],
       knowledgeItemIds: config?.knowledgeItemIds || [],
+      writingStyleIds: config?.writingStyleIds || [],
     };
   }, [currentProject]);
 
@@ -78,14 +96,19 @@ export function useWritingMaterials(): UseWritingMaterialsReturn {
         ? window.electronAPI.knowledge.list({}, 1, 1000)
         : Promise.resolve({ success: false, items: [] });
 
-      const [wbResult, charResult, personaResult, kbResult] = await Promise.all([
-        wbPromise, charPromise, personaPromise, kbPromise,
+      const wsPromise = window.electronAPI?.writing?.style?.list
+        ? window.electronAPI.writing.style.list()
+        : Promise.resolve({ success: false, styles: [] });
+
+      const [wbResult, charResult, personaResult, kbResult, wsResult] = await Promise.all([
+        wbPromise, charPromise, personaPromise, kbPromise, wsPromise,
       ]);
 
       const wbList = Array.isArray(wbResult) ? wbResult : [];
       const chList = Array.isArray(charResult) ? charResult : [];
       const paList = Array.isArray(personaResult) ? personaResult : [];
       const kbList = (kbResult?.success && Array.isArray(kbResult.items)) ? kbResult.items : [];
+      const wsList = (wsResult?.success && Array.isArray(wsResult.styles)) ? wsResult.styles : [];
 
       const mappedWorldBooks: MaterialItem[] = wbList.map((wb: any) => ({
         id: wb.path,
@@ -129,10 +152,23 @@ export function useWritingMaterials(): UseWritingMaterialsReturn {
         metadata: item,
       }));
 
+      const mappedWritingStyles: MaterialItem[] = wsList
+        .filter((ws: WritingStyleResource) => ws.status === 'COMPLETED')
+        .map((ws: WritingStyleResource) => ({
+          id: ws.id,
+          name: ws.name,
+          type: 'writing-style' as MaterialType,
+          description: ws.analysis?.fullReport?.substring(0, 100) || '文风分析完成',
+          path: ws.id,
+          isSelected: selectedIds.writingStyleIds?.includes(ws.id) || false,
+          metadata: ws,
+        }));
+
       setWorldBooks(mappedWorldBooks);
       setCharacters(mappedCharacters);
       setPersonas(mappedPersonas);
       setKnowledgeItems(mappedKnowledge);
+      setWritingStyles(mappedWritingStyles);
     } catch (error) {
       console.error('[useWritingMaterials] Load materials error:', error);
     } finally {
@@ -172,6 +208,85 @@ export function useWritingMaterials(): UseWritingMaterialsReturn {
   const filteredCharacters = filterMaterials(characters, debouncedQuery);
   const filteredPersonas = filterMaterials(personas, debouncedQuery);
   const filteredKnowledgeItems = filterMaterials(knowledgeItems, debouncedQuery);
+  const filteredWritingStyles = filterMaterials(writingStyles, debouncedQuery);
+
+  const loadWritingStyles = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.writing.style.list();
+      if (result.success) {
+        const selectedIds = getSelectedIds();
+        const mappedWritingStyles: MaterialItem[] = result.styles
+          .filter((ws: WritingStyleResource) => ws.status === 'COMPLETED')
+          .map((ws: WritingStyleResource) => ({
+            id: ws.id,
+            name: ws.name,
+            type: 'writing-style' as MaterialType,
+            description: ws.analysis?.fullReport?.substring(0, 100) || '文风分析完成',
+            path: ws.id,
+            isSelected: selectedIds.writingStyleIds?.includes(ws.id) || false,
+            metadata: ws,
+          }));
+        setWritingStyles(mappedWritingStyles);
+      }
+    } catch (error) {
+      console.error('[useWritingMaterials] Failed to load writing styles:', error);
+    }
+  }, [getSelectedIds]);
+
+  const toggleWritingStyle = useCallback((id: string) => {
+    if (!currentProject) return;
+
+    const resources = currentProject.config.resources || {
+      worldBookIds: [],
+      characterCardIds: [],
+    };
+    const newResources = { ...resources };
+    const ids = [...(resources.writingStyleIds || [])];
+    const idx = ids.indexOf(id);
+    if (idx >= 0) ids.splice(idx, 1);
+    else ids.push(id);
+    newResources.writingStyleIds = ids;
+
+    updateProject(currentProject.id, {
+      config: {
+        ...currentProject.config,
+        resources: newResources,
+      },
+    });
+
+    setWritingStyles(items =>
+      items.map((item) =>
+        item.id === id ? { ...item, isSelected: !item.isSelected } : item
+      )
+    );
+  }, [currentProject, updateProject]);
+
+  const uploadWritingStyle = useCallback(async (filePath: string, fileName: string, fileSize: number) => {
+    if (!window.electronAPI?.writing?.style?.upload) {
+      return { success: false, error: '写作风格学习功能不可用' };
+    }
+
+    setWritingStyleLearning({ taskId: null, progress: null, isLearning: true });
+
+    const result = await window.electronAPI.writing.style.upload({
+      filePath,
+      fileName,
+      fileSize,
+    });
+
+    if (result.success && result.taskId) {
+      setWritingStyleLearning(prev => ({ ...prev, taskId: result.taskId! }));
+    }
+
+    return result;
+  }, []);
+
+  const cancelLearning = useCallback(async (taskId: string) => {
+    if (window.electronAPI?.writing?.style?.cancel) {
+      await window.electronAPI.writing.style.cancel(taskId);
+    }
+    setWritingStyleLearning({ taskId: null, progress: null, isLearning: false });
+  }, []);
 
   const toggleMaterial = useCallback((type: MaterialType, id: string) => {
     if (!currentProject) return;
@@ -256,20 +371,52 @@ export function useWritingMaterials(): UseWritingMaterialsReturn {
           return personas.filter((p) => p.isSelected).length;
         case 'knowledge':
           return knowledgeItems.filter((k) => k.isSelected).length;
+        case 'writing-style':
+          return writingStyles.filter((ws) => ws.isSelected).length;
       }
     },
-    [worldBooks, characters, personas, knowledgeItems]
+    [worldBooks, characters, personas, knowledgeItems, writingStyles]
   );
 
   const refreshMaterials = useCallback(() => {
     loadAllMaterials();
   }, [loadAllMaterials]);
 
+  useEffect(() => {
+    if (!window.electronAPI?.writing?.style) return;
+
+    const removeProgressListener = window.electronAPI.writing.style.onProgress((data) => {
+      setWritingStyleLearning(prev => ({
+        ...prev,
+        progress: data.progress,
+        isLearning: data.progress.status !== 'COMPLETED' && data.progress.status !== 'FAILED' && data.progress.status !== 'CANCELLED',
+      }));
+    });
+
+    const removeCompleteListener = window.electronAPI.writing.style.onComplete(async () => {
+      setWritingStyleLearning({ taskId: null, progress: null, isLearning: false });
+      await loadWritingStyles();
+    });
+
+    const removeErrorListener = window.electronAPI.writing.style.onError((data) => {
+      setWritingStyleLearning({ taskId: null, progress: null, isLearning: false });
+      console.error('[useWritingMaterials] Writing style learning error:', data.error);
+    });
+
+    return () => {
+      removeProgressListener?.();
+      removeCompleteListener?.();
+      removeErrorListener?.();
+    };
+  }, [loadWritingStyles]);
+
   return {
     worldBooks,
     characters,
     personas,
     knowledgeItems,
+    writingStyles,
+    filteredWritingStyles,
     loading,
     searchQuery,
     setSearchQuery,
@@ -278,8 +425,13 @@ export function useWritingMaterials(): UseWritingMaterialsReturn {
     filteredPersonas,
     filteredKnowledgeItems,
     loadAllMaterials,
+    loadWritingStyles,
     toggleMaterial,
+    toggleWritingStyle,
     getSelectedCount,
     refreshMaterials,
+    writingStyleLearning,
+    uploadWritingStyle,
+    cancelLearning,
   };
 }

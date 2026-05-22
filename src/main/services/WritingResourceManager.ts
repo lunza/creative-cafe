@@ -4,7 +4,8 @@ import { pathService } from './pathService';
 import { getStorageService } from './storageService';
 import { characterService } from './characterService';
 import { worldBookService } from './worldBookService';
-import { WorldBookContext, CharacterCardContext, UserPersonaContext } from '../../shared/types/writing.types';
+import { writingStorageService } from './WritingStorageService';
+import { WorldBookContext, CharacterCardContext, UserPersonaContext, WritingStyleResource, WritingStyleAnalysis } from '../../shared/types/writing.types';
 
 export class WritingResourceManager {
   async loadWorldBooks(worldBookIds: string[]): Promise<WorldBookContext[]> {
@@ -136,10 +137,28 @@ export class WritingResourceManager {
     return contexts;
   }
 
+  async loadWritingStyles(styleIds: string[]): Promise<WritingStyleResource[]> {
+    const resources: WritingStyleResource[] = [];
+    
+    for (const id of styleIds) {
+      try {
+        const style = await writingStorageService.loadWritingStyle(id);
+        if (style && style.status === 'COMPLETED' && style.analysis) {
+          resources.push(style);
+        }
+      } catch (error) {
+        console.error(`[WritingResourceManager] Failed to load writing style ${id}:`, error);
+      }
+    }
+    
+    return resources;
+  }
+
   buildResourceContextSummary(
     worldBooks: WorldBookContext[],
     characters: CharacterCardContext[],
-    userPersonas: UserPersonaContext[] = []
+    userPersonas: UserPersonaContext[] = [],
+    writingStyles: WritingStyleResource[] = []
   ): string {
     const parts: string[] = [];
     
@@ -173,6 +192,28 @@ export class WritingResourceManager {
           for (const entry of wb.entries) {
             parts.push(`#### ${entry.name}`);
             if (entry.content) parts.push(entry.content);
+          }
+        }
+        parts.push('');
+      }
+    }
+
+    if (writingStyles.length > 0) {
+      parts.push('## 写作风格参考\n');
+      for (const style of writingStyles) {
+        parts.push(`### ${style.name}`);
+        if (style.analysis) {
+          if (style.analysis.styleOverview) {
+            parts.push(`风格概述: ${JSON.stringify(style.analysis.styleOverview)}`);
+          }
+          if (style.analysis.coreTechniques && style.analysis.coreTechniques.length > 0) {
+            parts.push('核心写作技巧:');
+            for (const technique of style.analysis.coreTechniques) {
+              parts.push(`- ${technique}`);
+            }
+          }
+          if (style.analysis.imitableElements) {
+            parts.push(`可模仿要素: ${JSON.stringify(style.analysis.imitableElements)}`);
           }
         }
         parts.push('');

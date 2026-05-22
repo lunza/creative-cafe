@@ -132,10 +132,11 @@ export interface WritingResourceConfig {
   userPersonaIds?: string[];
   knowledgeItemIds?: string[];
   referenceMaterials?: ReferenceMaterial[];
+  writingStyleIds?: string[];
 }
 
 // 素材类型
-export type MaterialType = 'worldbook' | 'character' | 'persona' | 'knowledge';
+export type MaterialType = 'worldbook' | 'character' | 'persona' | 'knowledge' | 'writing-style';
 
 // 素材项
 export interface MaterialItem {
@@ -206,6 +207,7 @@ export interface ContentGenerationRequest {
   worldBookContext: {
     entryName: string;
     content: string;
+    keywords?: string[];
     relevance: number;
   }[];
   characterContext: {
@@ -213,14 +215,34 @@ export interface ContentGenerationRequest {
     description: string;
     personality: string;
   }[];
+  userPersonaContext?: {
+    name: string;
+    description: string;
+    traits: string[];
+  }[];
+  knowledgeContext?: {
+    title: string;
+    content: string;
+    relevance: number;
+  }[];
   generationParams: {
     targetWordCount: number;
     style: string;
     perspective: string;
     novelType?: string;
     constraints?: string[];
+    writingStyleContext?: string;
   };
   modelConfig: ModelConfig;
+  projectId?: string;
+  chapterIndex?: number;
+  resources?: {
+    worldBookIds?: string[];
+    characterCardIds?: string[];
+    userPersonaIds?: string[];
+    knowledgeItemIds?: string[];
+    writingStyleIds?: string[];
+  };
 }
 
 // 作品信息
@@ -357,6 +379,7 @@ export interface WritingProject {
   updatedAt: number;
   lastSavedAt: number;
   metadata: ProjectMetadata;
+  aiGenerationHistory?: AIGenerationHistory[];
 }
 
 // 生成内容
@@ -507,4 +530,105 @@ export interface OutlineHistoryState {
   description: string;
   // 是否自动保存
   isAutoSave?: boolean;
+}
+
+// AI辅助拆分/合并相关类型
+export interface AISplitSuggestion {
+  splitCount: number;
+  titles: string[];
+  summaries: string[];
+  targetWordCounts: number[];
+  keyPlotPoints: string[][];
+  confidence: number;
+  rawResponse?: string;
+}
+
+export interface AIMergeSuggestion {
+  mergedTitle: string;
+  mergedSummary: string;
+  mergedTargetWordCount: number;
+  mergedKeyPlotPoints: string[];
+  chapterIndices: number[];
+  confidence: number;
+  rawResponse?: string;
+}
+
+export type AIGenerationSuggestion = AISplitSuggestion | AIMergeSuggestion;
+
+export interface AIGenerationHistory {
+  id: string;
+  type: 'split' | 'merge';
+  timestamp: number;
+  sourceChapterIndices: number[];
+  suggestion: AIGenerationSuggestion;
+  isAccepted: boolean;
+}
+
+// 写作风格状态
+export enum WritingStyleStatus {
+  LEARNING = 'LEARNING',
+  PROCESSING = 'PROCESSING',
+  ANALYZING = 'ANALYZING',
+  INTEGRATING = 'INTEGRATING',
+  COMPLETED = 'COMPLETED',
+  FAILED = 'FAILED',
+  CANCELLED = 'CANCELLED'
+}
+
+// 写作风格阶段
+export enum WritingStylePhase {
+  FILE_READING = 'FILE_READING',
+  TEXT_SPLITTING = 'TEXT_SPLITTING',
+  BATCH_ANALYSIS = 'BATCH_ANALYSIS',
+  RESULT_INTEGRATION = 'RESULT_INTEGRATION',
+  COMPLETED = 'COMPLETED'
+}
+
+// 写作风格进度
+export interface WritingStyleProgress {
+  phase: WritingStylePhase;
+  currentChunk: number;
+  totalChunks: number;
+  status: WritingStyleStatus;
+  message: string;
+}
+
+// 写作风格分析结果
+export interface WritingStyleAnalysis {
+  styleOverview: Record<string, any>;
+  coreTechniques: string[];
+  languageFeatures: Record<string, any>;
+  narrativeStructure: Record<string, any>;
+  imitableElements: Record<string, any>;
+  fullReport: string;
+}
+
+// 写作风格资源
+export interface WritingStyleResource {
+  id: string;
+  name: string;
+  sourceFile: string;
+  fileSize: number;
+  analysis: WritingStyleAnalysis | null;
+  createdAt: number;
+  status: WritingStyleStatus;
+  progress: WritingStyleProgress;
+}
+
+// 写作风格学习请求
+export interface WritingStyleLearningRequest {
+  filePath: string;
+  fileName: string;
+  fileSize: number;
+}
+
+// 写作风格分块分析结果
+export interface WritingStyleChunkAnalysis {
+  chunkIndex: number;
+  styleOverview: Record<string, any>;
+  coreTechniques: string[];
+  languageFeatures: Record<string, any>;
+  narrativeStructure: Record<string, any>;
+  imitableElements: Record<string, any>;
+  partialReport: string;
 }

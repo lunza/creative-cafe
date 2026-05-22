@@ -5,6 +5,7 @@ import { getStorageService } from '../../services/storageService';
 import { AppSetting } from '../../../shared/settings';
 import type { AppSetting as AppSettingType } from '../../../renderer/types/setting';
 import { getAppDataPath } from '../../utils/appPath';
+import { getLogDir, getLogFilePath } from '../../services/logPathService';
 
 // 日志级别
 const LOG_LEVELS = {
@@ -16,15 +17,8 @@ const LOG_LEVELS = {
 
 // ========== 主进程日志函数（写入文件 + console） ==========
 
-// 获取日志目录的路径（使用 AppData）
-const getLogDir = (): string => {
-  return path.join(getAppDataPath(), 'creative-cafe', 'logs');
-};
-
 // 获取日志文件路径
-const getLogPath = (): string => {
-  return path.join(getLogDir(), 'setting-handler.log');
-};
+const getLogPath = (): string => getLogFilePath('setting-handler.log');
 
 // 简单日志函数
 const logToFile = (level: string, message: string, details?: string) => {

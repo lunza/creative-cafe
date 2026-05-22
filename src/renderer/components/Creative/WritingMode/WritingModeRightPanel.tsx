@@ -1,8 +1,9 @@
 import React, { useState, useCallback } from 'react';
-import { Tabs, Input, Button, Empty, Tag, Tooltip, Typography, Spin, Badge } from 'antd';
-import { BookOutlined, RobotOutlined, EyeOutlined, SearchOutlined, ReloadOutlined, GlobalOutlined, IdcardOutlined, UserOutlined, UnorderedListOutlined } from '@ant-design/icons';
+import { Tabs, Input, Button, Empty, Tag, Tooltip, Typography, Spin, Badge, Modal, Progress, Upload, message, Descriptions, Popconfirm } from 'antd';
+import { BookOutlined, RobotOutlined, EyeOutlined, SearchOutlined, ReloadOutlined, GlobalOutlined, IdcardOutlined, UserOutlined, UnorderedListOutlined, UploadOutlined, DeleteOutlined, StopOutlined, FileTextOutlined } from '@ant-design/icons';
+import type { UploadProps } from 'antd';
 import { theme } from 'antd';
-import { MaterialType } from '../../../shared/types/writing.types';
+import { MaterialItem, MaterialType } from '../../../shared/types/writing.types';
 import { useWritingMaterials } from './useWritingMaterials';
 import MaterialList from './MaterialList';
 
@@ -24,13 +25,19 @@ const WritingModeRightPanel: React.FC<WritingModeRightPanelProps> = ({ width, on
     filteredCharacters,
     filteredPersonas,
     filteredKnowledgeItems,
+    filteredWritingStyles,
     toggleMaterial,
+    toggleWritingStyle,
     getSelectedCount,
     refreshMaterials,
+    writingStyleLearning,
+    uploadWritingStyle,
+    cancelLearning,
   } = useWritingMaterials();
 
   const [activeMaterialTab, setActiveMaterialTab] = useState<string>('worldbook');
   const [selectedSummaryVisible, setSelectedSummaryVisible] = useState(false);
+  const [selectedStyleForPreview, setSelectedStyleForPreview] = useState<MaterialItem | null>(null);
 
   const handleRefresh = useCallback(() => {
     refreshMaterials();
@@ -47,7 +54,8 @@ const WritingModeRightPanel: React.FC<WritingModeRightPanelProps> = ({ width, on
   const selectedCharacterCount = getSelectedCount('character');
   const selectedPersonaCount = getSelectedCount('persona');
   const selectedKnowledgeCount = getSelectedCount('knowledge');
-  const totalSelected = selectedWorldBookCount + selectedCharacterCount + selectedPersonaCount + selectedKnowledgeCount;
+  const selectedWritingStyleCount = getSelectedCount('writing-style');
+  const totalSelected = selectedWorldBookCount + selectedCharacterCount + selectedPersonaCount + selectedKnowledgeCount + selectedWritingStyleCount;
 
   const materialSubTabs = [
     {
@@ -128,6 +136,159 @@ const WritingModeRightPanel: React.FC<WritingModeRightPanelProps> = ({ width, on
           type="knowledge"
           emptyText={searchQuery ? '未匹配的知识库条目' : '暂无知识库条目'}
         />
+      ),
+    },
+    {
+      key: 'writing-style',
+      label: (
+        <Badge count={selectedWritingStyleCount} showZero size="small" offset={[-4, 0]}>
+          <span>
+            <FileTextOutlined />
+            写作风格
+          </span>
+        </Badge>
+      ),
+      children: (
+        <div>
+          <div style={{ marginBottom: 12, display: 'flex', gap: 8 }}>
+            <Upload
+              accept=".txt"
+              showUploadList={false}
+              beforeUpload={(file) => {
+                if (!file.name.endsWith('.txt')) {
+                  message.error('仅支持 .txt 格式文件');
+                  return false;
+                }
+                if (file.size > 50 * 1024 * 1024) {
+                  message.error('文件大小不能超过 50MB');
+                  return false;
+                }
+                uploadWritingStyle(file.path || (file as any).path, file.name, file.size).then(result => {
+                  if (result.success) {
+                    message.success('开始文风学习，请在后台等待完成');
+                  } else {
+                    message.error(result.error || '上传失败');
+                  }
+                });
+                return false;
+              }}
+            >
+              <Button icon={<UploadOutlined />} size="small">
+                上传txt文件
+              </Button>
+            </Upload>
+          </div>
+
+          {writingStyleLearning.isLearning && (
+            <div style={{ 
+              marginBottom: 12, 
+              padding: '8px 12px', 
+              background: token.colorFillQuaternary, 
+              borderRadius: 6 
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  学习中: {writingStyleLearning.progress?.message || '处理中...'}
+                </Text>
+                <Popconfirm
+                  title="确认取消"
+                  description="确定要取消文风学习吗？"
+                  onConfirm={() => writingStyleLearning.taskId && cancelLearning(writingStyleLearning.taskId)}
+                  okText="确定"
+                  cancelText="取消"
+                >
+                  <Button icon={<StopOutlined />} size="small" danger>
+                    取消
+                  </Button>
+                </Popconfirm>
+              </div>
+              <Progress
+                percent={
+                  writingStyleLearning.progress?.totalChunks 
+                    ? Math.round((writingStyleLearning.progress.currentChunk / writingStyleLearning.progress.totalChunks) * 100)
+                    : 0
+                }
+                size="small"
+                status={
+                  writingStyleLearning.progress?.status === 'FAILED' ? 'exception' :
+                  writingStyleLearning.progress?.status === 'CANCELLED' ? 'exception' :
+                  'active'
+                }
+              />
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                {writingStyleLearning.progress?.phase === 'FILE_READING' && '正在读取文件...'}
+                {writingStyleLearning.progress?.phase === 'TEXT_SPLITTING' && '正在分割文本...'}
+                {writingStyleLearning.progress?.phase === 'BATCH_ANALYSIS' && 
+                  `正在分析第 ${writingStyleLearning.progress.currentChunk}/${writingStyleLearning.progress.totalChunks} 块`}
+                {writingStyleLearning.progress?.phase === 'RESULT_INTEGRATION' && '正在生成分析报告...'}
+                {writingStyleLearning.progress?.phase === 'COMPLETED' && '学习完成'}
+              </Text>
+            </div>
+          )}
+
+          <div style={{ flex: 1, overflow: 'auto', maxHeight: 'calc(100vh - 300px)' }}>
+            {filteredWritingStyles.length === 0 ? (
+              <Empty 
+                description={searchQuery ? '未匹配的写作风格' : '暂无已学习的写作风格，请上传txt文件开始学习'} 
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+              />
+            ) : (
+              filteredWritingStyles.map((item) => (
+                <div
+                  key={item.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '8px 12px',
+                    marginBottom: 4,
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                    background: item.isSelected ? token.colorPrimaryBg : 'transparent',
+                    border: `1px solid ${item.isSelected ? token.colorPrimary : token.colorBorder}`,
+                  }}
+                  onClick={() => toggleWritingStyle(item.id)}
+                >
+                  <div style={{ flex: 1, overflow: 'hidden' }}>
+                    <Text strong style={{ fontSize: 13 }}>{item.name}</Text>
+                    <br />
+                    <Text type="secondary" style={{ fontSize: 11 }} ellipsis>
+                      {item.description}
+                    </Text>
+                  </div>
+                  <div style={{ display: 'flex', gap: 4, marginLeft: 8 }}>
+                    <Button
+                      size="small"
+                      icon={<EyeOutlined />}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedStyleForPreview(item);
+                      }}
+                    />
+                    <Popconfirm
+                      title="确认删除"
+                      description="确定要删除该写作风格吗？此操作不可恢复。"
+                      onConfirm={(e) => {
+                        e?.stopPropagation();
+                        window.electronAPI?.writing?.style?.delete(item.id);
+                        refreshMaterials();
+                      }}
+                      okText="确定"
+                      cancelText="取消"
+                    >
+                      <Button
+                        size="small"
+                        icon={<DeleteOutlined />}
+                        danger
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </Popconfirm>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       ),
     },
   ];
@@ -332,6 +493,60 @@ const WritingModeRightPanel: React.FC<WritingModeRightPanelProps> = ({ width, on
       <div style={{ flex: 1, overflow: 'hidden', padding: '0 16px' }}>
         <Tabs defaultActiveKey="materials" items={tabItems} style={{ height: '100%' }} />
       </div>
+
+      <Modal
+        title={`写作风格分析: ${selectedStyleForPreview?.name || ''}`}
+        open={!!selectedStyleForPreview}
+        onCancel={() => setSelectedStyleForPreview(null)}
+        footer={[
+          <Button key="close" onClick={() => setSelectedStyleForPreview(null)}>
+            关闭
+          </Button>,
+        ]}
+        width={700}
+      >
+        {selectedStyleForPreview?.metadata?.analysis && (
+          <div style={{ maxHeight: '60vh', overflow: 'auto' }}>
+            <Descriptions column={1} size="small" bordered>
+              <Descriptions.Item label="风格概述">
+                {JSON.stringify(selectedStyleForPreview.metadata.analysis.styleOverview, null, 2)}
+              </Descriptions.Item>
+              <Descriptions.Item label="核心写作技巧">
+                <ul style={{ margin: 0, paddingLeft: 20 }}>
+                  {selectedStyleForPreview.metadata.analysis.coreTechniques?.map((t: string, i: number) => (
+                    <li key={i}>{t}</li>
+                  ))}
+                </ul>
+              </Descriptions.Item>
+              <Descriptions.Item label="语言特色">
+                {JSON.stringify(selectedStyleForPreview.metadata.analysis.languageFeatures, null, 2)}
+              </Descriptions.Item>
+              <Descriptions.Item label="叙事结构">
+                {JSON.stringify(selectedStyleForPreview.metadata.analysis.narrativeStructure, null, 2)}
+              </Descriptions.Item>
+              <Descriptions.Item label="可模仿要素">
+                {JSON.stringify(selectedStyleForPreview.metadata.analysis.imitableElements, null, 2)}
+              </Descriptions.Item>
+            </Descriptions>
+            <div style={{ marginTop: 16 }}>
+              <Text strong>完整分析报告:</Text>
+              <pre style={{ 
+                whiteSpace: 'pre-wrap', 
+                wordBreak: 'break-word',
+                background: token.colorFillQuaternary,
+                padding: 12,
+                borderRadius: 6,
+                marginTop: 8,
+                maxHeight: 300,
+                overflow: 'auto',
+                fontSize: 12
+              }}>
+                {selectedStyleForPreview.metadata.analysis.fullReport}
+              </pre>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 };

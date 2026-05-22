@@ -2,11 +2,17 @@ import { create } from 'zustand';
 import { WritingProject, WritingConfig, ExportFormat, ChapterOutline } from '../../shared/types/writing.types';
 import { MAX_UNDO_HISTORY, AUTO_SAVE_DELAY } from '../../shared/constants/writing.constants';
 
+interface OutlineHistoryEntry {
+  chapters: ChapterOutline[];
+  description: string;
+  timestamp: number;
+}
+
 interface WritingProjectState {
   projects: WritingProject[];
   currentProjectId: string | null;
   isLoading: boolean;
-  outlineHistory: ChapterOutline[][];
+  outlineHistory: OutlineHistoryEntry[];
   outlineHistoryIndex: number;
   isSaving: boolean;
   autoSaveTimer: NodeJS.Timeout | null;
@@ -135,13 +141,17 @@ export const useWritingProjectStore = create<WritingProjectState>((set, get) => 
   pushOutlineHistory: (chapters, description) => {
     const { outlineHistory, outlineHistoryIndex } = get();
     const newHistory = outlineHistory.slice(0, outlineHistoryIndex + 1);
-    newHistory.push(chapters.map(c => ({ ...c })));
-    if (newHistory.length > MAX_UNDO_HISTORY) {
-      newHistory.shift();
-    }
+    newHistory.push({
+      chapters: chapters.map(c => ({ ...c })),
+      description,
+      timestamp: Date.now()
+    });
+    const trimmedHistory = newHistory.length > MAX_UNDO_HISTORY
+      ? newHistory.slice(-MAX_UNDO_HISTORY)
+      : newHistory;
     set({
-      outlineHistory: newHistory,
-      outlineHistoryIndex: newHistory.length - 1
+      outlineHistory: trimmedHistory,
+      outlineHistoryIndex: trimmedHistory.length - 1
     });
   },
 
@@ -150,7 +160,7 @@ export const useWritingProjectStore = create<WritingProjectState>((set, get) => 
     if (outlineHistoryIndex <= 0) return null;
     const newIndex = outlineHistoryIndex - 1;
     set({ outlineHistoryIndex: newIndex });
-    return outlineHistory[newIndex].map(c => ({ ...c }));
+    return outlineHistory[newIndex].chapters.map(c => ({ ...c }));
   },
 
   redoOutline: () => {
@@ -158,7 +168,7 @@ export const useWritingProjectStore = create<WritingProjectState>((set, get) => 
     if (outlineHistoryIndex >= outlineHistory.length - 1) return null;
     const newIndex = outlineHistoryIndex + 1;
     set({ outlineHistoryIndex: newIndex });
-    return outlineHistory[newIndex].map(c => ({ ...c }));
+    return outlineHistory[newIndex].chapters.map(c => ({ ...c }));
   },
 
   canUndo: () => {

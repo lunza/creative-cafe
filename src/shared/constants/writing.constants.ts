@@ -110,3 +110,7 @@ export const MIN_CHAPTER_WORD_COUNT = 100;
 export const MAX_CHAPTER_WORD_COUNT = 50000;
 export const MAX_UNDO_HISTORY = 20;
 export const AUTO_SAVE_DELAY = 500;
+
+export const MAX_AI_SUGGESTION_HISTORY = 20;
+export const AI_SPLIT_TIMEOUT = 30000;
+export const AI_MERGE_TIMEOUT = 30000;
