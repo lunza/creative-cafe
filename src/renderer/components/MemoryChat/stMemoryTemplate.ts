@@ -163,7 +163,7 @@ export const DEFAULT_SETTINGS = {
   step_by_step_use_main_api: false,
   custom_api_url: 'http://127.0.0.1:5000/v1/chat/completions',
   custom_model_name: 'qwen3.5-27b-heretic-v3',
-  custom_temperature: 0.7,
+  custom_temperature: undefined,
   
   // 其他设置
   confirm_before_execution: false,

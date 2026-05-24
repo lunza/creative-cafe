@@ -534,12 +534,12 @@ const ChatManager: React.FC = () => {
       const aiConfig = {
         apiKey: setting?.api_key || '',
         apiUrl: setting?.api_url || 'http://127.0.0.1:5000',
-        modelName: setting?.model_name || 'qwen3.5-27b-heretic-v3',
+        modelName: setting?.model_name || (() => { throw new Error('未配置 AI 模型名称') })(),
         apiMode: setting?.api_mode || 'text_completion'
       };
 
       if (!aiConfig.modelName) {
-        aiConfig.modelName = 'qwen3.5-27b-heretic-v3';
+        throw new Error('未配置 AI 模型名称');
       }
 
       setProcessingConfig(aiConfig);
@@ -738,12 +738,12 @@ const ChatManager: React.FC = () => {
       const aiConfig = {
         apiKey: activeEngine?.api_key || '',
         apiUrl: activeEngine?.api_url || 'http://127.0.0.1:5000',
-        modelName: activeEngine?.model_name || 'qwen3.5-27b-heretic-v3',
+        modelName: activeEngine?.model_name || (() => { throw new Error('未配置 AI 模型名称') })(),
         apiMode: activeEngine?.api_mode || 'text_completion'
       };
 
       if (!aiConfig.modelName) {
-        aiConfig.modelName = 'qwen3.5-27b-heretic-v3';
+        throw new Error('未配置 AI 模型名称');
       }
 
       setProcessingConfig(aiConfig);

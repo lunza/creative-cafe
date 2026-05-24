@@ -19,8 +19,12 @@ export class AIService {
 
   // 确保配置是安全的，仅校验范围，不注入硬编码默认值
   private ensureSafeConfig(config: AIServiceConfig): AIServiceConfig {
-    const safeMaxTokens = this.sanitizeNumber(config.defaultMaxTokens, 4096, 1);
-    const safeTemperature = this.sanitizeNumber(config.defaultTemperature, 0.7, 0, 2);
+    const safeMaxTokens = config.defaultMaxTokens !== undefined
+      ? this.clampNumber(config.defaultMaxTokens, 1, undefined)
+      : undefined;
+    const safeTemperature = config.defaultTemperature !== undefined
+      ? this.clampNumber(config.defaultTemperature, 0, 2)
+      : undefined;
     const safeRetryAttempts = this.sanitizeNumber(config.retryAttempts, 0, 0);
     const safeRetryDelay = this.sanitizeNumber(config.retryDelay, 1000, 0);
     const safeTimeout = this.sanitizeNumber(config.timeout, 0, 0); // 默认无超时限制
@@ -70,6 +74,21 @@ export class AIService {
       return max;
     }
     
+    return num;
+  }
+
+  // 仅做范围校验，不注入默认值
+  private clampNumber(
+    value: number,
+    min: number,
+    max: number | undefined
+  ): number {
+    const num = Number(value);
+    if (isNaN(num) || !isFinite(num)) {
+      return min;
+    }
+    if (num < min) return min;
+    if (max !== undefined && num > max) return max;
     return num;
   }
 

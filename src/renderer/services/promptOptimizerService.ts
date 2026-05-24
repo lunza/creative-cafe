@@ -183,8 +183,8 @@ class PromptOptimizerService {
         systemPrompt,
         explanation: this.generateExplanation(request, systemPrompt),
         suggestedParameters: {
-          temperature: 0.7,
-          maxTokens: 2048,
+          temperature: undefined,
+          maxTokens: undefined,
           topP: 1.0
         },
         createdAt: new Date().toISOString()

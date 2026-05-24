@@ -752,11 +752,11 @@ const WorldBookManager: React.FC = () => {
       const apiUrl = activeEngine.api_url;
       const apiKey = activeEngine.api_key;
       const apiMode = activeEngine.api_mode;
-      const modelName = activeEngine.model_name || 'gpt-3.5-turbo';
+      const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
       const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
-      const maxTokens = Number(activeEngine.max_tokens) || 10240;
-      const temperature = Number(activeEngine.temperature) || 0.7;
-      const topP = Number(activeEngine.top_p) || 0.95;
+      const maxTokens = Number(activeEngine.max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })();
+      const temperature = Number(activeEngine.temperature) ?? (() => { throw new Error('未配置 temperature 参数') })();
+      const topP = Number(activeEngine.top_p) ?? (() => { throw new Error('未配置 top_p 参数') })();
       
       addLog(`[WorldBook] AI排序API配置: URL=${apiUrl}, Mode=${apiMode}, Model=${modelName}, Transmission=${apiKeyTransmission}, MaxTokens=${maxTokens}, Temperature=${temperature}, TopP=${topP}`);
       
@@ -1094,11 +1094,11 @@ const WorldBookManager: React.FC = () => {
       const apiUrl = activeEngine.api_url;
       const apiKey = activeEngine.api_key;
       const apiMode = activeEngine.api_mode;
-      const modelName = activeEngine.model_name || 'gpt-3.5-turbo';
+      const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
       const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
-      const maxTokens = Number(activeEngine.max_tokens) || 10240;
-      const temperature = Number(activeEngine.temperature) || 0.7;
-      const topP = Number(activeEngine.top_p) || 0.95;
+      const maxTokens = Number(activeEngine.max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })();
+      const temperature = Number(activeEngine.temperature) ?? (() => { throw new Error('未配置 temperature 参数') })();
+      const topP = Number(activeEngine.top_p) ?? (() => { throw new Error('未配置 top_p 参数') })();
       
       addLog(`[WorldBook] API配置: URL=${apiUrl}, Mode=${apiMode}, Model=${modelName}, Transmission=${apiKeyTransmission}, MaxTokens=${maxTokens}, Temperature=${temperature}, TopP=${topP}`);
       
@@ -1193,11 +1193,11 @@ const WorldBookManager: React.FC = () => {
       const apiUrl = activeEngine.api_url;
       const apiKey = activeEngine.api_key;
       const apiMode = activeEngine.api_mode;
-      const modelName = activeEngine.model_name || 'gpt-3.5-turbo';
+      const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
       const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
-      const maxTokens = Number(activeEngine.max_tokens) || 10240;
-      const temperature = Number(activeEngine.temperature) || 0.7;
-      const topP = Number(activeEngine.top_p) || 0.95;
+      const maxTokens = Number(activeEngine.max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })();
+      const temperature = Number(activeEngine.temperature) ?? (() => { throw new Error('未配置 temperature 参数') })();
+      const topP = Number(activeEngine.top_p) ?? (() => { throw new Error('未配置 top_p 参数') })();
       
       addLog(`[WorldBook] 一键翻译配置: URL=${apiUrl}, Mode=${apiMode}, Model=${modelName}, Transmission=${apiKeyTransmission}, MaxTokens=${maxTokens}, Temperature=${temperature}, TopP=${topP}`);
       
@@ -1383,11 +1383,11 @@ const WorldBookManager: React.FC = () => {
       const apiUrl = activeEngine.api_url;
       const apiKey = activeEngine.api_key;
       const apiMode = activeEngine.api_mode;
-      const modelName = activeEngine.model_name || 'gpt-3.5-turbo';
+      const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
       const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
-      const maxTokens = Number(activeEngine.max_tokens) || 10240;
-      const temperature = Number(activeEngine.temperature) || 0.7;
-      const topP = Number(activeEngine.top_p) || 0.95;
+      const maxTokens = Number(activeEngine.max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })();
+      const temperature = Number(activeEngine.temperature) ?? (() => { throw new Error('未配置 temperature 参数') })();
+      const topP = Number(activeEngine.top_p) ?? (() => { throw new Error('未配置 top_p 参数') })();
       
       addLog(`[WorldBook] 一键润色配置: URL=${apiUrl}, Mode=${apiMode}, Model=${modelName}, Transmission=${apiKeyTransmission}, MaxTokens=${maxTokens}, Temperature=${temperature}, TopP=${topP}`);
       addLog(`[WorldBook] 用户一键润色要求: ${polishAllRequirements || '无'}`, 'info');
@@ -1529,11 +1529,11 @@ const WorldBookManager: React.FC = () => {
       const apiUrl = activeEngine.api_url;
       const apiKey = activeEngine.api_key;
       const apiMode = activeEngine.api_mode;
-      const modelName = activeEngine.model_name || 'gpt-3.5-turbo';
+      const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
       const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
-      const maxTokens = Number(activeEngine.max_tokens) || 10240;
-      const temperature = Number(activeEngine.temperature) || 0.7;
-      const topP = Number(activeEngine.top_p) || 0.95;
+      const maxTokens = Number(activeEngine.max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })();
+      const temperature = Number(activeEngine.temperature) ?? (() => { throw new Error('未配置 temperature 参数') })();
+      const topP = Number(activeEngine.top_p) ?? (() => { throw new Error('未配置 top_p 参数') })();
       
       addLog(`[WorldBook] API配置: URL=${apiUrl}, Mode=${apiMode}, Model=${modelName}, Transmission=${apiKeyTransmission}, MaxTokens=${maxTokens}, Temperature=${temperature}, TopP=${topP}`);
       addLog(`[WorldBook] 用户润色要求: ${polishRequirements || '无'}`, 'info');
@@ -2075,9 +2075,9 @@ ${worldBookDescription}`;
       throw new Error('AI引擎API地址未配置');
     }
     
-    const maxTokensVal = Number(max_tokens) || 512;
-    const tempVal = Number(temperature) || 0.7;
-    const topPVal = Number(top_p) || 0.95;
+    const maxTokensVal = Number(max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })();
+    const tempVal = Number(temperature) ?? (() => { throw new Error('未配置 temperature 参数') })();
+    const topPVal = Number(top_p) ?? (() => { throw new Error('未配置 top_p 参数') })();
     
     addLog(`[WorldBook] generateKeywords: 开始生成关键词`);
     addLog(`[WorldBook] API配置: URL=${api_url}, Mode=${api_mode}, Model=${model_name}, Transmission=${api_key_transmission}, MaxTokens=${maxTokensVal}, Temperature=${tempVal}, TopP=${topPVal}`);
@@ -2570,11 +2570,11 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
       const apiUrl = activeEngine.api_url;
       const apiKey = activeEngine.api_key;
       const apiMode = activeEngine.api_mode;
-      const modelName = activeEngine.model_name || 'gpt-3.5-turbo';
+      const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
       const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
-      const maxTokens = Number(activeEngine.max_tokens) || 10240;
-      const temperature = Number(activeEngine.temperature) || 0.7;
-      const topP = Number(activeEngine.top_p) || 0.95;
+      const maxTokens = Number(activeEngine.max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })();
+      const temperature = Number(activeEngine.temperature) ?? (() => { throw new Error('未配置 temperature 参数') })();
+      const topP = Number(activeEngine.top_p) ?? (() => { throw new Error('未配置 top_p 参数') })();
       
       addLog(`[WorldBook] AI生成条目API配置: URL=${apiUrl}, Mode=${apiMode}, Model=${modelName}, Transmission=${apiKeyTransmission}, MaxTokens=${maxTokens}, Temperature=${temperature}, TopP=${topP}`);
       
@@ -2892,11 +2892,11 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
       const apiUrl = activeEngine.api_url;
       const apiKey = activeEngine.api_key;
       const apiMode = activeEngine.api_mode;
-      const modelName = activeEngine.model_name || 'gpt-3.5-turbo';
+      const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
       const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
-      const maxTokens = Number(activeEngine.max_tokens) || 10240;
-      const temperature = Number(activeEngine.temperature) || 0.7;
-      const topP = Number(activeEngine.top_p) || 0.95;
+      const maxTokens = Number(activeEngine.max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })();
+      const temperature = Number(activeEngine.temperature) ?? (() => { throw new Error('未配置 temperature 参数') })();
+      const topP = Number(activeEngine.top_p) ?? (() => { throw new Error('未配置 top_p 参数') })();
       
       if (!apiUrl) {
         message.error('API地址不能为空');
@@ -3070,11 +3070,11 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
       const apiUrl = activeEngine.api_url;
       const apiKey = activeEngine.api_key;
       const apiMode = activeEngine.api_mode;
-      const modelName = activeEngine.model_name || 'gpt-3.5-turbo';
+      const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
       const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
-      const maxTokens = Number(activeEngine.max_tokens) || 10240;
-      const temperature = Number(activeEngine.temperature) || 0.7;
-      const topP = Number(activeEngine.top_p) || 0.95;
+      const maxTokens = Number(activeEngine.max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })();
+      const temperature = Number(activeEngine.temperature) ?? (() => { throw new Error('未配置 temperature 参数') })();
+      const topP = Number(activeEngine.top_p) ?? (() => { throw new Error('未配置 top_p 参数') })();
       
       addLog(`[WorldBook] 关键词扩写API配置: URL=${apiUrl}, Mode=${apiMode}, Model=${modelName}, Transmission=${apiKeyTransmission}, MaxTokens=${maxTokens}, Temperature=${temperature}, TopP=${topP}`);
       
@@ -3215,11 +3215,11 @@ ${worldBookDescription ? worldBookDescription : '无特定世界书背景'}
       const apiUrl = activeEngine.api_url;
       const apiKey = activeEngine.api_key;
       const apiMode = activeEngine.api_mode;
-      const modelName = activeEngine.model_name || 'gpt-3.5-turbo';
+      const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
       const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
-      const maxTokens = Number(activeEngine.max_tokens) || 10240;
-      const temperature = Number(activeEngine.temperature) || 0.7;
-      const topP = Number(activeEngine.top_p) || 0.95;
+      const maxTokens = Number(activeEngine.max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })();
+      const temperature = Number(activeEngine.temperature) ?? (() => { throw new Error('未配置 temperature 参数') })();
+      const topP = Number(activeEngine.top_p) ?? (() => { throw new Error('未配置 top_p 参数') })();
       
       addLog(`[WorldBook] 生成描述API配置: URL=${apiUrl}, Mode=${apiMode}, Model=${modelName}, Transmission=${apiKeyTransmission}, MaxTokens=${maxTokens}, Temperature=${temperature}, TopP=${topP}`);
       
@@ -3603,11 +3603,11 @@ ${charactersInfo}
       const apiUrl = activeEngine.api_url;
       const apiKey = activeEngine.api_key;
       const apiMode = activeEngine.api_mode;
-      const modelName = activeEngine.model_name || 'gpt-3.5-turbo';
+      const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
       const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
-      const maxTokens = Number(activeEngine.max_tokens) || 10240;
-      const temperature = Number(activeEngine.temperature) || 0.7;
-      const topP = Number(activeEngine.top_p) || 0.95;
+      const maxTokens = Number(activeEngine.max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })();
+      const temperature = Number(activeEngine.temperature) ?? (() => { throw new Error('未配置 temperature 参数') })();
+      const topP = Number(activeEngine.top_p) ?? (() => { throw new Error('未配置 top_p 参数') })();
       const topK = Number(activeEngine.top_k) || undefined;
       const minP = Number(activeEngine.min_p) || undefined;
       const frequencyPenalty = Number(activeEngine.frequency_penalty) || undefined;
@@ -4132,7 +4132,7 @@ ${charactersInfo}
       for (const entry of newEntries) {
         if (!entry.tags || entry.tags.length === 0) {
           addLog(`[WorldBook] 条目缺少标签，正在生成: ${entry.comment || '无注释'}`, 'info');
-          const tags = await generateTagsForEntry(entry, apiUrl, apiKey, apiMode, modelName, apiKeyTransmission, worldBookDescription, Number(activeEngine.max_tokens) || 512, Number(activeEngine.temperature) || 0.7, Number(activeEngine.top_p) || 0.95);
+          const tags = await generateTagsForEntry(entry, apiUrl, apiKey, apiMode, modelName, apiKeyTransmission, worldBookDescription, Number(activeEngine.max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })(), Number(activeEngine.temperature) ?? (() => { throw new Error('未配置 temperature 参数') })(), Number(activeEngine.top_p) ?? (() => { throw new Error('未配置 top_p 参数') })());
           entry.tags = tags;
         }
       }

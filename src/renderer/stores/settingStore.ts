@@ -158,6 +158,20 @@ export const useSettingStore = create<SettingState>((set, get) => ({
         return { success: false, error: '请先设置AI引擎API地址' };
       }
 
+      if (!activeEngine.model_name) {
+        addLog('测试失败：请先设置AI模型名称', 'error', {
+          category: 'ai',
+          context: {
+            errorType: 'ConfigurationError',
+            errorLocation: 'settingStore.ts:160:testConnection',
+            errorMessage: '请先设置AI模型名称'
+          },
+          details: '测试连通性失败，请先在设置中配置AI引擎的模型名称。'
+        });
+        set({ error: '请先设置AI模型名称', loading: false });
+        return { success: false, error: '请先设置AI模型名称' };
+      }
+
       addLog('测试连通性 - 激活引擎信息', 'debug', {
         category: 'ai',
         context: {
@@ -200,7 +214,7 @@ export const useSettingStore = create<SettingState>((set, get) => ({
           'Content-Type': 'application/json'
         },
         body: apiMode === 'chat_completion' ? {
-          model: activeEngine.model_name || 'gpt-3.5-turbo',
+          model: activeEngine.model_name,
           messages: [
             {
               role: 'system',
@@ -211,13 +225,13 @@ export const useSettingStore = create<SettingState>((set, get) => ({
               content: '测试连接'
             }
           ],
-          max_tokens: 1,
-          temperature: 0.7
+          max_tokens: activeEngine.max_tokens ?? 1,
+          temperature: activeEngine.temperature ?? 0.7
         } : {
-          model: activeEngine.model_name || 'gpt-3.5-turbo',
+          model: activeEngine.model_name,
           prompt: '测试连接',
-          max_tokens: 1,
-          temperature: 0.7
+          max_tokens: activeEngine.max_tokens ?? 1,
+          temperature: activeEngine.temperature ?? 0.7
         },
         timeout: 5000
       };
