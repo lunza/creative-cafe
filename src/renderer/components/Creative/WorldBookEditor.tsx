@@ -210,7 +210,7 @@ const WorldBookEditor: React.FC = () => {
 
       const apiUrl = buildEngineApiUrl(activeEngine);
       const apiKey = activeEngine.api_key;
-      const modelName = activeEngine.model_name || 'gpt-3.5-turbo';
+      const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
       const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
       const apiMode = activeEngine.api_mode || 'chat_completion';
 
@@ -240,15 +240,15 @@ const WorldBookEditor: React.FC = () => {
               content: prompt
             }
           ],
-          max_tokens: Number(activeEngine.max_tokens) || 10240,
-          temperature: Number(activeEngine.temperature) || 0.7
+          max_tokens: Number(activeEngine.max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })(),
+          temperature: Number(activeEngine.temperature) ?? (() => { throw new Error('未配置 temperature 参数') })()
         };
       } else {
         requestBody = {
           model: modelName,
           prompt,
-          max_tokens: Number(activeEngine.max_tokens) || 10240,
-          temperature: Number(activeEngine.temperature) || 0.7
+          max_tokens: Number(activeEngine.max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })(),
+          temperature: Number(activeEngine.temperature) ?? (() => { throw new Error('未配置 temperature 参数') })()
         };
       }
 

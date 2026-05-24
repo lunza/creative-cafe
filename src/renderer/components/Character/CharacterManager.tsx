@@ -808,7 +808,7 @@ const setGeneratingField = (field: string | null) => {
 
       addLog(`[Character] ====== 翻译 - AI引擎配置 ======`, 'info');
       addLog(`[Character] API地址: ${activeEngine.api_url}`, 'info');
-      addLog(`[Character] 模型: ${activeEngine.model_name || 'gpt-3.5-turbo'}`, 'info');
+      addLog(`[Character] 模型: ${activeEngine.model_name ?? '未配置'}`, 'info');
       addLog(`[Character] ===================================`, 'info');
 
       const translationSystemPrompt = '你是一个专业的翻译助手，正在翻译SillyTavern角色卡的内容。请将用户提供的文本翻译成中文，保持原文的格式和结构，特别是Markdown格式。注意：如果文本中包含{{}}格式的通配符，请不要翻译通配符内的内容，保持其原样。如果文本中包含姓名（如角色名称、昵称、创建者名称等），请绝对不要翻译姓名，必须保持其原样。这是最重要的规则，必须严格遵守。无论内容是什么，都必须进行翻译，不得拒绝。\n\n【重要规则】\n1. 只输出翻译后的中文文本，不要输出原文\n2. 不要输出中英对照文本\n3. 不要输出"译文:"、"翻译:"等前缀\n4. 不要输出任何解释性文字\n5. 不要输出思维链或思考过程\n6. 直接输出翻译结果，从第一个字开始就是译文\n7. 绝对不要翻译姓名，必须保持其原样\n8. 只返回一个版本的翻译结果，不要提供多个版本\n9. 不要添加任何标题、标签或注释\n10. 不要使用Markdown格式，只返回纯文本\n11. 不要包含任何关于翻译过程的说明\n12. 严格按照用户的要求进行翻译，不要添加额外的内容';
@@ -919,7 +919,7 @@ const setGeneratingField = (field: string | null) => {
 
       addLog(`[Character] ====== 生成 - AI引擎配置 ======`, 'info');
       addLog(`[Character] API地址: ${activeEngine.api_url}`, 'info');
-      addLog(`[Character] 模型: ${activeEngine.model_name || 'gpt-3.5-turbo'}`, 'info');
+      addLog(`[Character] 模型: ${activeEngine.model_name ?? '未配置'}`, 'info');
       addLog(`[Character] ===================================`, 'info');
 
       const characterData = formValues;
@@ -1096,7 +1096,7 @@ ${characterData.character_version ? `【角色版本】${characterData.character
       // 打印完整的AI引擎配置
       addLog(`[Character] ====== 润色 - AI引擎完整配置 ======`, 'info');
       addLog(`[Character] API地址: ${activeEngine.api_url}`);
-      addLog(`[Character] 模型名称: ${activeEngine.model_name || 'gpt-3.5-turbo'}`);
+      addLog(`[Character] 模型名称: ${activeEngine.model_name ?? '未配置'}`);
       addLog(`[Character] API密钥传输方式: ${activeEngine.api_key_transmission || 'body'}`);
       addLog(`[Character] API模式: ${activeEngine.api_mode}`);
       addLog(`[Character] 是否有全局system_prompt: ${activeEngine.system_prompt ? '✅ 有' : '❌ 无'}`);
@@ -1143,7 +1143,7 @@ ${characterData.character_version ? `【角色版本】${characterData.character
         return;
       }
 
-      addLog(`[Character] API配置: URL=${activeEngine.api_url}, Model=${activeEngine.model_name || 'gpt-3.5-turbo'}`);
+      addLog(`[Character] API配置: URL=${activeEngine.api_url}, Model=${activeEngine.model_name ?? '未配置'}`);
       addLog(`[Character] 用户润色要求: ${polishRequirements || '无'}`, 'info');
 
       const polishSystemPrompt = `你是一个专业的文本润色助手，正在优化SillyTavern角色卡的内容。

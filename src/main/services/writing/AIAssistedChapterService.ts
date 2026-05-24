@@ -54,12 +54,36 @@ export class AIAssistedChapterService {
     const engines = settings?.aiEngines || [];
     const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
 
+    if (!activeEngine?.model_name) {
+      throw new Error('未配置 AI 模型名称，请在设置中配置 AI 引擎');
+    }
+
     return {
       baseUrl: activeEngine?.api_url || settings?.ai?.baseUrl || '',
       apiKey: activeEngine?.api_key || settings?.ai?.apiKey || '',
       apiKeyTransmission: activeEngine?.api_key_transmission || 'header',
-      model: activeEngine?.model_name || 'gpt-4o',
+      model: activeEngine.model_name,
       systemPrompt: activeEngine?.system_prompt || ''
+    };
+  }
+
+  private async getEngineConfig(): Promise<{ temperature: number; maxTokens: number }> {
+    const storageService = getStorageService();
+    const settings = storageService.getSettings();
+    const engines = settings?.aiEngines || [];
+    const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
+
+    if (activeEngine?.temperature === undefined || activeEngine?.temperature === null) {
+      throw new Error('未配置 AI 温度参数，请在设置中配置 AI 引擎');
+    }
+
+    if (activeEngine?.max_tokens === undefined || activeEngine?.max_tokens === null) {
+      throw new Error('未配置 AI 最大令牌数，请在设置中配置 AI 引擎');
+    }
+
+    return {
+      temperature: activeEngine.temperature,
+      maxTokens: activeEngine.max_tokens
     };
   }
 
@@ -214,10 +238,12 @@ ${chaptersInfo}
       { role: 'user', content: userPrompt }
     ];
 
+    const engineConfig = await this.getEngineConfig();
+
     const modelConfig: ModelConfig = request.modelConfig || {
       model: config.model,
-      temperature: 0.7,
-      maxTokens: 4000
+      temperature: engineConfig.temperature,
+      maxTokens: engineConfig.maxTokens
     };
 
     try {
@@ -256,10 +282,12 @@ ${chaptersInfo}
       { role: 'user', content: userPrompt }
     ];
 
+    const engineConfig = await this.getEngineConfig();
+
     const modelConfig: ModelConfig = request.modelConfig || {
       model: config.model,
-      temperature: 0.7,
-      maxTokens: 4000
+      temperature: engineConfig.temperature,
+      maxTokens: engineConfig.maxTokens
     };
 
     try {

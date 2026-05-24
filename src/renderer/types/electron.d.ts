@@ -338,6 +338,19 @@ interface ElectronAPI {
       onComplete: (callback: (data: { taskId: string; resource: WritingStyleResource }) => void) => () => void;
       onError: (callback: (data: { taskId: string; error: string }) => void) => () => void;
     };
+    // 表格整理 API
+    table: {
+      getTableData: (projectId: string) => Promise<{ sheets: string[]; headers: Record<string, string[]>; data: Record<string, Record<string, any>[]>; sheetDescriptions: Record<string, string> }>;
+      saveTableData: (projectId: string, sheetName: string, sheetData: Record<string, any>[]) => Promise<void>;
+      clearTableData: (projectId: string) => Promise<void>;
+      updateRowInTable: (projectId: string, sheetName: string, rowIndex: number, rowData: Record<string, any>) => Promise<boolean>;
+      getTableConfig: (projectId: string) => Promise<{ enabled: boolean; autoOrganize: boolean; organizeMode: 'sync' | 'async'; associatedTemplateId: string | null; associatedTemplateName: string } | null>;
+      saveTableConfig: (projectId: string, config: { enabled: boolean; autoOrganize: boolean; organizeMode: 'sync' | 'async'; associatedTemplateId: string | null; associatedTemplateName: string }) => Promise<void>;
+      associateTableTemplate: (projectId: string, templateId: string, templateName: string, templateSheets: Array<{ name: string; headers: string[]; description?: string }>) => Promise<{ success: boolean; error?: string }>;
+      getAllTemplates: () => Promise<{ success: boolean; templates: any[]; error?: string }>;
+      organizeTable: (projectId: string, modelConfig: any, chapterIndex?: number) => Promise<{ success: boolean; message: string; processedCount?: number; errorCount?: number; errors?: string[] }>;
+      getOrganizeProgress: (projectId: string) => Promise<{ progress: number; status: string } | null>;
+    };
   };
 }
 

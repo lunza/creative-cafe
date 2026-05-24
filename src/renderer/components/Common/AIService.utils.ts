@@ -130,8 +130,8 @@ export class AIUtils {
       apiKey: apiKey || config.defaultApiKey,
       apiKeyTransmission,
       messages: processedMessages,
-      temperature: temperature ?? config.defaultTemperature ?? 0.7,
-      max_tokens: ensurePositiveInteger(max_tokens ?? maxTokens ?? config.defaultMaxTokens, 1000),
+      temperature: temperature ?? config.defaultTemperature,
+      max_tokens: max_tokens ?? maxTokens ?? config.defaultMaxTokens,
     };
   }
 
@@ -230,12 +230,12 @@ export class AIConfigValidator {
       return { valid: false, error: '配置不能为空' };
     }
 
-    if (!config.defaultModel || typeof config.defaultModel !== 'string') {
+    if (config.defaultModel === undefined || typeof config.defaultModel !== 'string') {
       return { valid: false, error: '默认模型必须是字符串' };
     }
 
-    if (!config.defaultBaseUrl || typeof config.defaultBaseUrl !== 'string') {
-      return { valid: false, error: 'API 基础 URL 不能为空' };
+    if (config.defaultBaseUrl === undefined || typeof config.defaultBaseUrl !== 'string') {
+      return { valid: false, error: 'API 基础 URL 必须是字符串' };
     }
 
     if (config.defaultTemperature !== undefined && (typeof config.defaultTemperature !== 'number' || config.defaultTemperature < 0 || config.defaultTemperature > 2)) {
@@ -263,11 +263,11 @@ export class AIConfigValidator {
 
   static createDefaultConfig(): AIServiceConfig {
     return {
-      defaultModel: 'gpt-3.5-turbo',
-      defaultBaseUrl: 'http://127.0.0.1:5000',
+      defaultModel: '',
+      defaultBaseUrl: '',
       defaultApiKey: '',
-      defaultTemperature: 0.7,
-      defaultMaxTokens: 4096,
+      defaultTemperature: undefined,
+      defaultMaxTokens: undefined,
       retryAttempts: 3,
       retryDelay: 1000,
       timeout: 600000,

@@ -60,8 +60,8 @@ export const DEFAULT_WRITING_CONFIG = {
   narrativePerspective: NarrativePerspective.THIRD_PERSON,
   targetWordCount: 10000,
   chapterCount: 10,
-  temperature: 0.8,
-  maxTokens: 8000,
+  temperature: undefined,
+  maxTokens: undefined,
   model: 'gpt-4o'
 };
 

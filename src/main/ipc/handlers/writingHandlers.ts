@@ -10,10 +10,10 @@ import { promptBuilder } from '../../services/writing/PromptBuilder';
 import { aiAssistedChapterService } from '../../services/writing/AIAssistedChapterService';
 import { plotCheckerService, PlotCheckRequestData } from '../../services/writing/PlotCheckerService';
 import { logicCheckRecorder } from '../../services/writing/LogicCheckRecorder';
-import { chunkedCheckService, ChunkedCheckConfig } from '../../services/writing/ChunkedCheckService';
 import { addLog } from '../../services/memory/chatLogService';
 import { worldBookService } from '../../services/worldBookService';
 import { getStorageService } from '../../services/storageService';
+import { tableTemplateService } from '../../services/memory/tableTemplateService';
 import {
   WritingConfig,
   WritingProject,
@@ -320,7 +320,7 @@ export function registerWritingHandlers(): void {
           completedChapters: 0,
           generationSettings: {
             model: config.modelConfig?.model || '',
-            temperature: config.modelConfig?.temperature || 0.7
+            temperature: config.modelConfig?.temperature ?? (() => { throw new Error('未配置 temperature 参数') })()
           },
           continuityInfo: {
             foreshadowing: [],
@@ -946,9 +946,9 @@ export function registerWritingHandlers(): void {
       const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
 
       const modelConfig: ModelConfig = {
-        model: activeEngine?.model_name || project.config?.modelConfig?.model || 'gpt-4o',
-        temperature: Number(activeEngine?.temperature) ?? project.config?.modelConfig?.temperature ?? 0.3,
-        maxTokens: Number(activeEngine?.max_tokens) ?? project.config?.modelConfig?.maxTokens ?? 4000
+        model: activeEngine?.model_name ?? project.config?.modelConfig?.model ?? (() => { throw new Error('未配置 AI 模型名称') })(),
+        temperature: Number(activeEngine?.temperature) ?? project.config?.modelConfig?.temperature ?? (() => { throw new Error('未配置 temperature 参数') })(),
+        maxTokens: Number(activeEngine?.max_tokens) ?? project.config?.modelConfig?.maxTokens ?? (() => { throw new Error('未配置 max_tokens 参数') })()
       };
 
       addLog(`模型配置: ${JSON.stringify(modelConfig)}`, 'debug');
@@ -1014,9 +1014,9 @@ export function registerWritingHandlers(): void {
       const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
 
       const modelConfig: ModelConfig = {
-        model: activeEngine?.model_name || request.modelConfig?.model || 'gpt-4o',
-        temperature: Number(activeEngine?.temperature) ?? request.modelConfig?.temperature ?? 0.3,
-        maxTokens: Number(activeEngine?.max_tokens) ?? request.modelConfig?.maxTokens ?? 4000
+        model: activeEngine?.model_name ?? request.modelConfig?.model ?? (() => { throw new Error('未配置 AI 模型名称') })(),
+        temperature: Number(activeEngine?.temperature) ?? request.modelConfig?.temperature ?? (() => { throw new Error('未配置 temperature 参数') })(),
+        maxTokens: Number(activeEngine?.max_tokens) ?? request.modelConfig?.maxTokens ?? (() => { throw new Error('未配置 max_tokens 参数') })()
       };
 
       addLog(`【自动修正】模型配置: ${JSON.stringify(modelConfig)}`, 'debug');
@@ -1069,90 +1069,165 @@ export function registerWritingHandlers(): void {
     }
   });
 
-  ipcMain.handle('writing:startChunkedCheck', async (_event, config: { projectId: string; outline: any; chapterContents: Record<string, string>; resources: any; novelType?: string; writingStyle?: string; modelConfig?: any; chunks?: any[] }) => {
+  // ========== Table Management ==========
+
+  ipcMain.handle('writing:table:getTableData', async (_event, projectId: string) => {
     try {
-      addLog('===== 写作模式: 开始分片检查 =====', 'debug');
-      
-      // Read model config from active AI engine settings
-      const storageService = getStorageService();
-      const settings = storageService.getSettings();
-      const engines = settings?.aiEngines || [];
-      const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
-
-      const modelConfig: ModelConfig = {
-        model: activeEngine?.model_name || config.modelConfig?.model || 'gpt-4o',
-        temperature: Number(activeEngine?.temperature) ?? config.modelConfig?.temperature ?? 0.3,
-        maxTokens: Number(activeEngine?.max_tokens) ?? config.modelConfig?.maxTokens ?? 4000
-      };
-
-      addLog(`【分片检查】模型配置: ${JSON.stringify(modelConfig)}`, 'debug');
-
-      const checkConfig: ChunkedCheckConfig = {
-        projectId: config.projectId,
-        outline: config.outline,
-        chapterContents: config.chapterContents,
-        resources: config.resources,
-        novelType: config.novelType,
-        writingStyle: config.writingStyle,
-        modelConfig
-      };
-
-      const progress = await chunkedCheckService.startCheck(checkConfig, config.chunks);
-
-      addLog('===== 写作模式: 分片检查完成 =====', 'debug');
-      return { success: true, progress, error: null };
+      const data = await writingStorageService.getTableData(projectId);
+      return { success: true, data };
     } catch (error) {
-      addLog('===== 写作模式: 分片检查错误 =====', 'error');
+      return {
+        success: false,
+        data: null,
+        error: error instanceof Error ? error.message : '获取表格数据失败'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:table:saveTableData', async (_event, projectId: string, sheetName: string, sheetData: Record<string, any>[]) => {
+    try {
+      await writingStorageService.saveTableData(projectId, sheetName, sheetData);
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '保存表格数据失败'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:table:clearTableData', async (_event, projectId: string) => {
+    try {
+      await writingStorageService.clearTableData(projectId);
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '清空表格数据失败'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:table:updateRowInTable', async (_event, projectId: string, sheetName: string, rowIndex: number, rowData: Record<string, any>) => {
+    try {
+      const result = await writingStorageService.updateRowInTable(projectId, sheetName, rowIndex, rowData);
+      return { success: true, result };
+    } catch (error) {
+      return {
+        success: false,
+        result: false,
+        error: error instanceof Error ? error.message : '更新行数据失败'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:table:getTableConfig', async (_event, projectId: string) => {
+    try {
+      const config = await writingStorageService.getTableConfig(projectId);
+      return { success: true, config };
+    } catch (error) {
+      return {
+        success: false,
+        config: null,
+        error: error instanceof Error ? error.message : '获取表格配置失败'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:table:saveTableConfig', async (_event, projectId: string, config: any) => {
+    try {
+      await writingStorageService.saveTableConfig(projectId, config);
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '保存表格配置失败'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:table:associateTableTemplate', async (_event, projectId: string, templateId: string, templateName: string, templateSheets: Array<{ name: string; headers: string[]; description?: string }>) => {
+    try {
+      console.log('[DEBUG IPC] associateTableTemplate 接收参数:', {
+        projectId,
+        templateId,
+        templateName,
+        templateSheetsType: typeof templateSheets,
+        templateSheetsIsArray: Array.isArray(templateSheets),
+        templateSheetsLength: templateSheets?.length,
+        templateSheetsFirst: templateSheets?.[0]
+      });
+      if (!templateSheets || !Array.isArray(templateSheets) || templateSheets.length === 0) {
+        console.error('[DEBUG IPC] 模板页签数据为空或格式错误');
+        return { success: false, error: '模板页签数据为空' };
+      }
+      await writingStorageService.associateTableTemplate(projectId, templateId, templateName, templateSheets);
+      return { success: true };
+    } catch (error) {
+      console.error('[writing:table:associateTableTemplate] Error:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '关联模板失败'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:table:getAllTemplates', async () => {
+    try {
+      const templates = tableTemplateService.getAllTemplates();
+      return { success: true, templates };
+    } catch (error) {
+      console.error('[writing:table:getAllTemplates] Error:', error);
+      return {
+        success: false,
+        templates: [],
+        error: error instanceof Error ? error.message : '获取模板列表失败'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:table:organizeTable', async (event, projectId: string, modelConfig: ModelConfig, chapterIndex?: number) => {
+    try {
+      console.log('[WritingOrganize] IPC handler 收到请求:', { projectId, chapterIndex });
+      const result = await writingStorageService.organizeTable(
+        projectId,
+        modelConfig,
+        chapterIndex,
+        // onProgress callback - 发送进度事件到渲染进程
+        (current: number, total: number, message: string, percent?: number) => {
+          if (event.sender && !event.sender.isDestroyed()) {
+            event.sender.send('writing:table:organizeProgress', projectId, {
+              current,
+              total,
+              message,
+              percent: percent || 0,
+              timestamp: Date.now()
+            });
+          }
+        }
+      );
+      return { success: true, ...result };
+    } catch (error) {
+      return {
+        success: false,
+        processedCount: 0,
+        errorCount: 0,
+        errors: [error instanceof Error ? error.message : '整理失败'],
+        error: error instanceof Error ? error.message : '整理失败'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:table:getOrganizeProgress', async (_event, projectId: string) => {
+    try {
+      const progress = await writingStorageService.getOrganizeProgress(projectId);
+      return { success: true, progress };
+    } catch (error) {
       return {
         success: false,
         progress: null,
-        error: error instanceof Error ? error.message : '分片检查失败'
+        error: error instanceof Error ? error.message : '获取进度失败'
       };
-    }
-  });
-
-  ipcMain.handle('writing:pauseChunkedCheck', async () => {
-    try {
-      chunkedCheckService.pause();
-      return { success: true };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : '暂停失败' };
-    }
-  });
-
-  ipcMain.handle('writing:resumeChunkedCheck', async () => {
-    try {
-      chunkedCheckService.resume();
-      return { success: true };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : '继续失败' };
-    }
-  });
-
-  ipcMain.handle('writing:stopChunkedCheck', async () => {
-    try {
-      chunkedCheckService.stop();
-      return { success: true };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : '停止失败' };
-    }
-  });
-
-  ipcMain.handle('writing:getChunkedCheckProgress', async () => {
-    try {
-      const progress = chunkedCheckService.getProgress();
-      return { success: true, progress, error: null };
-    } catch (error) {
-      return { success: false, progress: null, error: error instanceof Error ? error.message : '获取进度失败' };
-    }
-  });
-
-  ipcMain.handle('writing:getChunkedCheckSummary', async () => {
-    try {
-      const summary = chunkedCheckService.getSummaryReport();
-      return { success: true, summary, error: null };
-    } catch (error) {
-      return { success: false, summary: null, error: error instanceof Error ? error.message : '获取汇总失败' };
     }
   });
 

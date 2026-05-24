@@ -87,7 +87,7 @@ export class WritingStyleLearningService {
     }
   }
 
-  private async getModelName(fallbackModel: string): Promise<string> {
+  private async getModelName(): Promise<string> {
     try {
       const storageService = getStorageService();
       const settings = storageService.getSettings();
@@ -99,10 +99,59 @@ export class WritingStyleLearningService {
         if (engineModel) return engineModel;
       }
       
-      return settings?.ai?.defaultModel || fallbackModel || 'gpt-4o';
+      throw new Error('未配置 AI 模型名称，请在设置中配置 AI 引擎');
     } catch (error) {
+      if (error instanceof Error && error.message.includes('未配置 AI 模型名称')) {
+        throw error;
+      }
       console.error('[WritingStyleLearningService] getModelName error:', error);
-      return fallbackModel || 'gpt-4o';
+      throw new Error('未配置 AI 模型名称，请在设置中配置 AI 引擎');
+    }
+  }
+
+  private async getTemperature(): Promise<number> {
+    try {
+      const storageService = getStorageService();
+      const settings = storageService.getSettings();
+      
+      const engines = settings?.aiEngines || [];
+      if (engines.length > 0) {
+        const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
+        if (activeEngine?.temperature !== undefined && activeEngine?.temperature !== null) {
+          return activeEngine.temperature;
+        }
+      }
+      
+      throw new Error('未配置 AI 温度参数，请在设置中配置 AI 引擎');
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('未配置 AI 温度参数')) {
+        throw error;
+      }
+      console.error('[WritingStyleLearningService] getTemperature error:', error);
+      throw new Error('未配置 AI 温度参数，请在设置中配置 AI 引擎');
+    }
+  }
+
+  private async getMaxTokens(): Promise<number> {
+    try {
+      const storageService = getStorageService();
+      const settings = storageService.getSettings();
+      
+      const engines = settings?.aiEngines || [];
+      if (engines.length > 0) {
+        const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
+        if (activeEngine?.max_tokens !== undefined && activeEngine?.max_tokens !== null) {
+          return activeEngine.max_tokens;
+        }
+      }
+      
+      throw new Error('未配置 AI 最大令牌数，请在设置中配置 AI 引擎');
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('未配置 AI 最大令牌数')) {
+        throw error;
+      }
+      console.error('[WritingStyleLearningService] getMaxTokens error:', error);
+      throw new Error('未配置 AI 最大令牌数，请在设置中配置 AI 引擎');
     }
   }
 
@@ -196,7 +245,9 @@ export class WritingStyleLearningService {
     const baseUrl = await this.getBaseUrl();
     const apiKey = await this.getApiKey();
     const apiKeyTransmission = await this.getApiKeyTransmission();
-    const modelName = await this.getModelName('gpt-4o');
+    const modelName = await this.getModelName();
+    const temperature = await this.getTemperature();
+    const maxTokens = await this.getMaxTokens();
     const engineSystemPrompt = await this.getEngineSystemPrompt();
 
     if (!baseUrl) {
@@ -238,8 +289,8 @@ ${text}
     const requestBody: Record<string, any> = {
       model: modelName,
       messages: enrichedMessages,
-      temperature: 0.3,
-      max_tokens: 4096,
+      temperature: temperature,
+      max_tokens: maxTokens,
       stream: true,
     };
 
@@ -399,7 +450,9 @@ ${text}
     const baseUrl = await this.getBaseUrl();
     const apiKey = await this.getApiKey();
     const apiKeyTransmission = await this.getApiKeyTransmission();
-    const modelName = await this.getModelName('gpt-4o');
+    const modelName = await this.getModelName();
+    const temperature = await this.getTemperature();
+    const maxTokens = await this.getMaxTokens();
     const engineSystemPrompt = await this.getEngineSystemPrompt();
 
     if (!baseUrl) {
@@ -443,8 +496,8 @@ ${summaries}
     const requestBody: Record<string, any> = {
       model: modelName,
       messages: enrichedMessages,
-      temperature: 0.3,
-      max_tokens: 8192,
+      temperature: temperature,
+      max_tokens: maxTokens,
       stream: true,
     };
 

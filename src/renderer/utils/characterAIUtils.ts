@@ -13,15 +13,15 @@ function buildAIRequestOptions(
 ): AIRequestOptions {
   const temperature = (typeof engine.temperature === 'number' && engine.temperature >= 0 && engine.temperature <= 2)
     ? engine.temperature
-    : 0.7;
+    : (() => { throw new Error('未配置 temperature 参数') })();
 
   return {
-    model: engine.model_name || 'gpt-3.5-turbo',
+    model: engine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })(),
     baseUrl: engine.api_url,
     apiKey: engine.api_key,
     messages,
     temperature,
-    maxTokens: ensurePositiveInteger(engine.max_tokens, 4096)
+    maxTokens: Number(engine.max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })()
   };
 }
 

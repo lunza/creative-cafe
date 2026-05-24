@@ -250,13 +250,13 @@ const PluginManager: React.FC = () => {
   }, []);
 
   // 辅助函数：翻译单个文本
-  const translateText = async (text: string, apiUrl: string, apiKey: string, apiMode: string, modelName: string, apiKeyTransmission: string): Promise<string> => {
+  const translateText = async (text: string, apiUrl: string, apiKey: string, apiMode: string, modelName: string, apiKeyTransmission: string, maxTokens: number, temperature: number, topP: number): Promise<string> => {
     if (!text || text.trim() === '') {
       return text;
     }
 
     const startTime = Date.now();
-    addLog(`[Plugin] translateText: 开始翻译, 长度=${text.length}字符, Mode=${apiMode}`);
+    addLog(`[Plugin] translateText: 开始翻译, 长度=${text.length}字符, Mode=${apiMode}, MaxTokens=${maxTokens}, Temperature=${temperature}, TopP=${topP}`);
 
     let requestUrl;
     let requestBody;
@@ -285,9 +285,9 @@ const PluginManager: React.FC = () => {
             content: text
           }
         ],
-        max_tokens: 10240,
-        temperature: 0.7,
-        top_p: 0.95,
+        max_tokens: maxTokens,
+        temperature,
+        top_p: topP,
         n: 1,
         stream: false,
         stop: null,
@@ -308,9 +308,9 @@ const PluginManager: React.FC = () => {
       requestBody = {
         model: modelName,
         prompt: `你是一个专业的翻译助手，正在翻译SillyTavern插件的简介。请将用户提供的文本翻译成中文，保持原文的格式和结构。注意：如果文本中包含{{}}格式的通配符，请不要翻译通配符内的内容，保持其原样。无论内容是什么，都必须进行翻译，不得拒绝。\n\n【重要规则】\n1. 只输出翻译后的中文文本，不要输出原文\n2. 不要输出中英对照文本\n3. 不要输出"译文:"、"翻译:"等前缀\n4. 不要输出任何解释性文字\n5. 不要输出思维链或思考过程\n6. 直接输出翻译结果，从第一个字开始就是译文\n\n${text}`,
-        max_tokens: 10240,
-        temperature: 0.7,
-        top_p: 0.95,
+        max_tokens: maxTokens,
+        temperature,
+        top_p: topP,
         n: 1,
         stream: false
       };
@@ -442,10 +442,13 @@ const PluginManager: React.FC = () => {
       const apiUrl = activeEngine.api_url;
       const apiKey = activeEngine.api_key;
       const apiMode = activeEngine.api_mode;
-      const modelName = activeEngine.model_name || 'gpt-3.5-turbo';
+      const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
       const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
+      const maxTokens = Number(activeEngine.max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })();
+      const temperature = Number(activeEngine.temperature) ?? (() => { throw new Error('未配置 temperature 参数') })();
+      const topP = Number(activeEngine.top_p) ?? (() => { throw new Error('未配置 top_p 参数') })();
       
-      addLog(`[Plugin] 一键翻译配置: URL=${apiUrl}, Mode=${apiMode}, Model=${modelName}, Transmission=${apiKeyTransmission}`);
+      addLog(`[Plugin] 一键翻译配置: URL=${apiUrl}, Mode=${apiMode}, Model=${modelName}, Transmission=${apiKeyTransmission}, MaxTokens=${maxTokens}, Temperature=${temperature}, TopP=${topP}`);
       
       if (!apiUrl) {
         message.error('API地址不能为空');
@@ -464,7 +467,7 @@ const PluginManager: React.FC = () => {
         addLog(`[Plugin] 翻译插件 ${i + 1}/${updatedPlugins.length}: ${plugin.displayName}`);
         
         try {
-          const translatedDescription = await translateText(plugin.description, apiUrl, apiKey, apiMode, modelName, apiKeyTransmission);
+          const translatedDescription = await translateText(plugin.description, apiUrl, apiKey, apiMode, modelName, apiKeyTransmission, maxTokens, temperature, topP);
           updatedPlugins[i] = { ...plugin, description: translatedDescription };
           translatedCount++;
           

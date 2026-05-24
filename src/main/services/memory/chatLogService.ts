@@ -9,6 +9,7 @@ import { tableTemplateService } from './tableTemplateService';
 import { tableEditParser, TableEditCommand } from './tableEditParser';
 import { pathService } from '../pathService';
 import { getUserDataPath } from '../../utils/appPath';
+import { getStorageService } from '../storageService';
 
 // 导入全局日志发送函数
 import { sendLogToRenderer } from '../../index';
@@ -721,8 +722,11 @@ class ChatLogService {
     // 构建提示词
     const prompt = this.buildAIPrompt(messages, template, chatId);
     
+    // 获取 AI 引擎配置参数
+    const engineAIParams = this.getEngineAIParams();
+    
     // 调用 AI API
-    const aiResponse = await this.callAIAPI(prompt, apiKey, apiUrl, modelName);
+    const aiResponse = await this.callAIAPI(prompt, apiKey, apiUrl, modelName, undefined, engineAIParams);
     
     // 解析 AI 响应
     const results = this.parseAIResponse(aiResponse);
@@ -1582,6 +1586,37 @@ deleteRow(4, 1)
   }
 
   /**
+   * 获取 AI 引擎配置参数
+   */
+  private getEngineAIParams(): { temperature: number; max_tokens: number; top_p: number; frequency_penalty: number; presence_penalty: number } | null {
+    try {
+      const storageService = getStorageService();
+      const settings = storageService.getSettings();
+      const engines = settings?.aiEngines || [];
+      if (engines.length > 0) {
+        const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
+        
+        if (activeEngine?.temperature !== undefined && 
+            activeEngine?.max_tokens !== undefined && 
+            activeEngine?.top_p !== undefined && 
+            activeEngine?.frequency_penalty !== undefined && 
+            activeEngine?.presence_penalty !== undefined) {
+          return {
+            temperature: activeEngine.temperature,
+            max_tokens: activeEngine.max_tokens,
+            top_p: activeEngine.top_p,
+            frequency_penalty: activeEngine.frequency_penalty,
+            presence_penalty: activeEngine.presence_penalty
+          };
+        }
+      }
+    } catch (error) {
+      console.error('[chatLogService] getEngineAIParams error:', error);
+    }
+    return null;
+  }
+
+  /**
    * 调用 AI API
    */
   private async callAIAPI(
@@ -1589,7 +1624,8 @@ deleteRow(4, 1)
     apiKey: string,
     apiUrl: string,
     modelName: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    aiParams?: { temperature: number; max_tokens: number; top_p: number; frequency_penalty: number; presence_penalty: number }
   ): Promise<string> {
     addLog('调用 AI API', 'debug');
     addLog(`API 地址: ${apiUrl}`, 'debug');
@@ -1597,6 +1633,10 @@ deleteRow(4, 1)
     addLog(`提示词长度: ${prompt.length} 字符`, 'debug');
     addLog('===== AI 请求入参 =====', 'debug');
     addLog(prompt, 'debug');
+    
+    if (!aiParams) {
+      throw new Error('AI 引擎参数配置不完整，请在设置中配置 temperature、max_tokens 等参数');
+    }
     
     try {
       const isChatCompletion = apiUrl.includes('/chat/completions');
@@ -1616,11 +1656,11 @@ deleteRow(4, 1)
               content: prompt
             }
           ],
-          temperature: 0.3,
-          max_tokens: 10240,
-          top_p: 0.9,
-          frequency_penalty: 0.0,
-          presence_penalty: 0.0,
+          temperature: aiParams.temperature,
+          max_tokens: aiParams.max_tokens,
+          top_p: aiParams.top_p,
+          frequency_penalty: aiParams.frequency_penalty,
+          presence_penalty: aiParams.presence_penalty,
           extra_body: {
             enable_thinking: false
           }
@@ -1629,11 +1669,11 @@ deleteRow(4, 1)
         requestBody = {
           model: modelName,
           prompt: prompt,
-          temperature: 0.3,
-          max_tokens: 10240,
-          top_p: 0.9,
-          frequency_penalty: 0.0,
-          presence_penalty: 0.0
+          temperature: aiParams.temperature,
+          max_tokens: aiParams.max_tokens,
+          top_p: aiParams.top_p,
+          frequency_penalty: aiParams.frequency_penalty,
+          presence_penalty: aiParams.presence_penalty
         };
       }
       
@@ -1716,14 +1756,15 @@ deleteRow(4, 1)
     modelName: string,
     maxRetries: number = 3,
     retryDelay: number = 2000,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    aiParams?: { temperature: number; max_tokens: number; top_p: number; frequency_penalty: number; presence_penalty: number }
   ): Promise<string> {
     let lastError: Error | null = null;
     
     for (let i = 0; i < maxRetries; i++) {
       try {
         console.log(`尝试调用 AI API (${i + 1}/${maxRetries})...`);
-        const response = await this.callAIAPI(prompt, apiKey, apiUrl, modelName, signal);
+        const response = await this.callAIAPI(prompt, apiKey, apiUrl, modelName, signal, aiParams);
         console.log('AI API 调用成功');
         return response;
       } catch (error) {
@@ -2468,7 +2509,7 @@ deleteRow(4, 1)
     const aiConfig = {
       apiKey: config?.apiKey || '',
       apiUrl: config?.apiUrl || 'http://127.0.0.1:5000',
-      modelName: config?.modelName || 'qwen3.5-27b-heretic-v3',
+      modelName: config?.modelName || (() => { throw new Error('未配置 AI 模型名称') })(),
       apiMode: config?.apiMode || 'text_completion'
     };
 
@@ -2562,7 +2603,8 @@ deleteRow(4, 1)
       try {
         const tableContext = this.buildTableContext(chatId, effectiveTemplateId);
         const prompt = this.buildAIPromptForProgressive(message, template, chatId, tableContext);
-        const aiResponse = await this.callAIAPIWithRetry(prompt, aiConfig.apiKey, apiEndpoint, aiConfig.modelName, 3, 2000, signal);
+        const engineAIParams = this.getEngineAIParams();
+        const aiResponse = await this.callAIAPIWithRetry(prompt, aiConfig.apiKey, apiEndpoint, aiConfig.modelName, 3, 2000, signal, engineAIParams);
 
         if (!aiResponse || aiResponse.trim() === '') {
           addLog(`${logger} AI未返回有效响应 (消息 ${absoluteMessageIndex}/${totalMessages})`, 'warn');
@@ -2672,7 +2714,7 @@ deleteRow(4, 1)
       const aiConfig = {
         apiKey: config?.apiKey || '',
         apiUrl: config?.apiUrl || 'http://127.0.0.1:5000',
-        modelName: config?.modelName || 'qwen3.5-27b-heretic-v3',
+        modelName: config?.modelName || (() => { throw new Error('未配置 AI 模型名称') })(),
         apiMode: config?.apiMode || 'text_completion'
       };
       
@@ -2703,7 +2745,9 @@ deleteRow(4, 1)
         global.sendLogToRenderer('表格整理: 正在发送请求到 AI 服务器...', 'info');
       }
       
-      const aiResponse = await this.callAIAPIWithRetry(prompt, aiConfig.apiKey, apiEndpoint, aiConfig.modelName);
+      const engineAIParams = this.getEngineAIParams();
+      
+      const aiResponse = await this.callAIAPIWithRetry(prompt, aiConfig.apiKey, apiEndpoint, aiConfig.modelName, undefined, undefined, undefined, engineAIParams);
       
       // 发送实时更新：AI 响应完成
       if (global.sendLogToRenderer) {

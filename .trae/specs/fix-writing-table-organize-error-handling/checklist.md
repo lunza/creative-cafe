@@ -1,0 +1,6 @@
+- [x] `processChapterWithAI` 方法返回类型从 `void` 改为对象 `{ success: boolean; error?: string }`
+- [x] AI返回空响应时，`errorCount` 正确累加，错误信息被记录到 `errors` 数组
+- [x] tableEdit解析失败时，`errorCount` 正确累加，错误信息被记录到 `errors` 数组
+- [x] 章节处理成功时，`processedCount` 正确累加，`errorCount` 不变
+- [x] 日志输出包含 `addLog` 调用，与聊天模式保持一致
+- [x] 最终返回结果中 `processedCount` 和 `errorCount` 准确反映实际处理情况

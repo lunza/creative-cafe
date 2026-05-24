@@ -3,12 +3,14 @@ import { Card, Form, Input, Button, Space, Typography, message, Divider, Statist
 import { EyeOutlined, RocketOutlined } from '@ant-design/icons';
 import { usePromptOptimizerStore } from '../../stores/promptOptimizerStore';
 import { useUIStore } from '../../stores/uiStore';
+import { useSettingStore } from '../../stores/settingStore';
 
 const { TextArea } = Input;
 const { Text, Title } = Typography;
 
 const PreviewPrompt: React.FC = () => {
   const { theme } = useUIStore();
+  const { setting } = useSettingStore();
   const { 
     previewPrompt, 
     isPreviewing, 
@@ -22,12 +24,21 @@ const PreviewPrompt: React.FC = () => {
   const handlePreview = async () => {
     try {
       const values = await form.validateFields();
+
+      const activeEngine = setting?.aiEngines?.find(e => e.id === setting?.activeEngineId) 
+        || setting?.aiEngines?.[0];
+
+      if (!activeEngine) {
+        message.error('请先在设置中配置AI引擎');
+        return;
+      }
+
       await previewPrompt({
         prompt: values.prompt,
         testInput: values.testInput,
         parameters: {
-          temperature: 0.7,
-          maxTokens: 500
+          temperature: activeEngine.temperature,
+          maxTokens: activeEngine.max_tokens
         }
       });
       message.success('预览成功');

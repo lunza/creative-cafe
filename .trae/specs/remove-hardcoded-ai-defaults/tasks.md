@@ -1,0 +1,43 @@
+# Tasks
+- [x] Task 1: 删除 src/main 服务层中的硬编码默认参数
+  - [x] SubTask 1.1: 修复 WritingStyleLearningService.ts 中的 getModelName fallback ('gpt-4o') 和 request body 硬编码参数 (temperature: 0.3, max_tokens: 4096/8192)
+  - [x] SubTask 1.2: 修复 PlotCheckerService.ts 中的 getConfig fallback ('gpt-4o') 和 modelConfig fallback (temperature: 0.3, maxTokens: 40960)
+  - [x] SubTask 1.3: 修复 AIAssistedChapterService.ts 中的 getConfig fallback ('gpt-4o') 和 modelConfig (temperature: 0.7, maxTokens: 4000)
+  - [x] SubTask 1.4: 修复 chatLogService.ts 中的硬编码 request body (temperature: 0.3, max_tokens: 10240, top_p: 0.9, frequency_penalty: 0.0, presence_penalty: 0.0)
+- [x] Task 2: 删除 src/main ipc handlers 中的硬编码 fallback
+  - [x] SubTask 2.1: 修复 writingHandlers.ts 中的 model fallback ('gpt-4o')、temperature fallback (0.7, 0.3)、maxTokens fallback (4000)
+- [x] Task 3: 删除 src/renderer 组件中的硬编码 fallback
+  - [x] SubTask 3.1: 修复 WorldBookManager.tsx 中所有 model fallback ('gpt-3.5-turbo')、temperature fallback (0.7)、max_tokens fallback (512)、top_p fallback (0.95)
+  - [x] SubTask 3.2: 修复 CharacterManager.tsx 中所有 model fallback ('gpt-3.5-turbo')
+  - [x] SubTask 3.3: 修复 PluginManager.tsx 中的 model fallback ('gpt-3.5-turbo') 和 request body 硬编码参数
+  - [x] SubTask 3.4: 修复 CharacterDialogueChat.hooks.ts 中 getEffectiveParams 的 fallback (max_tokens: 8192)
+  - [x] SubTask 3.5: 修复 ChatEngine.ts 中的 model fallback ('gpt-3.5-turbo') 和 max_tokens fallback (4096)
+  - [x] SubTask 3.6: 修复 useCreativeAI.ts 中的 model fallback ('gpt-3.5-turbo')
+  - [x] SubTask 3.7: 修复 WorldBookEditor.tsx 中的 model fallback ('gpt-3.5-turbo') 和 temperature fallback (0.7)
+  - [x] SubTask 3.8: 修复 WritingTablePreviewModal.tsx 中的硬编码参数 (temperature: 0.7, maxTokens: 8000)
+  - [x] SubTask 3.9: 修复 useChapterGeneration.ts 中的硬编码参数 (temperature: 0.8, maxTokens: 8000)
+  - [x] SubTask 3.10: 修复 characterAIUtils.ts 中的 model fallback ('gpt-3.5-turbo')
+- [x] Task 4: 删除 src/renderer stores/services 中的硬编码
+  - [x] SubTask 4.1: 修复 settingStore.ts 中的 model fallback ('gpt-3.5-turbo') 和硬编码参数
+  - [x] SubTask 4.2: 修复 promptOptimizerService.ts 中的硬编码参数 (temperature: 0.7, maxTokens: 2048)
+  - [x] SubTask 4.3: 修复 PreviewPrompt.tsx 中的硬编码参数 (temperature: 0.7, maxTokens: 500)
+  - [x] SubTask 4.4: 修复 Settings.tsx 中的硬编码参数 (temperature: 0.7, max_tokens: 10240, top_p: 0.95, frequency_penalty: 0, presence_penalty: 0)
+  - [x] SubTask 4.5: 修复 stMemoryTemplate.ts 中的 custom_temperature fallback (0.7)
+- [x] Task 5: 删除 shared 和 utils 中的硬编码
+  - [x] SubTask 5.1: 修复 shared/settings.ts 中的硬编码参数 (temperature: 0.7, max_tokens: 4096, top_p: 1, frequency_penalty: 0.0, presence_penalty: 0.0)
+  - [x] SubTask 5.2: 修复 shared/constants/writing.constants.ts 中的硬编码参数 (temperature: 0.8, maxTokens: 8000)
+  - [x] SubTask 5.3: 修复 main/services/storageService.ts 中的硬编码参数 (temperature: 1, max_tokens: 300, top_p: 1, frequency_penalty: 0.0, presence_penalty: 0.0)
+- [x] Task 6: 修复 AIService.utils.ts 中的 createDefaultConfig
+  - [x] SubTask 6.1: 修改 createDefaultConfig 移除硬编码默认值 (model: 'gpt-3.5-turbo', temperature: 0.7, maxTokens: 4096)
+  - [x] SubTask 6.2: 修复 AIService.tsx 中的 retry fallback (retryAttempts: 3, retryDelay: 1000) - 保留，基础设施参数
+  - [x] SubTask 6.3: 修复 MarkdownAITools.tsx 中的 timeout fallback (600000) - 保留，基础设施参数
+- [x] Task 7: 验证所有硬编码默认参数已清除
+
+# Task Dependencies
+- [Task 1] depends on [无]
+- [Task 2] depends on [无]
+- [Task 3] depends on [无]
+- [Task 4] depends on [无]
+- [Task 5] depends on [无]
+- [Task 6] depends on [无]
+- [Task 7] depends on [Task 1, Task 2, Task 3, Task 4, Task 5, Task 6]

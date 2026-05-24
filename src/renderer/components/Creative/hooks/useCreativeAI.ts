@@ -60,7 +60,7 @@ export const useCreativeAI = (): UseCreativeAIReturn => {
 
   const buildRequestBody = useCallback((engine: any, messages: any[], customPrompt?: string) => {
     const apiMode = engine.api_mode || 'chat_completion';
-    const modelName = engine.model_name || 'gpt-3.5-turbo';
+    const modelName = engine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
     const apiKey = engine.api_key;
     const apiKeyTransmission = engine.api_key_transmission || 'body';
 
@@ -68,10 +68,10 @@ export const useCreativeAI = (): UseCreativeAIReturn => {
       'Content-Type': 'application/json'
     };
 
-    const maxTokens = ensurePositiveInteger(engine.max_tokens, 10240);
+    const maxTokens = Number(engine.max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })();
     const temperature = (typeof engine.temperature === 'number' && engine.temperature >= 0 && engine.temperature <= 2)
       ? engine.temperature
-      : 0.7;
+      : (() => { throw new Error('未配置 temperature 参数') })();
 
     let requestBody: any;
     if (apiMode === 'chat_completion') {

@@ -363,12 +363,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     autoFixIssue: (params: { projectId: string; chapterIndex: number; content: string; issue: any; modelConfig?: any }) => ipcRenderer.invoke('writing:autoFixIssue', params),
     getLogicCheckRecords: () => ipcRenderer.invoke('writing:getLogicCheckRecords'),
     clearLogicCheckRecords: () => ipcRenderer.invoke('writing:clearLogicCheckRecords'),
-    startChunkedCheck: (config) => ipcRenderer.invoke('writing:startChunkedCheck', config),
-    pauseChunkedCheck: () => ipcRenderer.invoke('writing:pauseChunkedCheck'),
-    resumeChunkedCheck: () => ipcRenderer.invoke('writing:resumeChunkedCheck'),
-    stopChunkedCheck: () => ipcRenderer.invoke('writing:stopChunkedCheck'),
-    getChunkedCheckProgress: () => ipcRenderer.invoke('writing:getChunkedCheckProgress'),
-    getChunkedCheckSummary: () => ipcRenderer.invoke('writing:getChunkedCheckSummary'),
     aiSuggestSplit: (request: any) => ipcRenderer.invoke('writing:aiSuggestSplit', request),
     aiSuggestMerge: (request: any) => ipcRenderer.invoke('writing:aiSuggestMerge', request),
     saveAIGenerationHistory: (params: { projectId: string; history: any }) => ipcRenderer.invoke('writing:saveAIGenerationHistory', params),
@@ -411,6 +405,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.on('writing:style:error', handler);
         return () => ipcRenderer.removeListener('writing:style:error', handler);
       }
+    },
+    table: {
+      getTableData: (projectId: string) => ipcRenderer.invoke('writing:table:getTableData', projectId),
+      saveTableData: (projectId: string, sheetName: string, sheetData: Record<string, any>[]) => ipcRenderer.invoke('writing:table:saveTableData', projectId, sheetName, sheetData),
+      clearTableData: (projectId: string) => ipcRenderer.invoke('writing:table:clearTableData', projectId),
+      updateRowInTable: (projectId: string, sheetName: string, rowIndex: number, rowData: Record<string, any>) => ipcRenderer.invoke('writing:table:updateRowInTable', projectId, sheetName, rowIndex, rowData),
+      getTableConfig: (projectId: string) => ipcRenderer.invoke('writing:table:getTableConfig', projectId),
+      saveTableConfig: (projectId: string, config: any) => ipcRenderer.invoke('writing:table:saveTableConfig', projectId, config),
+      associateTableTemplate: (projectId: string, templateId: string, templateName: string, templateSheets: Array<{ name: string; headers: string[]; description?: string }>) => ipcRenderer.invoke('writing:table:associateTableTemplate', projectId, templateId, templateName, templateSheets),
+      getAllTemplates: () => ipcRenderer.invoke('writing:table:getAllTemplates'),
+      organizeTable: (projectId: string, modelConfig: any) => ipcRenderer.invoke('writing:table:organizeTable', projectId, modelConfig),
+      getOrganizeProgress: (projectId: string) => ipcRenderer.invoke('writing:table:getOrganizeProgress', projectId)
     }
   }
 });

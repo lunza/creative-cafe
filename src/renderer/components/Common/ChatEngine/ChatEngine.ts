@@ -135,12 +135,12 @@ export class ChatEngine implements IChatEngine {
 
     if (apiMode === 'chat_completion') {
       const body: any = {
-        model: config.model_name || 'gpt-3.5-turbo',
+        model: config.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })(),
         messages: [
           { role: 'system', content: systemPrompt },
           ...chatHistory,
         ],
-        max_tokens: Number(config.max_tokens) || 4096,
+        max_tokens: Number(config.max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })(),
         temperature: Number(config.temperature) ?? 0.8,
         stream: true,
       };
@@ -171,9 +171,9 @@ export class ChatEngine implements IChatEngine {
         prompt += `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}\n`;
       });
       const body: any = {
-        model: config.model_name || 'gpt-3.5-turbo',
+        model: config.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })(),
         prompt,
-        max_tokens: Number(config.max_tokens) || 4096,
+        max_tokens: Number(config.max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })(),
         temperature: Number(config.temperature) ?? 0.8,
         stream: true,
       };
