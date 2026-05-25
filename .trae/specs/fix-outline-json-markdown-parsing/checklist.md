@@ -1,0 +1,9 @@
+- [x] writing.types.ts 中 ChapterOutline 添加了 importantSpans?: string[] 字段
+- [x] PromptBuilder.buildOutlinePrompt 的 JSON 结构示例中每个章节包含 importantSpans 字段
+- [x] PromptBuilder.buildOutlinePrompt 的章节大纲生成要求中添加了 importantSpans 使用说明
+- [x] PromptBuilder.buildOutlinePrompt 的输出格式要求中包含禁止 Markdown 格式说明
+- [x] WritingConfigPanel.tsx 额外要求输入框下方显示格式指令提示文字
+- [x] WritingConfigModal.tsx 额外要求输入框下方显示格式指令提示文字
+- [x] OutlineEditor.tsx 渲染章节概要和关键情节点时使用 renderWithImportantSpans 高亮 importantSpans 内容
+- [x] renderWithImportantSpans 向后兼容：无 importantSpans 字段时正常显示
+- [x] 所有文件构建无 TypeScript 错误

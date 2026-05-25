@@ -32,19 +32,20 @@ export class ContentGenerator {
     );
 
     const resourceContext = this.buildResourceContext(request);
-    const recentChapters = this.buildRecentChapters(request);
     const chapterSummaries = this.buildChapterSummaries(request);
     const longTermContext = this.buildLongTermContext(request);
     const continuityConstraints = this.buildContinuityConstraints(request);
+    const tableContext = this.buildTableContextForPrompt(request);
 
     const userPrompt = promptBuilder.buildContentPrompt(
       request.chapterInfo,
       {
         resourceContext,
-        recentChapters,
+        recentChapters: '',
         chapterSummaries,
         longTermContext,
-        continuityConstraints
+        continuityConstraints,
+        tableContext
       },
       request.generationParams
     );
@@ -426,23 +427,6 @@ export class ContentGenerator {
     return parts.join('\n');
   }
 
-  private buildRecentChapters(request: ContentGenerationRequest): string {
-    const recentChapters = request.previousChapters.slice(-3);
-    if (recentChapters.length === 0) return '';
-
-    const parts: string[] = ['## 前序章节'];
-    for (const ch of recentChapters) {
-      parts.push(`### 第${ch.index + 1}章 ${ch.title}`);
-      if (ch.fullContent) {
-        parts.push(ch.fullContent);
-      } else {
-        parts.push(ch.summary);
-      }
-    }
-
-    return parts.join('\n');
-  }
-
   private buildChapterSummaries(request: ContentGenerationRequest): string {
     const summaries = request.previousChapters.filter(ch => ch.summary);
     if (summaries.length === 0) return '';
@@ -464,6 +448,67 @@ export class ContentGenerator {
     if (constraints.length === 0) return '';
 
     return `## 连贯性约束\n${constraints.join('\n')}`;
+  }
+
+  private buildTableContextForPrompt(request: ContentGenerationRequest): string {
+    if (!request.writingTableData) {
+      return '';
+    }
+
+    const { writingTableData } = request;
+    const sheets = writingTableData.sheets || [];
+    if (sheets.length === 0) {
+      return '';
+    }
+
+    let context = `## 历史剧情表格数据（重要参考资料）\n`;
+    context += `以下表格记录了之前章节中已建立的角色、物品、事件、地点等关键信息，请在创作时作为参考，确保剧情走向和细节与前文一致。\n\n`;
+
+    sheets.forEach((sheetName: string, sheetIndex: number) => {
+      const tableIndex = sheetIndex + 1;
+      context += `=== ${sheetName} (表格索引: ${tableIndex}) ===\n`;
+      context += `表格用途：${writingTableData.sheetDescriptions?.[sheetName] || '暂无描述'}\n`;
+
+      const sheetData = writingTableData.data?.[sheetName] || [];
+      if (sheetData.length === 0) {
+        context += `当前数据：暂无数据\n\n`;
+        return;
+      }
+
+      context += `当前已有数据（共${sheetData.length}条）：\n`;
+
+      const uniqueIdIndex: Map<string, number> = new Map();
+
+      sheetData.forEach((row: Record<string, unknown>, rowIndex: number) => {
+        const rowDisplay = rowIndex + 1;
+        const uniqueId = row['唯一id'] as string | undefined;
+
+        if (uniqueId) {
+          uniqueIdIndex.set(uniqueId, rowDisplay);
+        }
+
+        const fields = Object.entries(row)
+          .filter(([key]) => key !== '0')
+          .map(([key, value]) => {
+            const headerIndex = parseInt(key) + 1;
+            const headerName = writingTableData.headers?.[sheetName]?.[parseInt(key) - 2] || `字段${headerIndex}`;
+            return `${headerName}=${value}`;
+          })
+          .join(', ');
+        context += `  行${rowDisplay}: ${fields}\n`;
+      });
+
+      if (uniqueIdIndex.size > 0) {
+        context += `\n【唯一ID快速查找索引】\n`;
+        uniqueIdIndex.forEach((rowNum, uniqueId) => {
+          context += `  ${uniqueId} → 行${rowNum}\n`;
+        });
+      }
+
+      context += '\n';
+    });
+
+    return context;
   }
 
   private getNovelTypeFromRequest(request: ContentGenerationRequest): NovelType {

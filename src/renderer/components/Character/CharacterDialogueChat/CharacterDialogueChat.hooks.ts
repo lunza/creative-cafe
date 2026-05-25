@@ -106,8 +106,8 @@ export function useCharacterConfig(characterCardId: string) {
     const source = hasCustomParams ? 'custom' : 'global';
 
     const effectiveParams: EffectiveAIParams = {
-      temperature: customParams.temperature ?? globalEngine?.temperature ?? (() => { throw new Error('未配置 temperature 参数') })(),
-      max_tokens: customParams.max_tokens !== undefined ? customParams.max_tokens : (globalEngine?.max_tokens !== undefined ? globalEngine.max_tokens : (() => { throw new Error('未配置 max_tokens 参数') })()),
+      temperature: customParams.temperature ?? globalEngine?.temperature ?? 0.7,
+      max_tokens: customParams.max_tokens !== undefined ? customParams.max_tokens : (globalEngine?.max_tokens !== undefined ? globalEngine.max_tokens : 8192),
       source,
     };
 

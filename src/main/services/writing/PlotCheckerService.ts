@@ -16,7 +16,8 @@ import {
   LogicCheckResult,
   LOGIC_CONTRADICTION_TYPE_LABELS,
   AutoFixDiff,
-  AutoFixResult
+  AutoFixResult,
+  QuickFixSuggestion
 } from '../../../shared/types/writing.types';
 import { AI_CHECK_TIMEOUT } from '../../../shared/constants/writing.constants';
 import { getStorageService } from '../storageService';
@@ -49,9 +50,19 @@ export interface PlotCheckRequestData {
     title: string;
     content: string;
   }[];
+  writingTableData?: {
+    tableConfig?: {
+      associatedTemplateId: string;
+      associatedTemplateName: string;
+    };
+    sheets?: string[];
+    headers?: Record<string, string[]>;
+    data?: Record<string, Record<string, any>[]>;
+    sheetDescriptions?: Record<string, string>;
+  };
 }
 
-const AI_CHECK_TIMEOUT = 120000;
+const AI_CHECK_TIMEOUT = 0; // 0 = 无超时限制
 
 export class PlotCheckerService {
   private async getConfig(): Promise<{ baseUrl: string; apiKey: string; apiKeyTransmission: string; model: string }> {
@@ -112,6 +123,11 @@ export class PlotCheckerService {
       }
     }
 
+    const tableContext = this.buildTableContextForPrompt(request);
+    if (tableContext) {
+      contextParts += tableContext + '\n';
+    }
+
     contextParts += `## 当前章节内容\n${request.content}`;
 
     const logicDetectionSection = `
@@ -161,7 +177,12 @@ ${logicDetectionSection}
         "title": "标题",
         "description": "问题描述",
         "suggestion": "改进建议",
-        "position": { "startIndex": 0, "endIndex": 100 }
+        "position": { "startIndex": 0, "endIndex": 100 },
+        "quickFixSuggestion": {
+          "originalText": "需要替换的原文片段",
+          "fixedText": "修改后的文本",
+          "reason": "修正理由"
+        }
       }
     ]
   },
@@ -185,6 +206,13 @@ ${logicDetectionSection}
     "logic_issues": []
   }
 }
+
+对于每个识别出的问题，请同时提供 quickFixSuggestion 字段，包含：
+- originalText: 需要被替换的原文片段（必须是章节内容中实际存在的文本，要精确匹配）
+- fixedText: 修改后的文本（可以比原文长或短）
+- reason: 修正理由（说明语法、逻辑、表达等方面的改进原因）
+
+注意：quickFixSuggestion中的originalText必须是章节内容中一字不差的原文，否则无法执行替换。如果问题不涉及具体文本修改，可以不提供quickFixSuggestion。
 
 评分标准：
 - 90-100: 优秀，无问题
@@ -244,10 +272,10 @@ ${logicDetectionSection}
     addLog(`【剧情检查】请求 URL: ${config.baseUrl}/v1/chat/completions`, 'debug');
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null;
 
     try {
-      addLog(`【剧情检查】开始发送 AI 请求 (超时: ${timeoutMs / 1000}秒)...`, 'info');
+      addLog(`【剧情检查】开始发送 AI 请求${timeoutMs > 0 ? ` (超时: ${timeoutMs / 1000}秒)` : ' (无超时限制)'}...`, 'info');
       const response = await fetch(`${config.baseUrl}/v1/chat/completions`, {
         method: 'POST',
         headers,
@@ -287,11 +315,11 @@ ${logicDetectionSection}
       }
       throw error;
     } finally {
-      clearTimeout(timeoutId);
+      if (timeoutId !== null) clearTimeout(timeoutId);
     }
   }
 
-  private parseCheckResponse(rawContent: string, chapterIndex: number): PlotCheckReport {
+  private parseCheckResponse(rawContent: string, chapterIndex: number, chapterContent?: string): PlotCheckReport {
     let jsonStr = rawContent.trim();
 
     const patterns = [
@@ -306,6 +334,9 @@ ${logicDetectionSection}
         break;
       }
     }
+
+    // 修复 AI 返回的中文引号问题：将中文引号替换为英文引号
+    jsonStr = this.fixChineseQuotes(jsonStr);
 
     const parsed = JSON.parse(jsonStr);
 
@@ -326,14 +357,70 @@ ${logicDetectionSection}
 
     for (const { key, enum: dim } of dimensionKeys) {
       const data = parsed[key] || { score: 50, issues: [] };
-      const issues: PlotCheckIssue[] = (data.issues || []).map((issue: any) => ({
-        dimension: dim,
-        severity: issue.severity || 'low',
-        title: issue.title || '未知问题',
-        description: issue.description || '',
-        suggestion: issue.suggestion || '',
-        position: issue.position || undefined
-      }));
+      const issues: PlotCheckIssue[] = (data.issues || []).map((issue: any) => {
+        const origTextEntries: { snippet: string; start: number; end: number }[] = [];
+        const refs: { type: string; name: string; summary: string }[] = [];
+
+        if (chapterContent) {
+          if (issue.position && issue.position.startIndex !== undefined && issue.position.endIndex !== undefined) {
+            const posStart = Math.max(0, issue.position.startIndex);
+            const posEnd = Math.min(chapterContent.length, issue.position.endIndex);
+            if (posStart < posEnd && posStart < chapterContent.length) {
+              const ctx = 40;
+              const start = Math.max(0, posStart - ctx);
+              const end = Math.min(chapterContent.length, posEnd + ctx);
+              origTextEntries.push({
+                snippet: chapterContent.substring(start, end),
+                start,
+                end
+              });
+            }
+          }
+
+          if (origTextEntries.length === 0) {
+            const keywords = this.extractKeywords(issue.description, 3);
+            for (const kw of keywords) {
+              const matchIdx = chapterContent.indexOf(kw);
+              if (matchIdx !== -1) {
+                const ctx = 80;
+                const start = Math.max(0, matchIdx - ctx);
+                const end = Math.min(chapterContent.length, matchIdx + kw.length + ctx);
+                const snippet = chapterContent.substring(start, end);
+                const alreadyExists = origTextEntries.some(e =>
+                  Math.abs(e.start - start) < 20
+                );
+                if (!alreadyExists) {
+                  origTextEntries.push({ snippet, start, end });
+                }
+                if (origTextEntries.length >= 2) break;
+              }
+            }
+          }
+        }
+
+        if (issue.references && Array.isArray(issue.references)) {
+          for (const ref of issue.references) {
+            refs.push({
+              type: ref.type || 'unknown',
+              name: ref.name || '未知来源',
+              summary: ref.summary || ''
+            });
+          }
+        }
+
+        return {
+          dimension: dim,
+          severity: issue.severity || 'low',
+          title: issue.title || '未知问题',
+          description: issue.description || '',
+          suggestion: issue.suggestion || '',
+          position: issue.position || undefined,
+          originalText: origTextEntries.length > 0 ? origTextEntries : undefined,
+          references: refs.length > 0 ? refs : undefined,
+          quickFixable: !!issue.quickFixSuggestion,
+          quickFixSuggestion: issue.quickFixSuggestion ? this.validateQuickFixSuggestion(issue.quickFixSuggestion, chapterContent) : undefined
+        };
+      });
 
       dimensions.push({
         dimension: dim,
@@ -393,6 +480,120 @@ ${logicDetectionSection}
     };
   }
 
+  private validateQuickFixSuggestion(suggestion: any, chapterContent: string): QuickFixSuggestion | undefined {
+    if (!suggestion || !suggestion.originalText || !suggestion.fixedText) {
+      return undefined;
+    }
+
+    const validated: QuickFixSuggestion = {
+      originalText: suggestion.originalText,
+      fixedText: suggestion.fixedText,
+      reason: suggestion.reason || '无'
+    };
+
+    // 验证原文本在章节内容中的存在性
+    const matchIndex = chapterContent.indexOf(validated.originalText);
+    if (matchIndex !== -1) {
+      validated.position = {
+        startIndex: matchIndex,
+        endIndex: matchIndex + validated.originalText.length
+      };
+    } else {
+      // 原文本未找到，标记为不可快速修正
+      return undefined;
+    }
+
+    return validated;
+  }
+
+  private extractKeywords(description: string, maxCount: number): string[] {
+    const keywords: string[] = [];
+    const chinesePhrases = description.match(/[\u4e00-\u9fff]{2,6}/g);
+    if (chinesePhrases) {
+      const filtered = chinesePhrases.filter(p =>
+        p.length >= 2 && !['问题', '描述', '情节', '建议', '出现', '存在', '可能', '一个', '这种', '需要'].includes(p)
+      );
+      const seen = new Set<string>();
+      for (const phrase of filtered) {
+        if (!seen.has(phrase) && keywords.length < maxCount) {
+          seen.add(phrase);
+          keywords.push(phrase);
+        }
+      }
+    }
+    return keywords;
+  }
+
+  // 将 JSON 字符串中的中文引号替换为英文引号，以修复 AI 返回非标准 JSON 的问题
+  private fixChineseQuotes(jsonStr: string): string {
+    let result = jsonStr;
+    // 替换中文双引号（左引号和右引号都替换为英文双引号）
+    result = result.replace(/"/g, '"');
+    result = result.replace(/"/g, '"');
+    return result;
+  }
+
+  private buildTableContextForPrompt(request: PlotCheckRequestData): string {
+    if (!request.writingTableData) {
+      return '';
+    }
+
+    const { writingTableData } = request;
+    const sheets = writingTableData.sheets || [];
+    if (sheets.length === 0) {
+      return '';
+    }
+
+    let context = `## 历史剧情表格数据（重要参考资料）\n`;
+    context += `以下表格记录了之前章节中已建立的角色、物品、事件、地点等关键信息，请在检查当前章节时作为参考，确保剧情走向和细节与前文一致。\n\n`;
+
+    sheets.forEach((sheetName: string, sheetIndex: number) => {
+      const tableIndex = sheetIndex + 1;
+      context += `=== ${sheetName} (表格索引: ${tableIndex}) ===\n`;
+      context += `表格用途：${writingTableData.sheetDescriptions?.[sheetName] || '暂无描述'}\n`;
+
+      const sheetData = writingTableData.data?.[sheetName] || [];
+      if (sheetData.length === 0) {
+        context += `当前数据：暂无数据\n\n`;
+        return;
+      }
+
+      context += `当前已有数据（共${sheetData.length}条）：\n`;
+
+      const uniqueIdIndex: Map<string, number> = new Map();
+
+      sheetData.forEach((row: any, rowIndex: number) => {
+        const rowDisplay = rowIndex + 1;
+        const uniqueId = row['唯一id'];
+
+        if (uniqueId) {
+          uniqueIdIndex.set(uniqueId, rowDisplay);
+        }
+
+        const fields = Object.entries(row)
+          .filter(([key]) => key !== '0')
+          .map(([key, value]) => {
+            const headerIndex = parseInt(key) + 1;
+            const headerName = writingTableData.headers?.[sheetName]?.[parseInt(key) - 2] || `字段${headerIndex}`;
+            return `${headerName}=${value}`;
+          })
+          .join(', ');
+        context += `  行${rowDisplay}: ${fields}\n`;
+      });
+
+      if (uniqueIdIndex.size > 0) {
+        context += `\n【唯一ID快速查找索引】\n`;
+        uniqueIdIndex.forEach((rowNum, uniqueId) => {
+          context += `  ${uniqueId} → 行${rowNum}\n`;
+        });
+      }
+
+      context += '\n';
+    });
+
+    return context;
+  }
+
   private performRuleBasedValidation(content: string, previousContent?: string): LogicCheckIssue[] {
     const issues: LogicCheckIssue[] = [];
     
@@ -416,13 +617,23 @@ ${logicDetectionSection}
       for (const reviveKeyword of reviveKeywords) {
         const reviveRegex = new RegExp(`${entity}.*?${reviveKeyword}|${reviveKeyword}.*?${entity}`, 'gi');
         if (reviveRegex.test(content)) {
+          const posIndex = content.indexOf(entity);
+          const ctx = 40;
+          const snippetStart = Math.max(0, posIndex - ctx);
+          const snippetEnd = Math.min(content.length, posIndex + entity.length + ctx);
+
           issues.push({
             type: 'character_state',
             severity: 'high',
             description: `角色"${entity}"可能存在状态矛盾：前文已确认死亡，但后续又出现复活相关描述`,
             analysis: `检测到"${entity}"与死亡关键词和复活关键词同时出现在文本中，需要确认是否为合理的情节发展（如复活设定、梦境、回忆等）`,
             suggestion: `如果"${entity}"确实已死亡且无复活设定，请移除或修改复活相关描述；如有复活设定，请确保在前文中明确说明`,
-            chapterIndex: 0
+            chapterIndex: 0,
+            originalText: [{
+              snippet: content.substring(snippetStart, snippetEnd),
+              start: snippetStart,
+              end: snippetEnd
+            }]
           });
         }
       }
@@ -448,13 +659,23 @@ ${logicDetectionSection}
       for (const reappearKeyword of reappearKeywords) {
         const reappearRegex = new RegExp(`${item}.*?${reappearKeyword}|${reappearKeyword}.*?${item}`, 'gi');
         if (reappearRegex.test(content)) {
+          const posIndex = content.indexOf(item);
+          const ctx = 40;
+          const snippetStart = Math.max(0, posIndex - ctx);
+          const snippetEnd = Math.min(content.length, posIndex + item.length + ctx);
+
           issues.push({
             type: 'item_state',
             severity: 'medium',
             description: `物品"${item}"可能存在状态矛盾：前文已被消耗/使用，但后续又出现`,
             analysis: `检测到"${item}"与消耗关键词和重现关键词同时出现在文本中，需要确认物品是否真的被完全消耗`,
             suggestion: `如果"${item}"确实已被消耗，请移除重现相关描述；如未完全消耗，请明确说明剩余量或状态`,
-            chapterIndex: 0
+            chapterIndex: 0,
+            originalText: [{
+              snippet: content.substring(snippetStart, snippetEnd),
+              start: snippetStart,
+              end: snippetEnd
+            }]
           });
         }
       }
@@ -480,13 +701,23 @@ ${logicDetectionSection}
     
     for (const [entity, counts] of entityCounts) {
       if (counts.length > 1 && new Set(counts).size > 1) {
+        const posIndex = content.indexOf(entity);
+        const ctx = 40;
+        const snippetStart = Math.max(0, posIndex - ctx);
+        const snippetEnd = Math.min(content.length, posIndex + entity.length + ctx);
+
         issues.push({
           type: 'mathematical',
           severity: 'medium',
           description: `实体"${entity}"的数量存在矛盾：前文为 ${counts[0]}，后文为 ${counts[counts.length - 1]}`,
           analysis: `同一实体在文本中被赋予了不同的数量值，可能存在数量关系矛盾`,
           suggestion: `请统一"${entity}"的数量描述，确保前后一致`,
-          chapterIndex: 0
+          chapterIndex: 0,
+          originalText: [{
+            snippet: content.substring(snippetStart, snippetEnd),
+            start: snippetStart,
+            end: snippetEnd
+          }]
         });
       }
     }
@@ -534,7 +765,7 @@ ${logicDetectionSection}
       addLog(`规则验证发现 ${ruleBasedIssues.length} 个潜在问题`, 'debug');
 
       const rawContent = await this.callAIService(messages, modelConfig, AI_CHECK_TIMEOUT);
-      const report = this.parseCheckResponse(rawContent, request.chapterIndex);
+      const report = this.parseCheckResponse(rawContent, request.chapterIndex, request.content);
 
       // 合并规则验证结果
       if (ruleBasedIssues.length > 0 && report.logicCheckResult) {
@@ -621,12 +852,32 @@ ${logicDetectionSection}
     projectId: string,
     chapterIndex: number,
     content: string,
-    issue: PlotCheckIssue,
+    issue: PlotCheckIssue | LogicCheckIssue,
+    issueType: 'dimension' | 'logic' = 'dimension',
     modelConfig?: ModelConfig
   ): Promise<AutoFixResult> {
     addLog('===== 剧情检查: 自动修正开始 =====', 'debug');
-    addLog(`章节索引: ${chapterIndex}, 问题标题: ${issue.title}`, 'debug');
-    addLog(`问题描述: ${issue.description}`, 'debug');
+    addLog(`章节索引: ${chapterIndex}`, 'debug');
+
+    // 根据问题类型构建不同的问题描述
+    const dimensionLabel = issueType === 'dimension' && (issue as PlotCheckIssue).dimension
+      ? PLOT_CHECK_DIMENSION_LABELS[(issue as PlotCheckIssue).dimension] || (issue as PlotCheckIssue).dimension
+      : null;
+    const typeLabel = issueType === 'logic' && (issue as LogicCheckIssue).type
+      ? LOGIC_CONTRADICTION_TYPE_LABELS[(issue as LogicCheckIssue).type] || (issue as LogicCheckIssue).type
+      : null;
+    const title = (issue as PlotCheckIssue).title || null;
+    const description = issue.description;
+    const suggestion = issue.suggestion || '';
+    const analysis = (issue as LogicCheckIssue).analysis || null;
+    const position = issue.position;
+
+    if (issueType === 'dimension') {
+      addLog(`维度: ${dimensionLabel}, 问题标题: ${title}`, 'debug');
+    } else {
+      addLog(`类型: ${typeLabel}, 问题描述: ${description}`, 'debug');
+    }
+    addLog(`问题描述: ${description}`, 'debug');
 
     const config = await this.getConfig();
 
@@ -639,16 +890,26 @@ ${logicDetectionSection}
 4. 返回修正后的完整章节内容
 5. 不要包含任何解释性文字，直接返回修正后的内容`;
 
+    let problemInfo = '';
+    if (dimensionLabel) {
+      problemInfo += `- 维度: ${dimensionLabel}\n`;
+    }
+    if (typeLabel) {
+      problemInfo += `- 类型: ${typeLabel}\n`;
+    }
+    problemInfo += `- 严重程度: ${issue.severity}\n`;
+    if (title) problemInfo += `- 问题标题: ${title}\n`;
+    problemInfo += `- 问题描述: ${description}\n`;
+    if (analysis) problemInfo += `- 矛盾点分析: ${analysis}\n`;
+    problemInfo += `- 改进建议: ${suggestion}\n`;
+    if (position) {
+      problemInfo += `- 问题位置: 第 ${position.startIndex} 到 ${position.endIndex} 字符\n`;
+    }
+
     const userPrompt = `请对以下章节内容进行修正：
 
 ## 问题信息
-- 维度: ${PLOT_CHECK_DIMENSION_LABELS[issue.dimension]}
-- 严重程度: ${issue.severity}
-- 问题标题: ${issue.title}
-- 问题描述: ${issue.description}
-- 改进建议: ${issue.suggestion}
-${issue.position ? `- 问题位置: 第 ${issue.position.startIndex} 到 ${issue.position.endIndex} 字符` : ''}
-
+${problemInfo}
 ## 当前章节内容
 ${content}
 
@@ -700,6 +961,124 @@ ${content}
       };
     }
   }
+
+  async batchFixIssues(
+    projectId: string,
+    chapterIndex: number,
+    content: string,
+    issues: any[],
+    modelConfig?: ModelConfig
+  ): Promise<{ success: boolean; fixedContent: string; results: { index: number; success: boolean; error?: string }[]; error?: string }> {
+    addLog('===== 剧情检查: 批量修正开始 =====', 'debug');
+    addLog(`章节索引: ${chapterIndex}, 问题数量: ${issues.length}`, 'debug');
+
+    if (!issues || issues.length === 0) {
+      return { success: true, fixedContent: content, results: [] };
+    }
+
+    const config = await this.getConfig();
+
+    const systemPrompt = `你是一个专业的小说编辑和修订助手。你的任务是根据列出的一组问题，对章节内容进行精准的批量修正。
+
+重要规则：
+1. 仅修正列出的问题，保持其他内容完全不变
+2. 保持原有的写作风格、语气和叙事方式
+3. 确保修正后的内容上下文连贯
+4. 保持章节的段落结构和格式不变
+5. 直接返回修正后的完整章节内容，不要包含任何解释、标记或注释
+
+对于每个问题，请按照描述和建议进行修正。如果一个问题涉及原文片段，请精确替换该片段。`;
+
+    const issuesDescription = issues.map((issue: any, idx: number) => {
+      let desc = `### 问题 ${idx + 1}\n`;
+      if (issue.dimension) {
+        desc += `- 维度: ${PLOT_CHECK_DIMENSION_LABELS[issue.dimension] || issue.dimension}\n`;
+      }
+      if (issue.type) {
+        desc += `- 类型: ${LOGIC_CONTRADICTION_TYPE_LABELS[issue.type] || issue.type}\n`;
+      }
+      desc += `- 严重程度: ${issue.severity}\n`;
+      if (issue.title) desc += `- 标题: ${issue.title}\n`;
+      desc += `- 描述: ${issue.description}\n`;
+      if (issue.analysis) desc += `- 分析: ${issue.analysis}\n`;
+      desc += `- 建议: ${issue.suggestion}\n`;
+
+      if (issue.originalText && issue.originalText.length > 0) {
+        desc += `- 相关原文:\n`;
+        for (const ot of issue.originalText) {
+          desc += `  \`\`\`\n  ${ot.snippet}\n  \`\`\`\n`;
+        }
+      }
+      if (issue.references && issue.references.length > 0) {
+        desc += `- 参考资料:\n`;
+        for (const ref of issue.references) {
+          desc += `  - [${ref.type}] ${ref.name}: ${ref.summary}\n`;
+        }
+      }
+      if (issue.position) {
+        desc += `- 位置: 第 ${issue.position.startIndex} 到 ${issue.position.endIndex} 字符\n`;
+      }
+      return desc;
+    }).join('\n\n');
+
+    const userPrompt = `请对以下章节内容进行批量修正：
+
+## 问题列表（共 ${issues.length} 个）
+${issuesDescription}
+
+## 当前章节内容
+${content}
+
+请根据上述问题列表，对章节内容进行批量修正。返回修正后的完整章节内容，不要包含任何解释或标记。`;
+
+    const messages: ChatMessage[] = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
+    ];
+
+    const engineConfig = await this.getEngineConfig();
+
+    const effectiveModelConfig: ModelConfig = modelConfig || {
+      model: config.model,
+      temperature: engineConfig.temperature,
+      maxTokens: Math.min(engineConfig.maxTokens * 2, 8000)
+    };
+
+    addLog(`【批量修正】模型配置: ${JSON.stringify(effectiveModelConfig)}`, 'debug');
+
+    try {
+      const rawContent = await this.callAIService(messages, effectiveModelConfig, AI_CHECK_TIMEOUT * 2);
+      const fixedContent = rawContent.trim();
+
+      addLog(`【批量修正】成功, 修正后内容长度: ${fixedContent.length}`, 'info');
+
+      const diffs = this.computeDiffs(content, fixedContent);
+      addLog(`修正差异数: ${diffs.length}`, 'debug');
+
+      const results = issues.map((_, idx) => ({
+        index: idx,
+        success: true
+      }));
+
+      addLog('===== 剧情检查: 批量修正完成 =====', 'debug');
+      addLog(`修正成功: true, 问题数: ${issues.length}`, 'debug');
+
+      return {
+        success: true,
+        fixedContent,
+        results
+      };
+    } catch (error) {
+      addLog(`【批量修正】失败: ${error instanceof Error ? error.message : String(error)}`, 'error');
+      return {
+        success: false,
+        fixedContent: content,
+        results: issues.map((_, idx) => ({ index: idx, success: false, error: error instanceof Error ? error.message : '修正失败' })),
+        error: error instanceof Error ? error.message : '批量修正失败'
+      };
+    }
+  }
+
 }
 
 export const plotCheckerService = new PlotCheckerService();

@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { BatchFixRequest } from '../shared/types/writing.types';
 
 // 存储 subscription 映射，以便 off 方法可以正确移除监听器
 const subscriptionMap = new Map<string, Map<Function, Function>>();
@@ -361,6 +362,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     exportProjectWithChapters: (projectId: string, format: string, chapterIndices: number[]) => ipcRenderer.invoke('writing:exportProjectWithChapters', projectId, format, chapterIndices),
     checkChapter: (params: { projectId: string; chapterIndex: number; content: string; previousChapters?: { index: number; title: string; content: string }[] }) => ipcRenderer.invoke('writing:checkChapter', params),
     autoFixIssue: (params: { projectId: string; chapterIndex: number; content: string; issue: any; modelConfig?: any }) => ipcRenderer.invoke('writing:autoFixIssue', params),
+    batchFixIssues: (req: BatchFixRequest) => ipcRenderer.invoke('writing:batchFixIssues', req),
     getLogicCheckRecords: () => ipcRenderer.invoke('writing:getLogicCheckRecords'),
     clearLogicCheckRecords: () => ipcRenderer.invoke('writing:clearLogicCheckRecords'),
     aiSuggestSplit: (request: any) => ipcRenderer.invoke('writing:aiSuggestSplit', request),

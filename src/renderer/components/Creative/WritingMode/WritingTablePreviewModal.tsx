@@ -559,7 +559,7 @@ const WritingTablePreviewModal: React.FC<WritingTablePreviewModalProps> = ({
 
     // 注册进度事件监听器
     let lastLoadTime = 0;
-    const LOAD_THROTTLE_MS = 500; // 至少间隔500ms再加载表格数据
+    const LOAD_THROTTLE_MS = 50; // 至少间隔50ms再加载表格数据，确保每个分片完成后快速刷新
 
     const progressListener = (_event: any, _projectId: string, progressData: { current: number; total: number; message: string; percent: number; timestamp: number }) => {
       console.log('[WritingOrganize] 收到进度更新:', progressData);

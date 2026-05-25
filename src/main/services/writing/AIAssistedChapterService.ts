@@ -402,6 +402,9 @@ ${chaptersInfo}
       }
     }
 
+    // 修复 AI 返回的中文引号问题
+    jsonStr = this.fixChineseQuotes(jsonStr);
+
     try {
       const parsed = JSON.parse(jsonStr);
 
@@ -446,6 +449,9 @@ ${chaptersInfo}
       }
     }
 
+    // 修复 AI 返回的中文引号问题
+    jsonStr = this.fixChineseQuotes(jsonStr);
+
     try {
       const parsed = JSON.parse(jsonStr);
 
@@ -470,6 +476,14 @@ ${chaptersInfo}
       }
       throw error;
     }
+  }
+
+  // 将 JSON 字符串中的中文引号替换为英文引号
+  private fixChineseQuotes(jsonStr: string): string {
+    let result = jsonStr;
+    result = result.replace(/"/g, '"');
+    result = result.replace(/"/g, '"');
+    return result;
   }
 
   private createError(

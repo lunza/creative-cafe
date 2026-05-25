@@ -1,0 +1,3 @@
+- [x] LOAD_THROTTLE_MS 已从 500ms 降低到 50ms
+- [x] 分片处理完成后前端进度监听器能正确触发 loadTableData()
+- [x] 表格内容在分片处理完成后能实时展示更新结果
