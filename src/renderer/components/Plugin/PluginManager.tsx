@@ -444,8 +444,8 @@ const PluginManager: React.FC = () => {
       const apiMode = activeEngine.api_mode;
       const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
       const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
-      const maxTokens = Number(activeEngine.max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })();
-      const temperature = Number(activeEngine.temperature) ?? (() => { throw new Error('未配置 temperature 参数') })();
+      const maxTokens = (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240;
+      const temperature = (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : 0.7;
       const topP = Number(activeEngine.top_p) ?? (() => { throw new Error('未配置 top_p 参数') })();
       
       addLog(`[Plugin] 一键翻译配置: URL=${apiUrl}, Mode=${apiMode}, Model=${modelName}, Transmission=${apiKeyTransmission}, MaxTokens=${maxTokens}, Temperature=${temperature}, TopP=${topP}`);

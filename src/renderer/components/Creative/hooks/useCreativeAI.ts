@@ -68,10 +68,10 @@ export const useCreativeAI = (): UseCreativeAIReturn => {
       'Content-Type': 'application/json'
     };
 
-    const maxTokens = Number(engine.max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })();
+    const maxTokens = (typeof engine.max_tokens === 'number' && engine.max_tokens > 0) ? engine.max_tokens : 10240;
     const temperature = (typeof engine.temperature === 'number' && engine.temperature >= 0 && engine.temperature <= 2)
       ? engine.temperature
-      : (() => { throw new Error('未配置 temperature 参数') })();
+      : 0.7;
 
     let requestBody: any;
     if (apiMode === 'chat_completion') {

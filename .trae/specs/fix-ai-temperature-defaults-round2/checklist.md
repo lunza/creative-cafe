@@ -1,0 +1,8 @@
+- [x] WorldBookManager所有遗漏的5处temperature/max_tokens已修复为使用默认值
+- [x] useChapterGeneration.ts中2处验证已修复为使用默认值
+- [x] MarkdownAITools.tsx中2处验证已修复为使用默认值
+- [x] WorldBookEditor.tsx中4处验证已修复为使用默认值
+- [x] ChatEngine.ts中2处验证已修复为使用默认值
+- [x] PluginManager.tsx中2处验证已修复为使用默认值
+- [x] TypeScript编译无新增错误
+- [x] grep搜索确认所有"未配置 temperature 参数"和"未配置 max_tokens 参数"已清除

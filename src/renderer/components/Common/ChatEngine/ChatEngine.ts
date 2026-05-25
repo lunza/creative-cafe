@@ -140,7 +140,7 @@ export class ChatEngine implements IChatEngine {
           { role: 'system', content: systemPrompt },
           ...chatHistory,
         ],
-        max_tokens: Number(config.max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })(),
+        max_tokens: (typeof config.max_tokens === 'number' && config.max_tokens > 0) ? config.max_tokens : 10240,
         temperature: Number(config.temperature) ?? 0.8,
         stream: true,
       };
@@ -173,7 +173,7 @@ export class ChatEngine implements IChatEngine {
       const body: any = {
         model: config.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })(),
         prompt,
-        max_tokens: Number(config.max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })(),
+        max_tokens: (typeof config.max_tokens === 'number' && config.max_tokens > 0) ? config.max_tokens : 10240,
         temperature: Number(config.temperature) ?? 0.8,
         stream: true,
       };
