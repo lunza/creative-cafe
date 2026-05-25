@@ -17,9 +17,9 @@
 
 - [x] Task 4: 构建并验证
   - [x] SubTask 4.1: 运行构建命令 - 构建成功无错误
-  - [ ] SubTask 4.2: 验证剧情检查返回的报告中每个问题包含 `quickFixSuggestion`
-  - [ ] SubTask 4.3: 验证快速修正按钮点击时直接使用缓存建议展示弹窗
-  - [ ] SubTask 4.4: 验证接受修正后执行字符串替换并重新评分
+  - [x] SubTask 4.2: 验证剧情检查返回的报告中每个问题包含 `quickFixSuggestion`
+  - [x] SubTask 4.3: 验证快速修正按钮点击时直接使用缓存建议展示弹窗
+  - [x] SubTask 4.4: 验证接受修正后执行字符串替换并重新评分
 
 # Task Dependencies
 - Task 2 depends on Task 1
