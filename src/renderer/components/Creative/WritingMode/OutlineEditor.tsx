@@ -9,6 +9,53 @@ import { useWritingProjectStore } from '../../../stores/writingProjectStore';
 
 const { TextArea } = Input;
 
+// 将文本中匹配 importantSpans 的部分以加粗样式显示
+function renderWithImportantSpans(text: string, importantSpans?: string[]): React.ReactNode {
+  if (!importantSpans || importantSpans.length === 0) return text;
+
+  const spans = importantSpans.filter(s => s && s.length > 0);
+  if (spans.length === 0) return text;
+
+  // 按长度降序排列，避免短 span 先匹配导致长 span 无法匹配
+  const sortedSpans = [...spans].sort((a, b) => b.length - a.length);
+
+  const parts: React.ReactNode[] = [];
+  let remaining = text;
+  let keyIndex = 0;
+
+  while (remaining.length > 0) {
+    let earliestIndex = -1;
+    let earliestSpan = '';
+
+    for (const span of sortedSpans) {
+      const idx = remaining.indexOf(span);
+      if (idx >= 0 && (earliestIndex < 0 || idx < earliestIndex)) {
+        earliestIndex = idx;
+        earliestSpan = span;
+      }
+    }
+
+    if (earliestIndex < 0) {
+      // 没有找到更多匹配，剩余部分作为普通文本
+      parts.push(<React.Fragment key={keyIndex++}>{remaining}</React.Fragment>);
+      break;
+    }
+
+    // 添加匹配前的普通文本
+    if (earliestIndex > 0) {
+      parts.push(<React.Fragment key={keyIndex++}>{remaining.slice(0, earliestIndex)}</React.Fragment>);
+    }
+
+    // 添加加粗的 span
+    parts.push(<strong key={keyIndex++}>{earliestSpan}</strong>);
+
+    // 继续处理剩余部分
+    remaining = remaining.slice(earliestIndex + earliestSpan.length);
+  }
+
+  return <span>{parts}</span>;
+}
+
 interface OutlineEditorProps {
   outline: GeneratedOutline | null;
   onConfirm: () => void;
@@ -276,13 +323,13 @@ const OutlineEditor: React.FC<OutlineEditorProps> = ({
                               </div>
                             ) : (
                               <div>
-                                <p>{chapter.summary}</p>
+                                <p>{renderWithImportantSpans(chapter.summary, chapter.importantSpans)}</p>
                                 {chapter.keyPlotPoints.length > 0 && (
                                   <div>
                                     <strong>关键情节:</strong>
                                     <ul>
                                       {chapter.keyPlotPoints.map((point, idx) => (
-                                        <li key={idx}>{point}</li>
+                                        <li key={idx}>{renderWithImportantSpans(point, chapter.importantSpans)}</li>
                                       ))}
                                     </ul>
                                   </div>

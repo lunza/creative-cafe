@@ -30,7 +30,10 @@ import {
   PlotCheckRequest,
   PlotCheckReport,
   PlotCheckIssue,
-  ModelConfig
+  LogicCheckIssue,
+  ModelConfig,
+  BatchFixRequest,
+  BatchFixResult
 } from '../../../shared/types/writing.types';
 
 const activeAbortControllers = new Map<string, AbortController>();
@@ -506,10 +509,30 @@ export function registerWritingHandlers(): void {
         addLog(`[Resources] 素材上下文摘要(长度): ${resourceSummary.length}`, 'debug');
       }
 
+      // Load writing table data for chapter generation context
+      const projectId = request.projectId;
+      if (projectId) {
+        const tableData = await writingStorageService.getTableData(projectId);
+        const tableConfig = await writingStorageService.getTableConfig(projectId);
+        if (tableData && tableConfig) {
+          addLog(`[WritingTable] 加载表格数据: ${tableData.sheets?.length || 0}个表`, 'debug');
+          request.writingTableData = {
+            tableConfig: {
+              associatedTemplateId: tableConfig.associatedTemplateId,
+              associatedTemplateName: tableConfig.associatedTemplateName
+            },
+            sheets: tableData.sheets,
+            headers: tableData.headers,
+            data: tableData.data,
+            sheetDescriptions: tableData.sheetDescriptions
+          };
+        }
+      }
+
       addLog('===== 请求入参结束 =====', 'debug');
 
       const abortController = new AbortController();
-      const { projectId, chapterIndex } = request;
+      const { chapterIndex } = request;
       activeAbortControllers.set(`${projectId}_${chapterIndex}`, abortController);
 
       const onStream = (chunk: string) => {
@@ -957,6 +980,9 @@ export function registerWritingHandlers(): void {
         return { success: false, error: '未配置 AI 模型，请在设置中配置 AI 引擎', report: null };
       }
 
+      const tableData = await writingStorageService.getTableData(request.projectId);
+      const tableConfig = await writingStorageService.getTableConfig(request.projectId);
+
       const checkRequest: PlotCheckRequestData = {
         projectId: request.projectId,
         chapterIndex: request.chapterIndex,
@@ -966,7 +992,17 @@ export function registerWritingHandlers(): void {
         novelType: project.config?.parameters?.novelType,
         writingStyle: project.config?.parameters?.writingStyle,
         modelConfig,
-        previousChapters: request.previousChapters || []
+        previousChapters: request.previousChapters || [],
+        writingTableData: tableData && tableConfig ? {
+          tableConfig: {
+            associatedTemplateId: tableConfig.associatedTemplateId,
+            associatedTemplateName: tableConfig.associatedTemplateName
+          },
+          sheets: tableData.sheets,
+          headers: tableData.headers,
+          data: tableData.data,
+          sheetDescriptions: tableData.sheetDescriptions
+        } : undefined
       };
 
       const report = await plotCheckerService.checkChapter(checkRequest);
@@ -1000,11 +1036,11 @@ export function registerWritingHandlers(): void {
     }
   });
 
-  ipcMain.handle('writing:autoFixIssue', async (_event, request: { projectId: string; chapterIndex: number; content: string; issue: PlotCheckIssue; modelConfig?: ModelConfig }) => {
+  ipcMain.handle('writing:autoFixIssue', async (_event, request: { projectId: string; chapterIndex: number; content: string; issue: PlotCheckIssue; issueType?: 'dimension' | 'logic'; modelConfig?: ModelConfig }) => {
     try {
       addLog('===== 写作模式: 自动修正请求 =====', 'debug');
       addLog(`章节索引: ${request.chapterIndex}`, 'debug');
-      addLog(`问题标题: ${request.issue?.title}`, 'debug');
+      addLog(`问题标题: ${request.issue?.title || request.issue?.description}`, 'debug');
       addLog('===== 请求入参结束 =====', 'debug');
 
       // Read model config from active AI engine settings
@@ -1026,6 +1062,7 @@ export function registerWritingHandlers(): void {
         request.chapterIndex,
         request.content,
         request.issue,
+        request.issueType || 'dimension',
         modelConfig
       );
 
@@ -1048,6 +1085,58 @@ export function registerWritingHandlers(): void {
         fixedContent: request.content,
         diffs: [],
         error: error instanceof Error ? error.message : '自动修正失败'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:batchFixIssues', async (_event, req: BatchFixRequest): Promise<BatchFixResult> => {
+    try {
+      addLog('===== 写作模式: 批量修正请求 =====', 'debug');
+      addLog(`章节索引: ${req.chapterIndex}`, 'debug');
+      addLog(`问题数量: ${req.issues?.length || 0}`, 'debug');
+      addLog('===== 请求入参结束 =====', 'debug');
+
+      const project = await writingStorageService.loadProject(req.projectId);
+      if (!project) {
+        throw new Error('项目不存在');
+      }
+
+      // Read model config from active AI engine settings
+      const storageService = getStorageService();
+      const settings = storageService.getSettings();
+      const engines = settings?.aiEngines || [];
+      const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
+
+      const modelConfig: ModelConfig = {
+        model: activeEngine?.model_name ?? req.modelConfig?.model ?? (() => { throw new Error('未配置 AI 模型名称') })(),
+        temperature: Number(activeEngine?.temperature) ?? req.modelConfig?.temperature ?? (() => { throw new Error('未配置 temperature 参数') })(),
+        maxTokens: Number(activeEngine?.max_tokens) ?? req.modelConfig?.maxTokens ?? (() => { throw new Error('未配置 max_tokens 参数') })()
+      };
+
+      addLog(`【批量修正】模型配置: ${JSON.stringify(modelConfig)}`, 'debug');
+
+      const result = await plotCheckerService.batchFixIssues(
+        req.projectId,
+        req.chapterIndex,
+        req.content,
+        req.issues,
+        modelConfig
+      );
+
+      addLog('===== 写作模式: 批量修正完成 =====', 'debug');
+      addLog(`修正成功: ${result.success}`, 'debug');
+      addLog('===== 响应结束 =====', 'debug');
+
+      return result;
+    } catch (error) {
+      addLog('===== 写作模式: 批量修正错误 =====', 'error');
+      addLog(`错误信息: ${error instanceof Error ? error.message : String(error)}`, 'error');
+      addLog('===== 错误详情结束 =====', 'error');
+      return {
+        success: false,
+        fixedContent: req.content,
+        results: req.issues.map((_, i) => ({ index: i, success: false, error: error instanceof Error ? error.message : 'Unknown error' })),
+        error: error instanceof Error ? error.message : '批量修正失败'
       };
     }
   });

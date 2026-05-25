@@ -50,8 +50,6 @@ export function useChapterGeneration(
   const saveProject = useWritingProjectStore((state) => state.saveProject);
   const getCurrentProject = useWritingProjectStore((state) => state.getCurrentProject);
   const setting = useSettingStore((state) => state.setting);
-  const aiEngines = setting?.ai_engines || [];
-  const activeEngine = aiEngines.find((e) => e.is_active) || aiEngines[0];
 
   const [selectedChapterIndex, setSelectedChapterIndex] = useState(0);
   const [generationState, setGenerationState] = useState<GenerationState>(GenerationState.IDLE);
@@ -250,64 +248,78 @@ export function useChapterGeneration(
     setCurrentChapterWords(0);
     setSelectedChapterIndex(chapterIndex);
 
-    abortControllerRef.current = new AbortController();
-
-    const currentProject = currentProjectRef.current;
-    const model = activeEngine?.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
-    const temperature = Number(activeEngine?.temperature) ?? (() => { throw new Error('未配置 temperature 参数') })();
-    const maxTokens = Number(activeEngine?.max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })();
-    const modelConfig = {
-      model,
-      temperature,
-      maxTokens
-    };
-
-    const previousChapters = outline.chapters
-      .filter(ch => ch.index < chapterIndex && chapterContents[ch.index])
-      .map(ch => ({
-        index: ch.index,
-        title: ch.title,
-        summary: ch.summary || ch.title,
-        fullContent: (chapterContents[ch.index] || '').substring(0, MAX_PREVIOUS_CHAPTER_CONTENT_LENGTH)
-      }));
-
-    const novelType = currentProject?.config?.parameters?.novelType || 'web_novel';
-    const writingStyle = currentProject?.config?.parameters?.writingStyle || 'serious';
-    const perspective = currentProject?.config?.parameters?.narrativePerspective || 'third_person';
-    const projectResources = currentProject?.config?.resources || {};
-
-    const request = {
-      projectId,
-      chapterIndex,
-      chapterInfo: {
-        index: chapter.index,
-        title: chapter.title,
-        outline: chapter.summary,
-        characters: chapter.characters || [],
-        scenes: chapter.scenes || []
-      },
-      previousChapters,
-      worldBookContext: [],
-      characterContext: [],
-      generationParams: {
-        targetWordCount: chapter.targetWordCount,
-        style: writingStyle,
-        perspective: perspective,
-        novelType,
-        constraints: []
-      },
-      modelConfig,
-      resources: {
-        worldBookIds: projectResources.worldBookIds || [],
-        characterCardIds: projectResources.characterCardIds || [],
-        userPersonaIds: projectResources.userPersonaIds || [],
-        knowledgeItemIds: projectResources.knowledgeItemIds || [],
-        writingStyleIds: projectResources.writingStyleIds || []
-      }
-    };
-
     try {
-      await window.electronAPI?.writing?.generateChapter(request);
+      abortControllerRef.current = new AbortController();
+
+      const currentSetting = useSettingStore.getState().setting;
+      const engines = currentSetting?.aiEngines || currentSetting?.ai_engines || [];
+      const engine = engines.find((e: any) => e.id === currentSetting?.activeEngineId) || engines[0];
+
+      if (!engine) {
+        throw new Error('未配置 AI 引擎，请先在设置中配置 AI 服务');
+      }
+
+      if (!engine.model_name) {
+        throw new Error('未配置 AI 模型名称');
+      }
+      if (engine.temperature === undefined || engine.temperature === null) {
+        throw new Error('未配置 temperature 参数');
+      }
+      if (engine.max_tokens === undefined || engine.max_tokens === null) {
+        throw new Error('未配置 max_tokens 参数');
+      }
+
+      const modelConfig = {
+        model: engine.model_name,
+        temperature: Number(engine.temperature),
+        maxTokens: Number(engine.max_tokens),
+      };
+
+      const currentProject = useWritingProjectStore.getState().getCurrentProject();
+      if (!currentProject) {
+        throw new Error('未找到当前项目');
+      }
+
+      if (!window.electronAPI?.writing?.generateChapter) {
+        throw new Error('IPC 通信模块未就绪，请重启应用');
+      }
+
+      const novelType = currentProject.config?.parameters?.novelType || 'web_novel';
+      const writingStyle = currentProject.config?.parameters?.writingStyle || 'serious';
+      const perspective = currentProject.config?.parameters?.narrativePerspective || 'third_person';
+      const projectResources = currentProject.config?.resources || {};
+
+      const request = {
+        projectId,
+        chapterIndex,
+        chapterInfo: {
+          index: chapter.index,
+          title: chapter.title,
+          outline: chapter.summary,
+          characters: chapter.characters || [],
+          scenes: chapter.scenes || []
+        },
+        previousChapters: [],
+        worldBookContext: [],
+        characterContext: [],
+        generationParams: {
+          targetWordCount: chapter.targetWordCount,
+          style: writingStyle,
+          perspective: perspective,
+          novelType,
+          constraints: []
+        },
+        modelConfig,
+        resources: {
+          worldBookIds: projectResources.worldBookIds || [],
+          characterCardIds: projectResources.characterCardIds || [],
+          userPersonaIds: projectResources.userPersonaIds || [],
+          knowledgeItemIds: projectResources.knowledgeItemIds || [],
+          writingStyleIds: projectResources.writingStyleIds || []
+        }
+      };
+
+      await window.electronAPI.writing.generateChapter(request);
     } catch (error: any) {
       if (error.name === 'AbortError') {
         setGenerationState(GenerationState.STOPPED);
@@ -319,7 +331,7 @@ export function useChapterGeneration(
       setIsGenerating(false);
       setGenerationState(GenerationState.ERROR);
     }
-  }, [outline, isGenerating, chapterContents, projectId]);
+  }, [outline, isGenerating, chapterContents, projectId, setting]);
 
   const handleContinuousGeneration = useCallback(() => {
     if (!outline || isGenerating) return;

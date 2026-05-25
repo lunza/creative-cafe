@@ -1,0 +1,7 @@
+- [x] PromptBuilder.buildContentPrompt 不再拼接 recentChapters/前序章节内容
+- [x] ContentGenerator 中 buildRecentChapters 方法已删除
+- [x] ContentGenerator.buildPrompt 不再调用 buildRecentChapters
+- [x] useChapterGeneration 不再构建 previousChapters 数据
+- [x] 测试用例已更新，不再包含前序章节相关断言
+- [x] 所有测试通过
+- [x] 构建无错误

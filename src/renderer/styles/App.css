@@ -12,6 +12,12 @@
   --card-bg-color: #1f1f1f;
   --border-color: #333333;
   --primary-color: #1890ff;
+  --bg-diff-original: #3c1a1a;
+  --border-diff-original: #5c2a2a;
+  --text-diff-original: #f8d7da;
+  --bg-diff-fixed: #1a3c1a;
+  --border-diff-fixed: #2a5c2a;
+  --text-diff-fixed: #d7f8da;
 }
 
 .app-layout {

@@ -115,34 +115,44 @@ const AutoFixResultModal: React.FC<AutoFixResultModalProps> = ({
                           <Space direction="vertical" style={{ width: '100%' }} size="small">
                             <div>
                               <Tag color="error" size="small">原文本</Tag>
-                              <Paragraph
+                              <div
                                 style={{
                                   margin: '4px 0 0',
                                   padding: '8px',
-                                  backgroundColor: '#fff1f0',
-                                  border: '1px solid #ffccc7',
-                                  borderRadius: 4
+                                  backgroundColor: 'var(--bg-diff-original, #fff1f0)',
+                                  border: '1px solid var(--border-diff-original, #ffccc7)',
+                                  borderRadius: 4,
+                                  color: 'var(--text-diff-original, #000)',
+                                  fontSize: 13,
+                                  lineHeight: 1.6,
+                                  wordBreak: 'break-all',
+                                  whiteSpace: 'pre-wrap'
                                 }}
                               >
                                 {truncateText(diff.originalText || '(空)', 150)}
-                              </Paragraph>
+                              </div>
                             </div>
                             <div style={{ textAlign: 'center' }}>
                               <ArrowRightOutlined style={{ color: '#1890ff' }} />
                             </div>
                             <div>
                               <Tag color="success" size="small">修正后</Tag>
-                              <Paragraph
+                              <div
                                 style={{
                                   margin: '4px 0 0',
                                   padding: '8px',
-                                  backgroundColor: '#f6ffed',
-                                  border: '1px solid #b7eb8f',
-                                  borderRadius: 4
+                                  backgroundColor: 'var(--bg-diff-fixed, #f6ffed)',
+                                  border: '1px solid var(--border-diff-fixed, #b7eb8f)',
+                                  borderRadius: 4,
+                                  color: 'var(--text-diff-fixed, #000)',
+                                  fontSize: 13,
+                                  lineHeight: 1.6,
+                                  wordBreak: 'break-all',
+                                  whiteSpace: 'pre-wrap'
                                 }}
                               >
                                 {truncateText(diff.fixedText || '(空)', 150)}
-                              </Paragraph>
+                              </div>
                             </div>
                           </Space>
                         }

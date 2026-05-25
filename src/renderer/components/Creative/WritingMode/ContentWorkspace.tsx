@@ -39,6 +39,7 @@ import ChapterMergeModal from './ChapterMergeModal';
 import AIGenerationHistoryModal from './AIGenerationHistoryModal';
 import PlotCheckReportModal from './PlotCheckReportModal';
 import AutoFixResultModal from './AutoFixResultModal';
+import QuickFixSuggestionModal from './QuickFixSuggestionModal';
 import WritingTablePreviewModal from './WritingTablePreviewModal';
 import { useChapterGeneration } from './hooks/useChapterGeneration';
 import { useVersionManagement } from './hooks/useVersionManagement';
@@ -160,6 +161,36 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
 
   const handleBackToConfig = () => {
     chapterStructure.handleBackToConfig(onBack);
+  };
+
+  const handleBatchFix = async (selectedIssues: Array<{ key: string; issue: any; issueType: 'dimension' | 'logic' }>) => {
+    return plotCheck.handleBatchFix(
+      currentChapter.index,
+      chapterGeneration.chapterContents[currentChapter?.index] || '',
+      selectedIssues,
+      projectId,
+      outline,
+      () => {},
+      chapterGeneration.editorContentRef
+    );
+  };
+
+  const handleQuickFix = (chapterContent: string, issue: any) => {
+    plotCheck.handleQuickFix(chapterContent, issue);
+  };
+
+  const handleAcceptQuickFix = () => {
+    plotCheck.handleAcceptQuickFix(
+      currentChapter.index,
+      outline,
+      chapterGeneration.editorContentRef,
+      () => {},
+      () => plotCheck.handlePlotCheck(currentChapter.index, chapterGeneration.chapterContents, outline, projectId)
+    );
+  };
+
+  const handleRejectQuickFix = () => {
+    plotCheck.handleRejectQuickFix();
   };
 
   const handleContentUpdated = (fixedContent: string) => {
@@ -485,8 +516,20 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
           () => {},
           chapterGeneration.editorContentRef
         )}
+        onQuickFix={handleQuickFix}
         chapterContent={chapterGeneration.chapterContents[currentChapter?.index] || ''}
         onContentUpdated={handleContentUpdated}
+        onRecheck={() => plotCheck.handlePlotCheck(currentChapter.index, chapterGeneration.chapterContents, outline, projectId)}
+      />
+
+      <QuickFixSuggestionModal
+        visible={!!plotCheck.pendingQuickFixSuggestion}
+        suggestion={plotCheck.pendingQuickFixSuggestion}
+        issueTitle={plotCheck.pendingQuickFixIssue?.title || plotCheck.pendingQuickFixIssue?.description || ''}
+        issueType={plotCheck.pendingQuickFixType === 'logic' ? '逻辑异常' : plotCheck.pendingQuickFixIssue?.dimension ? '维度问题' : '问题'}
+        onAccept={handleAcceptQuickFix}
+        onReject={handleRejectQuickFix}
+        onCancel={handleRejectQuickFix}
       />
 
       <Modal
@@ -500,20 +543,35 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
           {plotCheck.logicRecords.length === 0 ? (
             <Empty description="暂无逻辑矛盾记录" />
           ) : (
-            <Table
-              dataSource={plotCheck.logicRecords}
-              pagination={{ pageSize: 10 }}
-              size="small"
-              rowKey="1"
-              columns={[
-                { title: '异常类型', dataIndex: '2', key: 'type', width: 120 },
-                { title: '情节描述', dataIndex: '3', key: 'description', ellipsis: true },
-                { title: '矛盾点', dataIndex: '4', key: 'analysis', ellipsis: true },
-                { title: '章节', dataIndex: '5', key: 'chapter', width: 100 },
-                { title: '严重程度', dataIndex: '6', key: 'severity', width: 80 },
-                { title: '检测时间', dataIndex: '8', key: 'time', width: 150 }
-              ]}
-            />
+            <>
+              <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end' }}>
+                <Popconfirm
+                  title="确认清空"
+                  description="确定要清空所有逻辑矛盾记录吗？此操作不可恢复。"
+                  onConfirm={plotCheck.handleClearLogicRecords}
+                  okText="确定"
+                  cancelText="取消"
+                >
+                  <Button danger icon={<DeleteOutlined />}>
+                    清空记录
+                  </Button>
+                </Popconfirm>
+              </div>
+              <Table
+                dataSource={plotCheck.logicRecords}
+                pagination={{ pageSize: 10 }}
+                size="small"
+                rowKey="1"
+                columns={[
+                  { title: '异常类型', dataIndex: '2', key: 'type', width: 120 },
+                  { title: '情节描述', dataIndex: '3', key: 'description', ellipsis: true },
+                  { title: '矛盾点', dataIndex: '4', key: 'analysis', ellipsis: true },
+                  { title: '章节', dataIndex: '5', key: 'chapter', width: 100 },
+                  { title: '严重程度', dataIndex: '6', key: 'severity', width: 80 },
+                  { title: '检测时间', dataIndex: '8', key: 'time', width: 150 }
+                ]}
+              />
+            </>
           )}
         </Spin>
       </Modal>

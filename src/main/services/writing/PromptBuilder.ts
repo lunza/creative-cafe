@@ -121,7 +121,8 @@ ${resourceContext ? `\n## 用户与角色信息\n${resourceContext}` : ''}${writ
       "characters": ["出场角色"],
       "scenes": ["场景描述"],
       "suspensePoints": ["悬念点"],
-      "targetWordCount": ${wordsPerChapter}
+      "targetWordCount": ${wordsPerChapter},
+      "importantSpans": ["需要加粗显示的重要文本1", "需要加粗显示的重要文本2"]
     }
   ],
   "characterRelationships": [
@@ -151,9 +152,10 @@ ${resourceContext ? `\n## 用户与角色信息\n${resourceContext}` : ''}${writ
 3. 章节之间要有连贯性，情节递进
 4. 遵循${template.name}类型的创作范式: ${template.outlineStructure.join('、')}
 5. 合理安排起承转合，注意节奏控制
-${!includeEnding ? '6. 不要生成结局章节，故事保持开放式发展' : ''}
-${chapterRangeInstruction ? `${!includeEnding ? '7' : '6'}. 仅生成指定范围的章节：第${rangeStart}章至第${rangeEnd}章` : ''}
-${parameters.forbiddenContent && parameters.forbiddenContent.length > 0 ? `${(!includeEnding || chapterRangeInstruction) ? '7' : '6'}. 绝对不要包含以下内容: ${parameters.forbiddenContent.join('、')}` : ''}
+6. 合理使用 importantSpans 字段标记需要在前端加粗显示的重要文本，包括但不限于：具体金额、重要物品名称、人物关系发展关键描述、剧情推动点、关键线索等。importantSpans 中的文本必须是 summary 或 keyPlotPoints 中出现的原文片段（精确匹配），纯文本格式，不要包含任何Markdown标记
+${!includeEnding ? '7. 不要生成结局章节，故事保持开放式发展' : ''}
+${chapterRangeInstruction ? `${!includeEnding ? '8' : '7'}. 仅生成指定范围的章节：第${rangeStart}章至第${rangeEnd}章` : ''}
+${parameters.forbiddenContent && parameters.forbiddenContent.length > 0 ? `${(!includeEnding || chapterRangeInstruction) ? '8' : '7'}. 绝对不要包含以下内容: ${parameters.forbiddenContent.join('、')}` : ''}
 
 ## 输出格式要求
 1. 只输出JSON格式的大纲，不要输出任何解释性文字、前言或后记
@@ -163,6 +165,7 @@ ${parameters.forbiddenContent && parameters.forbiddenContent.length > 0 ? `${(!i
 5. 不要在JSON末尾添加多余的逗号
 6. 整个输出必须被包裹在\`\`\`json和\`\`\`代码块中
 7. 确保所有字符串值都完整闭合，不要在字符串中间截断
+8. 不要在JSON字符串值中使用任何Markdown格式标记（如**加粗**、*斜体*、_下划线_、~~删除线~~等），如需标记重要内容请使用 importantSpans 字段
 
 请严格按照上述格式输出完整的JSON大纲。`;
   }
@@ -181,6 +184,7 @@ ${parameters.forbiddenContent && parameters.forbiddenContent.length > 0 ? `${(!i
       chapterSummaries: string;
       longTermContext: string;
       continuityConstraints: string;
+      tableContext?: string;
     },
     parameters: {
       targetWordCount: number;
@@ -212,10 +216,9 @@ ${chapterInfo.scenes.join('、')}`);
 ${context.resourceContext}`);
     }
 
-    if (context.recentChapters) {
+    if (context.tableContext) {
       parts.push(`
-## 前序章节内容
-${context.recentChapters}`);
+${context.tableContext}`);
     }
 
     if (context.chapterSummaries) {

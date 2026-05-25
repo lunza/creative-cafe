@@ -244,6 +244,16 @@ export interface ContentGenerationRequest {
     knowledgeItemIds?: string[];
     writingStyleIds?: string[];
   };
+  writingTableData?: {
+    tableConfig?: {
+      associatedTemplateId: string;
+      associatedTemplateName: string;
+    };
+    sheets?: string[];
+    headers?: Record<string, string[]>;
+    data?: Record<string, Record<string, any>[]>;
+    sheetDescriptions?: Record<string, string>;
+  };
 }
 
 // 作品信息
@@ -283,6 +293,8 @@ export interface ChapterOutline {
   importance?: ImportanceLevel;
   children?: ChapterOutline[];
   content?: string;
+  // 需要在前端加粗显示的重要文本片段（纯文本，不含 Markdown）
+  importantSpans?: string[];
 }
 
 // 角色关系
@@ -676,9 +688,21 @@ export interface PlotCheckIssue {
     line?: number;
     column?: number;
   };
+  originalText?: {
+    snippet: string;
+    start: number;
+    end: number;
+  }[];
+  references?: {
+    type: string;
+    name: string;
+    summary: string;
+  }[];
   fixable?: boolean;
   fixed?: boolean;
   fixResult?: string;
+  quickFixable?: boolean;
+  quickFixSuggestion?: QuickFixSuggestion;
 }
 
 export interface DimensionScore {
@@ -699,6 +723,7 @@ export interface PlotCheckReport {
   logicCheckResult?: LogicCheckResult;
   checkedAt: number;
   chapterIndex: number;
+  batchFixed?: boolean;
 }
 
 export interface PlotCheckRequest {
@@ -738,6 +763,21 @@ export interface LogicCheckIssue {
     endIndex: number;
   };
   suggestion?: string;
+  originalText?: {
+    snippet: string;
+    start: number;
+    end: number;
+  }[];
+  references?: {
+    type: string;
+    name: string;
+    summary: string;
+  }[];
+  fixable?: boolean;
+  fixed?: boolean;
+  fixResult?: string;
+  quickFixable?: boolean;
+  quickFixSuggestion?: QuickFixSuggestion;
 }
 
 export interface LogicCheckResult {
@@ -746,6 +786,22 @@ export interface LogicCheckResult {
   highSeverityCount: number;
   mediumSeverityCount: number;
   lowSeverityCount: number;
+}
+
+export interface QuickFixSuggestion {
+  originalText: string;
+  fixedText: string;
+  reason: string;
+  position?: {
+    startIndex: number;
+    endIndex: number;
+  };
+}
+
+export interface QuickFixResult {
+  success: boolean;
+  suggestion: QuickFixSuggestion | null;
+  error?: string;
 }
 
 export interface AutoFixDiff {
@@ -761,6 +817,51 @@ export interface AutoFixResult {
   success: boolean;
   fixedContent: string;
   diffs: AutoFixDiff[];
+  error?: string;
+}
+
+export interface BatchFixIssueInfo {
+  dimension?: PlotCheckDimension;
+  type?: LogicContradictionType;
+  severity: IssueSeverity;
+  title?: string;
+  description: string;
+  analysis?: string;
+  suggestion: string;
+  position?: {
+    startIndex: number;
+    endIndex: number;
+  };
+  originalText?: {
+    snippet: string;
+    start: number;
+    end: number;
+  }[];
+  references?: {
+    type: string;
+    name: string;
+    summary: string;
+  }[];
+}
+
+export interface BatchFixRequest {
+  projectId: string;
+  chapterIndex: number;
+  content: string;
+  issues: BatchFixIssueInfo[];
+  modelConfig?: ModelConfig;
+}
+
+export interface BatchFixIssueResult {
+  index: number;
+  success: boolean;
+  error?: string;
+}
+
+export interface BatchFixResult {
+  success: boolean;
+  fixedContent: string;
+  results: BatchFixIssueResult[];
   error?: string;
 }
 

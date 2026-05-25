@@ -308,6 +308,9 @@ export class OutlineGenerator {
       jsonStr = jsonStr.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
     }
 
+    // 修复 AI 返回的中文引号问题
+    jsonStr = this.fixChineseQuotes(jsonStr);
+
     console.log('[OutlineGenerator] Parsing JSON (length:', jsonStr.length, ')');
     console.log('[OutlineGenerator] JSON preview:', jsonStr.substring(0, 200));
 
@@ -322,6 +325,7 @@ export class OutlineGenerator {
 
     // Try multiple fix strategies in order of robustness
     const fixStrategies = [
+      { name: 'stripMarkdown', strategy: () => this.stripMarkdownFromValues(jsonStr) },
       { name: 'unescapeControl', strategy: () => this.fixUnescapedCharacters(jsonStr) },
       { name: 'truncateTrailing', strategy: () => this.fixTrailingGarbage(jsonStr) },
       { name: 'errorPositionFix', strategy: () => this.fixByErrorPosition(jsonStr) },
@@ -655,6 +659,28 @@ export class OutlineGenerator {
     fixed = fixed.replace(/:\s*'([^']*)'/g, ':"$1"');
 
     return fixed;
+  }
+
+  // 将 JSON 字符串中的中文引号替换为英文引号
+  private fixChineseQuotes(jsonStr: string): string {
+    let result = jsonStr;
+    result = result.replace(/"/g, '"');
+    result = result.replace(/"/g, '"');
+    return result;
+  }
+
+  // 移除 JSON 字符串值中的 Markdown 格式标记（如 **bold**, *italic*, __bold__ 等）
+  private stripMarkdownFromValues(jsonStr: string): string {
+    let result = jsonStr;
+    // 移除字符串值内部的 **bold** 或 __bold__
+    result = result.replace(/\*\*(.+?)\*\*/g, '$1');
+    result = result.replace(/__(.+?)__/g, '$1');
+    // 移除 *italic* 或 _italic_
+    result = result.replace(/\*(.+?)\*/g, '$1');
+    result = result.replace(/_(.+?)_/g, '$1');
+    // 移除 ~~strikethrough~~
+    result = result.replace(/~~(.+?)~~/g, '$1');
+    return result;
   }
 
   private getDefaultStyle(novelType: string): any {

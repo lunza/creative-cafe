@@ -110,9 +110,13 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
       localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(existing));
       setSavedConfigs(existing);
       message.success(`配置 "${name}" 已保存`);
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to save config:', e);
-      message.error('保存配置失败');
+      if (e.name === 'QuotaExceededError' || e.code === 22) {
+        message.error('保存失败：本地存储空间已满，请清理浏览器缓存或检查磁盘空间');
+      } else {
+        message.error(`保存配置失败: ${e?.message || String(e)}`);
+      }
     }
   };
 
@@ -125,31 +129,41 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
     });
   };
 
-  const handleConfirmSave = () => {
+  const handleConfirmSave = async () => {
     if (!saveName.trim()) {
       message.warning('请输入配置名称');
       return;
     }
-    const values = form.getFieldsValue();
-    const config = {
-      resources: {
-        worldBookIds: selectedWorldBooks.map(wb => wb.id),
-        characterCardIds: selectedCharacters.map(c => c.id),
-        userPersonaIds: selectedPersonas.length > 0 ? selectedPersonas.map(p => p.id) : undefined
-      },
-      parameters: {
-        creativeDescription: values.creativeDescription,
-        novelType: values.novelType,
-        targetWordCount: values.targetWordCount,
-        chapterCount: values.chapterCount,
-        narrativePerspective: values.narrativePerspective,
-        writingStyle: values.writingStyle,
-        additionalRequirements: values.additionalRequirements,
-        forbiddenContent: values.forbiddenContent?.split('\n').filter(Boolean) || []
-      }
-    };
-    saveConfigToStorage(saveName.trim(), config);
-    setSaveModalVisible(false);
+    try {
+      setSaving(true);
+      const values = await form.getFieldsValue();
+      const config = {
+        resources: {
+          worldBookIds: selectedWorldBooks.map(wb => wb.id),
+          characterCardIds: selectedCharacters.map(c => c.id),
+          userPersonaIds: selectedPersonas.length > 0 ? selectedPersonas.map(p => p.id) : undefined
+        },
+        parameters: {
+          creativeDescription: values.creativeDescription,
+          novelType: values.novelType,
+          targetWordCount: values.targetWordCount,
+          chapterCount: values.chapterCount,
+          narrativePerspective: values.narrativePerspective,
+          writingStyle: values.writingStyle,
+          additionalRequirements: values.additionalRequirements,
+          forbiddenContent: Array.isArray(values.forbiddenContent)
+            ? values.forbiddenContent.filter((s: string) => s && s.trim())
+            : values.forbiddenContent?.split('\n').filter(Boolean) || []
+        }
+      };
+      saveConfigToStorage(saveName.trim(), config);
+      setSaveModalVisible(false);
+    } catch (e: any) {
+      console.error('保存配置失败:', e);
+      message.error(`保存配置失败: ${e?.message || String(e)}`);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleLoadConfig = (entry: { name: string; config: any }) => {
@@ -265,7 +279,9 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
         narrativePerspective: values.narrativePerspective,
         writingStyle: values.writingStyle,
         additionalRequirements: values.additionalRequirements,
-        forbiddenContent: values.forbiddenContent?.split('\n').filter(Boolean) || [],
+        forbiddenContent: Array.isArray(values.forbiddenContent)
+          ? values.forbiddenContent.filter((s: string) => s && s.trim())
+          : values.forbiddenContent?.split('\n').filter(Boolean) || [],
         includeEnding: values.includeEnding !== false,
         chapterRangeStart: values.includeEnding === false ? values.chapterRangeStart || 1 : undefined,
         chapterRangeEnd: values.includeEnding === false ? values.chapterRangeEnd || values.chapterCount : undefined
@@ -663,7 +679,11 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
                   }}
                 </Form.Item>
 
-                <Form.Item label="额外要求" name="additionalRequirements">
+                <Form.Item
+                  label="额外要求"
+                  name="additionalRequirements"
+                  extra="如需加粗重要内容（如金额、重要物品等），请直接说明即可，系统会自动处理格式，无需输入 Markdown 标记"
+                >
                   <TextArea rows={2} placeholder="其他特殊要求或说明" />
                 </Form.Item>
 
@@ -766,6 +786,7 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
               onCancel={() => setSaveModalVisible(false)}
               okText="保存"
               cancelText="取消"
+              confirmLoading={saving}
             >
               <Input
                 placeholder="请输入配置名称"
