@@ -435,7 +435,7 @@ const PlotCheckReportModal: React.FC<PlotCheckReportModalProps> = ({
                                定位到问题位置
                             </a>
                           )}
-                          {onQuickFix && chapterContent && !fixed && issue.quickFixSuggestion && (
+                          {onQuickFix && chapterContent && issue.quickFixSuggestion && !fixed && (
                             <Button
                               size="small"
                               icon={<EditOutlined />}
@@ -527,7 +527,7 @@ const PlotCheckReportModal: React.FC<PlotCheckReportModalProps> = ({
                                 {issue.suggestion && <Text style={{ color: '#52c41a' }}>💡 {issue.suggestion}</Text>}
                                 {renderOriginalText((issue as LogicCheckIssue).originalText)}
                                 {renderReferences((issue as LogicCheckIssue).references)}
-                                {onQuickFix && chapterContent && !fixed && issue.quickFixSuggestion && (
+                                {onQuickFix && chapterContent && issue.quickFixSuggestion && !fixed && (
                                   <Button
                                     size="small"
                                     icon={<EditOutlined />}
