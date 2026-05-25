@@ -111,7 +111,7 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
     const engineMaxTokens = activeEngine.max_tokens;
     const safeMaxTokens = (typeof engineMaxTokens === 'number' && engineMaxTokens > 0) 
       ? engineMaxTokens 
-      : (() => { throw new Error('未配置 max_tokens 参数') })();
+      : 10240;
     
     if (typeof engineMaxTokens === 'number' && engineMaxTokens <= 0) {
       addLog(`[MarkdownAI] ⚠️ 引擎 max_tokens 值无效 (${engineMaxTokens})，请检查配置`, 'warn');
@@ -120,7 +120,7 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
     const engineTemp = activeEngine.temperature;
     const safeTemperature = (typeof engineTemp === 'number' && engineTemp >= 0 && engineTemp <= 2) 
       ? engineTemp 
-      : (() => { throw new Error('未配置 temperature 参数') })();
+      : 0.7;
     
     if (typeof engineTemp === 'number' && (engineTemp < 0 || engineTemp > 2)) {
       addLog(`[MarkdownAI] ⚠️ 引擎 temperature 值无效 (${engineTemp})，请检查配置`, 'warn');

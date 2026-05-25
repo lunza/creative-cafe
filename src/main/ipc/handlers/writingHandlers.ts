@@ -323,7 +323,7 @@ export function registerWritingHandlers(): void {
           completedChapters: 0,
           generationSettings: {
             model: config.modelConfig?.model || '',
-            temperature: config.modelConfig?.temperature ?? (() => { throw new Error('未配置 temperature 参数') })()
+            temperature: config.modelConfig?.temperature ?? 0.7
           },
           continuityInfo: {
             foreshadowing: [],
@@ -970,8 +970,8 @@ export function registerWritingHandlers(): void {
 
       const modelConfig: ModelConfig = {
         model: activeEngine?.model_name ?? project.config?.modelConfig?.model ?? (() => { throw new Error('未配置 AI 模型名称') })(),
-        temperature: Number(activeEngine?.temperature) ?? project.config?.modelConfig?.temperature ?? (() => { throw new Error('未配置 temperature 参数') })(),
-        maxTokens: Number(activeEngine?.max_tokens) ?? project.config?.modelConfig?.maxTokens ?? (() => { throw new Error('未配置 max_tokens 参数') })()
+        temperature: (typeof activeEngine?.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : (project.config?.modelConfig?.temperature ?? 0.7),
+        maxTokens: (typeof activeEngine?.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : (project.config?.modelConfig?.maxTokens ?? 10240)
       };
 
       addLog(`模型配置: ${JSON.stringify(modelConfig)}`, 'debug');
@@ -1051,8 +1051,8 @@ export function registerWritingHandlers(): void {
 
       const modelConfig: ModelConfig = {
         model: activeEngine?.model_name ?? request.modelConfig?.model ?? (() => { throw new Error('未配置 AI 模型名称') })(),
-        temperature: Number(activeEngine?.temperature) ?? request.modelConfig?.temperature ?? (() => { throw new Error('未配置 temperature 参数') })(),
-        maxTokens: Number(activeEngine?.max_tokens) ?? request.modelConfig?.maxTokens ?? (() => { throw new Error('未配置 max_tokens 参数') })()
+        temperature: (typeof activeEngine?.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : (request.modelConfig?.temperature ?? 0.7),
+        maxTokens: (typeof activeEngine?.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : (request.modelConfig?.maxTokens ?? 10240)
       };
 
       addLog(`【自动修正】模型配置: ${JSON.stringify(modelConfig)}`, 'debug');
@@ -1109,8 +1109,8 @@ export function registerWritingHandlers(): void {
 
       const modelConfig: ModelConfig = {
         model: activeEngine?.model_name ?? req.modelConfig?.model ?? (() => { throw new Error('未配置 AI 模型名称') })(),
-        temperature: Number(activeEngine?.temperature) ?? req.modelConfig?.temperature ?? (() => { throw new Error('未配置 temperature 参数') })(),
-        maxTokens: Number(activeEngine?.max_tokens) ?? req.modelConfig?.maxTokens ?? (() => { throw new Error('未配置 max_tokens 参数') })()
+        temperature: (typeof activeEngine?.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : (req.modelConfig?.temperature ?? 0.7),
+        maxTokens: (typeof activeEngine?.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : (req.modelConfig?.maxTokens ?? 10240)
       };
 
       addLog(`【批量修正】模型配置: ${JSON.stringify(modelConfig)}`, 'debug');

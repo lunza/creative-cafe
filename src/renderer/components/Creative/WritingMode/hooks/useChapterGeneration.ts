@@ -263,10 +263,10 @@ export function useChapterGeneration(
         throw new Error('未配置 AI 模型名称');
       }
       if (engine.temperature === undefined || engine.temperature === null) {
-        throw new Error('未配置 temperature 参数');
+        engine.temperature = 0.7;
       }
       if (engine.max_tokens === undefined || engine.max_tokens === null) {
-        throw new Error('未配置 max_tokens 参数');
+        engine.max_tokens = 10240;
       }
 
       const modelConfig = {

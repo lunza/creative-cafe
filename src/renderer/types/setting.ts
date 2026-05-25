@@ -211,3 +211,5 @@ export interface AppSetting {
     autoVectorizeKnowledge?: boolean;
   };
 }
+
+export type AIEngine = AIEngineSetting;

@@ -599,15 +599,13 @@ const WritingTablePreviewModal: React.FC<WritingTablePreviewModalProps> = ({
         throw new Error('未配置 AI 引擎，请在设置中配置');
       }
       
-      const temperature = Number(activeEngine.temperature);
-      if (!temperature && temperature !== 0) {
-        throw new Error('AI 引擎未配置 temperature 参数，请在设置中配置');
-      }
+      const temperature = (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2)
+        ? activeEngine.temperature
+        : 0.7;
       
-      const maxTokens = Number(activeEngine.max_tokens);
-      if (!maxTokens) {
-        throw new Error('AI 引擎未配置 max_tokens 参数，请在设置中配置');
-      }
+      const maxTokens = (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0)
+        ? activeEngine.max_tokens
+        : 10240;
       
       const modelConfig = {
         temperature,

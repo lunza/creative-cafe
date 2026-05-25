@@ -240,15 +240,15 @@ const WorldBookEditor: React.FC = () => {
               content: prompt
             }
           ],
-          max_tokens: Number(activeEngine.max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })(),
-          temperature: Number(activeEngine.temperature) ?? (() => { throw new Error('未配置 temperature 参数') })()
+          max_tokens: (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240,
+          temperature: (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : 0.7
         };
       } else {
         requestBody = {
           model: modelName,
           prompt,
-          max_tokens: Number(activeEngine.max_tokens) ?? (() => { throw new Error('未配置 max_tokens 参数') })(),
-          temperature: Number(activeEngine.temperature) ?? (() => { throw new Error('未配置 temperature 参数') })()
+          max_tokens: (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240,
+          temperature: (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : 0.7
         };
       }
 
