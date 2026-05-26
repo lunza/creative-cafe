@@ -1,9 +1,0 @@
-- [ ] WritingTablePreviewModal 组件 props 包含 chapterId、chapterTitle、chapterContent 参数
-- [ ] ContentWorkspace 点击"表格整理"按钮时传递当前章节的 index、title 和 content
-- [ ] handleStartOrganize 仅处理当前选中章节，不遍历所有项目章节
-- [ ] 整理过程中章节选择被禁用，防止切换章节
-- [ ] 整理完成后章节锁定解除，用户可正常切换章节
-- [ ] WritingStorageService.organizeTable 支持 chapterIndex 参数
-- [ ] 后端仅处理指定章节的内容，不影响其他章节
-- [ ] 构建成功，无编译错误
-- [ ] 手动验证单章节整理功能正常

@@ -1,6 +1,0 @@
-- [x] 设置加载保障机制已实现，对话界面启动时确保setting已加载
-- [x] AI引擎配置状态能准确反映配置情况，无需进入设置页面保存
-- [x] avatarService.ts 使用 getUserDataPath() 而非 process.cwd()
-- [x] 用户人设存储路径始终为 __USER_DATA__/data/avatars 格式
-- [x] 测试用例已编写并通过
-- [x] 项目原有功能未受影响

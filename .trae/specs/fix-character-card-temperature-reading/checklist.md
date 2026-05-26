@@ -1,7 +1,0 @@
-- [x] AIEngine类型别名已添加到setting.ts并正确导出
-- [x] characterAIUtils.ts能正确导入AIEngine类型
-- [x] buildAIRequestOptions函数能正确读取temperature参数
-- [x] temperature参数验证逻辑正常工作（有效值正常读取，无效值抛出错误）
-- [x] 角色卡翻译/润色/生成功能能正确读取并使用temperature参数
-- [x] 配置文件读取路径正确，JSON解析逻辑无误
-- [x] 参数提取方法准确，temperature值能正确传递到AI请求中

@@ -1,9 +1,0 @@
-- [x] buildAIRequestOptions函数在temperature未配置时使用默认值0.7
-- [x] buildAIRequestOptions函数在max_tokens未配置时使用默认值10240
-- [x] Settings表单加载时，temperature为undefined时显示默认值0.7
-- [x] Settings表单加载时，max_tokens为undefined时显示默认值10240
-- [x] Settings保存后，配置文件中包含正确的temperature值
-- [x] 角色卡翻译功能不再报"未配置 temperature 参数"错误
-- [x] 角色卡润色功能正常工作
-- [x] 角色卡生成功能正常工作
-- [x] TypeScript编译无新增错误
