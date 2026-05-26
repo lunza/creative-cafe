@@ -1,90 +1,122 @@
 @echo off
 chcp 65001 >nul
+
 set "SCRIPT_DIR=%~dp0"
 cd /d "%SCRIPT_DIR%"
 
+set "APP_NAME=Creative Cafe"
+set "APP_VERSION=1.0.1"
+set "NODE_MIN_VERSION=18"
+set "NPM_REGISTRY=https://registry.npmmirror.com"
+set "MAX_RETRIES=3"
+set "RETRY_DELAY=3"
+
+set "LOGS_DIR=%SCRIPT_DIR%logs"
+set "LOG_FILE=%LOGS_DIR%\install.log"
+set "APPDATA_DIR=%APPDATA%\%APP_NAME%"
+
+if not exist "%LOGS_DIR%" mkdir "%LOGS_DIR%" 2>nul
+
 echo ============================================================
-echo   Creative Cafe - Startup
+echo   %APP_NAME% v%APP_VERSION% - Startup Script
 echo ============================================================
 echo.
 
-rem Check Node.js
+echo [DEBUG] SCRIPT_DIR=%SCRIPT_DIR%
+echo [DEBUG] LOG_FILE=%LOG_FILE%
+echo [DEBUG] APPDATA_DIR=%APPDATA_DIR%
+echo [DEBUG] CD=%CD%
+echo.
+
+echo [1/7] Checking Node.js environment...
+
 where node >nul 2>nul
-if %errorlevel% neq 0 (
-    echo [ERROR] Node.js not found
-    echo Please install from: https://nodejs.org/
+if errorlevel 1 (
+    echo [ERROR] Node.js not found in PATH
+    echo.
+    echo Please install Node.js from https://nodejs.org/
+    echo.
     pause
     exit /b 1
 )
-for /f "tokens=*" %%i in ('node --version 2^>nul') do set "NODE_VERSION=%%i"
+
+for /f "tokens=*" %%i in ('node --version') do set "NODE_VERSION=%%i"
 echo [OK] Node.js: %NODE_VERSION%
 
-rem Check npm
 where npm >nul 2>nul
-if %errorlevel% neq 0 (
+if errorlevel 1 (
     echo [ERROR] npm not found
     pause
     exit /b 1
 )
-for /f "tokens=*" %%i in ('npm --version 2^>nul') do set "NPM_VERSION=%%i"
+
+for /f "tokens=*" %%i in ('npm --version') do set "NPM_VERSION=%%i"
 echo [OK] npm: %NPM_VERSION%
 
-rem Check dependencies
+echo.
+echo [2/7] Configuring npm registry (China mirror)...
+
+call npm config set registry %NPM_REGISTRY%
+if errorlevel 1 (
+    echo [WARN] Failed to set registry globally
+    set "NPM_FLAGS=--registry %NPM_REGISTRY%"
+) else (
+    set "NPM_FLAGS="
+)
+
+for /f "tokens=*" %%i in ('npm config get registry') do set "CURRENT_REGISTRY=%%i"
+echo [OK] Registry configured: %CURRENT_REGISTRY%
+
+echo.
+echo [3/7] Checking and installing dependencies...
+
 if not exist "node_modules" (
-    echo.
     echo Installing dependencies...
-    call npm install --no-audit --no-fund
-    if %errorlevel% neq 0 (
+    call npm install %NPM_FLAGS% --no-audit --no-fund --progress=true
+    if errorlevel 1 (
         echo [ERROR] Installation failed
+        echo Please check network connection and try again.
         pause
         exit /b 1
     )
-    echo [DONE] Dependencies installed
+    echo [OK] Dependencies installed
 ) else (
-    echo [OK] Dependencies: installed
+    echo [OK] Dependencies: already installed
 )
 
-rem Check Vite
-if not exist "node_modules\vite" (
-    echo.
-    echo [WARN] Vite not found, installing...
-    call npm install vite --save-dev --no-audit --no-fund
-    if %errorlevel% neq 0 (
+echo.
+
+:deps_installed
+
+echo.
+echo [4/7] Checking Vite...
+if exist "node_modules\vite" (
+    echo [OK] Vite: installed
+) else (
+    echo [INSTALL] Vite not found, installing...
+    call npm install vite --save-dev %NPM_FLAGS% --no-audit --no-fund
+    if exist "node_modules\vite" (
+        echo [OK] Vite: installed
+    ) else (
         echo [ERROR] Vite installation failed
-        echo Try running: npm install
         pause
         exit /b 1
     )
-    echo [OK] Vite: installed
-) else (
-    echo [OK] Vite: installed
 )
 
-rem Check Electron
+echo.
+echo [5/7] Checking Electron...
 set "ELECTRON_OK=false"
 if exist "node_modules\electron\dist\electron.exe" set "ELECTRON_OK=true"
-if exist "node_modules\electron\dist\Electron.app" set "ELECTRON_OK=true"
-if exist "node_modules\electron\dist\electron" set "ELECTRON_OK=true"
 
 if "%ELECTRON_OK%"=="false" (
-    echo.
-    echo [ERROR] Electron not installed correctly
-    echo Reinstalling Electron...
-    echo.
-    if exist "node_modules\electron" rmdir /s /q "node_modules\electron"
-    call npm install electron --save-dev --no-audit --no-fund
-    if %errorlevel% neq 0 (
-        echo [ERROR] Electron installation failed
-        echo Try running: npm install electron --force
-        pause
-        exit /b 1
-    )
-    rem Verify again
+    echo [WARN] Electron not installed correctly, reinstalling...
+    if exist "node_modules\electron" rmdir /s /q "node_modules\electron" 2>nul
+    call npm install electron --save-dev %NPM_FLAGS% --no-audit --no-fund
     if exist "node_modules\electron\dist\electron.exe" (
         echo [OK] Electron: installed
     ) else (
-        echo [ERROR] Electron installation still failed
-        echo Try: Delete node_modules and run npm install
+        echo [ERROR] Electron installation failed
         pause
         exit /b 1
     )
@@ -92,26 +124,45 @@ if "%ELECTRON_OK%"=="false" (
     echo [OK] Electron: installed
 )
 
-rem Check vector deps
 if exist "node_modules\@xenova\transformers" (
     echo [OK] @xenova/transformers: installed
 ) else (
-    echo [WARN] @xenova/transformers: not installed
+    echo [WARN] @xenova/transformers: not installed (optional)
 )
 
 if exist "node_modules\lru-cache" (
     echo [OK] lru-cache: installed
 ) else (
-    echo [WARN] lru-cache: not installed
+    echo [WARN] lru-cache: not installed (optional)
 )
 
-rem Start app
 echo.
-echo Starting Creative Cafe...
-echo Press Ctrl+C to stop
+echo [6/7] Initializing project directories...
+
+if not exist "%APPDATA_DIR%" (
+    mkdir "%APPDATA_DIR%" 2>nul
+    echo [OK] AppData directory created
+) else (
+    echo [OK] AppData directory exists
+)
+
+set "APPDATA_DATA_DIR=%APPDATA_DIR%\data"
+if not exist "%APPDATA_DATA_DIR%" mkdir "%APPDATA_DATA_DIR%" 2>nul
+set "APPDATA_CACHE_DIR=%APPDATA_DIR%\cache"
+if not exist "%APPDATA_CACHE_DIR%" mkdir "%APPDATA_CACHE_DIR%" 2>nul
+echo [OK] Project initialization complete
+
+echo.
+echo [7/7] Starting %APP_NAME%...
+echo ============================================================
+echo   %APP_NAME% is starting...
+echo ============================================================
 echo.
 
 call npm run dev
 
 echo.
+echo Done.
 pause
+pause
+exit /b %errorlevel%
