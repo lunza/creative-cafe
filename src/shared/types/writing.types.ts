@@ -703,6 +703,8 @@ export interface PlotCheckIssue {
   fixResult?: string;
   quickFixable?: boolean;
   quickFixSuggestion?: QuickFixSuggestion;
+  corrected?: boolean;
+  correctedText?: string;
 }
 
 export interface DimensionScore {
@@ -778,6 +780,8 @@ export interface LogicCheckIssue {
   fixResult?: string;
   quickFixable?: boolean;
   quickFixSuggestion?: QuickFixSuggestion;
+  corrected?: boolean;
+  correctedText?: string;
 }
 
 export interface LogicCheckResult {

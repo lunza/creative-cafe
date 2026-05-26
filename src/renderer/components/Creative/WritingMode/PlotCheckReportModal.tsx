@@ -105,7 +105,20 @@ const PlotCheckReportModal: React.FC<PlotCheckReportModalProps> = ({
 
   const status = getOverallStatus(report.overallScore);
 
-  const isIssueFixed = (key: string) => fixedIssueKeys.has(key);
+  const isIssueFixed = (key: string) => {
+    // Check if the issue is in the fixedIssueKeys set
+    if (fixedIssueKeys.has(key)) {
+      return true;
+    }
+    
+    // Find the issue object by key to check if it's corrected
+    const issueEntry = allIssues.find(entry => entry.key === key);
+    if (issueEntry && issueEntry.issue.corrected) {
+      return true;
+    }
+    
+    return false;
+  };
   const isIssueFixing = (key: string) => fixingIssueKey === key;
   const isIssueSelected = (key: string) => selectedIssueKeys.has(key);
 
@@ -421,55 +434,63 @@ const PlotCheckReportModal: React.FC<PlotCheckReportModalProps> = ({
                       ),
                       children: (
                         <Space direction="vertical" style={{ width: '100%' }}>
-                          <Paragraph style={{ marginBottom: 4 }}>{issue.description}</Paragraph>
-                          <Paragraph style={{ marginBottom: 4, color: '#52c41a' }}>
-                            <Text strong>💡 建议：</Text>{issue.suggestion}
-                          </Paragraph>
-                          {renderOriginalText((issue as PlotCheckIssue).originalText)}
-                          {renderReferences((issue as PlotCheckIssue).references)}
-                          {issue.position && onIssueClick && (
-                            <a
-                              onClick={() => onIssueClick(dim.dimension, idx)}
-                              style={{ fontSize: 12 }}
-                            >
-                               定位到问题位置
-                            </a>
-                          )}
-                          {onQuickFix && chapterContent && issue.quickFixSuggestion && !fixed && (
-                            <Button
-                              size="small"
-                              icon={<EditOutlined />}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleQuickFix(issue, issueKey);
-                              }}
-                              style={{ marginTop: 8, marginRight: 8 }}
-                            >
-                              快速修正
-                            </Button>
-                          )}
-                          {onAutoFix && chapterContent && !fixed && (
-                            <Button
-                              type="primary"
-                              size="small"
-                              icon={fixing ? <LoadingOutlined /> : <ToolOutlined />}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleAutoFix(issue, 'dimension', issueKey);
-                              }}
-                              loading={fixing}
-                              disabled={fixing}
-                              style={{ marginTop: 8 }}
-                            >
-                              {fixing ? '修正中...' : '自动修正'}
-                            </Button>
-                          )}
-                          {fixed && (
-                            <Text type="success" style={{ fontSize: 12, marginTop: 8 }}>
-                              <CheckCircleOutlined /> 该问题已自动修正
-                            </Text>
-                          )}
-                        </Space>
+                            <Paragraph style={{ marginBottom: 4 }}>{issue.description}</Paragraph>
+                            <Paragraph style={{ marginBottom: 4, color: '#52c41a' }}>
+                              <Text strong>💡 建议：</Text>{issue.suggestion}
+                            </Paragraph>
+                            {renderOriginalText((issue as PlotCheckIssue).originalText)}
+                            {renderReferences((issue as PlotCheckIssue).references)}
+                            {issue.position && onIssueClick && (
+                              <a
+                                onClick={() => onIssueClick(dim.dimension, idx)}
+                                style={{ fontSize: 12 }}
+                              >
+                                 定位到问题位置
+                              </a>
+                            )}
+                            {fixed && issue.correctedText && (
+                              <div style={{ marginTop: 12, padding: '10px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 4 }}>
+                                <Text strong style={{ color: '#52c41a', fontSize: 12 }}>修正后文本:</Text>
+                                <div style={{ marginTop: 4, padding: '6px', background: '#f0f9eb', borderRadius: 4, borderLeft: '3px solid #52c41a' }}>
+                                  {issue.correctedText}
+                                </div>
+                              </div>
+                            )}
+                            {onQuickFix && chapterContent && issue.quickFixSuggestion && !fixed && (
+                              <Button
+                                size="small"
+                                icon={<EditOutlined />}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleQuickFix(issue, issueKey);
+                                }}
+                                style={{ marginTop: 8, marginRight: 8 }}
+                              >
+                                快速修正
+                              </Button>
+                            )}
+                            {onAutoFix && chapterContent && !fixed && (
+                              <Button
+                                type="primary"
+                                size="small"
+                                icon={fixing ? <LoadingOutlined /> : <ToolOutlined />}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleAutoFix(issue, 'dimension', issueKey);
+                                }}
+                                loading={fixing}
+                                disabled={fixing}
+                                style={{ marginTop: 8 }}
+                              >
+                                {fixing ? '修正中...' : '自动修正'}
+                              </Button>
+                            )}
+                            {fixed && (
+                              <Text type="success" style={{ fontSize: 12, marginTop: 8 }}>
+                                <CheckCircleOutlined /> 该问题已自动修正
+                              </Text>
+                            )}
+                          </Space>
                       )
                     };
                   })}
@@ -527,6 +548,14 @@ const PlotCheckReportModal: React.FC<PlotCheckReportModalProps> = ({
                                 {issue.suggestion && <Text style={{ color: '#52c41a' }}>💡 {issue.suggestion}</Text>}
                                 {renderOriginalText((issue as LogicCheckIssue).originalText)}
                                 {renderReferences((issue as LogicCheckIssue).references)}
+                                {fixed && issue.correctedText && (
+                                  <div style={{ marginTop: 12, padding: '10px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 4 }}>
+                                    <Text strong style={{ color: '#52c41a', fontSize: 12 }}>修正后文本:</Text>
+                                    <div style={{ marginTop: 4, padding: '6px', background: '#f0f9eb', borderRadius: 4, borderLeft: '3px solid #52c41a' }}>
+                                      {issue.correctedText}
+                                    </div>
+                                  </div>
+                                )}
                                 {onQuickFix && chapterContent && issue.quickFixSuggestion && !fixed && (
                                   <Button
                                     size="small"

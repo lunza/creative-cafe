@@ -227,9 +227,47 @@ export function usePlotCheck(
   }, [getCurrentProject, updateProject]);
 
   const handleAcceptFix = useCallback(() => {
+    // Update the report to mark the issue as corrected
+    setPlotCheckReport(prev => {
+      if (!prev || !pendingFixIssue) return prev;
+      
+      const updatedReport = { ...prev };
+      updatedReport.dimensions = updatedReport.dimensions.map(dim => ({
+        ...dim,
+        issues: dim.issues.map(issue => {
+          if (issue === pendingFixIssue) {
+            return {
+              ...issue,
+              corrected: true,
+              correctedText: pendingFixIssue.quickFixSuggestion?.fixedText || pendingFixIssue.suggestion || '已修正'
+            };
+          }
+          return issue;
+        })
+      }));
+
+      if (updatedReport.logicCheckResult) {
+        updatedReport.logicCheckResult = {
+          ...updatedReport.logicCheckResult,
+          issues: updatedReport.logicCheckResult.issues.map(issue => {
+            if (issue === pendingFixIssue) {
+              return {
+                ...issue,
+                corrected: true,
+                correctedText: pendingFixIssue.quickFixSuggestion?.fixedText || pendingFixIssue.suggestion || '已修正'
+              };
+            }
+            return issue;
+          })
+        };
+      }
+
+      return updatedReport;
+    });
+    
     setShowFixResultModal(false);
     message.success('修正已应用到编辑器');
-  }, []);
+  }, [pendingFixIssue]);
 
   const handleRejectFix = useCallback((
     chapterIndex: number,
@@ -301,6 +339,44 @@ export function usePlotCheck(
         saveProject();
       }
 
+      // Update the report to mark the issue as corrected
+      setPlotCheckReport(prev => {
+        if (!prev) return prev;
+        
+        const updatedReport = { ...prev };
+        updatedReport.dimensions = updatedReport.dimensions.map(dim => ({
+          ...dim,
+          issues: dim.issues.map(issue => {
+            if (pendingQuickFixIssue && issue === pendingQuickFixIssue) {
+              return {
+                ...issue,
+                corrected: true,
+                correctedText: pendingQuickFixSuggestion.fixedText
+              };
+            }
+            return issue;
+          })
+        }));
+
+        if (updatedReport.logicCheckResult) {
+          updatedReport.logicCheckResult = {
+            ...updatedReport.logicCheckResult,
+            issues: updatedReport.logicCheckResult.issues.map(issue => {
+              if (pendingQuickFixIssue && issue === pendingQuickFixIssue) {
+                return {
+                  ...issue,
+                  corrected: true,
+                  correctedText: pendingQuickFixSuggestion.fixedText
+                };
+              }
+              return issue;
+            })
+          };
+        }
+
+        return updatedReport;
+      });
+
       message.success('快速修正已应用');
 
       if (onRecheck) {
@@ -311,7 +387,7 @@ export function usePlotCheck(
     setPendingQuickFixSuggestion(null);
     setPendingQuickFixIssue(null);
     setPendingQuickFixContent('');
-  }, [pendingQuickFixSuggestion, pendingQuickFixContent, getCurrentProject, updateProject, saveProject]);
+  }, [pendingQuickFixSuggestion, pendingQuickFixContent, pendingQuickFixIssue, getCurrentProject, updateProject, saveProject]);
 
   const handleRejectQuickFix = useCallback(() => {
     setPendingQuickFixSuggestion(null);
