@@ -37,9 +37,9 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
       alignItems: 'center',
       justifyContent: 'space-between',
       padding: isFullscreen ? '20px 32px' : '16px 20px',
-      background: 'var(--header-bg, rgba(30, 30, 46, 0.8))',
+      background: 'var(--chat-header-bg, rgba(30, 30, 46, 0.8))',
       backdropFilter: 'blur(10px)',
-      borderBottom: '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
+      borderBottom: '1px solid var(--chat-header-border, rgba(255, 255, 255, 0.1))',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div style={{
@@ -88,14 +88,14 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
             margin: 0,
             fontSize: isFullscreen ? '18px' : '16px',
             fontWeight: 600,
-            color: 'var(--text-primary, #e2e8f0)',
+            color: 'var(--chat-header-text-primary, #e2e8f0)',
           }}>
             {characterName || 'Test Character'}
           </h3>
           <p style={{
             margin: 0,
             fontSize: '12px',
-            color: 'var(--text-secondary, #6b7280)',
+            color: 'var(--chat-header-text-secondary, #6b7280)',
           }}>
             {messageCount} messages {characterCardContent ? '• Roleplay mode' : ''}
           </p>
@@ -109,9 +109,9 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
             alignItems: 'center',
             gap: '8px',
             padding: '4px 12px',
-            background: 'rgba(99, 102, 241, 0.1)',
+            background: 'var(--chat-header-persona-bg, rgba(99, 102, 241, 0.1))',
             borderRadius: '16px',
-            border: '1px solid rgba(99, 102, 241, 0.3)',
+            border: '1px solid var(--chat-header-persona-border, rgba(99, 102, 241, 0.3))',
           }}>
             <div style={{
               width: '24px',
@@ -129,7 +129,7 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
                 <UserOutlined style={{ fontSize: '12px', color: '#fff' }} />
               )}
             </div>
-            <span style={{ fontSize: '13px', color: 'var(--text-primary, #e2e8f0)' }}>
+            <span style={{ fontSize: '13px', color: 'var(--chat-header-persona-text, #e2e8f0)' }}>
               {selectedPersona.name}
             </span>
           </div>
@@ -141,7 +141,7 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
               icon={<ExportOutlined />}
               onClick={onExport}
               size="small"
-              style={{ color: 'var(--text-secondary, #9ca3af)' }}
+              style={{ color: 'var(--chat-header-btn-color, #9ca3af)' }}
             />
           </Tooltip>
         )}

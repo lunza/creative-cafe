@@ -1,8 +1,6 @@
 .config-panel {
   width: 320px;
   height: 100%;
-  background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
-  border-left: 1px solid rgba(139, 92, 246, 0.2);
   display: flex;
   flex-direction: column;
   overflow-y: auto;
@@ -10,6 +8,8 @@
   padding: 16px;
   gap: 16px;
   transition: all 0.3s ease;
+  background: var(--config-panel-bg-gradient);
+  border-left: 1px solid var(--config-panel-divider, rgba(139, 92, 246, 0.2));
 }
 
 .config-panel::-webkit-scrollbar {
@@ -21,17 +21,17 @@
 }
 
 .config-panel::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--config-panel-scrollbar-thumb);
   border-radius: 3px;
 }
 
 .config-panel::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: var(--config-panel-scrollbar-thumb-hover);
 }
 
 .config-panel-divider {
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(139, 92, 246, 0.4), transparent);
+  background: linear-gradient(90deg, transparent, var(--config-panel-divider-end, rgba(139, 92, 246, 0.4)), transparent);
   margin: 8px 0;
 }
 
@@ -44,15 +44,15 @@
 .persona-panel-title {
   font-size: 14px;
   font-weight: 600;
-  color: #e2e8f0;
+  color: var(--config-panel-sub-title-color);
   margin: 0;
   padding-bottom: 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid var(--config-panel-divider, rgba(255, 255, 255, 0.1));
 }
 
 .persona-loading {
   text-align: center;
-  color: #94a3b8;
+  color: var(--config-panel-sub-text-color, #94a3b8);
   font-size: 13px;
   padding: 20px 0;
 }
@@ -63,25 +63,25 @@
   align-items: center;
   justify-content: center;
   padding: 24px 0;
-  color: #94a3b8;
+  color: var(--config-panel-sub-text-color, #94a3b8);
   text-align: center;
 }
 
 .persona-empty-icon {
   font-size: 32px;
-  color: #64748b;
+  color: var(--config-panel-icon-color, #64748b);
   margin-bottom: 12px;
 }
 
 .persona-empty p {
   margin: 0 0 4px 0;
   font-size: 14px;
-  color: #cbd5e1;
+  color: var(--config-panel-text-color, #cbd5e1);
 }
 
 .persona-empty span {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--config-panel-sub-text-color, #94a3b8);
 }
 
 .persona-list {
@@ -97,7 +97,7 @@
   align-items: center;
   padding: 12px;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--config-panel-card-bg);
   border: 2px solid transparent;
   cursor: pointer;
   transition: all 0.3s ease;
@@ -106,15 +106,15 @@
 }
 
 .persona-card:hover {
-  background: rgba(139, 92, 246, 0.1);
-  border-color: rgba(139, 92, 246, 0.3);
+  background: var(--config-panel-card-hover-bg, rgba(139, 92, 246, 0.1));
+  border-color: var(--config-panel-card-active-border);
   transform: translateY(-2px);
 }
 
 .persona-card.selected {
-  background: rgba(139, 92, 246, 0.15);
-  border-color: #8b5cf6;
-  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+  background: var(--config-panel-card-active-bg, rgba(139, 92, 246, 0.15));
+  border-color: var(--config-panel-card-active-border);
+  box-shadow: var(--config-panel-card-shadow);
 }
 
 .persona-avatar {
@@ -143,7 +143,7 @@
 
 .persona-name {
   font-size: 12px;
-  color: #e2e8f0;
+  color: var(--config-panel-sub-title-color);
   text-align: center;
   max-width: 80px;
   overflow: hidden;
@@ -163,15 +163,15 @@
   justify-content: space-between;
   padding: 10px 12px;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--config-panel-card-bg);
+  border: 1px solid var(--config-panel-card-border);
   transition: background-color 0.2s ease;
   user-select: none;
   position: relative;
 }
 
 .parameter-panel-header:hover {
-  background-color: rgba(255, 255, 255, 0.04);
+  background-color: var(--config-panel-card-hover-bg, rgba(255, 255, 255, 0.04));
 }
 
 .parameter-collapse-icon {
@@ -194,13 +194,13 @@
   gap: 8px;
   font-size: 14px;
   font-weight: 600;
-  color: #e2e8f0;
+  color: var(--config-panel-sub-title-color);
   margin: 0;
 }
 
 .parameter-tooltip-icon {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--config-panel-tooltip-color, #94a3b8);
   cursor: help;
   transition: color 0.2s ease;
 }
@@ -295,13 +295,13 @@
 
 .parameter-label {
   font-size: 12px;
-  color: #cbd5e1;
+  color: var(--config-panel-label-color, #cbd5e1);
   font-weight: 500;
 }
 
 .parameter-tooltip-icon {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--config-panel-tooltip-color, #94a3b8);
   cursor: help;
   transition: color 0.2s ease;
 }
@@ -313,7 +313,7 @@
 .parameter-value {
   font-size: 12px;
   font-weight: 600;
-  color: #94a3b8;
+  color: var(--config-panel-value-color, #94a3b8);
   min-width: 40px;
   text-align: right;
   transition: color 0.2s ease;
@@ -324,19 +324,19 @@
 }
 
 .parameter-slider .ant-slider-rail {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--config-panel-slider-track);
   height: 4px;
 }
 
 .parameter-slider .ant-slider-track {
-  background: linear-gradient(90deg, #8b5cf6 0%, #a855f7 100%);
+  background: var(--config-panel-slider-fill);
   height: 4px;
 }
 
 .parameter-slider .ant-slider-handle {
-  border: 2px solid #8b5cf6;
-  background: #fff;
-  box-shadow: 0 2px 6px rgba(139, 92, 246, 0.4);
+  border: 2px solid var(--config-panel-slider-thumb-border, #8b5cf6);
+  background: var(--config-panel-slider-thumb);
+  box-shadow: var(--config-panel-slider-thumb-shadow);
   transition: all 0.2s ease;
 }
 
@@ -352,19 +352,19 @@
 
 .parameter-slider .ant-slider-mark-text {
   font-size: 10px;
-  color: #94a3b8;
+  color: var(--config-panel-tooltip-color, #94a3b8);
 }
 
 .parameter-actions {
   display: flex;
   justify-content: center;
   padding-top: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  border-top: 1px solid var(--config-panel-divider, rgba(255, 255, 255, 0.05));
 }
 
 .parameter-reset-btn {
   border-color: rgba(139, 92, 246, 0.3);
-  color: #e2e8f0;
+  color: var(--config-panel-button-text);
   transition: all 0.2s ease;
 }
 
@@ -392,14 +392,14 @@
   justify-content: space-between;
   padding: 10px 12px;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--config-panel-card-bg);
+  border: 1px solid var(--config-panel-card-border);
   transition: background-color 0.2s ease;
   user-select: none;
 }
 
 .vectorization-panel-header:hover {
-  background-color: rgba(255, 255, 255, 0.04);
+  background-color: var(--config-panel-card-hover-bg, rgba(255, 255, 255, 0.04));
 }
 
 .vectorization-collapse-icon {
@@ -417,7 +417,7 @@
   gap: 8px;
   font-size: 14px;
   font-weight: 600;
-  color: #e2e8f0;
+  color: var(--config-panel-sub-title-color);
   margin: 0;
 }
 
@@ -428,7 +428,7 @@
 
 .vectorization-tooltip-icon {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--config-panel-tooltip-color, #94a3b8);
   cursor: help;
   transition: color 0.2s ease;
 }
@@ -883,7 +883,7 @@
 
 .token-management-tooltip-icon {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--config-panel-tooltip-color, #94a3b8);
   cursor: help;
   transition: color 0.2s ease;
 }
@@ -914,8 +914,8 @@
   margin-top: 8px;
   padding: 12px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: var(--config-panel-card-bg);
+  border: 1px solid var(--config-panel-card-border);
 }
 
 .token-config-fields {
@@ -939,7 +939,7 @@
   display: flex;
   align-items: center;
   font-size: 13px;
-  color: #cbd5e1;
+  color: var(--config-panel-label-color, #cbd5e1);
   font-weight: 500;
 }
 
@@ -977,13 +977,13 @@
   gap: 8px;
   padding: 12px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: var(--config-panel-card-bg);
+  border: 1px solid var(--config-panel-card-border);
 }
 
 .token-preset-card {
-  background: rgba(255, 255, 255, 0.02) !important;
-  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  background: var(--config-panel-card-bg) !important;
+  border: 1px solid var(--config-panel-card-border) !important;
 }
 
 .token-preset-card .ant-card-body {
@@ -1001,23 +1001,23 @@
   gap: 8px;
   padding: 12px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: var(--config-panel-card-bg);
+  border: 1px solid var(--config-panel-card-border);
 }
 
 .token-management-advanced .ant-card {
-  background: rgba(255, 255, 255, 0.02) !important;
-  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  background: var(--config-panel-card-bg) !important;
+  border: 1px solid var(--config-panel-card-border) !important;
 }
 
 .token-management-advanced .ant-card-head {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+  border-bottom: 1px solid var(--config-panel-card-border) !important;
   min-height: 36px !important;
 }
 
 .token-management-advanced .ant-card-head-title {
   font-size: 12px !important;
-  color: #cbd5e1 !important;
+  color: var(--config-panel-label-color, #cbd5e1) !important;
 }
 
 .token-management-advanced .ant-card-body {
@@ -1027,8 +1027,8 @@
 .token-management-tips {
   padding: 10px 12px;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: var(--config-panel-card-bg);
+  border: 1px solid var(--config-panel-card-border);
 }
 
 @media (max-width: 768px) {

@@ -15,9 +15,9 @@ interface QuickFixSuggestionModalProps {
   suggestion: QuickFixSuggestion | null;
   issueTitle: string;
   issueType: string;
-  onAccept: () => void;
-  onReject: () => void;
-  onCancel: () => void;
+  onAccept: (onComplete?: () => void) => void;
+  onReject: (onComplete?: () => void) => void;
+  onCancel: (onComplete?: () => void) => void;
 }
 
 const QuickFixSuggestionModal: React.FC<QuickFixSuggestionModalProps> = ({

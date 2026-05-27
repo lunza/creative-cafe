@@ -33,7 +33,7 @@ interface PlotCheckReportModalProps {
   onCancel: () => void;
   onIssueClick?: (dimension: PlotCheckDimension, issueIndex: number) => void;
   onAutoFix?: (chapterContent: string, issue: PlotCheckIssue | LogicCheckIssue, issueType: 'dimension' | 'logic') => Promise<{ success: boolean; fixedContent?: string; error?: string }>;
-  onQuickFix?: (chapterContent: string, issue: PlotCheckIssue | LogicCheckIssue) => void;
+  onQuickFix?: (chapterContent: string, issue: PlotCheckIssue | LogicCheckIssue, onComplete?: () => void) => void;
   onBatchFix?: (selectedIssues: Array<{ key: string; issue: PlotCheckIssue | LogicCheckIssue; issueType: 'dimension' | 'logic' }>) => Promise<{ success: boolean; fixedContent?: string; results?: Array<{ index: number; success: boolean; error?: string }>; error?: string }>;
   chapterContent?: string;
   onContentUpdated?: (fixedContent: string) => void;
@@ -96,6 +96,7 @@ const PlotCheckReportModal: React.FC<PlotCheckReportModalProps> = ({
   onRecheck
 }) => {
   const [fixingIssueKey, setFixingIssueKey] = useState<string | null>(null);
+  const [globalFixing, setGlobalFixing] = useState<boolean>(false);
   const [fixedIssueKeys, setFixedIssueKeys] = useState<Set<string>>(new Set());
   const [selectedIssueKeys, setSelectedIssueKeys] = useState<Set<string>>(new Set());
   const [batchFixing, setBatchFixing] = useState(false);
@@ -164,8 +165,9 @@ const PlotCheckReportModal: React.FC<PlotCheckReportModalProps> = ({
   const isPartiallySelected = selectableIssues.length > 0 && selectedIssueKeys.size > 0 && !isAllSelected;
 
   const handleBatchFix = async () => {
-    if (!onBatchFix || !chapterContent || selectedIssueKeys.size === 0) return;
+    if (!onBatchFix || !chapterContent || selectedIssueKeys.size === 0 || globalFixing) return;
 
+    setGlobalFixing(true);
     setBatchFixing(true);
     setBatchFixResults(null);
     try {
@@ -203,6 +205,7 @@ const PlotCheckReportModal: React.FC<PlotCheckReportModalProps> = ({
       message.error('批量修正失败，请稍后重试');
     } finally {
       setBatchFixing(false);
+      setGlobalFixing(false);
     }
   };
 
@@ -212,6 +215,7 @@ const PlotCheckReportModal: React.FC<PlotCheckReportModalProps> = ({
       return;
     }
 
+    setGlobalFixing(true);
     setFixingIssueKey(issueKey);
     try {
       const result = await onAutoFix(chapterContent, issue, issueType);
@@ -227,6 +231,7 @@ const PlotCheckReportModal: React.FC<PlotCheckReportModalProps> = ({
       message.error('修正失败，请稍后重试');
     } finally {
       setFixingIssueKey(null);
+      setGlobalFixing(false);
     }
   };
 
@@ -241,7 +246,10 @@ const PlotCheckReportModal: React.FC<PlotCheckReportModalProps> = ({
       return;
     }
 
-    onQuickFix(chapterContent, issue);
+    setGlobalFixing(true);
+    onQuickFix(chapterContent, issue, () => {
+      setGlobalFixing(false);
+    });
   };
 
   const renderOriginalText = (originalText?: { snippet: string; start: number; end: number }[]) => {
@@ -344,7 +352,7 @@ const PlotCheckReportModal: React.FC<PlotCheckReportModalProps> = ({
               icon={batchFixing ? <LoadingOutlined /> : <ThunderboltOutlined />}
               onClick={handleBatchFix}
               loading={batchFixing}
-              disabled={!hasSelectedIssues || batchFixing}
+              disabled={!hasSelectedIssues || batchFixing || globalFixing}
             >
               {batchFixing ? '批量修正中...' : `一键修复选中问题(${selectedIssueKeys.size})`}
             </Button>
@@ -464,6 +472,7 @@ const PlotCheckReportModal: React.FC<PlotCheckReportModalProps> = ({
                                   e.stopPropagation();
                                   handleQuickFix(issue, issueKey);
                                 }}
+                                disabled={globalFixing}
                                 style={{ marginTop: 8, marginRight: 8 }}
                               >
                                 快速修正
@@ -479,7 +488,7 @@ const PlotCheckReportModal: React.FC<PlotCheckReportModalProps> = ({
                                   handleAutoFix(issue, 'dimension', issueKey);
                                 }}
                                 loading={fixing}
-                                disabled={fixing}
+                                disabled={fixing || globalFixing}
                                 style={{ marginTop: 8 }}
                               >
                                 {fixing ? '修正中...' : '自动修正'}
@@ -561,6 +570,7 @@ const PlotCheckReportModal: React.FC<PlotCheckReportModalProps> = ({
                                     size="small"
                                     icon={<EditOutlined />}
                                     onClick={() => handleQuickFix(issue, issueKey)}
+                                    disabled={globalFixing}
                                     style={{ marginTop: 4, marginRight: 8 }}
                                   >
                                     快速修正
@@ -573,7 +583,7 @@ const PlotCheckReportModal: React.FC<PlotCheckReportModalProps> = ({
                                     icon={fixing ? <LoadingOutlined /> : <ToolOutlined />}
                                     onClick={() => handleAutoFix(issue, 'logic', issueKey)}
                                     loading={fixing}
-                                    disabled={fixing}
+                                    disabled={fixing || globalFixing}
                                     style={{ marginTop: 4 }}
                                   >
                                     {fixing ? '修正中...' : '自动修正'}

@@ -204,7 +204,8 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
           flexDirection: 'row',
           borderRadius: isFullscreen ? 0 : '16px',
           overflow: 'hidden',
-          background: 'linear-gradient(135deg, #1e1e2e 0%, #2d2b42 50%, #1e1e2e 100%)',
+          background: 'var(--chat-dialog-bg-gradient, linear-gradient(135deg, #1e1e2e 0%, #2d2b42 50%, #1e1e2e 100%))',
+          transition: 'background 0.3s ease',
           ...fullscreenStyles,
         },
         mask: {
@@ -242,24 +243,25 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
           overflow: hidden;
           pointer-events: none;
           z-index: 0;
+          transition: background 0.3s ease;
         }
         .chat-area-bg::before {
           content: '';
           position: absolute;
           inset: 0;
           background:
-            radial-gradient(ellipse at 20% 20%, rgba(255, 107, 53, 0.08) 0%, transparent 50%),
-            radial-gradient(ellipse at 80% 60%, rgba(74, 144, 217, 0.06) 0%, transparent 50%),
-            radial-gradient(ellipse at 50% 90%, rgba(255, 107, 107, 0.05) 0%, transparent 40%),
-            linear-gradient(180deg, #0f0f1a 0%, #161625 40%, #1a1a2e 100%);
+            radial-gradient(ellipse at 20% 20%, var(--chat-area-radial-1) 0%, transparent 50%),
+            radial-gradient(ellipse at 80% 60%, var(--chat-area-radial-2) 0%, transparent 50%),
+            radial-gradient(ellipse at 50% 90%, var(--chat-area-radial-3) 0%, transparent 40%),
+            var(--chat-area-bg-gradient);
         }
         .chat-area-bg::after {
           content: '';
           position: absolute;
           inset: 0;
           background:
-            radial-gradient(ellipse at 70% 30%, rgba(99, 102, 241, 0.06) 0%, transparent 45%),
-            radial-gradient(ellipse at 30% 70%, rgba(236, 72, 153, 0.05) 0%, transparent 50%);
+            radial-gradient(ellipse at 70% 30%, var(--chat-area-radial-4) 0%, transparent 45%),
+            radial-gradient(ellipse at 30% 70%, var(--chat-area-radial-5) 0%, transparent 50%);
         }
         .chat-bg-orb {
           position: absolute;
@@ -272,30 +274,31 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
           height: 300px;
           top: -100px;
           right: -50px;
-          background: radial-gradient(circle, rgba(99, 102, 241, 0.15) 0%, transparent 70%);
+          background: radial-gradient(circle, var(--chat-area-radial-1) 0%, transparent 70%);
         }
         .chat-bg-orb:nth-child(2) {
           width: 250px;
           height: 250px;
           bottom: 10%;
           left: -80px;
-          background: radial-gradient(circle, rgba(236, 72, 153, 0.1) 0%, transparent 70%);
+          background: radial-gradient(circle, var(--chat-area-radial-5) 0%, transparent 70%);
         }
         .chat-bg-orb:nth-child(3) {
           width: 200px;
           height: 200px;
           top: 40%;
           right: 20%;
-          background: radial-gradient(circle, rgba(255, 107, 53, 0.08) 0%, transparent 70%);
+          background: radial-gradient(circle, var(--chat-area-radial-6) 0%, transparent 70%);
         }
         .chat-bg-grid {
           position: absolute;
           inset: 0;
           background-image:
-            radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.03) 1px, transparent 0);
+            radial-gradient(circle at 1px 1px, var(--chat-bg-grid-color) 1px, transparent 0);
           background-size: 32px 32px;
           pointer-events: none;
           z-index: 0;
+          transition: background-image 0.3s ease;
         }
         .chat-messages::-webkit-scrollbar {
           width: 6px;
@@ -304,15 +307,16 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
           background: transparent;
         }
         .chat-messages::-webkit-scrollbar-thumb {
-          background: rgba(255, 255, 255, 0.2);
+          background: var(--chat-scrollbar-thumb);
           border-radius: 3px;
+          transition: background 0.3s ease;
         }
         .chat-messages::-webkit-scrollbar-thumb:hover {
-          background: rgba(255, 255, 255, 0.3);
+          background: var(--chat-scrollbar-thumb-hover);
         }
         .chat-messages {
           scrollbar-width: thin;
-          scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+          scrollbar-color: var(--chat-scrollbar-thumb) transparent;
         }
         .chat-textarea::-webkit-scrollbar {
           width: 0;
@@ -382,19 +386,19 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
               alignItems: 'center',
               justifyContent: 'center',
               height: '100%',
-              color: 'var(--text-secondary, #9ca3af)',
+              color: 'var(--chat-empty-text-secondary, #9ca3af)',
               textAlign: 'center',
             }}>
               <div style={{
                 width: isFullscreen ? '120px' : '80px',
                 height: isFullscreen ? '120px' : '80px',
                 borderRadius: '50%',
-                background: 'linear-gradient(135deg, #8b5cf6 0%, #a855f7 100%)',
+                background: 'var(--chat-empty-icon-bg, linear-gradient(135deg, #8b5cf6 0%, #a855f7 100%))',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 marginBottom: '24px',
-                boxShadow: '0 8px 32px rgba(139, 92, 246, 0.4)',
+                boxShadow: 'var(--chat-empty-shadow, 0 8px 32px rgba(139, 92, 246, 0.4))',
               }}>
                 <span style={{ fontSize: isFullscreen ? '48px' : '36px', color: '#fff', fontWeight: 'bold' }}>
                   {characterInfo.characterCardName.charAt(0).toUpperCase()}
@@ -404,7 +408,7 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
                 margin: '0 0 12px 0',
                 fontSize: isFullscreen ? '24px' : '20px',
                 fontWeight: 600,
-                color: 'var(--text-primary, #e2e8f0)',
+                color: 'var(--chat-empty-text-primary, #e2e8f0)',
               }}>
                 Start chatting with {characterInfo.characterCardName}
               </h3>
@@ -443,10 +447,10 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
               textAlign: 'center',
               padding: '12px',
               marginBottom: '16px',
-              background: 'rgba(239, 68, 68, 0.1)',
-              border: '1px solid rgba(239, 68, 68, 0.3)',
+              background: 'var(--chat-error-bg, rgba(239, 68, 68, 0.1))',
+              border: '1px solid var(--chat-error-border, rgba(239, 68, 68, 0.3))',
               borderRadius: '8px',
-              color: '#ef4444',
+              color: 'var(--chat-error-color, #ef4444)',
               fontSize: '13px',
             }}>
               {state.error}
@@ -467,9 +471,9 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
                   position: 'absolute',
                   bottom: '16px',
                   right: '16px',
-                  background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                  background: 'var(--chat-bubble-user-bg, linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%))',
                   border: 'none',
-                  boxShadow: '0 4px 12px rgba(99, 102, 241, 0.4)',
+                  boxShadow: 'var(--chat-bubble-user-shadow, 0 4px 12px rgba(99, 102, 241, 0.4))',
                   animation: 'pulse 2s infinite',
                 }}
               />
@@ -480,20 +484,20 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
         {isOrganizing && (
           <div style={{
             padding: '8px 16px',
-            background: 'linear-gradient(135deg, rgba(251, 191, 36, 0.1) 0%, rgba(245, 158, 11, 0.1) 100%)',
-            borderBottom: '1px solid rgba(251, 191, 36, 0.3)',
+            background: 'var(--chat-organizing-bg, linear-gradient(135deg, rgba(251, 191, 36, 0.1) 0%, rgba(245, 158, 11, 0.1) 100%))',
+            borderBottom: '1px solid var(--chat-organizing-border, rgba(251, 191, 36, 0.3))',
             display: 'flex',
             alignItems: 'center',
             gap: '8px',
             fontSize: '13px',
-            color: '#fbbf24',
+            color: 'var(--chat-organizing-color, #fbbf24)',
           }}>
             <span style={{
               display: 'inline-block',
               width: '8px',
               height: '8px',
               borderRadius: '50%',
-              background: '#fbbf24',
+              background: 'var(--chat-organizing-dot, #fbbf24)',
               animation: 'pulse 1.5s infinite',
             }} />
             <span>正在整理记忆表格，请稍候...</span>

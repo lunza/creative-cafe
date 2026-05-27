@@ -87,6 +87,127 @@
   --bg-selected: #e6f7ff;
   --bg-tooltip: rgba(0, 0, 0, 0.75);
 
+  /* 聊天对话框专用背景色 - Chat Dialog Background Colors */
+  --chat-dialog-bg: #f5f7fa;
+  --chat-dialog-bg-gradient: linear-gradient(135deg, #f5f7fa 0%, #e8eaf0 50%, #f5f7fa 100%);
+  --chat-area-bg: #f5f7fa;
+  --chat-area-bg-gradient: linear-gradient(180deg, #f0f2f5 0%, #f5f7fa 40%, #e8eaf0 100%);
+  --chat-area-radial-1: rgba(99, 102, 241, 0.06);
+  --chat-area-radial-2: rgba(139, 92, 246, 0.05);
+  --chat-area-radial-3: rgba(255, 107, 53, 0.04);
+  --chat-area-radial-4: rgba(74, 144, 217, 0.04);
+  --chat-area-radial-5: rgba(236, 72, 153, 0.04);
+  --chat-area-radial-6: rgba(255, 107, 107, 0.03);
+  --chat-bg-grid-color: rgba(0, 0, 0, 0.03);
+  --chat-scrollbar-thumb: rgba(0, 0, 0, 0.15);
+  --chat-scrollbar-thumb-hover: rgba(0, 0, 0, 0.25);
+
+  /* 聊天消息气泡 - Chat Message Bubble Colors */
+  --chat-bubble-user-bg: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  --chat-bubble-user-color: #ffffff;
+  --chat-bubble-user-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+  --chat-bubble-assistant-bg: rgba(255, 255, 255, 0.9);
+  --chat-bubble-assistant-color: #1a1a2e;
+  --chat-bubble-assistant-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --chat-bubble-assistant-border: rgba(0, 0, 0, 0.06);
+
+  /* 聊天编辑框 - Chat Edit Box Colors */
+  --chat-edit-bg: rgba(255, 255, 255, 0.8);
+  --chat-edit-border: rgba(0, 0, 0, 0.12);
+  --chat-edit-border-focus: var(--primary-color, #6366f1);
+  --chat-edit-color: #1a1a2e;
+
+  /* 聊天操作按钮 - Chat Action Button Colors */
+  --chat-action-bg: rgba(0, 0, 0, 0.04);
+  --chat-action-border: rgba(0, 0, 0, 0.08);
+  --chat-action-hover: rgba(0, 0, 0, 0.08);
+  --chat-action-text: #8c8c8c;
+
+  /* 聊天光标 - Chat Cursor Color */
+  --chat-cursor-color: #1a1a2e;
+
+  /* 聊天空状态 - Chat Empty State Colors */
+  --chat-empty-icon-bg: linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(168, 85, 247, 0.08) 100%);
+  --chat-empty-icon-color: #8b5cf6;
+  --chat-empty-text-primary: #1a1a2e;
+  --chat-empty-text-secondary: #8c8c8c;
+  --chat-empty-shadow: 0 8px 32px rgba(139, 92, 246, 0.2);
+
+  /* 聊天错误提示 - Chat Error Colors */
+  --chat-error-bg: rgba(239, 68, 68, 0.08);
+  --chat-error-border: rgba(239, 68, 68, 0.2);
+  --chat-error-color: #ef4444;
+
+  /* 聊天输入框 - Chat Input Colors */
+  --chat-input-bg: rgba(255, 255, 255, 0.8);
+  --chat-input-border: rgba(0, 0, 0, 0.1);
+  --chat-input-border-focus: var(--primary-color, #6366f1);
+  --chat-input-color: #1a1a2e;
+  --chat-input-placeholder: #8c8c8c;
+
+  /* 聊天整理提示 - Chat Organizing Colors */
+  --chat-organizing-bg: linear-gradient(135deg, rgba(251, 191, 36, 0.08) 0%, rgba(245, 158, 11, 0.08) 100%);
+  --chat-organizing-border: rgba(251, 191, 36, 0.2);
+  --chat-organizing-color: #f59e0b;
+  --chat-organizing-dot: #f59e0b;
+
+  /* 聊天头部 - Chat Header Colors */
+  --chat-header-bg: rgba(255, 255, 255, 0.8);
+  --chat-header-border: rgba(0, 0, 0, 0.1);
+  --chat-header-text-primary: #1a1a2e;
+  --chat-header-text-secondary: #8c8c8c;
+  --chat-header-btn-color: #8c8c8c;
+  --chat-header-persona-bg: rgba(99, 102, 241, 0.08);
+  --chat-header-persona-border: rgba(99, 102, 241, 0.2);
+  --chat-header-persona-text: #1a1a2e;
+
+  /* 发送按钮 - Chat Send Button Colors */
+  --chat-send-btn-bg: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  --chat-send-btn-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+  --chat-send-btn-disabled-bg: rgba(0, 0, 0, 0.08);
+  --chat-send-btn-disabled-border: rgba(0, 0, 0, 0.15);
+
+  /* 角色选择器面板 - Character Selector Panel Colors */
+  --char-selector-bg-gradient: linear-gradient(135deg, #f0f2f5 0%, #e8eaf0 50%, #f0f2f5 100%);
+  --char-selector-header-bg: rgba(0, 0, 0, 0.03);
+  --char-selector-header-color: #1a1a2e;
+  --char-selector-scrollbar-thumb: rgba(0, 0, 0, 0.2);
+  --char-selector-scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
+  --char-selector-list-item-bg: rgba(255, 255, 255, 0.6);
+  --char-selector-list-item-active-bg: rgba(99, 102, 241, 0.08);
+  --char-selector-list-item-active-border: var(--primary-color, #6366f1);
+  --char-selector-name-color: #1a1a2e;
+  --char-selector-name-active-color: #ffffff;
+  --char-selector-empty-color: #8c8c8c;
+
+  /* 配置面板 - Config Panel Colors */
+  --config-panel-bg-gradient: linear-gradient(135deg, #f0f2f5 0%, #e8eaf0 50%, #f0f2f5 100%);
+  --config-panel-scrollbar-thumb: rgba(0, 0, 0, 0.2);
+  --config-panel-scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
+  --config-panel-divider: rgba(0, 0, 0, 0.08);
+  --config-panel-sub-title-color: #1a1a2e;
+  --config-panel-card-bg: rgba(255, 255, 255, 0.7);
+  --config-panel-card-border: rgba(0, 0, 0, 0.06);
+  --config-panel-card-active-border: var(--primary-color, #6366f1);
+  --config-panel-card-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  --config-panel-slider-track: rgba(0, 0, 0, 0.1);
+  --config-panel-slider-fill: var(--primary-color, #6366f1);
+  --config-panel-slider-thumb: #ffffff;
+  --config-panel-slider-thumb-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  --config-panel-select-bg: rgba(255, 255, 255, 0.8);
+  --config-panel-select-border: rgba(0, 0, 0, 0.1);
+  --config-panel-select-color: #1a1a2e;
+  --config-panel-select-dropdown-bg: #ffffff;
+  --config-panel-select-dropdown-color: #1a1a2e;
+  --config-panel-select-dropdown-hover: rgba(99, 102, 241, 0.08);
+  --config-panel-button-text: #1a1a2e;
+  --config-panel-button-bg: rgba(0, 0, 0, 0.04);
+  --config-panel-button-border: rgba(0, 0, 0, 0.1);
+  --config-panel-button-hover: rgba(0, 0, 0, 0.08);
+  --config-panel-button-active-bg: var(--primary-color, #6366f1);
+  --config-panel-button-active-text: #ffffff;
+  --config-panel-button-active-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+
   /* 滚动条 - Scrollbar */
   --scrollbar-size: 8px;
   --scrollbar-track-bg: var(--bg-base);
@@ -417,6 +538,121 @@
   --bg-input: #1f1f1f;
   --bg-selected: #111d2c;
   --bg-tooltip: rgba(51, 51, 51, 0.9);
+
+  /* 聊天对话框专用背景色 - Chat Dialog Background Colors (Dark) */
+  --chat-dialog-bg: #1e1e2e;
+  --chat-dialog-bg-gradient: linear-gradient(135deg, #1e1e2e 0%, #2d2b42 50%, #1e1e2e 100%);
+  --chat-area-bg: #161625;
+  --chat-area-bg-gradient: linear-gradient(180deg, #0f0f1a 0%, #161625 40%, #1a1a2e 100%);
+  --chat-area-radial-1: rgba(255, 107, 53, 0.08);
+  --chat-area-radial-2: rgba(74, 144, 217, 0.06);
+  --chat-area-radial-3: rgba(255, 107, 107, 0.05);
+  --chat-area-radial-4: rgba(99, 102, 241, 0.06);
+  --chat-area-radial-5: rgba(236, 72, 153, 0.05);
+  --chat-area-radial-6: rgba(255, 107, 53, 0.08);
+  --chat-bg-grid-color: rgba(255, 255, 255, 0.03);
+  --chat-scrollbar-thumb: rgba(255, 255, 255, 0.2);
+  --chat-scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
+
+  /* 聊天消息气泡 - Chat Message Bubble Colors (Dark) */
+  --chat-bubble-user-bg: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  --chat-bubble-user-color: #ffffff;
+  --chat-bubble-user-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+  --chat-bubble-assistant-bg: rgba(30, 30, 46, 0.8);
+  --chat-bubble-assistant-color: #e2e8f0;
+  --chat-bubble-assistant-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  --chat-bubble-assistant-border: rgba(255, 255, 255, 0.06);
+
+  /* 聊天编辑框 - Chat Edit Box Colors (Dark) */
+  --chat-edit-bg: rgba(0, 0, 0, 0.25);
+  --chat-edit-border: rgba(255, 255, 255, 0.15);
+  --chat-edit-border-focus: var(--primary-color, #6366f1);
+  --chat-edit-color: #e2e8f0;
+
+  /* 聊天操作按钮 - Chat Action Button Colors (Dark) */
+  --chat-action-bg: rgba(255, 255, 255, 0.05);
+  --chat-action-border: rgba(255, 255, 255, 0.08);
+  --chat-action-hover: rgba(255, 255, 255, 0.1);
+  --chat-action-text: #9ca3af;
+
+  /* 聊天光标 - Chat Cursor Color (Dark) */
+  --chat-cursor-color: #e2e8f0;
+
+  /* 聊天空状态 - Chat Empty State Colors (Dark) */
+  --chat-empty-icon-bg: linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(168, 85, 247, 0.08) 100%);
+  --chat-empty-icon-color: #8b5cf6;
+  --chat-empty-text-primary: #e2e8f0;
+  --chat-empty-text-secondary: #9ca3af;
+  --chat-empty-shadow: 0 8px 32px rgba(139, 92, 246, 0.4);
+
+  /* 聊天错误提示 - Chat Error Colors (Dark) */
+  --chat-error-bg: rgba(239, 68, 68, 0.1);
+  --chat-error-border: rgba(239, 68, 68, 0.3);
+  --chat-error-color: #ef4444;
+
+  /* 聊天输入框 - Chat Input Colors (Dark) */
+  --chat-input-bg: rgba(30, 30, 46, 0.8);
+  --chat-input-border: rgba(255, 255, 255, 0.1);
+  --chat-input-border-focus: var(--primary-color, #6366f1);
+  --chat-input-color: #e2e8f0;
+  --chat-input-placeholder: #6b7280;
+
+  /* 聊天整理提示 - Chat Organizing Colors (Dark) */
+  --chat-organizing-bg: linear-gradient(135deg, rgba(251, 191, 36, 0.1) 0%, rgba(245, 158, 11, 0.1) 100%);
+  --chat-organizing-border: rgba(251, 191, 36, 0.3);
+  --chat-organizing-color: #fbbf24;
+  --chat-organizing-dot: #fbbf24;
+
+  /* 聊天头部 - Chat Header Colors (Dark) */
+  --chat-header-bg: rgba(30, 30, 46, 0.8);
+  --chat-header-border: rgba(255, 255, 255, 0.1);
+  --chat-header-text-primary: #e2e8f0;
+  --chat-header-text-secondary: #9ca3af;
+  --chat-header-btn-color: #9ca3af;
+  --chat-header-persona-bg: rgba(99, 102, 241, 0.1);
+  --chat-header-persona-border: rgba(99, 102, 241, 0.3);
+  --chat-header-persona-text: #e2e8f0;
+
+  /* 角色选择器面板 - Character Selector Panel Colors (Dark) */
+  --char-selector-bg-gradient: linear-gradient(135deg, #1e1e2e 0%, #2d2b42 50%, #1e1e2e 100%);
+  --char-selector-header-bg: rgba(0, 0, 0, 0.2);
+  --char-selector-header-color: #e2e8f0;
+  --char-selector-scrollbar-thumb: rgba(255, 255, 255, 0.2);
+  --char-selector-scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
+  --char-selector-list-item-bg: rgba(0, 0, 0, 0.15);
+  --char-selector-list-item-active-bg: rgba(99, 102, 241, 0.2);
+  --char-selector-list-item-active-border: var(--primary-color, #6366f1);
+  --char-selector-name-color: #9ca3af;
+  --char-selector-name-active-color: #ffffff;
+  --char-selector-empty-color: #9ca3af;
+
+  /* 配置面板 - Config Panel Colors (Dark) */
+  --config-panel-bg-gradient: linear-gradient(135deg, #1e1e2e 0%, #2d2b42 50%, #1e1e2e 100%);
+  --config-panel-scrollbar-thumb: rgba(255, 255, 255, 0.2);
+  --config-panel-scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
+  --config-panel-divider: rgba(255, 255, 255, 0.08);
+  --config-panel-sub-title-color: #e2e8f0;
+  --config-panel-card-bg: rgba(30, 30, 46, 0.6);
+  --config-panel-card-border: rgba(255, 255, 255, 0.06);
+  --config-panel-card-active-border: var(--primary-color, #6366f1);
+  --config-panel-card-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  --config-panel-slider-track: rgba(255, 255, 255, 0.1);
+  --config-panel-slider-fill: var(--primary-color, #6366f1);
+  --config-panel-slider-thumb: #ffffff;
+  --config-panel-slider-thumb-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  --config-panel-select-bg: rgba(30, 30, 46, 0.8);
+  --config-panel-select-border: rgba(255, 255, 255, 0.1);
+  --config-panel-select-color: #e2e8f0;
+  --config-panel-select-dropdown-bg: #1e1e2e;
+  --config-panel-select-dropdown-color: #e2e8f0;
+  --config-panel-select-dropdown-hover: rgba(99, 102, 241, 0.15);
+  --config-panel-button-text: #9ca3af;
+  --config-panel-button-bg: rgba(255, 255, 255, 0.05);
+  --config-panel-button-border: rgba(255, 255, 255, 0.08);
+  --config-panel-button-hover: rgba(255, 255, 255, 0.1);
+  --config-panel-button-active-bg: var(--primary-color, #6366f1);
+  --config-panel-button-active-text: #ffffff;
+  --config-panel-button-active-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
 
   /* 滚动条 - Scrollbar */
   --scrollbar-track-bg: var(--bg-base);

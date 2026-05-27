@@ -50,9 +50,9 @@ const ChatInputBar: React.FC<ChatInputBarProps> = ({
       display: 'flex',
       gap: '12px',
       padding: '16px 20px',
-      background: 'var(--input-bg, rgba(30, 30, 46, 0.6))',
+      background: 'var(--chat-input-bg, rgba(30, 30, 46, 0.6))',
       backdropFilter: 'blur(10px)',
-      borderTop: '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
+      borderTop: '1px solid var(--chat-input-border, rgba(255, 255, 255, 0.1))',
     }}>
       <textarea
         ref={textareaRef}
@@ -64,11 +64,11 @@ const ChatInputBar: React.FC<ChatInputBarProps> = ({
         rows={1}
         style={{
           flex: 1,
-          background: 'var(--textarea-bg, rgba(15, 15, 26, 0.8))',
-          border: '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
+          background: 'var(--chat-input-bg, rgba(15, 15, 26, 0.8))',
+          border: '1px solid var(--chat-input-border, rgba(255, 255, 255, 0.1))',
           borderRadius: '24px',
           padding: '12px 20px',
-          color: 'var(--text-primary, #e2e8f0)',
+          color: 'var(--chat-input-color, #e2e8f0)',
           fontSize: '14px',
           resize: 'none',
           outline: 'none',
@@ -83,11 +83,11 @@ const ChatInputBar: React.FC<ChatInputBarProps> = ({
           transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
         }}
         onFocus={(e) => {
-          e.target.style.borderColor = 'var(--primary-color, #6366f1)';
+          e.target.style.borderColor = 'var(--chat-input-border-focus, var(--primary-color, #6366f1))';
           e.target.style.boxShadow = '0 0 0 2px rgba(99, 102, 241, 0.2)';
         }}
         onBlur={(e) => {
-          e.target.style.borderColor = 'var(--border-color, rgba(255, 255, 255, 0.1))';
+          e.target.style.borderColor = 'var(--chat-input-border, rgba(255, 255, 255, 0.1))';
           e.target.style.boxShadow = 'none';
         }}
         className="chat-textarea"
@@ -151,11 +151,13 @@ const ChatInputBar: React.FC<ChatInputBarProps> = ({
               alignItems: 'center',
               justifyContent: 'center',
               background: input.trim() && !disabled
-                ? 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)'
-                : 'var(--btn-disabled-bg, #4b5563)',
-              border: 'none',
+                ? 'var(--chat-send-btn-bg, linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%))'
+                : 'var(--chat-send-btn-disabled-bg, rgba(99, 102, 241, 0.1))',
+              border: input.trim() && !disabled
+                ? 'none'
+                : '1px solid var(--chat-send-btn-disabled-border, rgba(99, 102, 241, 0.3))',
               boxShadow: input.trim() && !disabled
-                ? '0 4px 12px rgba(99, 102, 241, 0.4)'
+                ? 'var(--chat-send-btn-shadow, 0 4px 12px rgba(99, 102, 241, 0.4))'
                 : 'none',
               transition: 'all 0.2s ease',
             }}

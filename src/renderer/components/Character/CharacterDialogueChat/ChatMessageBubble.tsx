@@ -136,8 +136,8 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
       gap: '4px',
       padding: '4px 8px',
       borderRadius: '12px',
-      background: 'var(--action-bg, rgba(255, 255, 255, 0.05))',
-      border: '1px solid var(--action-border, rgba(255, 255, 255, 0.08))',
+      background: 'var(--chat-action-bg, rgba(255, 255, 255, 0.05))',
+      border: '1px solid var(--chat-action-border, rgba(255, 255, 255, 0.08))',
       opacity: isActionVisible && !isStreaming && !isGenerating ? 1 : 0,
       transform: isActionVisible && !isStreaming && !isGenerating ? 'translateY(0)' : 'translateY(4px)',
       transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
@@ -148,7 +148,7 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
           style={{
             background: 'none',
             border: 'none',
-            color: copied ? 'var(--success-color, #22c55e)' : 'var(--text-secondary, #9ca3af)',
+            color: copied ? 'var(--success-color, #22c55e)' : 'var(--chat-action-text, #9ca3af)',
             cursor: 'pointer',
             padding: '6px 8px',
             fontSize: '12px',
@@ -159,12 +159,12 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
             transition: 'all 0.2s ease',
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
+            e.currentTarget.style.background = 'var(--chat-action-hover, rgba(255, 255, 255, 0.1))';
             e.currentTarget.style.color = 'var(--text-primary, #e2e8f0)';
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.background = 'none';
-            e.currentTarget.style.color = copied ? 'var(--success-color, #22c55e)' : 'var(--text-secondary, #9ca3af)';
+            e.currentTarget.style.color = copied ? 'var(--success-color, #22c55e)' : 'var(--chat-action-text, #9ca3af)';
           }}
         >
           {copied ? <CheckOutlined /> : <CopyOutlined />}
@@ -185,7 +185,7 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
               style={{
                 background: 'none',
                 border: 'none',
-                color: isEditing ? 'var(--primary-color, #6366f1)' : 'var(--text-secondary, #9ca3af)',
+                color: isEditing ? 'var(--primary-color, #6366f1)' : 'var(--chat-action-text, #9ca3af)',
                 cursor: 'pointer',
                 padding: '6px 8px',
                 fontSize: '12px',
@@ -196,12 +196,12 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
                 transition: 'all 0.2s ease',
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
+                e.currentTarget.style.background = 'var(--chat-action-hover, rgba(255, 255, 255, 0.1))';
                 e.currentTarget.style.color = 'var(--primary-color, #6366f1)';
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.background = 'none';
-                e.currentTarget.style.color = isEditing ? 'var(--primary-color, #6366f1)' : 'var(--text-secondary, #9ca3af)';
+                e.currentTarget.style.color = isEditing ? 'var(--primary-color, #6366f1)' : 'var(--chat-action-text, #9ca3af)';
               }}
             >
               <EditOutlined />
@@ -217,7 +217,7 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
           style={{
             background: 'none',
             border: 'none',
-            color: message.status === 'error' ? 'var(--error-color, #ef4444)' : 'var(--text-secondary, #9ca3af)',
+            color: message.status === 'error' ? 'var(--error-color, #ef4444)' : 'var(--chat-action-text, #9ca3af)',
             cursor: isGenerating || isStreaming ? 'not-allowed' : 'pointer',
             padding: '6px 8px',
             fontSize: '12px',
@@ -230,14 +230,14 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
           }}
           onMouseEnter={(e) => {
             if (!isGenerating && !isStreaming) {
-              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
+              e.currentTarget.style.background = 'var(--chat-action-hover, rgba(255, 255, 255, 0.1))';
               e.currentTarget.style.color = 'var(--text-primary, #e2e8f0)';
             }
           }}
           onMouseLeave={(e) => {
             if (!isGenerating && !isStreaming) {
               e.currentTarget.style.background = 'none';
-              e.currentTarget.style.color = message.status === 'error' ? 'var(--error-color, #ef4444)' : 'var(--text-secondary, #9ca3af)';
+              e.currentTarget.style.color = message.status === 'error' ? 'var(--error-color, #ef4444)' : 'var(--chat-action-text, #9ca3af)';
             }
           }}
         >
@@ -257,7 +257,7 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
             style={{
               background: 'none',
               border: 'none',
-              color: 'var(--text-secondary, #9ca3af)',
+              color: 'var(--chat-action-text, #9ca3af)',
               cursor: isGenerating || isStreaming || message.status !== 'sent' ? 'not-allowed' : 'pointer',
               padding: '6px 8px',
               fontSize: '12px',
@@ -277,7 +277,7 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
             onMouseLeave={(e) => {
               if (!isGenerating && !isStreaming && message.status === 'sent') {
                 e.currentTarget.style.background = 'none';
-                e.currentTarget.style.color = 'var(--text-secondary, #9ca3af)';
+                e.currentTarget.style.color = 'var(--chat-action-text, #9ca3af)';
               }
             }}
           >
@@ -294,8 +294,8 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
       gap: '4px',
       padding: '4px 8px',
       borderRadius: '12px',
-      background: 'var(--action-bg, rgba(255, 255, 255, 0.05))',
-      border: '1px solid var(--action-border, rgba(255, 255, 255, 0.08))',
+      background: 'var(--chat-action-bg, rgba(255, 255, 255, 0.05))',
+      border: '1px solid var(--chat-action-border, rgba(255, 255, 255, 0.08))',
       opacity: isActionVisible ? 1 : 0,
       transform: isActionVisible ? 'translateY(0)' : 'translateY(4px)',
       transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
@@ -313,7 +313,7 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
           style={{
             background: 'none',
             border: 'none',
-            color: isEditing ? 'var(--primary-color, #6366f1)' : 'var(--text-secondary, #9ca3af)',
+            color: isEditing ? 'var(--primary-color, #6366f1)' : 'var(--chat-action-text, #9ca3af)',
             cursor: 'pointer',
             padding: '6px 8px',
             fontSize: '12px',
@@ -324,12 +324,12 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
             transition: 'all 0.2s ease',
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
+            e.currentTarget.style.background = 'var(--chat-action-hover, rgba(255, 255, 255, 0.1))';
             e.currentTarget.style.color = 'var(--primary-color, #6366f1)';
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.background = 'none';
-            e.currentTarget.style.color = isEditing ? 'var(--primary-color, #6366f1)' : 'var(--text-secondary, #9ca3af)';
+            e.currentTarget.style.color = isEditing ? 'var(--primary-color, #6366f1)' : 'var(--chat-action-text, #9ca3af)';
           }}
         >
           <EditOutlined />
@@ -391,16 +391,18 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
 
           <div style={{
             background: isUser
-              ? 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)'
-              : 'var(--bubble-bg-assistant, rgba(30, 30, 46, 0.8))',
-            color: isUser ? '#fff' : 'var(--text-primary, #e2e8f0)',
+              ? 'var(--chat-bubble-user-bg, linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%))'
+              : 'var(--chat-bubble-assistant-bg, rgba(30, 30, 46, 0.8))',
+            color: isUser
+              ? 'var(--chat-bubble-user-color, #fff)'
+              : 'var(--chat-bubble-assistant-color, #e2e8f0)',
             padding: '12px 16px',
             borderRadius: isUser ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
             wordBreak: 'break-word',
             backdropFilter: 'blur(10px)',
             boxShadow: isUser
-              ? '0 4px 12px rgba(99, 102, 241, 0.3)'
-              : '0 4px 12px rgba(0,0,0,0.2)',
+              ? 'var(--chat-bubble-user-shadow, 0 4px 12px rgba(99, 102, 241, 0.3))'
+              : 'var(--chat-bubble-assistant-shadow, 0 4px 12px rgba(0,0,0,0.2))',
             position: 'relative',
             transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
           }}>
@@ -452,20 +454,20 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
                     fontSize: '13px',
                     lineHeight: '1.7',
                     fontFamily: 'inherit',
-                    color: 'var(--text-primary, #e2e8f0)',
-                    background: 'rgba(0, 0, 0, 0.25)',
-                    border: '1px solid rgba(255, 255, 255, 0.15)',
+                    color: 'var(--chat-edit-color, #e2e8f0)',
+                    background: 'var(--chat-edit-bg, rgba(0, 0, 0, 0.25))',
+                    border: '1px solid var(--chat-edit-border, rgba(255, 255, 255, 0.15))',
                     borderRadius: '10px',
                     resize: 'none',
                     outline: 'none',
                     overflow: 'auto',
                   }}
                   onFocus={(e) => {
-                    e.currentTarget.style.borderColor = 'var(--primary-color, #6366f1)';
+                    e.currentTarget.style.borderColor = 'var(--chat-edit-border-focus, var(--primary-color, #6366f1))';
                     e.currentTarget.style.boxShadow = '0 0 0 2px rgba(99, 102, 241, 0.15)';
                   }}
                   onBlur={(e) => {
-                    e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.15)';
+                    e.currentTarget.style.borderColor = 'var(--chat-edit-border, rgba(255, 255, 255, 0.15))';
                     e.currentTarget.style.boxShadow = 'none';
                   }}
                 />
@@ -488,7 +490,7 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
                     display: 'inline-block',
                     width: '2px',
                     height: '1em',
-                    backgroundColor: 'var(--text-primary, #e2e8f0)',
+                    backgroundColor: 'var(--chat-cursor-color, #e2e8f0)',
                     marginLeft: '2px',
                     animation: 'blink 1s step-end infinite',
                     verticalAlign: 'text-bottom',
@@ -530,7 +532,7 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
               {!isLatestVersion && hasVersionInfo && (
                 <span style={{
                   fontSize: '10px',
-                  color: 'var(--text-tertiary, #6b7280)',
+                  color: 'var(--chat-action-text, #6b7280)',
                   fontStyle: 'italic',
                 }}>
                   历史版本 #{versionInfo.versionSequenceNumber}
@@ -547,7 +549,7 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
             }}>
               <span style={{
                 fontSize: '11px',
-                color: 'var(--text-secondary, #6b7280)',
+                color: 'var(--chat-action-text, #6b7280)',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '4px',

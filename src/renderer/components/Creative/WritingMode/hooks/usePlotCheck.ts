@@ -315,7 +315,8 @@ export function usePlotCheck(
     outline: GeneratedOutline | null,
     editorContentRef: React.MutableRefObject<string>,
     setChapterContents: React.Dispatch<React.SetStateAction<Record<number, string>>>,
-    onRecheck?: () => void
+    onRecheck?: () => void,
+    onCompletion?: () => void
   ) => {
     const currentChapter = outline?.chapters.find(ch => ch.index === chapterIndex);
     if (pendingQuickFixSuggestion && currentChapter && pendingQuickFixContent) {
@@ -387,13 +388,21 @@ export function usePlotCheck(
     setPendingQuickFixSuggestion(null);
     setPendingQuickFixIssue(null);
     setPendingQuickFixContent('');
+
+    if (onCompletion) {
+      onCompletion();
+    }
   }, [pendingQuickFixSuggestion, pendingQuickFixContent, pendingQuickFixIssue, getCurrentProject, updateProject, saveProject]);
 
-  const handleRejectQuickFix = useCallback(() => {
+  const handleRejectQuickFix = useCallback((onCompletion?: () => void) => {
     setPendingQuickFixSuggestion(null);
     setPendingQuickFixIssue(null);
     setPendingQuickFixContent('');
     message.info('已拒绝快速修正');
+
+    if (onCompletion) {
+      onCompletion();
+    }
   }, []);
 
   const handleViewLogicRecords = useCallback(async () => {

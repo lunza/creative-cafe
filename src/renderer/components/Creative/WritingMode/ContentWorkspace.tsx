@@ -175,22 +175,25 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
     );
   };
 
-  const handleQuickFix = (chapterContent: string, issue: any) => {
+  const handleQuickFix = (chapterContent: string, issue: any, onComplete?: () => void) => {
     plotCheck.handleQuickFix(chapterContent, issue);
+    if (onComplete) {
+      onComplete();
+    }
   };
 
-  const handleAcceptQuickFix = () => {
+  const handleAcceptQuickFix = (onComplete?: () => void) => {
     plotCheck.handleAcceptQuickFix(
       currentChapter.index,
       outline,
       chapterGeneration.editorContentRef,
       () => {},
-      () => plotCheck.handlePlotCheck(currentChapter.index, chapterGeneration.chapterContents, outline, projectId)
+      onComplete
     );
   };
 
-  const handleRejectQuickFix = () => {
-    plotCheck.handleRejectQuickFix();
+  const handleRejectQuickFix = (onComplete?: () => void) => {
+    plotCheck.handleRejectQuickFix(onComplete);
   };
 
   const handleContentUpdated = (fixedContent: string) => {
@@ -527,9 +530,9 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
         suggestion={plotCheck.pendingQuickFixSuggestion}
         issueTitle={plotCheck.pendingQuickFixIssue?.title || plotCheck.pendingQuickFixIssue?.description || ''}
         issueType={plotCheck.pendingQuickFixType === 'logic' ? '逻辑异常' : plotCheck.pendingQuickFixIssue?.dimension ? '维度问题' : '问题'}
-        onAccept={handleAcceptQuickFix}
-        onReject={handleRejectQuickFix}
-        onCancel={handleRejectQuickFix}
+        onAccept={(onComplete) => handleAcceptQuickFix(onComplete)}
+        onReject={(onComplete) => handleRejectQuickFix(onComplete)}
+        onCancel={(onComplete) => handleRejectQuickFix(onComplete)}
       />
 
       <Modal
