@@ -1,0 +1,35 @@
+- [x] 大纲数据结构已扩展，支持storyline、characterRelations、worldSetting字段
+- [x] Storyline接口定义完整，包含coreConflict、起承转合、theme字段
+- [x] CharacterRelation接口支持角色关系网络描述
+- [x] WorldSetting接口包含世界观规则和背景设定
+- [x] Store中的大纲状态类型已更新
+- [x] OutlineEditPanel组件已创建并正常工作
+- [x] StorylineEditor组件支持故事主线编辑
+- [x] CharacterRelationEditor组件支持角色关系编辑
+- [x] WorldSettingEditor组件支持世界观设定编辑
+- [x] ChapterEditor组件已重构并适配新架构
+- [x] EditTabNavigation组件实现内容类型切换导航
+- [x] AIEditService服务类已创建，封装AI辅助编辑API
+- [x] AIEditPrompt组件支持用户输入编辑意图
+- [x] Storyline AI辅助修改功能可用
+- [x] Chapter AI优化功能可用
+- [x] CharacterRelation AI辅助功能可用
+- [x] WorldSetting AI辅助功能可用
+- [x] OutlineContinuation组件支持续写交互
+- [x] 续写API服务调用正常
+- [x] 续写内容预览与确认流程完整
+- [x] OutlineVersion接口已定义
+- [x] 版本快照功能在关键操作时自动保存
+- [x] VersionHistoryPanel组件展示版本列表
+- [x] 版本恢复功能可用
+- [x] 版本比较功能以diff视图展示差异
+- [x] ImpactAnalyzer工具类可分析设定变更影响范围
+- [x] 变更确认对话框提示用户受影响的章节
+- [x] 批量章节更新逻辑正常
+- [x] WritingMode主组件已集成新的编辑面板
+- [x] 大纲确认流程支持编辑模式入口
+- [x] 模式切换逻辑数据同步正常
+- [x] 保存与同步逻辑适配新数据结构
+- [x] 大型大纲渲染性能优化（虚拟列表）
+- [x] AI请求加载状态管理完善
+- [x] 所有编辑流程功能测试通过

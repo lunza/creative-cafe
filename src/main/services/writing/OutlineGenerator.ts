@@ -1,6 +1,7 @@
 import {
   OutlineGenerationRequest,
   GeneratedOutline,
+  ChapterOutline,
   WritingError,
   WritingErrorCode
 } from '../../../shared/types/writing.types';
@@ -681,6 +682,199 @@ export class OutlineGenerator {
     // 移除 ~~strikethrough~~
     result = result.replace(/~~(.+?)~~/g, '$1');
     return result;
+  }
+
+  async generateContinuation(
+    outline: GeneratedOutline,
+    chapterCount: number,
+    instructions: string,
+    modelConfig: ModelConfig,
+    abortSignal?: AbortSignal
+  ): Promise<ChapterOutline[]> {
+    const baseUrl = await this.getBaseUrl();
+    const apiKey = await this.getApiKey();
+    const apiKeyTransmission = await this.getApiKeyTransmission();
+    const modelName = await this.getModelName(modelConfig.model);
+    const engineSystemPrompt = await this.getEngineSystemPrompt();
+
+    if (!baseUrl) {
+      throw this.createError(WritingErrorCode.OUTLINE_GENERATION_FAILED, '未配置 AI 服务地址');
+    }
+
+    const systemPrompt = this.buildContinuationSystemPrompt(outline);
+    const userPrompt = this.buildContinuationUserPrompt(outline, chapterCount, instructions);
+
+    const enrichedSystemPrompt = engineSystemPrompt
+      ? engineSystemPrompt.trim() + '\n\n' + systemPrompt
+      : systemPrompt;
+
+    const messages: ChatMessage[] = [
+      { role: 'system', content: enrichedSystemPrompt },
+      { role: 'user', content: userPrompt },
+    ];
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    const requestBody: Record<string, any> = {
+      model: modelName,
+      messages,
+      temperature: modelConfig.temperature,
+      max_tokens: modelConfig.maxTokens,
+      stream: true,
+    };
+
+    if (apiKey) {
+      if (apiKeyTransmission === 'header') {
+        const authValue = apiKey.trim().startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
+        headers['Authorization'] = authValue;
+      } else {
+        requestBody.api_key = apiKey;
+      }
+    }
+
+    const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(requestBody),
+      signal: abortSignal,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw this.createError(
+        WritingErrorCode.OUTLINE_GENERATION_FAILED,
+        `AI 请求失败: ${response.status} ${response.statusText}`,
+        errorText,
+      );
+    }
+
+    const rawContent = await this.readStreamResponse(response, abortSignal);
+
+    if (!rawContent && !abortSignal?.aborted) {
+      throw this.createError(WritingErrorCode.OUTLINE_GENERATION_FAILED, 'AI 返回内容为空');
+    }
+
+    return this.parseContinuationResponse(rawContent, outline);
+  }
+
+  private buildContinuationSystemPrompt(outline: GeneratedOutline): string {
+    const novelType = outline.workInfo.novelType;
+    const template = NovelTypeTemplates[novelType as keyof typeof NovelTypeTemplates];
+
+    return `你是一位专业的小说大纲续写助手。你的任务是基于已有大纲续写后续章节。
+
+## 创作原则
+1. 保持与已有大纲的风格、基调一致
+2. 剧情递进合理，前后连贯
+3. 角色行为符合已建立的性格特征
+4. 新章节的索引从已有章节的最大索引+1开始递增
+5. 每章目标字数参考已有章节的平均值
+
+## 输出要求
+1. 只输出 JSON 格式的章节数组，不要输出任何解释性文字
+2. JSON 必须是合法格式
+3. 每个章节必须包含: index, title, summary, keyPlotPoints, characters, scenes, targetWordCount
+4. 数组格式: [{...}, {...}, ...]`;
+  }
+
+  private buildContinuationUserPrompt(
+    outline: GeneratedOutline,
+    chapterCount: number,
+    instructions: string,
+  ): string {
+    const lastChapters = outline.chapters.slice(-3);
+    const lastChapterIndex = Math.max(...outline.chapters.map(ch => ch.index));
+    const avgWordCount = Math.round(
+      outline.chapters.reduce((sum, ch) => sum + (ch.targetWordCount || 3000), 0) / outline.chapters.length,
+    );
+
+    return `# 大纲续写任务
+
+## 已有大纲信息
+作品标题: ${outline.workInfo.suggestedTitle}
+已有章节数: ${outline.chapters.length}
+最后章节索引: ${lastChapterIndex}
+平均每章字数: ${avgWordCount}
+
+## 最近章节（参考上下文）
+${lastChapters.map(ch => `第 ${ch.index} 章: ${ch.title}\n摘要: ${ch.summary}\n关键情节: ${ch.keyPlotPoints.join('、')}\n`).join('\n---\n')}
+
+## 续写要求
+请续写 ${chapterCount} 个章节，章节索引从 ${lastChapterIndex + 1} 开始递增。
+${instructions ? `\n## 额外指令\n${instructions}` : ''}
+
+## 输出格式
+请输出如下格式的 JSON 数组:
+
+[
+  {
+    "index": ${lastChapterIndex + 1},
+    "title": "章节标题",
+    "summary": "章节概要",
+    "keyPlotPoints": ["关键情节点1", "关键情节点2"],
+    "characters": ["出场角色"],
+    "scenes": ["场景描述"],
+    "suspensePoints": ["悬念点"],
+    "targetWordCount": ${avgWordCount}
+  }
+]
+
+## 重要提示
+1. 只输出 JSON 数组，不要任何前后缀
+2. 被包裹在 \`\`\`json 和 \`\`\` 代码块中
+3. 所有章节索引必须从 ${lastChapterIndex + 1} 开始递增
+4. 确保剧情连贯，承接最后一章的内容`;
+  }
+
+  private parseContinuationResponse(response: string, existingOutline: GeneratedOutline): ChapterOutline[] {
+    let jsonStr = response.trim();
+
+    const patterns = [
+      /```(?:json)?\s*([\s\S]*?)```/,
+      /```\s*([\s\S]*?)```/,
+      /^```([\s\S]*?)```$/m,
+    ];
+
+    for (const pattern of patterns) {
+      const match = jsonStr.match(pattern);
+      if (match && match[1]) {
+        jsonStr = match[1].trim();
+        break;
+      }
+    }
+
+    if (jsonStr.startsWith('```')) {
+      jsonStr = jsonStr.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+    }
+
+    jsonStr = this.fixChineseQuotes(jsonStr);
+
+    try {
+      const parsed = JSON.parse(jsonStr);
+      const chapters: any[] = Array.isArray(parsed) ? parsed : parsed.chapters || [];
+
+      const lastChapterIndex = existingOutline.chapters.length > 0
+        ? Math.max(...existingOutline.chapters.map(ch => ch.index))
+        : 0;
+      const avgWordCount = existingOutline.chapters.length > 0
+        ? Math.round(existingOutline.chapters.reduce((sum, ch) => sum + (ch.targetWordCount || 3000), 0) / existingOutline.chapters.length)
+        : 3000;
+
+      return chapters.map((ch: any, idx: number) => ({
+        index: ch.index || lastChapterIndex + idx + 1,
+        title: ch.title || `第${lastChapterIndex + idx + 1}章`,
+        summary: ch.summary || '',
+        keyPlotPoints: ch.keyPlotPoints || [],
+        characters: ch.characters || [],
+        scenes: ch.scenes || [],
+        suspensePoints: ch.suspensePoints || [],
+        targetWordCount: ch.targetWordCount || avgWordCount,
+      }));
+    } catch (e) {
+      console.error('[OutlineGenerator] Parse continuation response failed:', e);
+      throw new Error('续写内容解析失败');
+    }
   }
 
   private getDefaultStyle(novelType: string): any {

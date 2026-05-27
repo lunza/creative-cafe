@@ -278,6 +278,24 @@ export interface StoryLine {
   theme: string;
 }
 
+// 增强版故事主线（支持更全面的故事设定）
+export interface EnhancedStoryLine extends StoryLine {
+  backstory?: string;
+  setting?: string;
+  tone?: string;
+  genre?: string[];
+  subplots?: {
+    name: string;
+    description: string;
+    relatedChapters: number[];
+  }[];
+  majorEvents?: {
+    title: string;
+    description: string;
+    chapterRange: [number, number];
+  }[];
+}
+
 // 章节大纲
 export interface ChapterOutline {
   index: number;
@@ -297,7 +315,7 @@ export interface ChapterOutline {
   importantSpans?: string[];
 }
 
-// 角色关系
+// 角色关系（旧版，向后兼容）
 export interface CharacterRelationship {
   name: string;
   role: string;
@@ -308,13 +326,130 @@ export interface CharacterRelationship {
   }[];
 }
 
-// 世界观要点
+// 角色详情（增强版）
+export interface CharacterDetail {
+  id: string;
+  name: string;
+  role: string;
+  description: string;
+  personality: string;
+  background: string;
+  motivations: string;
+  conflicts: string;
+  development: string;
+  relationships: {
+    targetCharacterId: string;
+    targetCharacterName: string;
+    relationshipType: string;
+    description: string;
+  }[];
+  tags?: string[];
+}
+
+// 角色关系网络
+export interface CharacterRelationshipNetwork {
+  characters: CharacterDetail[];
+  relationships: {
+    fromCharacterId: string;
+    toCharacterId: string;
+    type: string;
+    description: string;
+    intensity: 'low' | 'medium' | 'high' | 'critical';
+  }[];
+}
+
+// 世界观要点（旧版，向后兼容）
 export interface WorldbuildingNotes {
   category: string;
   points: string[];
 }
 
-// 生成的大纲
+// 世界观设定
+export interface WorldSetting {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  details: string[];
+  relatedCharacters?: string[];
+  relatedChapters?: number[];
+  importance?: ImportanceLevel;
+}
+
+// 世界观分组
+export interface WorldSettingGroup {
+  id: string;
+  name: string;
+  description: string;
+  settings: WorldSetting[];
+}
+
+// 大纲编辑区域
+export enum OutlineEditSection {
+  STORYLINE = 'storyline',
+  CHARACTERS = 'characters',
+  WORLD = 'world',
+  CHAPTERS = 'chapters',
+}
+
+// 大纲编辑模式
+export enum OutlineEditMode {
+  AI_GENERATED = 'ai_generated',
+  MANUAL_EDIT = 'manual_edit',
+  AI_ASSISTED = 'ai_assisted',
+}
+
+// 大纲版本信息
+export interface OutlineVersion {
+  id: string;
+  outline: GeneratedOutline;
+  timestamp: number;
+  note?: string;
+  source: 'auto_save' | 'manual_save' | 'ai_generation' | 'ai_edit' | 'restore';
+  isCurrent: boolean;
+}
+
+// AI编辑意图
+export interface AIEditIntent {
+  type: 'storyline' | 'chapter' | 'character' | 'world' | 'continuation';
+  instruction: string;
+  targetSection?: OutlineEditSection;
+  targetId?: string;
+  context?: Record<string, any>;
+}
+
+// AI编辑结果
+export interface AIEditResult {
+  success: boolean;
+  content?: string;
+  changes?: Record<string, any>;
+  suggestions?: string[];
+  error?: string;
+}
+
+// 大纲变更影响分析
+export interface OutlineImpactAnalysis {
+  affectedChapters: number[];
+  affectedCharacters: string[];
+  affectedWorldSettings: string[];
+  severity: 'low' | 'medium' | 'high';
+  description: string;
+}
+
+// 扩展版大纲（支持全面编辑）
+export interface EnhancedOutline {
+  workInfo: WorkInfo;
+  storyLine: EnhancedStoryLine;
+  characterNetwork: CharacterRelationshipNetwork;
+  worldSettings: WorldSettingGroup[];
+  chapters: ChapterOutline[];
+  versions: OutlineVersion[];
+  currentVersionId: string;
+  lastModified: number;
+  editMode: OutlineEditMode;
+}
+
+// 生成的大纲（向后兼容）
 export interface GeneratedOutline {
   workInfo: WorkInfo;
   storyLine: StoryLine;

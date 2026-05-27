@@ -19,7 +19,6 @@ import {
 import { theme } from 'antd';
 import { useWritingProjectStore } from '../../../stores/writingProjectStore';
 import { useWritingModeUIStore, LayoutMode, ActivePanel, RightPanelTab } from '../../../stores/writingModeUIStore';
-import { useWritingModeStore } from '../../../stores/writingModeStore';
 import { WritingProject, ProjectStatus, ChapterStatus } from '../../../../shared/types/writing.types';
 import { PROJECT_STATUS_LABELS } from '../../../../shared/constants/writing.constants';
 import WritingModeRightPanel from './WritingModeRightPanel';

@@ -1320,5 +1320,62 @@ export function registerWritingHandlers(): void {
     }
   });
 
+  ipcMain.handle('writing:continueOutline', async (_event, request: { outline: GeneratedOutline; chapterCount: number; instructions: string }) => {
+    try {
+      addLog('===== 写作模式: 大纲续写请求 =====', 'debug');
+      addLog(`已有章节数: ${request.outline.chapters.length}`, 'debug');
+      addLog(`续写章节数: ${request.chapterCount}`, 'debug');
+      addLog(`续写指令: ${request.instructions || '无'}`, 'debug');
+      addLog('===== 请求入参结束 =====', 'debug');
+
+      const project = await writingStorageService.loadProject(request.outline.workInfo?.suggestedTitle || '');
+      
+      const storageService = getStorageService();
+      const settings = storageService.getSettings();
+      const engines = settings?.aiEngines || [];
+      const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
+
+      const modelConfig: ModelConfig = {
+        model: activeEngine?.model_name || 'gpt-4o',
+        temperature: typeof activeEngine?.temperature === 'number' ? activeEngine.temperature : 0.7,
+        maxTokens: typeof activeEngine?.max_tokens === 'number' && activeEngine.max_tokens > 0 ? activeEngine.max_tokens : 10240,
+      };
+
+      const abortController = new AbortController();
+
+      try {
+        const newChapters = await outlineGenerator.generateContinuation(
+          request.outline,
+          request.chapterCount,
+          request.instructions,
+          modelConfig,
+          abortController.signal,
+        );
+
+        addLog('===== 写作模式: 大纲续写成功 =====', 'debug');
+        addLog(`新增章节数: ${newChapters.length}`, 'debug');
+        addLog('===== 响应结束 =====', 'debug');
+
+        return { success: true, chapters: newChapters };
+      } catch (error) {
+        addLog('===== 写作模式: 大纲续写错误 =====', 'error');
+        addLog(`错误信息: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        addLog('===== 错误详情结束 =====', 'error');
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : '大纲续写失败',
+        };
+      }
+    } catch (error) {
+      addLog('===== 写作模式: 大纲续写外部错误 =====', 'error');
+      addLog(`错误信息: ${error instanceof Error ? error.message : String(error)}`, 'error');
+      addLog('===== 错误详情结束 =====', 'error');
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '大纲续写失败',
+      };
+    }
+  });
+
   console.log('[Writing] Writing handlers registered');
 }
