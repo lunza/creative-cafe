@@ -102,7 +102,9 @@ export class StorageManager {
       ];
 
       // 为每个模块创建子目录
-      const modules = Object.values(StorageModule);
+      const modules = Object.values(StorageModule).filter(
+        module => module !== StorageModule.CONFIG
+      );
       modules.forEach(module => {
         directories.push(path.join(this.baseDataPath, MODULE_PATH_MAP[module]));
 
@@ -137,13 +139,13 @@ export class StorageManager {
 
   /**
    * 初始化各个模块的 Store 实例
+   * 仅为 CONFIG 和 EDITOR 模块创建 electron-store 实例
+   * 其他模块（CHARACTER, CREATIVE, WORLD_BOOK, MEMORY）的数据已迁移到子目录，不再生成 JSON 文件
    */
   private initializeStores(): void {
-    // 为每个模块创建独立的 Store 实例
-    const modules = Object.values(StorageModule);
+    const modulesWithStore = [StorageModule.EDITOR];
 
-    modules.forEach(module => {
-      const modulePath = path.join(this.baseDataPath, MODULE_PATH_MAP[module]);
+    modulesWithStore.forEach(module => {
       const store = new Store({
         name: `${module}`,
         clearInvalidConfig: true,
@@ -155,9 +157,24 @@ export class StorageManager {
   }
 
   /**
+   * 已迁移到子目录的模块列表（不再使用 electron-store 存储）
+   */
+  private readonly migratedModules = new Set([
+    StorageModule.CHARACTER,
+    StorageModule.CREATIVE,
+    StorageModule.WORLD_BOOK,
+    StorageModule.MEMORY,
+    StorageModule.CONFIG
+  ]);
+
+  /**
    * 验证权限
    */
   private hasPermission(module: StorageModule, operation: StorageOperation): boolean {
+    // 已迁移的模块始终允许读写，因为数据存储在子目录中
+    if (this.migratedModules.has(module)) {
+      return true;
+    }
     const permission = this.permissions[module];
     if (!permission) return false;
     return permission.operations.includes(operation);
@@ -250,13 +267,23 @@ export class StorageManager {
   /**
    * 从键名推断模块
    */
-  private inferFromKey(key: string): { module: StorageModule; storeKey: string } {
+  private inferFromKey(key: string): { module: StorageModule; storeKey: string; isSettingsFileKey: boolean } {
+    // 检查 settings、version、lastUpdated 这些直接写入 settings.json 的键
+    if (key === 'settings' || key === 'version' || key === 'lastUpdated') {
+      return {
+        module: StorageModule.CONFIG,
+        storeKey: key,
+        isSettingsFileKey: true
+      };
+    }
+
     // 首先检查是否是旧的存储键
     const legacyMapping = LEGACY_KEY_TO_MODULE[key];
     if (legacyMapping) {
       return {
         module: legacyMapping.module,
-        storeKey: key
+        storeKey: key,
+        isSettingsFileKey: false
       };
     }
 
@@ -264,14 +291,16 @@ export class StorageManager {
     if (key.includes('markdown_content') || key.endsWith('_content')) {
       return {
         module: StorageModule.EDITOR,
-        storeKey: key
+        storeKey: key,
+        isSettingsFileKey: false
       };
     }
 
     // 默认作为配置处理
     return {
       module: StorageModule.CONFIG,
-      storeKey: key
+      storeKey: key,
+      isSettingsFileKey: false
     };
   }
 
@@ -280,7 +309,17 @@ export class StorageManager {
    */
   get<T>(key: string): StorageResult<T> {
     try {
-      const { module, storeKey } = this.inferFromKey(key);
+      const { module, storeKey, isSettingsFileKey } = this.inferFromKey(key);
+
+      // 已迁移的模块不再生成 JSON 文件，返回空数据
+      if (this.migratedModules.has(module)) {
+        return { success: true, data: {} as T };
+      }
+
+      // settings、version、lastUpdated 键直接从 settings.json 文件读取
+      if (isSettingsFileKey) {
+        return this.readFromSettingsFile(key) as StorageResult<T>;
+      }
 
       if (!this.hasPermission(module, 'read')) {
         return { success: false, error: `没有模块 ${module} 的读取权限` };
@@ -308,11 +347,58 @@ export class StorageManager {
   }
 
   /**
+   * 从 settings.json 文件读取数据
+   */
+  private readFromSettingsFile(key: string): StorageResult<any> {
+    try {
+      const settingsPath = path.join(this.baseDataPath, 'settings.json');
+      if (!fs.existsSync(settingsPath)) {
+        // settings.json 不存在，返回适当的默认值
+        if (key === 'settings') {
+          return { success: true, data: {} };
+        }
+        if (key === 'version') {
+          return { success: true, data: CURRENT_VERSION };
+        }
+        if (key === 'lastUpdated') {
+          return { success: true, data: null };
+        }
+        return { success: true, data: null };
+      }
+
+      const raw = fs.readFileSync(settingsPath, 'utf-8');
+      const settings = JSON.parse(raw);
+
+      if (key === 'settings') {
+        return { success: true, data: settings };
+      }
+
+      // 从 settings.json 的内容中提取 version 和 lastUpdated
+      if (key === 'version') {
+        return { success: true, data: settings._version || CURRENT_VERSION };
+      }
+      if (key === 'lastUpdated') {
+        return { success: true, data: settings._lastUpdated || null };
+      }
+
+      return { success: true, data: settings[key] || null };
+    } catch (error) {
+      this.log(`从 settings.json 读取失败 - 键: ${key} -> 错误: ${error instanceof Error ? error.message : '未知错误'}`, 'error');
+      return { success: false, error: error instanceof Error ? error.message : '未知错误' };
+    }
+  }
+
+  /**
    * 设置数据
    */
   set<T>(key: string, value: T): StorageResult {
     try {
-      const { module, storeKey } = this.inferFromKey(key);
+      const { module, storeKey, isSettingsFileKey } = this.inferFromKey(key);
+
+      // settings、version、lastUpdated 键直接写入 settings.json 文件
+      if (isSettingsFileKey) {
+        return this.writeToSettingsFile(key, value);
+      }
 
       if (!this.hasPermission(module, 'write')) {
         return { success: false, error: `没有模块 ${module} 的写入权限` };
@@ -354,12 +440,59 @@ export class StorageManager {
   }
 
   /**
+   * 写入数据到 settings.json 文件
+   */
+  private writeToSettingsFile(key: string, value: any): StorageResult {
+    try {
+      const settingsPath = path.join(this.baseDataPath, 'settings.json');
+      const settingsDir = path.dirname(settingsPath);
+      if (!fs.existsSync(settingsDir)) {
+        fs.mkdirSync(settingsDir, { recursive: true });
+      }
+
+      let settings: Record<string, any> = {};
+      if (fs.existsSync(settingsPath)) {
+        const raw = fs.readFileSync(settingsPath, 'utf-8');
+        settings = JSON.parse(raw);
+      }
+
+      if (key === 'settings') {
+        // 将设置值合并到 settings.json 的顶层
+        settings = { ...settings, ...(value as Record<string, any>) };
+      } else if (key === 'version') {
+        settings._version = value as string;
+      } else if (key === 'lastUpdated') {
+        settings._lastUpdated = value as string;
+      } else {
+        settings[key] = value;
+      }
+
+      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+      this.log(`写入 settings.json - 键: ${key}`, 'debug');
+      return { success: true };
+    } catch (error) {
+      this.log(`写入 settings.json 失败 - 键: ${key} -> 错误: ${error instanceof Error ? error.message : '未知错误'}`, 'error');
+      return { success: false, error: error instanceof Error ? error.message : '未知错误' };
+    }
+  }
+
+  /**
    * 删除数据
    */
   delete(key: string): StorageResult {
     try {
-      const { module, storeKey } = this.inferFromKey(key);
+      const { module, storeKey, isSettingsFileKey } = this.inferFromKey(key);
       
+      // 已迁移的模块不支持删除操作
+      if (this.migratedModules.has(module)) {
+        return { success: true };
+      }
+
+      // settings、version、lastUpdated 键不支持直接删除
+      if (isSettingsFileKey) {
+        return { success: true };
+      }
+
       if (!this.hasPermission(module, 'delete')) {
         return { success: false, error: `没有模块 ${module} 的删除权限` };
       }
@@ -383,8 +516,20 @@ export class StorageManager {
    */
   has(key: string): StorageResult<boolean> {
     try {
-      const { module, storeKey } = this.inferFromKey(key);
+      const { module, storeKey, isSettingsFileKey } = this.inferFromKey(key);
       
+      // 已迁移的模块始终返回 false（不生成文件）
+      if (this.migratedModules.has(module)) {
+        return { success: true, exists: false };
+      }
+
+      // settings、version、lastUpdated 键直接检查 settings.json 文件
+      if (isSettingsFileKey) {
+        const settingsPath = path.join(this.baseDataPath, 'settings.json');
+        const exists = fs.existsSync(settingsPath);
+        return { success: true, exists };
+      }
+
       if (!this.hasPermission(module, 'read')) {
         return { success: false, error: `没有模块 ${module} 的读取权限` };
       }
@@ -408,8 +553,10 @@ export class StorageManager {
     try {
       const allData: Record<string, any> = {};
 
-      // 读取所有模块的数据
-      const modules = Object.values(StorageModule);
+      // 读取所有模块的数据（跳过已迁移模块）
+      const modules = Object.values(StorageModule).filter(
+        module => !this.migratedModules.has(module)
+      );
       modules.forEach(module => {
         const store = this.stores.get(module);
         if (store) {
@@ -417,6 +564,18 @@ export class StorageManager {
           Object.assign(allData, storeData);
         }
       });
+
+      // 读取 settings.json 的内容
+      try {
+        const settingsPath = path.join(this.baseDataPath, 'settings.json');
+        if (fs.existsSync(settingsPath)) {
+          const raw = fs.readFileSync(settingsPath, 'utf-8');
+          const settings = JSON.parse(raw);
+          Object.assign(allData, { settings, version: settings._version, lastUpdated: settings._lastUpdated });
+        }
+      } catch {
+        // settings.json 读取失败时忽略
+      }
 
       return { success: true, data: allData };
     } catch (error) {
@@ -452,30 +611,19 @@ export class StorageManager {
    * 初始化元数据
    */
   initializeMetadata(): void {
-    const configStore = this.stores.get(StorageModule.CONFIG);
-    if (configStore) {
-      const metadata: Metadata = {
-        version: CURRENT_VERSION,
-        lastUpdated: new Date().toISOString()
-      };
-      configStore.set('_metadata', metadata);
-    }
+    const metadata: Metadata = {
+      version: CURRENT_VERSION,
+      lastUpdated: new Date().toISOString()
+    };
+    this.writeToSettingsFile('version', CURRENT_VERSION);
+    this.writeToSettingsFile('lastUpdated', metadata.lastUpdated);
   }
 
   /**
    * 更新元数据
    */
   private updateMetadata(): void {
-    const configStore = this.stores.get(StorageModule.CONFIG);
-    if (configStore) {
-      const metadata = configStore.get('_metadata') as Metadata || {
-        version: CURRENT_VERSION,
-        lastUpdated: new Date().toISOString()
-      };
-      
-      metadata.lastUpdated = new Date().toISOString();
-      configStore.set('_metadata', metadata);
-    }
+    this.writeToSettingsFile('lastUpdated', new Date().toISOString());
   }
 
   /**

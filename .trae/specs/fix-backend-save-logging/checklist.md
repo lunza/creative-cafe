@@ -1,0 +1,5 @@
+- [x] `WritingStorageService.saveProject()` 包含成功日志输出
+- [x] `writing:saveProject` IPC handler 包含请求和结果日志
+- [x] 日志包含项目 ID 等关键信息
+- [x] 验证点击保存按钮后后端控制台有日志输出
+- [x] 验证数据流从前端到后端的完整日志链

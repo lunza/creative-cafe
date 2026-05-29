@@ -331,6 +331,7 @@ export class OutlineGenerator {
       { name: 'truncateTrailing', strategy: () => this.fixTrailingGarbage(jsonStr) },
       { name: 'errorPositionFix', strategy: () => this.fixByErrorPosition(jsonStr) },
       { name: 'commonJsonFix', strategy: () => this.fixCommonJsonIssues(jsonStr) },
+      { name: 'validateAndBalanceBraces', strategy: () => this.validateAndBalanceBraces(jsonStr) },
     ];
 
     for (const { name, strategy } of fixStrategies) {
@@ -682,6 +683,193 @@ export class OutlineGenerator {
     // 移除 ~~strikethrough~~
     result = result.replace(/~~(.+?)~~/g, '$1');
     return result;
+  }
+  
+  // Validates and balances braces/brackets in JSON to ensure proper structure
+  private validateAndBalanceBraces(jsonStr: string): string {
+    let result = jsonStr;
+    
+    // First, try to find the complete JSON structure by counting braces
+    let braceDepth = 0;
+    let bracketDepth = 0;
+    let inString = false;
+    let escape = false;
+    let lastValidEnd = -1;
+    let lastStructuralChar = -1;
+    
+    for (let i = 0; i < result.length; i++) {
+      const ch = result[i];
+      
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      
+      if (ch === '\\' && inString) {
+        escape = true;
+        continue;
+      }
+      
+      if (ch === '"' && !escape) {
+        inString = !inString;
+        continue;
+      }
+      
+      if (inString) continue;
+      
+      if (ch === '{') {
+        braceDepth++;
+        lastStructuralChar = i;
+      } else if (ch === '}') {
+        braceDepth--;
+        if (braceDepth === 0) {
+          lastValidEnd = i;
+        }
+      } else if (ch === '[') {
+        bracketDepth++;
+        lastStructuralChar = i;
+      } else if (ch === ']') {
+        bracketDepth--;
+        if (bracketDepth === 0 && braceDepth === 0) {
+          lastValidEnd = i;
+        }
+      }
+    }
+    
+    // If we found a valid complete structure, truncate to that point
+    if (lastValidEnd > 0) {
+      result = result.substring(0, lastValidEnd + 1);
+    } else if (lastStructuralChar > 0) {
+      // If we have unclosed structures, try to close them
+      result = result.substring(0, lastStructuralChar + 1);
+      const openBraces: string[] = [];
+      
+      // Re-count to see what's open
+      braceDepth = 0;
+      bracketDepth = 0;
+      inString = false;
+      escape = false;
+      
+      for (let i = 0; i < result.length; i++) {
+        const ch = result[i];
+        
+        if (escape) {
+          escape = false;
+          continue;
+        }
+        
+        if (ch === '\\' && inString) {
+          escape = true;
+          continue;
+        }
+        
+        if (ch === '"' && !escape) {
+          inString = !inString;
+          continue;
+        }
+        
+        if (inString) continue;
+        
+        if (ch === '{') {
+          braceDepth++;
+          openBraces.push('{');
+        } else if (ch === '}') {
+          if (braceDepth > 0) {
+            braceDepth--;
+            openBraces.pop();
+          }
+        } else if (ch === '[') {
+          bracketDepth++;
+          openBraces.push('[');
+        } else if (ch === ']') {
+          if (bracketDepth > 0) {
+            bracketDepth--;
+            openBraces.pop();
+          }
+        }
+      }
+      
+      // Close any remaining open braces/brackets
+      while (openBraces.length > 0) {
+        const open = openBraces.pop()!;
+        result += open === '{' ? '}' : ']';
+      }
+    }
+    
+    return result;
+  }
+  
+  // Validates JSON structure integrity before parsing
+  private validateJsonStructure(jsonStr: string): boolean {
+    // Check if the JSON has balanced braces and brackets
+    let braceDepth = 0;
+    let bracketDepth = 0;
+    let inString = false;
+    let escape = false;
+    
+    for (let i = 0; i < jsonStr.length; i++) {
+      const ch = jsonStr[i];
+      
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      
+      if (ch === '\\' && inString) {
+        escape = true;
+        continue;
+      }
+      
+      if (ch === '"' && !escape) {
+        inString = !inString;
+        continue;
+      }
+      
+      if (inString) continue;
+      
+      if (ch === '{') {
+        braceDepth++;
+      } else if (ch === '}') {
+        braceDepth--;
+        if (braceDepth < 0) return false; // Unbalanced: more closing than opening
+      } else if (ch === '[') {
+        bracketDepth++;
+      } else if (ch === ']') {
+        bracketDepth--;
+        if (bracketDepth < 0) return false; // Unbalanced: more closing than opening
+      }
+    }
+    
+    // Valid if all braces and brackets are balanced
+    return braceDepth === 0 && bracketDepth === 0;
+  }
+  
+  // Validates string value completeness in JSON
+  private validateStringValues(jsonStr: string): boolean {
+    let inString = false;
+    let escape = false;
+    
+    for (let i = 0; i < jsonStr.length; i++) {
+      const ch = jsonStr[i];
+      
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      
+      if (ch === '\\' && inString) {
+        escape = true;
+        continue;
+      }
+      
+      if (ch === '"' && !escape) {
+        inString = !inString;
+        continue;
+      }
+    }
+    
+    // Valid if we're not left in an unclosed string
+    return !inString;
   }
 
   async generateContinuation(

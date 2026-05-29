@@ -1,0 +1,8 @@
+- [x] `writingProjectStore` 中无 outlineHistory、undoOutline、redoOutline 相关代码
+- [x] `ManualOutlineEditor` 中无撤销/重做按钮
+- [x] `OutlineEditPanel` 中无版本历史按钮和 VersionHistoryPanel 引用
+- [x] `VersionHistoryPanel.tsx` 文件已删除
+- [x] `writingHandlers.ts` 中无 outlineHistory 相关代码
+- [x] `writing.types.ts` 中无 outlineHistory 类型定义
+- [x] 应用编译无错误
+- [x] 大纲编辑功能正常工作，仅展示最新数据

@@ -1,0 +1,23 @@
+- [ ] Git commit 已创建作为备份点
+- [ ] addChapter 中新增章节的 index = 当前最大 index + 1
+- [ ] addSubChapter 中新增子章节的 index 正确递增
+- [ ] GeneratedOutline 接口中无 chapters 字段
+- [ ] WritingProject 接口保留 chapters 字段作为唯一来源
+- [ ] OutlineEditor 保存大纲时仅写入 project.chapters
+- [ ] OutlineEditPanel 从 project.chapters 获取数据
+- [ ] WritingStorageService 统一使用 project.chapters
+- [ ] usePlotCheck 使用 project.chapters
+- [ ] useChapterGeneration 使用 project.chapters
+- [ ] useChapterStructure 使用 project.chapters
+- [ ] useVersionManagement 使用 project.chapters
+- [ ] WritingModeEntry 使用 project.chapters
+- [ ] WritingProgressDashboard 使用 project.chapters
+- [ ] 保存后的 project.json 中仅一份章节数据（project.chapters）
+- [ ] 所有章节 index 唯一且连续递增
+- [ ] 项目创建功能正常
+- [ ] 大纲编辑和保存功能正常
+- [ ] 章节添加、删除、移动功能正常
+- [ ] 章节内容生成功能正常
+- [ ] 项目加载和持久化正常
+- [ ] TypeScript 类型检查通过
+- [ ] 应用正常启动无运行时错误

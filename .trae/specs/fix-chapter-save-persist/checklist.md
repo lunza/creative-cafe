@@ -1,0 +1,7 @@
+- [x] `updateOutline` 正确更新当前项目的 outline.chapters
+- [x] `updateOutline` 包含日志输出
+- [x] `saveProject` 包含执行日志
+- [x] `triggerAutoSave` 包含日志输出
+- [x] 异常被捕获并记录到控制台
+- [x] 验证点击保存按钮后控制台有日志输出
+- [x] 验证章节修改能正确持久化

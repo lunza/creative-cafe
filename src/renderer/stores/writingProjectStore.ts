@@ -1,19 +1,11 @@
 import { create } from 'zustand';
 import { WritingProject, WritingConfig, ExportFormat, ChapterOutline } from '../../shared/types/writing.types';
-import { MAX_UNDO_HISTORY, AUTO_SAVE_DELAY } from '../../shared/constants/writing.constants';
-
-interface OutlineHistoryEntry {
-  chapters: ChapterOutline[];
-  description: string;
-  timestamp: number;
-}
+import { AUTO_SAVE_DELAY } from '../../shared/constants/writing.constants';
 
 interface WritingProjectState {
   projects: WritingProject[];
   currentProjectId: string | null;
   isLoading: boolean;
-  outlineHistory: OutlineHistoryEntry[];
-  outlineHistoryIndex: number;
   isSaving: boolean;
   autoSaveTimer: NodeJS.Timeout | null;
 
@@ -26,11 +18,6 @@ interface WritingProjectState {
   exportProject: (id: string, format: ExportFormat) => Promise<void>;
   getCurrentProject: () => WritingProject | null;
   getProjectById: (id: string) => WritingProject | null;
-  pushOutlineHistory: (chapters: ChapterOutline[], description: string) => void;
-  undoOutline: () => ChapterOutline[] | null;
-  redoOutline: () => ChapterOutline[] | null;
-  canUndo: () => boolean;
-  canRedo: () => boolean;
   updateOutline: (chapters: ChapterOutline[]) => void;
   triggerAutoSave: () => void;
 }
@@ -39,8 +26,6 @@ export const useWritingProjectStore = create<WritingProjectState>((set, get) => 
   projects: [],
   currentProjectId: null,
   isLoading: false,
-  outlineHistory: [],
-  outlineHistoryIndex: -1,
   isSaving: false,
   autoSaveTimer: null,
 
@@ -112,9 +97,15 @@ export const useWritingProjectStore = create<WritingProjectState>((set, get) => 
 
   saveProject: async () => {
     const { projects, currentProjectId } = get();
-    if (!currentProjectId) return;
+    if (!currentProjectId) {
+      console.warn('[writingProjectStore] saveProject: no currentProjectId');
+      return;
+    }
     const project = projects.find((p) => p.id === currentProjectId);
-    if (!project) return;
+    if (!project) {
+      console.warn('[writingProjectStore] saveProject: project not found for id:', currentProjectId);
+      return;
+    }
 
     if (window.electronAPI && window.electronAPI.writing) {
       await window.electronAPI.writing.saveProject(project);
@@ -138,50 +129,33 @@ export const useWritingProjectStore = create<WritingProjectState>((set, get) => 
     return projects.find((p) => p.id === id) || null;
   },
 
-  pushOutlineHistory: (chapters, description) => {
-    const { outlineHistory, outlineHistoryIndex } = get();
-    const newHistory = outlineHistory.slice(0, outlineHistoryIndex + 1);
-    newHistory.push({
-      chapters: chapters.map(c => ({ ...c })),
-      description,
-      timestamp: Date.now()
-    });
-    const trimmedHistory = newHistory.length > MAX_UNDO_HISTORY
-      ? newHistory.slice(-MAX_UNDO_HISTORY)
-      : newHistory;
-    set({
-      outlineHistory: trimmedHistory,
-      outlineHistoryIndex: trimmedHistory.length - 1
-    });
-  },
-
-  undoOutline: () => {
-    const { outlineHistory, outlineHistoryIndex } = get();
-    if (outlineHistoryIndex <= 0) return null;
-    const newIndex = outlineHistoryIndex - 1;
-    set({ outlineHistoryIndex: newIndex });
-    return outlineHistory[newIndex].chapters.map(c => ({ ...c }));
-  },
-
-  redoOutline: () => {
-    const { outlineHistory, outlineHistoryIndex } = get();
-    if (outlineHistoryIndex >= outlineHistory.length - 1) return null;
-    const newIndex = outlineHistoryIndex + 1;
-    set({ outlineHistoryIndex: newIndex });
-    return outlineHistory[newIndex].chapters.map(c => ({ ...c }));
-  },
-
-  canUndo: () => {
-    return get().outlineHistoryIndex > 0;
-  },
-
-  canRedo: () => {
-    const { outlineHistory, outlineHistoryIndex } = get();
-    return outlineHistoryIndex < outlineHistory.length - 1;
-  },
-
   updateOutline: (chapters) => {
-    get().pushOutlineHistory(chapters, '更新大纲');
+    const { currentProjectId, projects } = get();
+    if (!currentProjectId) {
+      return;
+    }
+
+    const updatedProjects = projects.map(project => {
+      if (project.id === currentProjectId) {
+        const updatedProject = { ...project };
+        if (!project.outline) {
+          updatedProject.outline = { chapters, version: 1 };
+        } else {
+          updatedProject.outline = {
+            ...project.outline,
+            chapters,
+            version: (project.outline.version || 1) + 1
+          };
+        }
+        return updatedProject;
+      }
+      return project;
+    });
+
+    set({
+      projects: updatedProjects
+    });
+
     get().triggerAutoSave();
   },
 
@@ -192,7 +166,11 @@ export const useWritingProjectStore = create<WritingProjectState>((set, get) => 
     }
     set({ isSaving: true });
     const timer = setTimeout(async () => {
-      await get().saveProject();
+      try {
+        await get().saveProject();
+      } catch (error) {
+        console.error('[writingProjectStore] triggerAutoSave: save error:', error);
+      }
       set({ isSaving: false, autoSaveTimer: null });
     }, AUTO_SAVE_DELAY);
     set({ autoSaveTimer: timer });

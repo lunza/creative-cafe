@@ -24,10 +24,10 @@ export interface StoragePermission {
 // 模块路径映射
 export const MODULE_PATH_MAP: Record<StorageModule, string> = {
   [StorageModule.CONFIG]: 'config',
-  [StorageModule.CREATIVE]: 'creative',
-  [StorageModule.CHARACTER]: 'character',
-  [StorageModule.WORLD_BOOK]: 'worldbook',
-  [StorageModule.MEMORY]: 'memory',
+  [StorageModule.CREATIVE]: 'creatives',
+  [StorageModule.CHARACTER]: 'characters',
+  [StorageModule.WORLD_BOOK]: 'worldbooks',
+  [StorageModule.MEMORY]: 'memories',
   [StorageModule.EDITOR]: 'editor'
 };
 

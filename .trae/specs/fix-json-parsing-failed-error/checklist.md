@@ -1,0 +1,11 @@
+- [x] Update PromptBuilder to enforce strict JSON format in buildOutlinePrompt method with explicit instructions to avoid markdown formatting inside JSON values
+- [x] Add instruction about proper escaping of special characters in the prompt
+- [x] Ensure JSON is wrapped in proper code fences in the AI response
+- [x] Enhance OutlineGenerator JSON parsing resilience to handle more edge cases of malformed JSON
+- [x] Add better error position detection in parseOutlineResponse method
+- [x] Improve unescaped character handling in the JSON parser
+- [x] Add proper truncation handling for streaming responses in OutlineGenerator
+- [x] Add comprehensive JSON validation before processing to check structure integrity
+- [x] Create JSON structure validator function to validate before parsing
+- [x] Add bracket/brace balance checking in the validation mechanism
+- [x] Validate string value completeness to ensure proper JSON structure

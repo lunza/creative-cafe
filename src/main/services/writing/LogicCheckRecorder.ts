@@ -32,7 +32,7 @@ export class LogicCheckRecorder {
 
   constructor() {
     const userDataPath = getUserDataPath();
-    this.dataDir = path.join(userDataPath, 'data', 'writing');
+    this.dataDir = path.join(userDataPath, 'data', 'writing-projects');
     this.ensureDirectories();
   }
 

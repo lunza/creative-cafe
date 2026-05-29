@@ -81,7 +81,6 @@ export function registerWritingHandlers(): void {
         config,
         outline: null,
         outlineRaw: null,
-        outlineHistory: [],
         chapters,
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -117,6 +116,7 @@ export function registerWritingHandlers(): void {
       const saved = await writingStorageService.saveProject(project);
       return { success: saved };
     } catch (error) {
+      console.error('[Writing] IPC writing:saveProject error:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error'
@@ -313,7 +313,6 @@ export function registerWritingHandlers(): void {
         config,
         outline,
         outlineRaw: rawContent,
-        outlineHistory: [],
         chapters,
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -708,12 +707,6 @@ export function registerWritingHandlers(): void {
     try {
       const project = await writingStorageService.loadProject(projectId);
       if (!project) return { success: false, error: 'Project not found' };
-      project.outlineHistory = project.outlineHistory || [];
-      project.outlineHistory.push({
-        outline,
-        timestamp: Date.now(),
-        note
-      });
       project.updatedAt = Date.now();
       await writingStorageService.saveProject(project);
       return { success: true };

@@ -10,8 +10,6 @@ import {
   SplitCellsOutlined,
   EditOutlined,
   UnorderedListOutlined,
-  UndoOutlined,
-  RedoOutlined,
   SaveOutlined
 } from '@ant-design/icons';
 import type { DataNode, EventDataNode } from 'antd/es/tree';
@@ -52,64 +50,16 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   const [isInitialized, setIsInitialized] = useState(false);
 
-  const pushOutlineHistory = useWritingProjectStore((state) => state.pushOutlineHistory);
-  const undoOutline = useWritingProjectStore((state) => state.undoOutline);
-  const redoOutline = useWritingProjectStore((state) => state.redoOutline);
-  const canUndo = useWritingProjectStore((state) => state.canUndo());
-  const canRedo = useWritingProjectStore((state) => state.canRedo());
   const isSaving = useWritingProjectStore((state) => state.isSaving);
   const updateOutline = useWritingProjectStore((state) => state.updateOutline);
 
   const chaptersRef = useRef(chapters);
   chaptersRef.current = chapters;
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
-        e.preventDefault();
-        handleUndo();
-      }
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
-        e.preventDefault();
-        handleRedo();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, []);
-
-  const handleUndo = useCallback(() => {
-    const prevChapters = undoOutline();
-    if (prevChapters) {
-      onChange(prevChapters);
-      message.success('已撤销');
-    } else {
-      message.info('没有可撤销的操作');
-    }
-  }, [undoOutline, onChange]);
-
-  const handleRedo = useCallback(() => {
-    const nextChapters = redoOutline();
-    if (nextChapters) {
-      onChange(nextChapters);
-      message.success('已重做');
-    } else {
-      message.info('没有可重做的操作');
-    }
-  }, [redoOutline, onChange]);
-
   const handleSave = useCallback(() => {
-    updateOutline(chapters);
+    updateOutline(chaptersRef.current);
     message.success('大纲已保存');
-  }, [chapters, updateOutline]);
-
-  const triggerChangeWithHistory = useCallback((updatedChapters: ChapterOutline[], description: string = '编辑章节') => {
-    pushOutlineHistory(chaptersRef.current, description);
-    onChange(updatedChapters);
-  }, [onChange, pushOutlineHistory]);
+  }, [updateOutline]);
 
   const generateChapterKey = (index: number, level: number = 0) => {
     return `chapter-${level}-${index}`;
@@ -165,9 +115,10 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
 
   const selectedChapter = React.useMemo(() => {
     if (selectedKeys.length === 0) return null;
-    const result = findChapterByKeys(selectedKeys as string[], chapters);
+    const currentChapters = chaptersRef.current;
+    const result = findChapterByKeys(selectedKeys as string[], currentChapters);
     return result?.chapter || null;
-  }, [selectedKeys, chapters, findChapterByKeys]);
+  }, [selectedKeys, chaptersRef, findChapterByKeys]);
 
   const handleSelect = useCallback((keys: React.Key[], info: { selected: boolean; selectedNodes: any; node: EventDataNode<any>; event: any }) => {
     setSelectedKeys(keys);
@@ -175,14 +126,12 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
       const currentChapters = chaptersRef.current;
       const result = findChapterByKeys(keys as string[], currentChapters);
       if (result) {
-        requestAnimationFrame(() => {
-          form.setFieldsValue({
-            title: result.chapter.title,
-            targetWordCount: result.chapter.targetWordCount,
-            summary: result.chapter.summary,
-            chapterType: result.chapter.chapterType,
-            importance: result.chapter.importance,
-          });
+        form.setFieldsValue({
+          title: result.chapter.title,
+          targetWordCount: result.chapter.targetWordCount,
+          summary: result.chapter.summary,
+          chapterType: result.chapter.chapterType,
+          importance: result.chapter.importance,
         });
         setValidationErrors({});
       }
@@ -220,8 +169,9 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
     const errors = validateForm(allValues);
 
     if (Object.keys(errors).length === 0 && selectedChapter) {
-      const updatedChapters = [...chapters];
-      const result = findChapterByKeys(selectedKeys as string[], updatedChapters);
+      // 使用深拷贝创建全新的章节数组，避免直接修改原始对象
+      const deepCopyChapters = JSON.parse(JSON.stringify(chapters)) as ChapterOutline[];
+      const result = findChapterByKeys(selectedKeys as string[], deepCopyChapters);
 
       if (result) {
         result.chapter = {
@@ -233,13 +183,17 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
           importance: allValues.importance,
         };
 
-        onChange(updatedChapters);
+        // 同步更新 ref，确保保存按钮能读取到最新数据
+        chaptersRef.current = deepCopyChapters;
+
+        onChange(deepCopyChapters);
       }
     }
   }, [chapters, selectedChapter, selectedKeys, onChange, findChapterByKeys, validateForm]);
 
   const addChapter = useCallback(() => {
-    const newIndex = chapters.length + 1;
+    const maxIndex = chapters.reduce((max, ch) => Math.max(max, ch.index || 0), 0);
+    const newIndex = maxIndex + 1;
     const newChapter: ChapterOutline = {
       index: newIndex,
       title: `第 ${newIndex} 章`,
@@ -253,13 +207,14 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
     };
 
     const updatedChapters = [...chapters, newChapter];
-    triggerChangeWithHistory(updatedChapters, '添加章节');
+    onChange(updatedChapters);
+    chaptersRef.current = updatedChapters;
 
     const newKey = generateChapterKey(chapters.length, 0);
     setSelectedKeys([newKey]);
     setExpandedKeys([...expandedKeys, newKey]);
     message.success('章节已添加');
-  }, [chapters, expandedKeys, triggerChangeWithHistory]);
+  }, [chapters, expandedKeys, onChange]);
 
   const addSubChapter = useCallback(() => {
     if (selectedKeys.length === 0) {
@@ -288,9 +243,9 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
       return;
     }
 
-    const newSubIndex = result.chapter.children.length + 1;
+    const maxIndex = chapters.reduce((max, ch) => Math.max(max, ch.index || 0), 0);
     const newSubChapter: ChapterOutline = {
-      index: newSubIndex,
+      index: maxIndex + 1,
       title: `子章节 ${newSubIndex}`,
       summary: '',
       keyPlotPoints: [],
@@ -305,10 +260,11 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
     const updatedResult = findChapterByKeys(selectedKeys as string[], updatedChapters);
     if (updatedResult && updatedResult.chapter.children) {
       updatedResult.chapter.children.push(newSubChapter);
-      triggerChangeWithHistory(updatedChapters, '添加子章节');
+      onChange(updatedChapters);
+      chaptersRef.current = updatedChapters;
       message.success('子章节已添加');
     }
-  }, [selectedKeys, chapters, triggerChangeWithHistory, findChapterByKeys]);
+  }, [selectedKeys, chapters, onChange, findChapterByKeys]);
 
   const deleteChapter = useCallback(() => {
     if (selectedKeys.length === 0) {
@@ -335,12 +291,13 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
         });
       }
 
-      triggerChangeWithHistory(updatedChapters, '删除章节');
+      onChange(updatedChapters);
+      chaptersRef.current = updatedChapters;
       setSelectedKeys([]);
       form.resetFields();
       message.success('章节已删除');
     }
-  }, [selectedKeys, chapters, form, triggerChangeWithHistory, findChapterByKeys]);
+  }, [selectedKeys, chapters, form, onChange, findChapterByKeys]);
 
   const moveChapter = useCallback((direction: 'up' | 'down') => {
     if (selectedKeys.length === 0) return;
@@ -372,9 +329,10 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
       ch.index = idx + 1;
     });
 
-    triggerChangeWithHistory(updatedChapters, `移动章节${direction === 'up' ? '上' : '下'}`);
+    onChange(updatedChapters);
+    chaptersRef.current = updatedChapters;
     message.success('章节已移动');
-  }, [selectedKeys, chapters, triggerChangeWithHistory, findChapterByKeys]);
+  }, [selectedKeys, chapters, onChange, findChapterByKeys]);
 
   const mergeChapters = useCallback(() => {
     if (selectedKeys.length === 0) {
@@ -422,10 +380,11 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
         ch.index = idx + 1;
       });
 
-      triggerChangeWithHistory(updatedChapters, '合并章节');
+      onChange(updatedChapters);
+      chaptersRef.current = updatedChapters;
       message.success('章节已合并');
     }
-  }, [selectedKeys, chapters, triggerChangeWithHistory, findChapterByKeys]);
+  }, [selectedKeys, chapters, onChange, findChapterByKeys]);
 
   const splitChapter = useCallback(() => {
     if (selectedKeys.length === 0) {
@@ -472,10 +431,11 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
         ch.index = idx + 1;
       });
 
-      triggerChangeWithHistory(updatedChapters, '拆分章节');
+      onChange(updatedChapters);
+      chaptersRef.current = updatedChapters;
       message.success('章节已分割');
     }
-  }, [selectedKeys, chapters, triggerChangeWithHistory, findChapterByKeys]);
+  }, [selectedKeys, chapters, onChange, findChapterByKeys]);
 
   const renderChapterTag = (chapter: ChapterOutline) => {
     const tags: React.ReactNode[] = [];
@@ -577,12 +537,6 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
               </Space>
             </div>
             <Space wrap>
-              <Tooltip title="撤销 (Ctrl+Z)">
-                <Button size="small" icon={<UndoOutlined />} onClick={handleUndo} disabled={!canUndo} />
-              </Tooltip>
-              <Tooltip title="重做 (Ctrl+Y)">
-                <Button size="small" icon={<RedoOutlined />} onClick={handleRedo} disabled={!canRedo} />
-              </Tooltip>
               <Tooltip title="保存">
                 <Button size="small" icon={<SaveOutlined />} onClick={handleSave} />
               </Tooltip>
@@ -643,7 +597,7 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
 
       <div style={{ flex: 1, overflow: 'auto', padding: 24 }}>
         {selectedChapter ? (
-          <div>
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             <div style={{ marginBottom: 24, display: 'flex', alignItems: 'center' }}>
               <EditOutlined style={{ marginRight: 8, color: token.colorPrimary }} />
               <span style={{ fontSize: 18, fontWeight: 500 }}>章节属性</span>
@@ -651,6 +605,7 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
 
             <Form
               form={form}
+              key={selectedChapter.chapterKey}
               layout="vertical"
               onValuesChange={handleFormChange}
               initialValues={{
@@ -660,6 +615,7 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
                 chapterType: selectedChapter.chapterType || ChapterType.MAIN_PLOT,
                 importance: selectedChapter.importance || ImportanceLevel.MEDIUM,
               }}
+              style={{ flex: 1, overflow: 'auto' }}
             >
               <Form.Item
                 label="章节名称"
@@ -749,6 +705,19 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
                 />
               </Form.Item>
             </Form>
+
+            <div style={{ marginTop: 24, paddingTop: 16, borderTop: `1px solid ${token.colorBorderSecondary}` }}>
+              <Button
+                type="primary"
+                icon={<SaveOutlined />}
+                onClick={handleSave}
+                loading={isSaving}
+                size="large"
+                block
+              >
+                保存当前章节信息
+              </Button>
+            </div>
           </div>
         ) : (
           <Empty

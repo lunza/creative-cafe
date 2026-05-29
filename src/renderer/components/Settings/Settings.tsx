@@ -33,6 +33,7 @@ const Settings: React.FC = () => {
   const [editingEngine, setEditingEngine] = useState<AIEngineSetting | null>(null);
   const [engineForm] = Form.useForm();
   const [testResult, setTestResult] = useState<{ success: boolean; responseTime?: number; model?: string; error?: string; details?: string } | null>(null);
+  const [engineTestResult, setEngineTestResult] = useState<{ success: boolean; responseTime?: number; model?: string; error?: string; details?: string } | null>(null);
   
   // 复制引擎相关状态
   const [showRenameModal, setShowRenameModal] = useState(false);
@@ -744,6 +745,84 @@ const Settings: React.FC = () => {
     }
   };
 
+  // 处理引擎表单测试连通性
+  const handleTestEngineConnection = async () => {
+    try {
+      const values = await engineForm.validateFields();
+      setEngineTestResult(null);
+      addLog('开始测试引擎连通性', 'info');
+      addLog(`API 密钥传输方式: ${values.api_key_transmission || 'body'}`, 'info');
+      
+      // 构建测试配置
+      const testSetting = {
+        ...setting,
+        aiEngines: [
+          {
+            id: 'test_engine',
+            name: '测试引擎',
+            api_url: values.api_url,
+            api_key: values.api_key,
+            model_name: values.model_name,
+            api_mode: values.api_mode,
+            api_key_transmission: values.api_key_transmission
+          }
+        ],
+        activeEngineId: 'test_engine'
+      };
+      
+      // 添加详细的调试日志
+      addLog('测试配置详细信息', 'debug', {
+        context: {
+          api_url: values.api_url,
+          model_name: values.model_name,
+          api_mode: values.api_mode,
+          api_key_transmission: values.api_key_transmission,
+          api_key_length: values.api_key ? values.api_key.length : 0
+        }
+      });
+      
+      // 显示加载消息
+      const loadingMessage = message.loading('正在测试连通性...', 0);
+      
+      // 调用 testConnection 函数进行实际测试
+      addLog('开始调用 testConnection 函数', 'debug');
+      const result = await testConnection(testSetting);
+      setEngineTestResult(result);
+      addLog('testConnection 函数调用完成', 'debug', {
+        context: { success: result.success, details: result.details }
+      });
+      
+      // 关闭加载消息
+      loadingMessage();
+      
+      if (result.success) {
+        addLog('引擎连通性测试成功', 'success');
+        message.success(`连接测试成功：${result.details || '成功'}`);
+      } else {
+        addLog('引擎连通性测试失败', 'error');
+        message.error('连接测试失败');
+      }
+    } catch (error) {
+      setEngineTestResult({
+        success: false,
+        error: error instanceof Error ? error.message : '未知错误',
+        details: `异常: ${error instanceof Error ? error.message : '未知错误'}`
+      });
+      addLog('测试引擎连通性失败', 'error', {
+        category: 'ai',
+        error: error instanceof Error ? error : undefined,
+        context: {
+          errorType: error instanceof Error ? error.name : 'UnknownError',
+          errorLocation: 'Settings.tsx:748:handleTestEngineConnection',
+          error_message: error instanceof Error ? error.message : String(error),
+          error_stack: error instanceof Error ? error.stack : undefined
+        },
+        details: '测试引擎连通性时发生错误，请检查API地址和API密钥是否正确。'
+      });
+      message.error('测试连通性失败');
+    }
+  };
+
   return (
     <div className="settings">
       <div className="settings-content">
@@ -1045,7 +1124,10 @@ const Settings: React.FC = () => {
       <Modal
         title={editingEngine && editingEngine.id ? '编辑引擎' : editingEngine ? '添加新引擎' : 'AI 引擎管理'}
         open={showEngineModal}
-        onCancel={() => setShowEngineModal(false)}
+        onCancel={() => {
+          setShowEngineModal(false);
+          setEngineTestResult(null);
+        }}
         footer={[
           <Button key="cancel" onClick={() => setShowEngineModal(false)}>
             取消
@@ -1167,6 +1249,14 @@ const Settings: React.FC = () => {
                 ]}
               />
             </Form.Item>
+            <Form.Item label="API密钥传输方式" name="api_key_transmission">
+              <Select
+                options={[
+                  { label: '请求头 (Authorization: Bearer)', value: 'header' },
+                  { label: '请求体', value: 'body' }
+                ]}
+              />
+            </Form.Item>
             <Form.Item label="最大令牌数 (max_tokens)" name="max_tokens">
               <Input type="number" min={1} max={100000} placeholder="例如: 10240" />
             </Form.Item>
@@ -1197,6 +1287,38 @@ const Settings: React.FC = () => {
                 placeholder="输入系统提示词，用于设置 AI 的行为和角色" 
               />
             </Form.Item>
+
+            <Form.Item>
+              <Space>
+                <Button type="primary" onClick={handleTestEngineConnection} icon={<SyncOutlined />}>
+                  测试连通性
+                </Button>
+                {engineForm.getFieldValue('api_url') && (
+                  <span style={{ color: '#666', fontSize: 12 }}>
+                    目标: {engineForm.getFieldValue('api_url')}
+                  </span>
+                )}
+              </Space>
+            </Form.Item>
+
+            {engineTestResult && (
+              <div style={{ marginBottom: 16 }}>
+                <Alert
+                  message={engineTestResult.success ? '引擎连接测试成功' : '引擎连接测试失败'}
+                  description={
+                    <div>
+                      <p><strong>API 地址:</strong> {engineForm.getFieldValue('api_url') || 'N/A'}</p>
+                      <p><strong>模型名称:</strong> {engineTestResult.model || engineForm.getFieldValue('model_name') || 'N/A'}</p>
+                      <p><strong>响应时间:</strong> {engineTestResult.responseTime ? `${engineTestResult.responseTime}ms` : 'N/A'}</p>
+                      <p><strong>详细信息:</strong> {engineTestResult.details || '无'}</p>
+                      {engineTestResult.error && <p style={{ color: 'red', marginTop: 8 }}><strong>错误:</strong> {engineTestResult.error}</p>}
+                    </div>
+                  }
+                  type={engineTestResult.success ? 'success' : 'error'}
+                  showIcon
+                />
+              </div>
+            )}
           </Form>
         )}
       </Modal>

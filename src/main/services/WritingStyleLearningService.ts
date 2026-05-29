@@ -26,7 +26,7 @@ export class WritingStyleLearningService {
     if (!fs.existsSync(dataDir)) {
       fs.mkdirSync(dataDir, { recursive: true });
     }
-    const writingDir = path.join(dataDir, 'writing');
+    const writingDir = path.join(dataDir, 'writing-projects');
     if (!fs.existsSync(writingDir)) {
       fs.mkdirSync(writingDir, { recursive: true });
     }

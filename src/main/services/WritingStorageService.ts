@@ -374,7 +374,6 @@ export class WritingStorageService {
       
       index.lastProjectId = project.id;
       saveIndex(index);
-      
       return true;
     } catch (error) {
       console.error('[WritingStorage] Failed to save project:', error);

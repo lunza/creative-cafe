@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { message, Button, Space } from 'antd';
-import { PlusOutlined, HistoryOutlined } from '@ant-design/icons';
+import { message, Button } from 'antd';
+import { PlusOutlined } from '@ant-design/icons';
 import { OutlineEditSection, GeneratedOutline, StoryLine, CharacterRelationship, WorldbuildingNotes, ChapterOutline, AIEditResult } from '../../../../shared/types/writing.types';
 import { useWritingModeStore } from '../../../stores/writingModeStore';
 import EditTabNavigation from './EditTabNavigation';
@@ -10,7 +10,6 @@ import WorldSettingEditor from './WorldSettingEditor';
 import ManualOutlineEditor from './ManualOutlineEditor';
 import AIEditPrompt from './AIEditPrompt';
 import OutlineContinuation from './OutlineContinuation';
-import VersionHistoryPanel from './VersionHistoryPanel';
 import VersionCompareModal from './VersionCompareModal';
 
 interface OutlineEditPanelProps {
@@ -32,18 +31,12 @@ const OutlineEditPanel: React.FC<OutlineEditPanelProps> = ({
   const [aiEditVisible, setAiEditVisible] = useState(false);
   const [continuationVisible, setContinuationVisible] = useState(false);
   const [aiTargetId, setAiTargetId] = useState<string | undefined>();
-  const [versionHistoryVisible, setVersionHistoryVisible] = useState(false);
   const [compareModalVisible, setCompareModalVisible] = useState(false);
   const [compareVersionId, setCompareVersionId] = useState<string>('');
 
   const versions = useWritingModeStore((state) => state.versions);
   const currentVersionId = useWritingModeStore((state) => state.currentVersionId);
-  const { addVersion, restoreVersion, setOutline } = useWritingModeStore.getState();
-
-  const handleRestoreVersion = (versionId: string) => {
-    restoreVersion(versionId);
-    message.success('版本已恢复');
-  };
+  const { addVersion, setOutline } = useWritingModeStore.getState();
 
   const handleCompareVersion = (versionId: string) => {
     setCompareVersionId(versionId);
@@ -208,21 +201,13 @@ const OutlineEditPanel: React.FC<OutlineEditPanelProps> = ({
         return (
           <div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-              <Space>
-                <Button
-                  icon={<HistoryOutlined />}
-                  onClick={() => setVersionHistoryVisible(true)}
-                >
-                  版本历史
-                </Button>
-                <Button
-                  type="primary"
-                  icon={<PlusOutlined />}
-                  onClick={() => setContinuationVisible(true)}
-                >
-                  续写章节
-                </Button>
-              </Space>
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => setContinuationVisible(true)}
+              >
+                续写章节
+              </Button>
             </div>
             <div style={{ height: '600px' }}>
               <ManualOutlineEditor
@@ -265,15 +250,6 @@ const OutlineEditPanel: React.FC<OutlineEditPanelProps> = ({
         onConfirm={handleContinuationConfirm}
         onCancel={handleContinuationCancel}
         projectId={projectId}
-      />
-
-      <VersionHistoryPanel
-        visible={versionHistoryVisible}
-        versions={versions}
-        currentVersionId={currentVersionId}
-        onRestore={handleRestoreVersion}
-        onCompare={handleCompareVersion}
-        onClose={() => setVersionHistoryVisible(false)}
       />
 
       {compareModalVisible && compareOutline && (

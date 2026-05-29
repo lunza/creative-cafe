@@ -516,12 +516,6 @@ export interface WritingProject {
   config: WritingConfig;
   outline: GeneratedOutline | null;
   outlineRaw: string | null;
-  outlineHistory: {
-    outline: GeneratedOutline;
-    rawContent?: string;
-    timestamp: number;
-    note?: string;
-  }[];
   chapters: Chapter[];
   createdAt: number;
   updatedAt: number;
