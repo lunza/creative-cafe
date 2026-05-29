@@ -1,5 +1,0 @@
-- [x] `handleSave` 使用 `chaptersRef.current` 获取最新章节数据
-- [x] `handleFormChange` 正确更新 `chaptersRef`
-- [x] 验证左侧章节列表能正确同步更新章节名称
-- [x] 验证切换章节后章节名称不会还原
-- [x] 验证保存后章节名称能正确持久化

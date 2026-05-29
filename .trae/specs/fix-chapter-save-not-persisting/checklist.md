@@ -1,6 +1,0 @@
-- [x] 所有章节操作方法（添加、删除、移动、合并、分割）在调用 onChange 前同步更新 chaptersRef
-- [x] handleFormChange 正确使用深拷贝数据更新 chaptersRef 并调用 onChange
-- [x] handleSave 能从 chaptersRef.current 读取到最新的章节数据
-- [x] updateOutline 正确更新 writingProjectStore 中的项目大纲
-- [x] 触发自动保存后 project.json 文件中的章节数据已更新
-- [x] 修改章节标题后保存，刷新页面章节名称保持不变

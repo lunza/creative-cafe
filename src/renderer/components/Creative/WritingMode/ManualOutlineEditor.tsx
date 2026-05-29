@@ -192,8 +192,7 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
   }, [chapters, selectedChapter, selectedKeys, onChange, findChapterByKeys, validateForm]);
 
   const addChapter = useCallback(() => {
-    const maxIndex = chapters.reduce((max, ch) => Math.max(max, ch.index || 0), 0);
-    const newIndex = maxIndex + 1;
+    const newIndex = chapters.length + 1;
     const newChapter: ChapterOutline = {
       index: newIndex,
       title: `第 ${newIndex} 章`,
@@ -243,9 +242,9 @@ const ManualOutlineEditor: React.FC<ManualOutlineEditorProps> = ({ chapters, onC
       return;
     }
 
-    const maxIndex = chapters.reduce((max, ch) => Math.max(max, ch.index || 0), 0);
+    const newSubIndex = result.chapter.children.length + 1;
     const newSubChapter: ChapterOutline = {
-      index: maxIndex + 1,
+      index: newSubIndex,
       title: `子章节 ${newSubIndex}`,
       summary: '',
       keyPlotPoints: [],
