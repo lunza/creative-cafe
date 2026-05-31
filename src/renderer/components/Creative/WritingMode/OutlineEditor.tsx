@@ -101,10 +101,10 @@ const OutlineEditor: React.FC<OutlineEditorProps> = ({
           scenes: ch.scenes || [],
           targetWordCount: ch.targetWordCount || 3000
         },
-        content: project.chapters.find(c => c.index === ch.index)?.content || '',
+        content: project.outline?.chapters.find(c => c.index === ch.index)?.content || '',
         status: ChapterStatus.PENDING,
-        wordCount: project.chapters.find(c => c.index === ch.index)?.wordCount || 0,
-        versions: project.chapters.find(c => c.index === ch.index)?.versions || [],
+        wordCount: project.outline?.chapters.find(c => c.index === ch.index)?.wordCount || 0,
+        versions: project.outline?.chapters.find(c => c.index === ch.index)?.versions || [],
         lastModified: Date.now()
       }))
     });

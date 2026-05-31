@@ -55,22 +55,15 @@ export function registerWritingHandlers(): void {
   ipcMain.handle('writing:createProject', async (_event, config: WritingConfig) => {
     try {
       const projectId = `writing_project_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      const chapters = config.parameters.chapterCount > 0
+      const outlineChapters = config.parameters.chapterCount > 0
         ? Array.from({ length: config.parameters.chapterCount }, (_, i) => ({
             index: i,
             title: `第${i + 1}章`,
-            outline: {
-              summary: '',
-              keyPlotPoints: [],
-              characters: [],
-              scenes: [],
-              targetWordCount: Math.round(config.parameters.targetWordCount / config.parameters.chapterCount)
-            },
-            content: '',
-            status: ChapterStatus.PENDING,
-            wordCount: 0,
-            versions: [],
-            lastModified: Date.now()
+            summary: '',
+            keyPlotPoints: [],
+            characters: [],
+            scenes: [],
+            targetWordCount: Math.round(config.parameters.targetWordCount / config.parameters.chapterCount)
           }))
         : [];
 
@@ -79,9 +72,19 @@ export function registerWritingHandlers(): void {
         title: config.parameters.creativeDescription.substring(0, 20) || '新作品',
         status: ProjectStatus.OUTLINING,
         config,
-        outline: null,
+        outline: {
+          workInfo: {
+            suggestedTitle: config.parameters.creativeDescription.substring(0, 20) || '新作品',
+            genre: config.parameters.novelType || '',
+            targetWordCount: config.parameters.targetWordCount,
+            writingStyle: config.parameters.writingStyle || ''
+          },
+          storyLine: { mainPlot: '', subPlots: [], theme: '' },
+          chapters: outlineChapters,
+          characterRelationships: [],
+          worldbuildingNotes: []
+        },
         outlineRaw: null,
-        chapters,
         createdAt: Date.now(),
         updatedAt: Date.now(),
         lastSavedAt: Date.now(),
@@ -287,24 +290,18 @@ export function registerWritingHandlers(): void {
       const outline = outlineGenerator.parseOutlineResponse(rawContent);
 
       const projectId = `writing_project_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      const chapters = config.parameters.chapterCount > 0
-        ? Array.from({ length: config.parameters.chapterCount }, (_, i) => ({
-            index: i,
-            title: outline.chapters[i]?.title || `第${i + 1}章`,
-            outline: {
-              summary: outline.chapters[i]?.summary || '',
-              keyPlotPoints: outline.chapters[i]?.keyPlotPoints || [],
-              characters: outline.chapters[i]?.characters || [],
-              scenes: outline.chapters[i]?.scenes || [],
-              targetWordCount: outline.chapters[i]?.targetWordCount || Math.round(config.parameters.targetWordCount / config.parameters.chapterCount)
-            },
-            content: '',
-            status: ChapterStatus.PENDING,
-            wordCount: 0,
-            versions: [],
-            lastModified: Date.now()
-          }))
-        : [];
+      
+      if (config.parameters.chapterCount > 0) {
+        outline.chapters = Array.from({ length: config.parameters.chapterCount }, (_, i) => ({
+          index: i,
+          title: outline.chapters[i]?.title || `第${i + 1}章`,
+          summary: outline.chapters[i]?.summary || '',
+          keyPlotPoints: outline.chapters[i]?.keyPlotPoints || [],
+          characters: outline.chapters[i]?.characters || [],
+          scenes: outline.chapters[i]?.scenes || [],
+          targetWordCount: outline.chapters[i]?.targetWordCount || Math.round(config.parameters.targetWordCount / config.parameters.chapterCount)
+        }));
+      }
 
       const project: WritingProject = {
         id: projectId,
@@ -313,7 +310,6 @@ export function registerWritingHandlers(): void {
         config,
         outline,
         outlineRaw: rawContent,
-        chapters,
         createdAt: Date.now(),
         updatedAt: Date.now(),
         lastSavedAt: Date.now(),
@@ -685,13 +681,15 @@ export function registerWritingHandlers(): void {
 
       const project = await writingStorageService.loadProject(projectId);
       if (!project) return { success: false, error: 'Project not found' };
+      if (!project.outline) return { success: false, error: 'Outline not found' };
 
       const validatedChapters = chapters.filter(ch => ch && typeof ch.index === 'number').sort((a, b) => a.index - b.index);
       if (validatedChapters.length === 0) {
         return { success: false, error: 'No valid chapters' };
       }
 
-      project.outline = { ...project.outline, chapters: validatedChapters } as GeneratedOutline;
+      project.outline.chapters = validatedChapters;
+      
       project.updatedAt = Date.now();
       await writingStorageService.saveProject(project);
       return { success: true };

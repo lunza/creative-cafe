@@ -118,8 +118,8 @@ export function useChapterStructure(
     const newOutline: GeneratedOutline = { ...outline, chapters: updatedChapters };
 
     const project = getCurrentProject();
-    if (project) {
-      const newProjectChapters = project.chapters.slice();
+    if (project && project.outline) {
+      const newProjectChapters = project.outline.chapters.slice();
       newProjectChapters.splice(selectedChapterIndex, 1, ...newChapters.map(ch => ({
         index: ch.index,
         title: ch.title,
@@ -191,8 +191,8 @@ export function useChapterStructure(
     const mergedStatuses: Record<number, ChapterStatus> = { [firstChapterIndex]: ChapterStatus.PENDING };
 
     const project = getCurrentProject();
-    if (project) {
-      const newProjectChapters = project.chapters.slice();
+    if (project && project.outline) {
+      const newProjectChapters = project.outline.chapters.slice();
       newProjectChapters.splice(insertIndex, sortedIndices.length, {
         index: firstChapterIndex,
         title: mergedChapter.title,

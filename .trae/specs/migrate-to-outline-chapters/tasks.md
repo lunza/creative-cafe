@@ -1,0 +1,43 @@
+# Tasks
+- [x] Task 1: 更新类型定义 - 扩展ChapterOutline类型以支持完整章节数据，移除WritingProject.chapters字段
+  - [x] SubTask 1.1: 在ChapterOutline接口中添加content、status、wordCount、versions、lastModified等字段
+  - [x] SubTask 1.2: 从WritingProject接口中移除chapters: Chapter[]字段
+  - [x] SubTask 1.3: 更新ChapterOutline接口使其与Chapter类型等价或创建新类型OutlineChapter
+- [x] Task 2: 更新主进程存储和IPC处理器
+  - [x] SubTask 2.1: 更新WritingStorageService.loadProject() - 从outline.chapters加载章节内容
+  - [x] SubTask 2.2: 更新WritingStorageService.saveProject() - 从outline.chapters保存章节内容
+  - [x] SubTask 2.3: 更新writing:saveOutline handler - 仅保存outline.chapters
+  - [x] SubTask 2.4: 更新writing:outline:update handler - 仅更新outline.chapters
+  - [x] SubTask 2.5: 更新writing:chapter:update handler - 更新outline.chapters中对应章节
+  - [x] SubTask 2.6: 更新所有其他引用project.chapters的IPC处理器
+- [x] Task 3: 更新渲染进程状态管理
+  - [x] SubTask 3.1: 更新writingProjectStore.loadProject() - 从outline.chapters加载
+  - [x] SubTask 3.2: 更新writingProjectStore.updateOutline() - 仅更新outline.chapters
+  - [x] SubTask 3.3: 更新writingProjectStore.updateChapter() - 更新outline.chapters
+  - [x] SubTask 3.4: 移除writingProjectStore中与project.chapters同步相关的代码
+- [x] Task 4: 更新大纲生成服务
+  - [x] SubTask 4.1: 更新OutlineGenerator.generateOutline() - 仅生成outline.chapters
+  - [x] SubTask 4.2: 移除生成后同步到project.chapters的逻辑
+  - [x] SubTask 4.3: 更新continueOutline方法 - 仅更新outline.chapters
+- [x] Task 5: 更新写作模式组件和hooks
+  - [x] SubTask 5.1: 更新OutlineEditor.tsx - 使用outline.chapters
+  - [x] SubTask 5.2: 更新useChapterGeneration.ts - 从outline.chapters读取和写入
+  - [x] SubTask 5.3: 更新useChapterStructure.ts - 从outline.chapters读取章节结构
+  - [x] SubTask 5.4: 更新ContentWorkspace.tsx - 使用outline.chapters
+  - [x] SubTask 5.5: 更新其他引用chapters的组件
+- [x] Task 6: 更新其他相关服务
+  - [x] SubTask 6.1: 更新AIAssistedChapterService - 使用outline.chapters
+  - [x] SubTask 6.2: 更新ContentGenerator - 使用outline.chapters
+  - [x] SubTask 6.3: 更新版本管理相关代码
+- [x] Task 7: 更新测试文件
+  - [x] SubTask 7.1: 更新与章节相关的单元测试
+  - [x] SubTask 7.2: 更新集成测试
+  - [x] SubTask 7.3: 运行测试确保通过
+
+# Task Dependencies
+- [Task 2] depends on [Task 1]
+- [Task 3] depends on [Task 1]
+- [Task 4] depends on [Task 1]
+- [Task 5] depends on [Task 2, Task 3]
+- [Task 6] depends on [Task 2]
+- [Task 7] depends on [Task 5, Task 6]

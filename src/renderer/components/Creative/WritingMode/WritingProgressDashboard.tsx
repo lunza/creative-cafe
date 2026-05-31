@@ -21,7 +21,7 @@ const WritingProgressDashboard: React.FC<WritingProgressDashboardProps> = ({ pro
     return <div style={{ padding: 24 }}>未找到项目</div>;
   }
 
-  const chapters = project.chapters || [];
+  const chapters = project.outline?.chapters || [];
   const targetWords = project.config?.parameters?.targetWordCount || DEFAULT_WRITING_CONFIG.targetWordCount;
   const totalWords = chapters.reduce((sum, ch) => sum + (ch.wordCount || 0), 0);
 

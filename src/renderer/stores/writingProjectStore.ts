@@ -147,6 +147,7 @@ export const useWritingProjectStore = create<WritingProjectState>((set, get) => 
             version: (project.outline.version || 1) + 1
           };
         }
+        
         return updatedProject;
       }
       return project;

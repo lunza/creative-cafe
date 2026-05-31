@@ -313,6 +313,18 @@ export interface ChapterOutline {
   content?: string;
   // 需要在前端加粗显示的重要文本片段（纯文本，不含 Markdown）
   importantSpans?: string[];
+  // Chapter 接口字段（使 ChapterOutline 成为统一的章节数据结构）
+  status?: ChapterStatus;
+  wordCount?: number;
+  versions?: ChapterVersion[];
+  lastModified?: number;
+  generationInfo?: {
+    model: string;
+    temperature: number;
+    tokensUsed: number;
+    generationTime: number;
+    generatedAt: number;
+  };
 }
 
 // 角色关系（旧版，向后兼容）
@@ -516,7 +528,6 @@ export interface WritingProject {
   config: WritingConfig;
   outline: GeneratedOutline | null;
   outlineRaw: string | null;
-  chapters: Chapter[];
   createdAt: number;
   updatedAt: number;
   lastSavedAt: number;

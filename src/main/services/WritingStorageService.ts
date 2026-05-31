@@ -255,7 +255,7 @@ export function safeWriteFile(filePath: string, content: string, encoding: Buffe
 function computeProjectMetadata(project: WritingProject): { totalWordCount: number; completedChapters: number } {
   let totalWordCount = 0;
   let completedChapters = 0;
-  for (const ch of project.chapters) {
+  for (const ch of project.outline!.chapters) {
     const wordCount = ch.content ? ch.content.length : (ch.wordCount || 0);
     totalWordCount += wordCount;
     if (ch.status === 'completed') {
@@ -271,17 +271,20 @@ export class WritingStorageService {
   }
 
   private migrateProjectIndices(project: WritingProject): WritingProject {
-    const firstChapter = project.chapters[0];
-    if (firstChapter && firstChapter.index === 0 && project.chapters.length > 1) {
-      const hasZeroBased = project.chapters.some((ch, idx) => ch.index === idx);
+    const firstChapter = project.outline!.chapters[0];
+    if (firstChapter && firstChapter.index === 0 && project.outline!.chapters.length > 1) {
+      const hasZeroBased = project.outline!.chapters.some((ch, idx) => ch.index === idx);
       if (hasZeroBased) {
         console.log('[WritingStorage] Migrating project from 0-based to 1-based indexing:', project.id);
         return {
           ...project,
-          chapters: project.chapters.map((ch, idx) => ({
-            ...ch,
-            index: idx + 1
-          }))
+          outline: {
+            ...project.outline,
+            chapters: project.outline!.chapters.map((ch, idx) => ({
+              ...ch,
+              index: idx + 1
+            }))
+          }
         };
       }
     }
@@ -334,7 +337,7 @@ export class WritingStorageService {
       }
 
       const expectedChapterFiles = new Set<string>();
-      for (const chapter of project.chapters) {
+      for (const chapter of project.outline!.chapters) {
         if (chapter.content && chapter.content.trim().length > 0) {
           const safeIndex = this.formatChapterIndex(chapter.index);
           const chapterFile = `chapter-${safeIndex}.md`;
@@ -410,7 +413,7 @@ export class WritingStorageService {
             const match = file.match(/^chapter-(\d+(?:\.\d+)?)\.md$/);
             if (match) {
               const chapterIndex = parseFloat(match[1]);
-              const chapter = project.chapters.find((c) => c.index === chapterIndex);
+              const chapter = project.outline!.chapters.find((c) => c.index === chapterIndex);
               if (chapter) {
                 const filePath = path.join(chaptersDir, file);
                 const content = fs.readFileSync(filePath, 'utf8');
@@ -524,7 +527,7 @@ export class WritingStorageService {
         return;
       }
 
-      const chapter = project.chapters.find((c) => c.index === chapterIndex);
+      const chapter = project.outline!.chapters.find((c) => c.index === chapterIndex);
       if (!chapter) {
         console.log('[WritingStorage] Auto-save skipped: chapter not found', chapterIndex);
         return;
@@ -586,7 +589,7 @@ export class WritingStorageService {
       const project = await this.loadProject(projectId);
       if (!project) return false;
 
-      const chapter = project.chapters.find((c) => c.index === chapterIndex);
+      const chapter = project.outline!.chapters.find((c) => c.index === chapterIndex);
       if (!chapter) return false;
 
       chapter.versions = chapter.versions || [];
@@ -618,7 +621,7 @@ export class WritingStorageService {
       const project = await this.loadProject(projectId);
       if (!project) return false;
 
-      const chapter = project.chapters.find((c) => c.index === chapterIndex);
+      const chapter = project.outline!.chapters.find((c) => c.index === chapterIndex);
       if (!chapter) return false;
 
       const version = chapter.versions.find((v) => v.id === versionId);
@@ -646,7 +649,7 @@ export class WritingStorageService {
       content += `章节数: ${project.config.parameters.chapterCount}\n\n`;
     }
     
-    for (const chapter of project.chapters.sort((a, b) => a.index - b.index)) {
+    for (const chapter of project.outline!.chapters.sort((a, b) => a.index - b.index)) {
       content += `${chapter.title}\n`;
       content += '-'.repeat(30) + '\n\n';
       content += (chapter.content || '') + '\n\n';
@@ -664,7 +667,7 @@ export class WritingStorageService {
       content += `| 章节数: ${project.config.parameters.chapterCount}\n\n`;
     }
     
-    for (const chapter of project.chapters.sort((a, b) => a.index - b.index)) {
+    for (const chapter of project.outline!.chapters.sort((a, b) => a.index - b.index)) {
       content += `## ${chapter.title}\n\n`;
       content += (chapter.content || '') + '\n\n';
     }
@@ -911,18 +914,18 @@ export class WritingStorageService {
       let chaptersToProcess: Chapter[];
       if (chapterIndex !== undefined) {
         // 单章节模式：仅处理指定章节
-        const targetChapter = project.chapters.find(ch => ch.index === chapterIndex);
+        const targetChapter = project.outline!.chapters.find(ch => ch.index === chapterIndex);
         if (!targetChapter) {
           throw new Error(`章节 ${chapterIndex} 不存在`);
         }
         if (!targetChapter.content || targetChapter.content.trim().length === 0) {
           throw new Error(`章节 ${targetChapter.title} 没有内容`);
         }
-        chaptersToProcess = [targetChapter];
+        chaptersToProcess = [targetChapter as Chapter];
         console.log('[WritingOrganize] 单章节模式 - 处理章节:', targetChapter.title);
       } else {
         // 全项目模式：处理所有有内容的章节
-        chaptersToProcess = project.chapters.filter(ch => ch.content && ch.content.trim().length > 0);
+        chaptersToProcess = project.outline!.chapters.filter(ch => ch.content && ch.content.trim().length > 0) as Chapter[];
         console.log('[WritingOrganize] 全项目模式 - 待处理章节数:', chaptersToProcess.length);
       }
 

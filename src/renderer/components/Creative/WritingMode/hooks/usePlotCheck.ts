@@ -173,9 +173,9 @@ export function usePlotCheck(
         editorContentRef.current = result.fixedContent;
         
         const project = getCurrentProject();
-        if (project) {
+        if (project && project.outline) {
           updateProject(project.id, {
-            chapters: project.chapters.map(ch =>
+            chapters: project.outline.chapters.map(ch =>
               ch.index === currentChapter.index
                 ? { ...ch, content: result.fixedContent, lastModified: Date.now() }
                 : ch
@@ -209,17 +209,17 @@ export function usePlotCheck(
     editorContentRef.current = fixedContent;
 
     const project = getCurrentProject();
-    if (project) {
+    if (project && project.outline) {
       updateProject(project.id, {
-        chapters: project.chapters.map(ch =>
+        chapters: project.outline.chapters.map(ch =>
           ch.index === chapterIndex
             ? { ...ch, content: fixedContent, lastModified: Date.now() }
             : ch
         ),
         metadata: {
           ...project.metadata,
-          totalWordCount: project.chapters.reduce((sum, ch) =>
-            sum + (ch.index === chapterIndex ? fixedContent.length : ch.wordCount), 0
+          totalWordCount: project.outline.chapters.reduce((sum, ch) =>
+            sum + (ch.index === chapterIndex ? fixedContent.length : ch.wordCount || 0), 0
           ),
         }
       });
@@ -281,9 +281,9 @@ export function usePlotCheck(
       editorContentRef.current = pendingFixContent;
       
       const project = getCurrentProject();
-      if (project) {
+      if (project && project.outline) {
         updateProject(project.id, {
-          chapters: project.chapters.map(ch =>
+          chapters: project.outline.chapters.map(ch =>
             ch.index === currentChapter.index
               ? { ...ch, content: pendingFixContent, lastModified: Date.now() }
               : ch
@@ -329,9 +329,9 @@ export function usePlotCheck(
       editorContentRef.current = newContent;
 
       const project = getCurrentProject();
-      if (project) {
+      if (project && project.outline) {
         updateProject(project.id, {
-          chapters: project.chapters.map(ch =>
+          chapters: project.outline.chapters.map(ch =>
             ch.index === currentChapter.index
               ? { ...ch, content: newContent, lastModified: Date.now() }
               : ch
@@ -487,9 +487,9 @@ export function usePlotCheck(
         editorContentRef.current = result.fixedContent;
 
         const project = getCurrentProject();
-        if (project) {
+        if (project && project.outline) {
           updateProject(project.id, {
-            chapters: project.chapters.map(ch =>
+            chapters: project.outline.chapters.map(ch =>
               ch.index === currentChapter.index
                 ? { ...ch, content: result.fixedContent, lastModified: Date.now() }
                 : ch

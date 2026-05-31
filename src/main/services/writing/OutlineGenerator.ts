@@ -369,6 +369,31 @@ export class OutlineGenerator {
       throw new Error('大纲中未定义章节');
     }
 
+    // Generate unique indices to prevent duplicates
+    // If chapters already have indices, we'll ensure they're unique and sequential
+    const assignedIndices = new Set<number>();
+    const uniqueChapters = data.chapters.map((ch: any, idx: number) => {
+      let index = ch.index || idx + 1;
+      
+      // If the proposed index is already taken, find the next available one
+      while (assignedIndices.has(index)) {
+        index++;
+      }
+      
+      assignedIndices.add(index);
+      
+      return {
+        index,
+        title: ch.title || `第${index}章`,
+        summary: ch.summary || '',
+        keyPlotPoints: ch.keyPlotPoints || [],
+        characters: ch.characters || [],
+        scenes: ch.scenes || [],
+        suspensePoints: ch.suspensePoints || [],
+        targetWordCount: ch.targetWordCount || 3000
+      };
+    });
+
     const outline: GeneratedOutline = {
       workInfo: {
         suggestedTitle: data.workInfo.suggestedTitle || '未命名',
@@ -387,16 +412,7 @@ export class OutlineGenerator {
         },
         theme: data.storyLine.theme || ''
       },
-      chapters: data.chapters.map((ch: any, idx: number) => ({
-        index: ch.index || idx + 1,
-        title: ch.title || `第${idx + 1}章`,
-        summary: ch.summary || '',
-        keyPlotPoints: ch.keyPlotPoints || [],
-        characters: ch.characters || [],
-        scenes: ch.scenes || [],
-        suspensePoints: ch.suspensePoints || [],
-        targetWordCount: ch.targetWordCount || 3000
-      })),
+      chapters: uniqueChapters,
       characterRelationships: data.characterRelationships || [],
       worldbuildingNotes: data.worldbuildingNotes || []
     };

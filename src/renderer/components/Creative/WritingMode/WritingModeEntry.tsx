@@ -148,9 +148,9 @@ const WritingModeEntry: React.FC = () => {
   );
 
   const getProjectProgress = (project: WritingProject): number => {
-    if (!project.chapters || project.chapters.length === 0) return 0;
-    const completed = project.chapters.filter(ch => ch.status === ChapterStatus.COMPLETED).length;
-    return Math.round((completed / project.chapters.length) * 100);
+    if (!project.outline?.chapters || project.outline.chapters.length === 0) return 0;
+    const completed = project.outline.chapters.filter(ch => ch.status === ChapterStatus.COMPLETED).length;
+    return Math.round((completed / project.outline.chapters.length) * 100);
   };
 
   const getProjectStatusIcon = (status: ProjectStatus) => {
@@ -307,7 +307,7 @@ const WritingModeEntry: React.FC = () => {
                       </Popconfirm>
                     </div>
                     <div style={{ fontSize: 11, color: token.colorTextTertiary }}>
-                      {PROJECT_STATUS_LABELS[project.status]} · {project.chapters?.length || 0} 章
+                      {PROJECT_STATUS_LABELS[project.status]} · {project.outline?.chapters?.length || 0} 章
                     </div>
                   </div>
                 );

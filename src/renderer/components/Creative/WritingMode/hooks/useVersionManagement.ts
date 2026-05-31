@@ -62,8 +62,8 @@ export function useVersionManagement(
       if (result.success) {
         message.success('版本已恢复');
         const project = useWritingProjectStore.getState().getCurrentProject();
-        if (project) {
-          const chapter = project.chapters.find(c => c.index === currentChapter.index);
+        if (project && project.outline) {
+          const chapter = project.outline.chapters.find(c => c.index === currentChapter.index);
           if (chapter) {
           }
         }
@@ -77,9 +77,9 @@ export function useVersionManagement(
     outline: GeneratedOutline | null
   ) => {
     const project = useWritingProjectStore.getState().getCurrentProject();
-    if (project) {
+    if (project && project.outline) {
       const chapter = outline?.chapters[selectedChapterIndex];
-      const projectChapter = project.chapters.find(c => c.index === chapter?.index);
+      const projectChapter = project.outline.chapters.find(c => c.index === chapter?.index);
       if (projectChapter && projectChapter.versions && projectChapter.versions.length > 0) {
         setVersionHistory([...projectChapter.versions].reverse());
         setShowVersionHistory(true);
@@ -109,9 +109,9 @@ export function useVersionManagement(
     }
     
     const project = getCurrentProject();
-    if (!project) return;
+    if (!project || !project.outline) return;
     
-    const filteredChapters = project.chapters.filter(ch => exportChapters.includes(ch.index));
+    const filteredChapters = project.outline.chapters.filter(ch => exportChapters.includes(ch.index));
     
     if (window.electronAPI?.writing) {
       try {

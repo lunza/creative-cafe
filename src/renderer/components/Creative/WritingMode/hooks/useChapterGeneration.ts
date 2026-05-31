@@ -77,7 +77,7 @@ export function useChapterGeneration(
     const contents: Record<number, string> = {};
     const project = getCurrentProject();
     for (const ch of outline.chapters) {
-      const projectChapter = project?.chapters?.find(c => c.index === ch.index);
+      const projectChapter = project?.outline?.chapters?.find(c => c.index === ch.index);
       const chapterContent = projectChapter?.content || '';
       statuses[ch.index] = chapterContent ? ChapterStatus.COMPLETED : ChapterStatus.PENDING;
       contents[ch.index] = chapterContent;
@@ -103,19 +103,19 @@ export function useChapterGeneration(
     }
     syncTimerRef.current = setTimeout(() => {
       const project = getCurrentProject();
-      if (project && outline) {
+      if (project && project.outline && outline) {
         const currentChapter = outline.chapters[selectedChapterIndex];
         if (currentChapter) {
           updateProject(project.id, {
-            chapters: project.chapters.map(ch =>
+            chapters: project.outline.chapters.map(ch =>
               ch.index === currentChapter.index
                 ? { ...ch, content, lastModified: Date.now() }
                 : ch
             ),
             metadata: {
               ...project.metadata,
-              totalWordCount: project.chapters.reduce((sum, ch) =>
-                sum + (ch.index === currentChapter.index ? content.length : ch.wordCount), 0
+              totalWordCount: project.outline.chapters.reduce((sum, ch) =>
+                sum + (ch.index === currentChapter.index ? content.length : ch.wordCount || 0), 0
               ),
             }
           });
@@ -170,17 +170,17 @@ export function useChapterGeneration(
       message.success(`第 ${(chapterNum >= 0 ? chapterNum : data.chapterIndex) + 1} 章生成完成`);
 
       const currentProject = currentProjectRef.current;
-      if (currentProject) {
+      if (currentProject && currentProject.outline) {
         updateProject(currentProject.id, {
-          chapters: currentProject.chapters.map(ch =>
+          chapters: currentProject.outline.chapters.map(ch =>
             ch.index === data.chapterIndex
               ? { ...ch, content: data.content, status: ChapterStatus.COMPLETED, wordCount: data.content.length, lastModified: Date.now() }
               : ch
           ),
           metadata: {
             ...currentProject.metadata,
-            totalWordCount: currentProject.chapters.reduce((sum, ch) => sum + (ch.index === data.chapterIndex ? data.content.length : ch.wordCount), 0),
-            completedChapters: currentProject.chapters.filter(ch => ch.index === data.chapterIndex || ch.status === ChapterStatus.COMPLETED).length
+            totalWordCount: currentProject.outline.chapters.reduce((sum, ch) => sum + (ch.index === data.chapterIndex ? data.content.length : ch.wordCount || 0), 0),
+            completedChapters: currentProject.outline.chapters.filter(ch => ch.index === data.chapterIndex || ch.status === ChapterStatus.COMPLETED).length
           }
         });
         saveProject();
@@ -399,19 +399,19 @@ export function useChapterGeneration(
       await window.electronAPI.writing.autoSaveChapter({ projectId, chapterIndex: currentChapter.index, content });
       setChapterContents(prev => ({ ...prev, [currentChapter.index]: content }));
       const project = getCurrentProject();
-      if (project) {
+      if (project && project.outline) {
         updateProject(project.id, {
-          chapters: project.chapters.map(ch =>
+          chapters: project.outline.chapters.map(ch =>
             ch.index === currentChapter.index
               ? { ...ch, content, status: ChapterStatus.COMPLETED, wordCount: content.length, lastModified: Date.now() }
               : ch
           ),
           metadata: {
             ...project.metadata,
-            totalWordCount: project.chapters.reduce((sum, ch) =>
-              sum + (ch.index === currentChapter.index ? content.length : ch.wordCount), 0
+            totalWordCount: project.outline.chapters.reduce((sum, ch) =>
+              sum + (ch.index === currentChapter.index ? content.length : ch.wordCount || 0), 0
             ),
-            completedChapters: project.chapters.filter(ch => ch.index === currentChapter.index || ch.status === ChapterStatus.COMPLETED).length
+            completedChapters: project.outline.chapters.filter(ch => ch.index === currentChapter.index || ch.status === ChapterStatus.COMPLETED).length
           }
         });
         saveProject();
@@ -429,19 +429,19 @@ export function useChapterGeneration(
     setStreamingContent('');
 
     const project = getCurrentProject();
-    if (project) {
+    if (project && project.outline) {
       updateProject(project.id, {
-        chapters: project.chapters.map(c =>
+        chapters: project.outline.chapters.map(c =>
           c.index === ch.index
             ? { ...c, content: '', status: ChapterStatus.PENDING, wordCount: 0, lastModified: Date.now() }
             : c
         ),
         metadata: {
           ...project.metadata,
-          totalWordCount: project.chapters.reduce((sum, c) =>
-            sum + (c.index === ch.index ? 0 : c.wordCount), 0
+          totalWordCount: project.outline.chapters.reduce((sum, c) =>
+            sum + (c.index === ch.index ? 0 : c.wordCount || 0), 0
           ),
-          completedChapters: project.chapters.filter(c => c.index !== ch.index && c.status === ChapterStatus.COMPLETED).length
+          completedChapters: project.outline.chapters.filter(c => c.index !== ch.index && c.status === ChapterStatus.COMPLETED).length
         }
       });
       saveProject();
