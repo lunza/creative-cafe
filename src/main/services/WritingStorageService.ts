@@ -270,27 +270,6 @@ export class WritingStorageService {
     return parseFloat(index.toFixed(10)).toString();
   }
 
-  private migrateProjectIndices(project: WritingProject): WritingProject {
-    const firstChapter = project.outline!.chapters[0];
-    if (firstChapter && firstChapter.index === 0 && project.outline!.chapters.length > 1) {
-      const hasZeroBased = project.outline!.chapters.some((ch, idx) => ch.index === idx);
-      if (hasZeroBased) {
-        console.log('[WritingStorage] Migrating project from 0-based to 1-based indexing:', project.id);
-        return {
-          ...project,
-          outline: {
-            ...project.outline,
-            chapters: project.outline!.chapters.map((ch, idx) => ({
-              ...ch,
-              index: idx + 1
-            }))
-          }
-        };
-      }
-    }
-    return project;
-  }
-
   getStoragePath(): string {
     return getWritingProjectsPath();
   }
@@ -402,8 +381,6 @@ export class WritingStorageService {
           continuityInfo: { foreshadowing: [], plotThreads: [], characterDevelopment: {} }
         };
       }
-      
-      project = this.migrateProjectIndices(project);
       
       const chaptersDir = getChaptersDir(projectId);
       if (fs.existsSync(chaptersDir)) {

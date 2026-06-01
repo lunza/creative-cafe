@@ -246,14 +246,14 @@ const Settings: React.FC = () => {
               model_name: values.model_name || '',
               api_mode: values.api_mode || 'text_completion',
               api_key_transmission: values.api_key_transmission || 'body',
-              max_tokens: values.max_tokens,
-              temperature: values.temperature,
-              top_p: values.top_p,
-              top_k: values.top_k,
-              min_p: values.min_p,
-              frequency_penalty: values.frequency_penalty,
-              presence_penalty: values.presence_penalty,
-              n: values.n,
+              max_tokens: Number(values.max_tokens) || 10240,
+              temperature: Number(values.temperature) ?? 0.7,
+              top_p: Number(values.top_p) || undefined,
+              top_k: Number(values.top_k) || undefined,
+              min_p: Number(values.min_p) || undefined,
+              frequency_penalty: Number(values.frequency_penalty) || undefined,
+              presence_penalty: Number(values.presence_penalty) || undefined,
+              n: Number(values.n) || 1,
               system_prompt: values.system_prompt || ''
             };
           }
@@ -369,7 +369,17 @@ const Settings: React.FC = () => {
         addLog('设置为null', 'error');
         message.error('设置未加载');
       }
-    } catch (error) {
+    } catch (error: any) {
+      // 表单验证错误 - 显示具体验证失败信息
+      if (error?.errorFields && Array.isArray(error.errorFields)) {
+        const errorMessages = error.errorFields
+          .map((field: any) => `${field.name?.join('.') || '未知字段'}: ${field.errors?.join(', ') || '验证失败'}`)
+          .join('; ');
+        addLog(`表单验证失败: ${errorMessages}`, 'error');
+        message.error(`表单验证失败: ${errorMessages}`);
+        return;
+      }
+
       addLog('保存设置失败', 'error', {
         category: 'setting',
         error: error instanceof Error ? error : undefined,
@@ -464,7 +474,18 @@ const Settings: React.FC = () => {
           addLog(`更新现有引擎: ${editingEngine.id}`, 'info');
           updatedEngines = updatedEngines.map(engine => {
             if (engine.id === editingEngine.id) {
-              return { ...engine, ...values };
+              return { 
+                ...engine, 
+                ...values,
+                max_tokens: Number(values.max_tokens) || 10240,
+                temperature: Number(values.temperature) ?? 0.7,
+                top_p: Number(values.top_p) || undefined,
+                top_k: Number(values.top_k) || undefined,
+                min_p: Number(values.min_p) || undefined,
+                frequency_penalty: Number(values.frequency_penalty) || undefined,
+                presence_penalty: Number(values.presence_penalty) || undefined,
+                n: Number(values.n) || 1,
+              };
             }
             return engine;
           });
@@ -481,7 +502,15 @@ const Settings: React.FC = () => {
             model_name: values.model_name || 'qwen3.5-27b-heretic-v3',
             api_mode: values.api_mode || 'text_completion',
             api_key_transmission: values.api_key_transmission || 'body',
-            ...values,
+            max_tokens: Number(values.max_tokens) || 10240,
+            temperature: Number(values.temperature) ?? 0.7,
+            top_p: Number(values.top_p) || undefined,
+            top_k: Number(values.top_k) || undefined,
+            min_p: Number(values.min_p) || undefined,
+            frequency_penalty: Number(values.frequency_penalty) || undefined,
+            presence_penalty: Number(values.presence_penalty) || undefined,
+            n: Number(values.n) || 1,
+            system_prompt: values.system_prompt || '',
           };
           updatedEngines.push(newEngine);
         }
@@ -1008,35 +1037,35 @@ const Settings: React.FC = () => {
           </Form.Item>
 
           <Form.Item label="最大令牌数 (max_tokens)" name="max_tokens">
-            <Input type="number" min={1} max={100000} placeholder="例如: 10240" />
+            <Input type="number" min={1} max={1000000} placeholder="范围: 1-1000000，例如: 10240" />
           </Form.Item>
 
           <Form.Item label="温度参数 (temperature)" name="temperature">
-            <Input type="number" min={0} max={2} step={0.1} placeholder="例如: 0.7" />
+            <Input type="number" min={0} max={2} step={0.1} placeholder="范围: 0-2，例如: 0.7" />
           </Form.Item>
 
           <Form.Item label="Top P (top_p)" name="top_p">
-            <Input type="number" min={0} max={1} step={0.05} placeholder="例如: 0.95" />
+            <Input type="number" min={0} max={1} step={0.05} placeholder="范围: 0-1，例如: 0.95" />
           </Form.Item>
 
           <Form.Item label="Top K (top_k)" name="top_k">
-            <Input type="number" min={0} max={200} step={1} placeholder="例如: 40" />
+            <Input type="number" min={0} max={200} step={1} placeholder="范围: 0-200，例如: 40" />
           </Form.Item>
 
           <Form.Item label="Min P (min_p)" name="min_p">
-            <Input type="number" min={0} max={1} step={0.05} placeholder="例如: 0.1" />
+            <Input type="number" min={0} max={1} step={0.05} placeholder="范围: 0-1，例如: 0.1" />
           </Form.Item>
 
           <Form.Item label="频率惩罚 (frequency_penalty)" name="frequency_penalty">
-            <Input type="number" min={-2} max={2} step={0.1} placeholder="例如: 0" />
+            <Input type="number" min={-2} max={2} step={0.1} placeholder="范围: -2到2，例如: 0" />
           </Form.Item>
 
           <Form.Item label="存在惩罚 (presence_penalty)" name="presence_penalty">
-            <Input type="number" min={-2} max={2} step={0.1} placeholder="例如: 0" />
+            <Input type="number" min={-2} max={2} step={0.1} placeholder="范围: -2到2，例如: 0" />
           </Form.Item>
 
           <Form.Item label="生成数量 (n)" name="n">
-            <Input type="number" min={1} max={10} step={1} placeholder="例如: 1" />
+            <Input type="number" min={1} max={10} step={1} placeholder="范围: 1-10，例如: 1" />
           </Form.Item>
 
           <Form.Item label="系统提示词 (system_prompt)" name="system_prompt">
@@ -1258,28 +1287,28 @@ const Settings: React.FC = () => {
               />
             </Form.Item>
             <Form.Item label="最大令牌数 (max_tokens)" name="max_tokens">
-              <Input type="number" min={1} max={100000} placeholder="例如: 10240" />
+              <Input type="number" min={1} max={1000000} placeholder="范围: 1-1000000，例如: 10240" />
             </Form.Item>
             <Form.Item label="温度参数 (temperature)" name="temperature">
-              <Input type="number" min={0} max={2} step={0.1} placeholder="例如: 0.7" />
+              <Input type="number" min={0} max={2} step={0.1} placeholder="范围: 0-2，例如: 0.7" />
             </Form.Item>
             <Form.Item label="Top P (top_p)" name="top_p">
-              <Input type="number" min={0} max={1} step={0.05} placeholder="例如: 0.95" />
+              <Input type="number" min={0} max={1} step={0.05} placeholder="范围: 0-1，例如: 0.95" />
             </Form.Item>
             <Form.Item label="Top K (top_k)" name="top_k">
-              <Input type="number" min={0} max={200} step={1} placeholder="例如: 40" />
+              <Input type="number" min={0} max={200} step={1} placeholder="范围: 0-200，例如: 40" />
             </Form.Item>
             <Form.Item label="Min P (min_p)" name="min_p">
-              <Input type="number" min={0} max={1} step={0.05} placeholder="例如: 0.1" />
+              <Input type="number" min={0} max={1} step={0.05} placeholder="范围: 0-1，例如: 0.1" />
             </Form.Item>
             <Form.Item label="频率惩罚 (frequency_penalty)" name="frequency_penalty">
-              <Input type="number" min={-2} max={2} step={0.1} placeholder="例如: 0" />
+              <Input type="number" min={-2} max={2} step={0.1} placeholder="范围: -2到2，例如: 0" />
             </Form.Item>
             <Form.Item label="存在惩罚 (presence_penalty)" name="presence_penalty">
-              <Input type="number" min={-2} max={2} step={0.1} placeholder="例如: 0" />
+              <Input type="number" min={-2} max={2} step={0.1} placeholder="范围: -2到2，例如: 0" />
             </Form.Item>
             <Form.Item label="生成数量 (n)" name="n">
-              <Input type="number" min={1} max={10} step={1} placeholder="例如: 1" />
+              <Input type="number" min={1} max={10} step={1} placeholder="范围: 1-10，例如: 1" />
             </Form.Item>
             <Form.Item label="系统提示词 (system_prompt)" name="system_prompt">
               <Input.TextArea 

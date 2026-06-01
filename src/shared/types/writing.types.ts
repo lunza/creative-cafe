@@ -306,14 +306,11 @@ export interface ChapterOutline {
   scenes: string[];
   suspensePoints?: string[];
   targetWordCount: number;
-  // 手动大纲编辑新增字段
   chapterType?: ChapterType;
   importance?: ImportanceLevel;
   children?: ChapterOutline[];
   content?: string;
-  // 需要在前端加粗显示的重要文本片段（纯文本，不含 Markdown）
   importantSpans?: string[];
-  // Chapter 接口字段（使 ChapterOutline 成为统一的章节数据结构）
   status?: ChapterStatus;
   wordCount?: number;
   versions?: ChapterVersion[];
@@ -327,7 +324,7 @@ export interface ChapterOutline {
   };
 }
 
-// 角色关系（旧版，向后兼容）
+// 角色关系
 export interface CharacterRelationship {
   name: string;
   role: string;
@@ -370,7 +367,7 @@ export interface CharacterRelationshipNetwork {
   }[];
 }
 
-// 世界观要点（旧版，向后兼容）
+// 世界观要点
 export interface WorldbuildingNotes {
   category: string;
   points: string[];
@@ -448,26 +445,14 @@ export interface OutlineImpactAnalysis {
   description: string;
 }
 
-// 扩展版大纲（支持全面编辑）
-export interface EnhancedOutline {
-  workInfo: WorkInfo;
-  storyLine: EnhancedStoryLine;
-  characterNetwork: CharacterRelationshipNetwork;
-  worldSettings: WorldSettingGroup[];
-  chapters: ChapterOutline[];
-  versions: OutlineVersion[];
-  currentVersionId: string;
-  lastModified: number;
-  editMode: OutlineEditMode;
-}
-
-// 生成的大纲（向后兼容）
+// 生成的大纲
 export interface GeneratedOutline {
   workInfo: WorkInfo;
   storyLine: StoryLine;
   chapters: ChapterOutline[];
   characterRelationships: CharacterRelationship[];
   worldbuildingNotes: WorldbuildingNotes[];
+  version?: number;
 }
 
 // 章节版本
