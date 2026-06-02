@@ -128,9 +128,16 @@ export class PlotCheckerService {
       contextParts += tableContext + '\n';
     }
 
-    contextParts += `## 当前章节内容\n${request.content}`;
+    const unifiedPrompt = `你是一个专业的小说编辑和质量检查助手。请对以下章节内容进行多维度检查，识别可能的设定不一致、情节矛盾（吃书）、设定遗漏（吞设定）、逻辑矛盾等问题。
 
-    const logicDetectionSection = `
+## 剧情多维度检测
+请从以下维度检查章节内容：
+1. 大纲一致性（outline_consistency）：章节内容是否与大纲规划一致，关键情节是否覆盖
+2. 世界书合规性（worldbook_compliance）：是否遵循已建立的世界观设定和规则
+3. 角色一致性（character_consistency）：角色性格、行为、身份是否与设定一致
+4. 写作风格（writing_style）：文笔、节奏、表达是否符合要求的写作风格
+5. 剧情连续性（plot_continuity）：与前文章节的情节、设定是否连贯
+
 ## 逻辑矛盾检测
 请同时检测以下类型的逻辑矛盾：
 1. 物品状态矛盾：已被消耗/使用的物品在后续情节中无合理解释地再次出现；如角色有两个面包，吃掉了一个，后续仍旧是两个面包，这是不合理的逻辑
@@ -140,79 +147,46 @@ export class PlotCheckerService {
 5. 剧情设定矛盾：与已建立的世界观设定或规则相冲突的情节
 6. 数学逻辑矛盾：包含明显数学计算错误或数量关系矛盾的情节；如20-4.85=15.15，10+3.2=13.2，而不是其他数字
 
-对于检测到的逻辑矛盾，请提供以下信息：
-- type: 矛盾类型（item_state/economic/character_state/physical_law/plot_setting/mathematical）
-- severity: 严重程度（high/medium/low）
-- description: 具体情节描述
-- analysis: 矛盾点分析
-- suggestion: 改进建议
+## 待检测文章内容
+${contextParts}
 
-请同时输出逻辑检查结果：
+## 输出格式要求
+请严格按照以下 JSON 格式返回检查结果（不要包含markdown代码块标记）：
 {
+  "overall_score": 80,
+  "dimension_scores": {
+    "outline_consistency": { "score": 85, "issues": [...] },
+    "worldbook_compliance": { "score": 90, "issues": [...] },
+    "character_consistency": { "score": 80, "issues": [...] },
+    "writing_style": { "score": 85, "issues": [...] },
+    "plot_continuity": { "score": 75, "issues": [...] }
+  },
   "logic_issues": [
     {
+      "title": "简短问题标题",
       "type": "item_state",
       "severity": "medium",
       "description": "...",
       "analysis": "...",
-      "suggestion": "..."
+      "suggestion": "...",
+      "quickFixSuggestion": {
+        "originalText": "需要替换的原文片段",
+        "fixedText": "修改后的文本",
+        "reason": "修正理由"
+      }
     }
   ]
 }
-`;
 
-    return `你是一个专业的小说编辑和质量检查助手。请对以下章节内容进行多维度检查，识别可能的设定不一致、情节矛盾（吃书）、设定遗漏（吞设定）等问题。
-
-${contextParts}
-
-${logicDetectionSection}
-
-请以JSON格式返回检查结果（不要包含markdown代码块标记）：
-{
-  "outline_consistency": {
-    "score": 85,
-    "issues": [
-      {
-        "severity": "medium",
-        "title": "标题",
-        "description": "问题描述",
-        "suggestion": "改进建议",
-        "position": { "startIndex": 0, "endIndex": 100 },
-        "quickFixSuggestion": {
-          "originalText": "需要替换的原文片段",
-          "fixedText": "修改后的文本",
-          "reason": "修正理由"
-        }
-      }
-    ]
-  },
-  "worldbook_compliance": {
-    "score": 90,
-    "issues": []
-  },
-  "character_consistency": {
-    "score": 80,
-    "issues": []
-  },
-  "writing_style": {
-    "score": 85,
-    "issues": []
-  },
-  "plot_continuity": {
-    "score": 75,
-    "issues": []
-  },
-  "logic_check_result": {
-    "logic_issues": []
-  }
-}
-
-对于每个识别出的问题，请同时提供 quickFixSuggestion 字段，包含：
-- originalText: 需要被替换的原文片段（必须是章节内容中实际存在的文本，要精确匹配）
+对于每个识别出的问题（包括剧情维度和逻辑矛盾），请同时提供 quickFixSuggestion 字段，包含：
+- originalText: 需要被替换的原文片段（必须是章节内容中一字不差的原文，**必须包含所有标点符号、换行符、特殊符号**，与原文完全一致才能执行替换）
 - fixedText: 修改后的文本（可以比原文长或短）
 - reason: 修正理由（说明语法、逻辑、表达等方面的改进原因）
 
-注意：quickFixSuggestion中的originalText必须是章节内容中一字不差的原文，否则无法执行替换。如果问题不涉及具体文本修改，可以不提供quickFixSuggestion。
+注意：quickFixSuggestion中的originalText必须是章节内容中一字不差的原文，否则无法执行替换。如果问题不涉及具体文本修改，可以将quickFixSuggestion设为null。
+
+每个 issue（dimension_scores 中的 issues 数组元素和 logic_issues 数组元素）都必须包含 title 字段：
+- title: 简短问题标题（不超过20字），是问题摘要，如"大纲伏笔描绘单薄"、"物品数量前后矛盾"、"角色行为与设定不符"、"前文事件遗漏"等
 
 评分标准：
 - 90-100: 优秀，无问题
@@ -220,7 +194,10 @@ ${logicDetectionSection}
 - 50-69: 一般，存在需要注意的问题
 - 0-49: 较差，存在严重问题
 
-严重程度：high（高）、medium（中）、low（低）`;
+严重程度：high（高）、medium（中）、low（低）
+逻辑矛盾类型：item_state（物品状态）/ economic（经济系统）/ character_state（角色状态）/ physical_law（物理规律）/ plot_setting（剧情设定）/ mathematical（数学逻辑）`;
+
+    return unifiedPrompt;
   }
 
   private async callAIService(
@@ -338,7 +315,14 @@ ${logicDetectionSection}
     // 修复 AI 返回的中文引号问题：将中文引号替换为英文引号
     jsonStr = this.fixChineseQuotes(jsonStr);
 
-    const parsed = JSON.parse(jsonStr);
+    let parsed: any;
+    try {
+      parsed = JSON.parse(jsonStr);
+    } catch (parseError) {
+      console.error('[PlotChecker] JSON 解析失败:', parseError);
+      console.error('[PlotChecker] 原始 JSON:', jsonStr);
+      return this.createFallbackReport(chapterIndex);
+    }
 
     const dimensions: DimensionScore[] = [];
     let totalIssues = 0;
@@ -346,6 +330,9 @@ ${logicDetectionSection}
     let mediumSeverityCount = 0;
     let lowSeverityCount = 0;
     let totalScore = 0;
+
+    // 支持新格式（dimension_scores）和旧格式（顶层维度键）
+    const dimensionData = parsed.dimension_scores || parsed;
 
     const dimensionKeys: { key: string; enum: PlotCheckDimension }[] = [
       { key: 'outline_consistency', enum: PlotCheckDimension.OUTLINE_CONSISTENCY },
@@ -356,8 +343,17 @@ ${logicDetectionSection}
     ];
 
     for (const { key, enum: dim } of dimensionKeys) {
-      const data = parsed[key] || { score: 50, issues: [] };
+      const data = dimensionData[key] || { score: 50, issues: [] };
       const issues: PlotCheckIssue[] = (data.issues || []).map((issue: any) => {
+        let issueTitle = issue.title;
+        if (!issueTitle || issueTitle.trim() === '') {
+          const desc = issue.description || '';
+          issueTitle = desc.substring(0, 20).replace(/[。！？,.!?…]+$/, '') || '未知问题';
+          if (issueTitle.length < 2) {
+            issueTitle = '未知问题';
+          }
+        }
+
         const origTextEntries: { snippet: string; start: number; end: number }[] = [];
         const refs: { type: string; name: string; summary: string }[] = [];
 
@@ -411,7 +407,7 @@ ${logicDetectionSection}
         return {
           dimension: dim,
           severity: issue.severity || 'low',
-          title: issue.title || '未知问题',
+          title: issueTitle,
           description: issue.description || '',
           suggestion: issue.suggestion || '',
           position: issue.position || undefined,
@@ -440,17 +436,30 @@ ${logicDetectionSection}
       totalScore += data.score || 50;
     }
 
-    const overallScore = Math.round(totalScore / dimensions.length);
+    // 优先使用 AI 返回的 overall_score，否则计算平均值
+    const overallScore = parsed.overall_score || Math.round(totalScore / dimensions.length);
 
     const logicIssuesRaw = parsed.logic_check_result?.logic_issues || parsed.logic_issues || [];
-    const logicIssues: LogicCheckIssue[] = logicIssuesRaw.map((issue: any) => ({
-      type: issue.type || 'plot_setting',
-      severity: issue.severity || 'low',
-      description: issue.description || '',
-      analysis: issue.analysis || '',
-      suggestion: issue.suggestion || '',
-      chapterIndex: chapterIndex
-    }));
+    const logicIssues: LogicCheckIssue[] = logicIssuesRaw.map((issue: any) => {
+      let issueTitle = issue.title;
+      if (!issueTitle || issueTitle.trim() === '') {
+        const desc = issue.description || '';
+        issueTitle = desc.substring(0, 20).replace(/[。！？,.!?…]+$/, '') || '未知问题';
+        if (issueTitle.length < 2) {
+          issueTitle = '未知问题';
+        }
+      }
+
+      return {
+        title: issueTitle,
+        type: issue.type || 'plot_setting',
+        severity: issue.severity || 'low',
+        description: issue.description || '',
+        analysis: issue.analysis || '',
+        suggestion: issue.suggestion || '',
+        chapterIndex: chapterIndex
+      };
+    });
 
     let logicHighCount = 0;
     let logicMediumCount = 0;
@@ -482,6 +491,12 @@ ${logicDetectionSection}
 
   private validateQuickFixSuggestion(suggestion: any, chapterContent: string): QuickFixSuggestion | undefined {
     if (!suggestion || !suggestion.originalText || !suggestion.fixedText) {
+      return undefined;
+    }
+    if (typeof suggestion.originalText !== 'string' || typeof suggestion.fixedText !== 'string') {
+      return undefined;
+    }
+    if (!chapterContent || typeof chapterContent !== 'string') {
       return undefined;
     }
 
@@ -545,6 +560,9 @@ ${logicDetectionSection}
 
   private extractKeywords(description: string, maxCount: number): string[] {
     const keywords: string[] = [];
+    if (!description || typeof description !== 'string') {
+      return keywords;
+    }
     const chinesePhrases = description.match(/[\u4e00-\u9fff]{2,6}/g);
     if (chinesePhrases) {
       const filtered = chinesePhrases.filter(p =>
@@ -559,6 +577,27 @@ ${logicDetectionSection}
       }
     }
     return keywords;
+  }
+
+  private createFallbackReport(chapterIndex: number): PlotCheckReport {
+    return {
+      overallScore: 0,
+      dimensions: [],
+      totalIssues: 0,
+      highSeverityCount: 0,
+      mediumSeverityCount: 0,
+      lowSeverityCount: 0,
+      logicCheckResult: {
+        issues: [],
+        totalIssues: 0,
+        highSeverityCount: 0,
+        mediumSeverityCount: 0,
+        lowSeverityCount: 0
+      },
+      checkedAt: Date.now(),
+      chapterIndex: chapterIndex,
+      error: 'AI 返回格式无效，无法解析检查结果'
+    };
   }
 
   // 将 JSON 字符串中的中文引号替换为英文引号，以修复 AI 返回非标准 JSON 的问题

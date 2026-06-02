@@ -851,6 +851,7 @@ export interface PlotCheckReport {
   checkedAt: number;
   chapterIndex: number;
   batchFixed?: boolean;
+  error?: string;
 }
 
 export interface PlotCheckRequest {

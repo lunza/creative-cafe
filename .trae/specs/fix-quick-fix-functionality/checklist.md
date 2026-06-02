@@ -1,0 +1,8 @@
+- [x] handleAcceptQuickFix 使用 editorContentRef.current 获取最新内容而非过时的 pendingQuickFixContent
+- [x] ContentWorkspace 中 handleAcceptQuickFix 调用传递正确的 setChapterContents (chapterGeneration.setChapterContents)
+- [x] ContentWorkspace 中 handleAcceptQuickFix 调用传递正确的 editorContentRef (chapterGeneration.editorContentRef)
+- [x] handleAcceptQuickFix useCallback 依赖项完整
+- [x] handleQuickFix 正确设置 pendingQuickFixType
+- [x] handleRejectQuickFix 正确清除 pendingQuickFixType
+- [x] QuickFixSuggestionModal 关闭按钮正确传递 onComplete 回调
+- [x] QuickFixSuggestionModal 正确接收并显示 pendingQuickFixType 作为 issueType

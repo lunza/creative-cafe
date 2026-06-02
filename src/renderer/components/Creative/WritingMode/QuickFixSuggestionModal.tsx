@@ -57,7 +57,7 @@ const QuickFixSuggestionModal: React.FC<QuickFixSuggestionModalProps> = ({
           <Button danger icon={<CloseCircleOutlined />} onClick={onReject}>
             拒绝修正
           </Button>
-          <Button onClick={onCancel}>关闭</Button>
+          <Button onClick={() => onCancel(() => {})}>关闭</Button>
         </Space>
       }
     >

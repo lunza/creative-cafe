@@ -19,7 +19,9 @@ import {
   MergeCellsOutlined,
   SearchOutlined,
   FileTextOutlined,
-  TableOutlined
+  TableOutlined,
+  AppstoreOutlined,
+  CloseOutlined
 } from '@ant-design/icons';
 import {
   GeneratedOutline,
@@ -28,6 +30,8 @@ import {
   ExportFormat,
   ChapterVersion,
   PlotCheckReport,
+  PlotCheckIssue,
+  LogicCheckIssue,
   AISplitSuggestion,
   AIMergeSuggestion,
   AIGenerationHistory,
@@ -37,15 +41,15 @@ import WritingProgressDashboard from './WritingProgressDashboard';
 import ChapterSplitModal from './ChapterSplitModal';
 import ChapterMergeModal from './ChapterMergeModal';
 import AIGenerationHistoryModal from './AIGenerationHistoryModal';
-import PlotCheckReportModal from './PlotCheckReportModal';
 import AutoFixResultModal from './AutoFixResultModal';
 import QuickFixSuggestionModal from './QuickFixSuggestionModal';
-import WritingTablePreviewModal from './WritingTablePreviewModal';
+import WritingModeRightPanel from './WritingModeRightPanel';
 import { useChapterGeneration } from './hooks/useChapterGeneration';
 import { useVersionManagement } from './hooks/useVersionManagement';
 import { useModalStates } from './hooks/useModalStates';
 import { usePlotCheck } from './hooks/usePlotCheck';
 import { useChapterStructure } from './hooks/useChapterStructure';
+import { useWritingModeUIStore, LayoutMode, RightPanelTab } from '../../../stores/writingModeUIStore';
 
 interface ContentWorkspaceProps {
   outline: GeneratedOutline | null;
@@ -72,6 +76,12 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
     (s) => {},
     (s) => {}
   );
+
+  const rightPanelVisible = useWritingModeUIStore((state) => state.rightPanelVisible);
+  const rightPanelTab = useWritingModeUIStore((state) => state.rightPanelTab);
+  const setRightPanelTab = useWritingModeUIStore((state) => state.setRightPanelTab);
+  const toggleRightPanel = useWritingModeUIStore((state) => state.toggleRightPanel);
+  const layoutMode = useWritingModeUIStore((state) => state.layoutMode);
 
   const [splitTitles, setSplitTitles] = useState<string[]>([]);
   const [isOrganizing, setIsOrganizing] = useState(false);
@@ -130,6 +140,17 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
       outline,
       projectId
     );
+    if (!rightPanelVisible) {
+      toggleRightPanel();
+    }
+    setRightPanelTab(RightPanelTab.PLOT_CHECK);
+  };
+
+  const handleOpenTableOrganize = () => {
+    if (!rightPanelVisible) {
+      toggleRightPanel();
+    }
+    setRightPanelTab(RightPanelTab.TABLE_ORGANIZE);
   };
 
   const handleSaveVersion = () => {
@@ -163,20 +184,33 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
     chapterStructure.handleBackToConfig(onBack);
   };
 
-  const handleBatchFix = async (selectedIssues: Array<{ key: string; issue: any; issueType: 'dimension' | 'logic' }>) => {
+  const handleBatchFix = async (selectedIssues: Array<{ key: string; issue: PlotCheckIssue | LogicCheckIssue; issueType: 'dimension' | 'logic' }>) => {
     return plotCheck.handleBatchFix(
       currentChapter.index,
       chapterGeneration.chapterContents[currentChapter?.index] || '',
       selectedIssues,
       projectId,
       outline,
-      () => {},
+      chapterGeneration.setChapterContents,
       chapterGeneration.editorContentRef
     );
   };
 
-  const handleQuickFix = (chapterContent: string, issue: any, onComplete?: () => void) => {
-    plotCheck.handleQuickFix(chapterContent, issue);
+  const handleAutoFix = async (chapterContent: string, issue: PlotCheckIssue | LogicCheckIssue, issueType: 'dimension' | 'logic') => {
+    return plotCheck.handleAutoFix(
+      currentChapter.index,
+      chapterContent,
+      issue,
+      issueType,
+      projectId,
+      outline,
+      chapterGeneration.setChapterContents,
+      chapterGeneration.editorContentRef
+    );
+  };
+
+  const handleQuickFix = (chapterContent: string, issue: PlotCheckIssue | LogicCheckIssue, issueType: 'dimension' | 'logic', onComplete?: () => void) => {
+    plotCheck.handleQuickFix(chapterContent, issue, issueType);
     if (onComplete) {
       onComplete();
     }
@@ -187,7 +221,8 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
       currentChapter.index,
       outline,
       chapterGeneration.editorContentRef,
-      () => {},
+      chapterGeneration.setChapterContents,
+      undefined,
       onComplete
     );
   };
@@ -201,7 +236,7 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
       currentChapter.index,
       fixedContent,
       chapterGeneration.chapterContents,
-      () => {},
+      chapterGeneration.setChapterContents,
       chapterGeneration.editorContentRef
     );
   };
@@ -215,13 +250,15 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
       currentChapter.index,
       outline,
       chapterGeneration.editorContentRef,
-      () => {}
+      chapterGeneration.setChapterContents
     );
   };
 
   const handleViewLogicRecords = () => {
     plotCheck.handleViewLogicRecords();
   };
+
+  const rightPanelWidth = layoutMode === LayoutMode.WIDE ? 300 : 0;
 
   return (
     <Layout style={{ height: '100%' }}>
@@ -397,25 +434,35 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
                   }}>
                     <Button icon={<MoreOutlined />}>版本</Button>
                   </Dropdown>
-                  <Button 
-                    icon={<TableOutlined />} 
-                    onClick={() => modalStates.setShowTablePreviewModal(true)}
+                  <Button
+                    icon={<TableOutlined />}
+                    onClick={handleOpenTableOrganize}
                   >
                     表格整理
                   </Button>
-                  <Button 
-                    icon={<SearchOutlined />} 
-                    onClick={handlePlotCheck} 
+                  <Button
+                    icon={<SearchOutlined />}
+                    onClick={handlePlotCheck}
                     loading={plotCheck.plotCheckLoading}
                   >
                     剧情检查
                   </Button>
-                  <Button 
-                    icon={<FileTextOutlined />} 
+                  <Button
+                    icon={<FileTextOutlined />}
                     onClick={handleViewLogicRecords}
                   >
                     逻辑记录
                   </Button>
+                  {layoutMode === LayoutMode.WIDE && (
+                    <Button
+                      type="text"
+                      icon={rightPanelVisible ? <CloseOutlined /> : <AppstoreOutlined />}
+                      onClick={toggleRightPanel}
+                      size="small"
+                    >
+                      {rightPanelVisible ? '关闭面板' : '辅助面板'}
+                    </Button>
+                  )}
                   <Button icon={<SettingOutlined />} onClick={handleBackToConfig}>调整参数</Button>
                 </div>
               </div>
@@ -454,6 +501,27 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
           </Card>
         </Content>
       </Layout>
+
+      {layoutMode === LayoutMode.WIDE && rightPanelVisible && (
+        <WritingModeRightPanel
+          width={rightPanelWidth}
+          onClose={() => toggleRightPanel()}
+          activeTab={rightPanelTab}
+          onTabChange={setRightPanelTab}
+          plotCheckReport={plotCheck.plotCheckReport}
+          plotCheckLoading={plotCheck.plotCheckLoading}
+          onPlotCheckAutoFix={handleAutoFix}
+          onPlotCheckQuickFix={handleQuickFix}
+          onPlotCheckBatchFix={handleBatchFix}
+          chapterContent={chapterGeneration.chapterContents[currentChapter?.index] || ''}
+          onContentUpdated={handleContentUpdated}
+          onRecheck={() => plotCheck.handlePlotCheck(currentChapter.index, chapterGeneration.chapterContents, outline, projectId)}
+          editorContentRef={chapterGeneration.editorContentRef}
+          tableProjectId={projectId}
+          tableChapterId={currentChapter.index}
+          tableChapterTitle={currentChapter.title}
+        />
+      )}
       
       <Modal
         title="版本历史"
@@ -503,26 +571,6 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
         projectId={projectId}
         onCancel={() => modalStates.setShowHistoryModal(false)}
         onRestore={handleRestoreHistory}
-      />
-
-      <PlotCheckReportModal
-        visible={modalStates.showPlotCheckModal}
-        report={plotCheck.plotCheckReport}
-        onCancel={() => modalStates.setShowPlotCheckModal(false)}
-        onAutoFix={(chapterContent, issue, issueType) => plotCheck.handleAutoFix(
-          currentChapter.index,
-          chapterContent,
-          issue,
-          issueType,
-          projectId,
-          outline,
-          () => {},
-          chapterGeneration.editorContentRef
-        )}
-        onQuickFix={handleQuickFix}
-        chapterContent={chapterGeneration.chapterContents[currentChapter?.index] || ''}
-        onContentUpdated={handleContentUpdated}
-        onRecheck={() => plotCheck.handlePlotCheck(currentChapter.index, chapterGeneration.chapterContents, outline, projectId)}
       />
 
       <QuickFixSuggestionModal
@@ -587,16 +635,6 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
         onAccept={handleAcceptFix}
         onReject={handleRejectFix}
         onCancel={() => modalStates.setShowFixResultModal(false)}
-      />
-
-      <WritingTablePreviewModal
-        visible={modalStates.showTablePreviewModal}
-        projectId={projectId}
-        onClose={() => modalStates.setShowTablePreviewModal(false)}
-        chapterId={currentChapter.index}
-        chapterTitle={currentChapter.title}
-        chapterContent={chapterGeneration.chapterContents[currentChapter.index] || ''}
-        onOrganizeStatusChange={setIsOrganizing}
       />
     </Layout>
   );

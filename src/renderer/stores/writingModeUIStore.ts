@@ -15,8 +15,8 @@ export enum ActivePanel {
 
 export enum RightPanelTab {
   MATERIALS = 'materials',
-  AI_ASSISTANT = 'ai_assistant',
-  PREVIEW = 'preview'
+  PLOT_CHECK = 'plot_check',
+  TABLE_ORGANIZE = 'table_organize'
 }
 
 interface WritingModeUIState {

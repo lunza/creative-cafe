@@ -55,19 +55,22 @@ interface UsePlotCheckResult {
   ) => Promise<{ success: boolean; fixedContent?: string; results?: Array<{ index: number; success: boolean; error?: string }>; error?: string }>;
   handleQuickFix: (
     chapterContent: string,
-    issue: any
+    issue: any,
+    issueType?: 'dimension' | 'logic'
   ) => void;
   pendingQuickFixSuggestion: any;
   pendingQuickFixIssue: any;
+  pendingQuickFixType: 'dimension' | 'logic';
   pendingQuickFixContent: string;
   handleAcceptQuickFix: (
     chapterIndex: number,
     outline: GeneratedOutline | null,
     editorContentRef: React.MutableRefObject<string>,
     setChapterContents: React.Dispatch<React.SetStateAction<Record<number, string>>>,
-    onRecheck?: () => void
+    onRecheck?: () => void,
+    onCompletion?: () => void
   ) => void;
-  handleRejectQuickFix: () => void;
+  handleRejectQuickFix: (onCompletion?: () => void) => void;
 }
 
 export function usePlotCheck(
@@ -298,7 +301,8 @@ export function usePlotCheck(
 
   const handleQuickFix = useCallback((
     chapterContent: string,
-    issue: any
+    issue: any,
+    issueType: 'dimension' | 'logic' = 'dimension'
   ) => {
     if (!issue.quickFixSuggestion) {
       message.warning('该问题暂无快速修正建议');
@@ -308,6 +312,7 @@ export function usePlotCheck(
     setPendingQuickFixSuggestion(issue.quickFixSuggestion);
     setPendingQuickFixIssue(issue);
     setPendingQuickFixContent(chapterContent);
+    setPendingQuickFixType(issueType);
   }, []);
 
   const handleAcceptQuickFix = useCallback((
@@ -319,8 +324,9 @@ export function usePlotCheck(
     onCompletion?: () => void
   ) => {
     const currentChapter = outline?.chapters.find(ch => ch.index === chapterIndex);
-    if (pendingQuickFixSuggestion && currentChapter && pendingQuickFixContent) {
-      const newContent = pendingQuickFixContent.replace(
+    if (pendingQuickFixSuggestion && currentChapter) {
+      const latestContent = editorContentRef.current || pendingQuickFixContent;
+      const newContent = latestContent.replace(
         pendingQuickFixSuggestion.originalText,
         pendingQuickFixSuggestion.fixedText
       );
@@ -340,7 +346,6 @@ export function usePlotCheck(
         saveProject();
       }
 
-      // Update the report to mark the issue as corrected
       setPlotCheckReport(prev => {
         if (!prev) return prev;
         
@@ -388,6 +393,7 @@ export function usePlotCheck(
     setPendingQuickFixSuggestion(null);
     setPendingQuickFixIssue(null);
     setPendingQuickFixContent('');
+    setPendingQuickFixType('dimension');
 
     if (onCompletion) {
       onCompletion();
@@ -398,6 +404,7 @@ export function usePlotCheck(
     setPendingQuickFixSuggestion(null);
     setPendingQuickFixIssue(null);
     setPendingQuickFixContent('');
+    setPendingQuickFixType('dimension');
     message.info('已拒绝快速修正');
 
     if (onCompletion) {
@@ -528,6 +535,7 @@ export function usePlotCheck(
     handleClearLogicRecords,
     pendingQuickFixSuggestion,
     pendingQuickFixIssue,
+    pendingQuickFixType,
     pendingQuickFixContent,
     handleQuickFix,
     handleAcceptQuickFix,

@@ -1,0 +1,4 @@
+- [x] handleBatchFix 调用传递正确的 setChapterContents (chapterGeneration.setChapterContents)
+- [x] handleContentUpdated 调用传递正确的 setChapterContents (chapterGeneration.setChapterContents)
+- [x] handleRejectFix 调用传递正确的 setChapterContents (chapterGeneration.setChapterContents)
+- [x] handleAutoFix 调用传递正确的 setChapterContents (chapterGeneration.setChapterContents)

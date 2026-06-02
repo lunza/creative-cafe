@@ -21,7 +21,6 @@ import { useWritingProjectStore } from '../../../stores/writingProjectStore';
 import { useWritingModeUIStore, LayoutMode, ActivePanel, RightPanelTab } from '../../../stores/writingModeUIStore';
 import { WritingProject, ProjectStatus, ChapterStatus } from '../../../../shared/types/writing.types';
 import { PROJECT_STATUS_LABELS } from '../../../../shared/constants/writing.constants';
-import WritingModeRightPanel from './WritingModeRightPanel';
 import WritingConfigModal from './WritingConfigModal';
 import OutlineEditor from './OutlineEditor';
 import ContentWorkspace from './ContentWorkspace';
@@ -365,13 +364,6 @@ const WritingModeEntry: React.FC = () => {
       <Content style={{ overflow: 'auto', position: 'relative' }}>
         {renderMainContent()}
       </Content>
-
-      {layoutMode === LayoutMode.WIDE && rightPanelVisible && (
-        <WritingModeRightPanel
-          width={rightPanelWidth}
-          onClose={() => toggleRightPanel()}
-        />
-      )}
 
       <WritingConfigModal
         open={showConfigModal}

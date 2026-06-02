@@ -25,6 +25,7 @@ interface UseChapterGenerationResult {
   generationState: GenerationState;
   streamingContent: string;
   chapterContents: Record<number, string>;
+  setChapterContents: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   chapterStatuses: Record<number, ChapterStatus>;
   isGenerating: boolean;
   isPaused: boolean;
@@ -78,7 +79,9 @@ export function useChapterGeneration(
     const project = getCurrentProject();
     for (const ch of outline.chapters) {
       const projectChapter = project?.outline?.chapters?.find(c => c.index === ch.index);
-      const chapterContent = projectChapter?.content || '';
+      // 恢复章节内容：从 outline 中的 ch.content 恢复（从磁盘加载的数据）
+      // ch.content 来自 WritingStorageService.loadProject，由 project.json 中的 chapters 数组提供
+      const chapterContent = ch.content || projectChapter?.content || '';
       statuses[ch.index] = chapterContent ? ChapterStatus.COMPLETED : ChapterStatus.PENDING;
       contents[ch.index] = chapterContent;
     }
@@ -90,7 +93,7 @@ export function useChapterGeneration(
     if (selectedChapterIndex >= outline.chapters.length) {
       setSelectedChapterIndex(0);
     }
-  }, [outline?.chapters?.length]);
+  }, [outline?.chapters?.length, getCurrentProject]);
 
   useEffect(() => {
     currentProjectRef.current = getCurrentProject();
@@ -185,6 +188,22 @@ export function useChapterGeneration(
         });
         saveProject();
       }
+
+      // 章节生成完毕后，延迟自动保存以确保 Markdown 组件渲染完成且状态更新完毕
+      setTimeout(async () => {
+        try {
+          if (window.electronAPI?.writing?.autoSaveChapter) {
+            await window.electronAPI.writing.autoSaveChapter({
+              projectId,
+              chapterIndex: data.chapterIndex,
+              content: data.content
+            });
+            console.log('[ChapterGeneration] Auto-save after generation complete: chapter', data.chapterIndex);
+          }
+        } catch (error) {
+          console.error('[ChapterGeneration] Failed to auto-save after generation:', error);
+        }
+      }, 500);
 
       if (generationProgress && generationProgress.mode === GenerationMode.CONTINUOUS) {
         const nextIndex = data.chapterIndex + 1;
@@ -463,6 +482,7 @@ export function useChapterGeneration(
     generationState,
     streamingContent,
     chapterContents,
+    setChapterContents,
     chapterStatuses,
     isGenerating,
     isPaused,

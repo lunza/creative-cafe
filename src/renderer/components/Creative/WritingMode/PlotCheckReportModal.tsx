@@ -33,7 +33,7 @@ interface PlotCheckReportModalProps {
   onCancel: () => void;
   onIssueClick?: (dimension: PlotCheckDimension, issueIndex: number) => void;
   onAutoFix?: (chapterContent: string, issue: PlotCheckIssue | LogicCheckIssue, issueType: 'dimension' | 'logic') => Promise<{ success: boolean; fixedContent?: string; error?: string }>;
-  onQuickFix?: (chapterContent: string, issue: PlotCheckIssue | LogicCheckIssue, onComplete?: () => void) => void;
+  onQuickFix?: (chapterContent: string, issue: PlotCheckIssue | LogicCheckIssue, issueType: 'dimension' | 'logic', onComplete?: () => void) => void;
   onBatchFix?: (selectedIssues: Array<{ key: string; issue: PlotCheckIssue | LogicCheckIssue; issueType: 'dimension' | 'logic' }>) => Promise<{ success: boolean; fixedContent?: string; results?: Array<{ index: number; success: boolean; error?: string }>; error?: string }>;
   chapterContent?: string;
   onContentUpdated?: (fixedContent: string) => void;
@@ -235,7 +235,7 @@ const PlotCheckReportModal: React.FC<PlotCheckReportModalProps> = ({
     }
   };
 
-  const handleQuickFix = (issue: PlotCheckIssue | LogicCheckIssue, issueKey: string) => {
+  const handleQuickFix = (issue: PlotCheckIssue | LogicCheckIssue, issueType: 'dimension' | 'logic', issueKey: string) => {
     if (!onQuickFix || !chapterContent) {
       message.warning('快速修正功能暂不可用');
       return;
@@ -247,7 +247,7 @@ const PlotCheckReportModal: React.FC<PlotCheckReportModalProps> = ({
     }
 
     setGlobalFixing(true);
-    onQuickFix(chapterContent, issue, () => {
+    onQuickFix(chapterContent, issue, issueType, () => {
       setGlobalFixing(false);
     });
   };
@@ -470,7 +470,7 @@ const PlotCheckReportModal: React.FC<PlotCheckReportModalProps> = ({
                                 icon={<EditOutlined />}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleQuickFix(issue, issueKey);
+                                  handleQuickFix(issue, 'dimension', issueKey);
                                 }}
                                 disabled={globalFixing}
                                 style={{ marginTop: 8, marginRight: 8 }}
@@ -569,7 +569,7 @@ const PlotCheckReportModal: React.FC<PlotCheckReportModalProps> = ({
                                   <Button
                                     size="small"
                                     icon={<EditOutlined />}
-                                    onClick={() => handleQuickFix(issue, issueKey)}
+                                    onClick={() => handleQuickFix(issue, 'logic', issueKey)}
                                     disabled={globalFixing}
                                     style={{ marginTop: 4, marginRight: 8 }}
                                   >
