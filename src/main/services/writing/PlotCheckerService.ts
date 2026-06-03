@@ -128,6 +128,10 @@ export class PlotCheckerService {
       contextParts += tableContext + '\n';
     }
 
+    // 核心：必须将待检测的章节内容本身加入 context，否则 AI 会从大纲中读取原文
+    contextParts += '## 本章内容（待检测的章节正文，quickFixSuggestion 的 originalText 必须从此部分复制）\n';
+    contextParts += `${request.content}\n\n`;
+
     const unifiedPrompt = `你是一个专业的小说编辑和质量检查助手。请对以下章节内容进行多维度检查，识别可能的设定不一致、情节矛盾（吃书）、设定遗漏（吞设定）、逻辑矛盾等问题。
 
 ## 剧情多维度检测
@@ -179,9 +183,22 @@ ${contextParts}
 }
 
 对于每个识别出的问题（包括剧情维度和逻辑矛盾），请同时提供 quickFixSuggestion 字段，包含：
-- originalText: 需要被替换的原文片段（必须是章节内容中一字不差的原文，**必须包含所有标点符号、换行符、特殊符号**，与原文完全一致才能执行替换）
+- originalText: 需要被替换的原文片段（**必须一字不差地从原文中复制，包含所有标点符号、换行符、特殊符号、空格**，与原文完全一致才能执行替换）
 - fixedText: 修改后的文本（可以比原文长或短）
 - reason: 修正理由（说明语法、逻辑、表达等方面的改进原因）
+
+## 如何确保 originalText 精确匹配原文
+
+在提供 quickFixSuggestion 时，请严格按照以下步骤操作：
+
+1. **定位原文**：在「本章内容」部分中找到需要修改的确切段落（**不要从大纲摘要或关键情节中复制原文**）
+2. **完整复制**：将原文从头到尾完整复制，**不得做任何修改**，包括：
+   - 保留所有标点符号（句号、逗号、引号、省略号等）
+   - 保留所有换行符和段落分隔
+   - 保留所有空格和缩进
+   - 保留所有特殊字符
+3. **验证匹配**：确保复制的原文能在原文中找到完全一致的匹配
+4. **如果无法完全复制**：可以只复制该段落中具有辨识度的关键句子（至少包含完整的首句和末句），确保首句和末句能精确定位到原文位置
 
 注意：quickFixSuggestion中的originalText必须是章节内容中一字不差的原文，否则无法执行替换。如果问题不涉及具体文本修改，可以将quickFixSuggestion设为null。
 
@@ -299,29 +316,55 @@ ${contextParts}
   private parseCheckResponse(rawContent: string, chapterIndex: number, chapterContent?: string): PlotCheckReport {
     let jsonStr = rawContent.trim();
 
+    // 步骤1: 尝试从 markdown 代码块中提取 JSON
     const patterns = [
       /```(?:json)?\s*([\s\S]*?)```/,
       /```\s*([\s\S]*?)```/,
     ];
 
+    let extracted = false;
     for (const pattern of patterns) {
       const match = jsonStr.match(pattern);
       if (match && match[1]) {
         jsonStr = match[1].trim();
+        extracted = true;
         break;
       }
     }
 
+    addLog(`【剧情检查】JSON 提取${extracted ? '成功' : '未找到代码块，尝试直接解析'}`, 'debug');
+    addLog(`【剧情检查】提取后 JSON 长度: ${jsonStr.length}`, 'debug');
+    addLog(`【剧情检查】提取后 JSON 前200字符: ${jsonStr.substring(0, 200)}`, 'debug');
+    addLog(`【剧情检查】提取后 JSON 后200字符: ${jsonStr.substring(Math.max(0, jsonStr.length - 200))}`, 'debug');
+
     // 修复 AI 返回的中文引号问题：将中文引号替换为英文引号
     jsonStr = this.fixChineseQuotes(jsonStr);
 
+    // 步骤2: 尝试解析 JSON
     let parsed: any;
     try {
       parsed = JSON.parse(jsonStr);
+      addLog(`【剧情检查】JSON 解析成功`, 'debug');
     } catch (parseError) {
-      console.error('[PlotChecker] JSON 解析失败:', parseError);
-      console.error('[PlotChecker] 原始 JSON:', jsonStr);
-      return this.createFallbackReport(chapterIndex);
+      addLog(`【剧情检查】JSON 解析失败: ${parseError instanceof Error ? parseError.message : String(parseError)}`, 'error');
+      addLog(`【剧情检查】尝试修复后重新解析...`, 'debug');
+
+      // 步骤3: 尝试修复 JSON（AI 可能在字符串值中使用了字面换行符而非 \n 转义）
+      try {
+        let fixedJson = this.fixJsonForParsing(jsonStr);
+
+        addLog(`【剧情检查】修复后 JSON 长度: ${fixedJson.length}`, 'debug');
+        addLog(`【剧情检查】修复后 JSON 前200字符: ${fixedJson.substring(0, 200)}`, 'debug');
+
+        // 尝试再次解析
+        parsed = JSON.parse(fixedJson);
+        addLog(`【剧情检查】修复后 JSON 解析成功`, 'debug');
+      } catch (secondError) {
+        addLog(`【剧情检查】修复后 JSON 解析仍失败: ${secondError instanceof Error ? secondError.message : String(secondError)}`, 'error');
+        addLog(`【剧情检查】JSON 前500字符: ${jsonStr.substring(0, 500)}`, 'debug');
+        addLog(`【剧情检查】JSON 后500字符: ${jsonStr.substring(Math.max(0, jsonStr.length - 500))}`, 'debug');
+        return this.createFallbackReport(chapterIndex);
+      }
     }
 
     const dimensions: DimensionScore[] = [];
@@ -334,6 +377,9 @@ ${contextParts}
     // 支持新格式（dimension_scores）和旧格式（顶层维度键）
     const dimensionData = parsed.dimension_scores || parsed;
 
+    addLog(`【剧情检查】解析维度数据: 使用dimension_scores=${!!parsed.dimension_scores}, parsed键=${Object.keys(parsed).join(', ')}`, 'debug');
+    addLog(`【剧情检查】overall_score=${parsed.overall_score}`, 'debug');
+
     const dimensionKeys: { key: string; enum: PlotCheckDimension }[] = [
       { key: 'outline_consistency', enum: PlotCheckDimension.OUTLINE_CONSISTENCY },
       { key: 'worldbook_compliance', enum: PlotCheckDimension.WORLDBOOK_COMPLIANCE },
@@ -344,6 +390,10 @@ ${contextParts}
 
     for (const { key, enum: dim } of dimensionKeys) {
       const data = dimensionData[key] || { score: 50, issues: [] };
+      addLog(`【剧情检查】维度 ${key}: score=${data.score}, issues数量=${(data.issues || []).length}`, 'debug');
+      if ((data.issues || []).length > 0) {
+        addLog(`【剧情检查】  第一个issue: title=${(data.issues[0] as any)?.title}, severity=${(data.issues[0] as any)?.severity}`, 'debug');
+      }
       const issues: PlotCheckIssue[] = (data.issues || []).map((issue: any) => {
         let issueTitle = issue.title;
         if (!issueTitle || issueTitle.trim() === '') {
@@ -501,6 +551,9 @@ ${contextParts}
     if (typeof suggestion.originalText !== 'string' || typeof suggestion.fixedText !== 'string') {
       return undefined;
     }
+    if (!chapterContent || typeof chapterContent !== 'string') {
+      return undefined;
+    }
 
     const validated: QuickFixSuggestion = {
       originalText: suggestion.originalText,
@@ -508,35 +561,100 @@ ${contextParts}
       reason: suggestion.reason || '无'
     };
 
-    // 尝试精确匹配
-    if (chapterContent && typeof chapterContent === 'string') {
-      let matchIndex = chapterContent.indexOf(validated.originalText);
+    // 策略1: 精确匹配（最优先）
+    let matchIndex = chapterContent.indexOf(validated.originalText);
+    if (matchIndex !== -1) {
+      validated.position = {
+        startIndex: matchIndex,
+        endIndex: matchIndex + validated.originalText.length
+      };
+      addLog(`【快速修正】精确匹配成功: 位置 [${matchIndex}, ${matchIndex + validated.originalText.length}]`, 'debug');
+      return validated;
+    }
+
+    // 策略2: 去除首尾空白后的匹配
+    const trimmedOriginalText = validated.originalText.trim();
+    if (trimmedOriginalText && trimmedOriginalText !== validated.originalText) {
+      matchIndex = chapterContent.indexOf(trimmedOriginalText);
       if (matchIndex !== -1) {
+        validated.originalText = trimmedOriginalText;
         validated.position = {
           startIndex: matchIndex,
-          endIndex: matchIndex + validated.originalText.length
+          endIndex: matchIndex + trimmedOriginalText.length
         };
+        addLog(`【快速修正】修剪后匹配成功: 位置 [${matchIndex}, ${matchIndex + trimmedOriginalText.length}]`, 'debug');
         return validated;
       }
+    }
 
-      // 如果精确匹配失败，尝试模糊匹配（去除首尾空白）
-      const trimmedOriginalText = validated.originalText.trim();
-      if (trimmedOriginalText && trimmedOriginalText !== validated.originalText) {
-        matchIndex = chapterContent.indexOf(trimmedOriginalText);
-        if (matchIndex !== -1) {
-          validated.originalText = trimmedOriginalText;
+    // 策略3: 锚点匹配 - 用首句和末句定位区间
+    const anchorMatch = this.findTextByAnchors(validated.originalText, chapterContent);
+    if (anchorMatch) {
+      validated.originalText = anchorMatch.fullText;
+      validated.position = {
+        startIndex: anchorMatch.startIndex,
+        endIndex: anchorMatch.endIndex
+      };
+      addLog(`【快速修正】锚点匹配成功: 位置 [${anchorMatch.startIndex}, ${anchorMatch.endIndex}], 提取文本长度=${anchorMatch.fullText.length}`, 'debug');
+      return validated;
+    }
+
+    // 策略4: 如果 AI 提供了 position，直接用 position 从原文提取
+    if (suggestion.position && suggestion.position.startIndex !== undefined && suggestion.position.endIndex !== undefined) {
+      const posStart = Math.max(0, suggestion.position.startIndex);
+      const posEnd = Math.min(chapterContent.length, suggestion.position.endIndex);
+      if (posStart < posEnd && posStart < chapterContent.length) {
+        const extractedText = chapterContent.substring(posStart, posEnd);
+        if (extractedText.length > 0) {
+          validated.originalText = extractedText;
           validated.position = {
-            startIndex: matchIndex,
-            endIndex: matchIndex + trimmedOriginalText.length
+            startIndex: posStart,
+            endIndex: posEnd
           };
+          addLog(`【快速修正】position提取成功: 位置 [${posStart}, ${posEnd}], 提取文本长度=${extractedText.length}`, 'debug');
           return validated;
         }
       }
     }
 
-    // 即使原文无法精确匹配，也返回建议数据
-    // 这样用户仍可查看建议内容，只是无法自动定位替换位置
-    return validated;
+    // 所有匹配策略均失败
+    addLog(`【快速修正】所有匹配策略失败，originalText前50字符: "${validated.originalText.substring(0, 50)}"`, 'warn');
+    return undefined;
+  }
+
+  // 锚点匹配：用原文的首句和末句作为锚点，定位并提取完整区间文本
+  private findTextByAnchors(originalText: string, chapterContent: string): { fullText: string; startIndex: number; endIndex: number } | null {
+    if (originalText.length < 20) return null; // 文本太短无法锚点匹配
+
+    // 提取首句（第一个句号、问号、叹号或换行符之前的内容）
+    const firstSentenceMatch = originalText.match(/^([^\n。！？.!?…]{5,})/);
+    if (!firstSentenceMatch) return null;
+    const firstSentence = firstSentenceMatch[1].trim();
+    if (firstSentence.length < 5) return null;
+
+    // 提取末句（最后一个句号、问号、叹号之后的内容，或最后一行）
+    const lines = originalText.split('\n').filter(l => l.trim().length > 0);
+    const lastLine = lines[lines.length - 1];
+    if (!lastLine || lastLine.trim().length < 5) return null;
+    const lastSentence = lastLine.trim();
+
+    // 在原文中查找首句
+    const firstIdx = chapterContent.indexOf(firstSentence);
+    if (firstIdx === -1) return null;
+
+    // 在首句之后查找末句
+    const searchStart = firstIdx + firstSentence.length;
+    const lastIdx = chapterContent.indexOf(lastSentence, searchStart);
+    if (lastIdx === -1) return null;
+
+    // 提取两个锚点之间的完整文本
+    const startIndex = firstIdx;
+    const endIndex = lastIdx + lastSentence.length;
+    const fullText = chapterContent.substring(startIndex, endIndex);
+
+    if (fullText.length < 10) return null;
+
+    return { fullText, startIndex, endIndex };
   }
 
   private extractKeywords(description: string, maxCount: number): string[] {
@@ -581,12 +699,147 @@ ${contextParts}
     };
   }
 
+  // 修复 AI 返回的非标准 JSON，使其可以被 JSON.parse 解析
+  // 主要处理：字符串值中的字面换行符、制表符等控制字符，以及 trailing commas、single quotes 等
+  private fixJsonForParsing(jsonStr: string): string {
+    // 步骤1: 移除 JSON 注释（// 和 /* */ 风格）
+    let result = jsonStr
+      .replace(/\/\*[\s\S]*?\*\//g, '') // 块注释
+      .replace(/\/\/.*$/gm, ''); // 行注释
+
+    // 步骤2: 将单引号替换为双引号（仅当它们不在已转义的字符串内时）
+    // 这是一个简化的处理，逐字符遍历来正确处理
+    let inString = false;
+    let escapeNext = false;
+    let temp = '';
+    for (let i = 0; i < result.length; i++) {
+      const char = result[i];
+      if (escapeNext) {
+        temp += char;
+        escapeNext = false;
+        continue;
+      }
+      if (char === '\\') {
+        temp += char;
+        escapeNext = true;
+        continue;
+      }
+      if (char === '"') {
+        inString = !inString;
+        temp += char;
+        continue;
+      }
+      // 在字符串外部，将单引号替换为双引号
+      if (!inString && char === "'") {
+        temp += '"';
+        continue;
+      }
+      temp += char;
+    }
+    result = temp;
+
+    // 步骤3: 处理键名未加引号的情况（如 { key: "value" } -> { "key": "value" }）
+    // 只处理简单的标识符键名
+    result = result.replace(/(\{|\,)\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/g, '$1 "$2":');
+
+    // 步骤4: 移除 trailing commas（在 } 或 ] 前的逗号）
+    result = result.replace(/,\s*([\]}])/g, '$1');
+
+    // 步骤5: 逐字符遍历，识别字符串内部的字面控制字符并转义
+    inString = false;
+    escapeNext = false;
+    let fixed = '';
+
+    for (let i = 0; i < result.length; i++) {
+      const char = result[i];
+
+      if (escapeNext) {
+        fixed += char;
+        escapeNext = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        // 检查是否是有效的 JSON 转义序列
+        const nextChar = result[i + 1];
+        if (nextChar === '"' || nextChar === '\\' || nextChar === '/' || nextChar === 'b' || nextChar === 'f' || nextChar === 'n' || nextChar === 'r' || nextChar === 't' || nextChar === 'u') {
+          // 有效的 JSON 转义序列，保留并标记
+          fixed += char;
+          escapeNext = true;
+          continue;
+        } else {
+          // 无效转义序列（如单独的 \），直接保留反斜杠
+          fixed += char;
+          continue;
+        }
+      }
+
+      if (char === '"') {
+        inString = !inString;
+        fixed += char;
+        continue;
+      }
+
+      if (inString) {
+        // 在字符串内部，将字面换行符替换为 \n
+        if (char === '\n') {
+          fixed += '\\n';
+        } else if (char === '\r') {
+          // 跳过 \r（Windows 换行）
+        } else if (char === '\t') {
+          fixed += '\\t';
+        } else if (char.charCodeAt(0) < 0x20 && char.charCodeAt(0) !== 0x09) {
+          // 其他控制字符跳过
+        } else {
+          fixed += char;
+        }
+      } else {
+        fixed += char;
+      }
+    }
+
+    return fixed;
+  }
+
   // 将 JSON 字符串中的中文引号替换为英文引号，以修复 AI 返回非标准 JSON 的问题
+  // 注意：只替换作为 JSON 结构分隔符的中文引号，保留字符串值内部的中文引号
   private fixChineseQuotes(jsonStr: string): string {
-    let result = jsonStr;
-    // 替换中文双引号（左引号和右引号都替换为英文双引号）
-    result = result.replace(/"/g, '"');
-    result = result.replace(/"/g, '"');
+    // 策略：逐字符遍历，只替换字符串外部的中文引号（即作为 JSON key/value 分隔符的引号）
+    let result = '';
+    let inString = false;
+    let escapeNext = false;
+
+    for (let i = 0; i < jsonStr.length; i++) {
+      const char = jsonStr[i];
+
+      if (escapeNext) {
+        result += char;
+        escapeNext = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        result += char;
+        escapeNext = true;
+        continue;
+      }
+
+      // 检测英文引号（字符串边界）
+      if (char === '"') {
+        inString = !inString;
+        result += char;
+        continue;
+      }
+
+      // 在字符串外部，将中文引号替换为英文引号
+      if (!inString && (char === '"' || char === '"')) {
+        result += '"';
+        continue;
+      }
+
+      result += char;
+    }
+
     return result;
   }
 

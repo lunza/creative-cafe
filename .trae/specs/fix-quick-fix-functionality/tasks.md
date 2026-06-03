@@ -13,8 +13,27 @@
 - [x] Task 4: 更新 PlotCheckReportModal 传递 pendingQuickFixType
   - [x] SubTask 4.1: 在 ContentWorkspace 中正确传递 pendingQuickFixType 给 QuickFixSuggestionModal
   - [x] SubTask 4.2: 更新 PlotCheckReportModal 的 onQuickFix 签名和 handleQuickFix 调用
+- [x] Task 5: 增强 validateQuickFixSuggestion 匹配逻辑
+  - [x] SubTask 5.1: 实现修剪匹配策略（去除首尾空白后匹配）
+  - [x] SubTask 5.2: 实现锚点匹配策略（用首句和末句定位区间）
+  - [x] SubTask 5.3: 实现 position 区间提取策略
+  - [x] SubTask 5.4: 添加匹配策略执行日志
+- [x] Task 6: 增强 fixJsonForParsing JSON 修复能力
+  - [x] SubTask 6.1: 添加注释移除功能（// 和 /* */ 风格）
+  - [x] SubTask 6.2: 添加单引号替换为双引号功能
+  - [x] SubTask 6.3: 添加未加引号键名处理功能
+  - [x] SubTask 6.4: 添加 trailing commas 移除功能
+  - [x] SubTask 6.5: 增强转义序列验证逻辑
+- [x] Task 7: 优化 prompt 提示词
+  - [x] SubTask 7.1: 增加详细的 originalText 精确匹配步骤指导
+  - [x] SubTask 7.2: 强调必须完整复制原文的所有符号和格式
+- [x] Task 8: 添加详细诊断日志
+  - [x] SubTask 8.1: 记录 JSON 提取状态和预览
+  - [x] SubTask 8.2: 记录各维度分数和问题数量
+  - [x] SubTask 8.3: 记录匹配策略执行结果
 
 # Task Dependencies
 - [Task 2] depends on [Task 1]
 - [Task 4] depends on [Task 1]
 - [Task 3] 可以并行执行
+- [Task 5, 6, 7, 8] 可以并行执行，均基于现有代码优化
