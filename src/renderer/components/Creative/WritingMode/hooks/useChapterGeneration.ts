@@ -47,9 +47,16 @@ export function useChapterGeneration(
   outline: GeneratedOutline | null,
   projectId: string
 ): UseChapterGenerationResult {
+  console.log('[ChapterGeneration] Hook called', {
+    hasOutline: !!outline,
+    chapterCount: outline?.chapters?.length,
+    projectId
+  });
+
   const updateProject = useWritingProjectStore((state) => state.updateProject);
   const saveProject = useWritingProjectStore((state) => state.saveProject);
-  const getCurrentProject = useWritingProjectStore((state) => state.getCurrentProject);
+  const currentProjectId = useWritingProjectStore((state) => state.currentProjectId);
+  const projects = useWritingProjectStore((state) => state.projects);
   const setting = useSettingStore((state) => state.setting);
 
   const [selectedChapterIndex, setSelectedChapterIndex] = useState(0);
@@ -73,18 +80,60 @@ export function useChapterGeneration(
   const handleContinuousGenerationRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    if (!outline || !outline.chapters) return;
+    console.log('[ChapterGeneration] useEffect triggered:', {
+      hasOutline: !!outline,
+      chapterCount: outline?.chapters?.length,
+      currentProjectId,
+      projectsCount: projects.length,
+      outlineChapter0ContentLength: outline?.chapters?.[0]?.content?.length || 0,
+      outlineChapter0ContentPreview: outline?.chapters?.[0]?.content?.substring(0, 50) || 'empty',
+      outlineRef: outline ? 'exists' : 'null'
+    });
+    
+    if (!outline || !outline.chapters) {
+      console.warn('[ChapterGeneration] Early return: outline or outline.chapters is missing');
+      return;
+    }
+    
+    // 直接从 store 数据中查找当前项目，确保获取到最新加载的章节内容
+    // 依赖 projects 数组，当 loadProjects 完成异步加载后会自动触发重新初始化
+    const project = projects.find(p => p.id === currentProjectId) || null;
+    console.log('[ChapterGeneration] Current project data:', {
+      projectId: currentProjectId,
+      hasProject: !!project,
+      projectChapterCount: project?.outline?.chapters?.length,
+      projectChapter0ContentLength: project?.outline?.chapters?.[0]?.content?.length || 0,
+      projectChapter0ContentPreview: project?.outline?.chapters?.[0]?.content?.substring(0, 50) || 'empty',
+      projectChapterContentExample: project?.outline?.chapters?.[0]?.content?.substring(0, 50) || 'empty'
+    });
+    
     const statuses: Record<number, ChapterStatus> = {};
     const contents: Record<number, string> = {};
-    const project = getCurrentProject();
+    
     for (const ch of outline.chapters) {
       const projectChapter = project?.outline?.chapters?.find(c => c.index === ch.index);
       // 恢复章节内容：从 outline 中的 ch.content 恢复（从磁盘加载的数据）
       // ch.content 来自 WritingStorageService.loadProject，由 project.json 中的 chapters 数组提供
       const chapterContent = ch.content || projectChapter?.content || '';
+      if (ch.index === 0) {
+        console.log('[ChapterGeneration] Chapter 0 content check:', {
+          outlineChapterContentLength: ch.content?.length || 0,
+          outlineChapterContentPreview: ch.content?.substring(0, 50) || 'empty',
+          projectChapterContentLength: projectChapter?.content?.length || 0,
+          projectChapterContentPreview: projectChapter?.content?.substring(0, 50) || 'empty',
+          finalContentLength: chapterContent.length
+        });
+      }
       statuses[ch.index] = chapterContent ? ChapterStatus.COMPLETED : ChapterStatus.PENDING;
       contents[ch.index] = chapterContent;
     }
+    console.log('[ChapterGeneration] Restored contents:', {
+      chapterCount: outline.chapters.length,
+      restoredContentCount: Object.values(contents).filter(c => c.length > 0).length,
+      contentsPreview: Object.fromEntries(
+        Object.entries(contents).map(([k, v]) => [k, v.substring(0, 50) || 'empty'])
+      )
+    });
     setChapterStatuses(statuses);
     setChapterContents(contents);
     if (outline.chapters.length === 0) {
@@ -93,11 +142,13 @@ export function useChapterGeneration(
     if (selectedChapterIndex >= outline.chapters.length) {
       setSelectedChapterIndex(0);
     }
-  }, [outline?.chapters?.length, getCurrentProject]);
+  }, [outline, currentProjectId, projects]);
 
   useEffect(() => {
-    currentProjectRef.current = getCurrentProject();
-  }, [getCurrentProject]);
+    // 当 projects 数据更新时，同步更新 currentProjectRef
+    const project = projects.find(p => p.id === currentProjectId) || null;
+    currentProjectRef.current = project;
+  }, [currentProjectId, projects]);
 
   const handleEditorChange = useCallback((content: string) => {
     editorContentRef.current = content;
@@ -105,27 +156,24 @@ export function useChapterGeneration(
       clearTimeout(syncTimerRef.current);
     }
     syncTimerRef.current = setTimeout(() => {
-      const project = getCurrentProject();
+      const project = currentProjectRef.current;
       if (project && project.outline && outline) {
         const currentChapter = outline.chapters[selectedChapterIndex];
         if (currentChapter) {
           updateProject(project.id, {
-            chapters: project.outline.chapters.map(ch =>
-              ch.index === currentChapter.index
-                ? { ...ch, content, lastModified: Date.now() }
-                : ch
-            ),
-            metadata: {
-              ...project.metadata,
-              totalWordCount: project.outline.chapters.reduce((sum, ch) =>
-                sum + (ch.index === currentChapter.index ? content.length : ch.wordCount || 0), 0
+            outline: {
+              ...project.outline,
+              chapters: project.outline.chapters.map(ch =>
+                ch.index === currentChapter.index
+                  ? { ...ch, content, lastModified: Date.now() }
+                  : ch
               ),
-            }
+            },
           });
         }
       }
     }, 1000);
-  }, [selectedChapterIndex, outline, getCurrentProject, updateProject]);
+  }, [selectedChapterIndex, outline, updateProject]);
 
   useEffect(() => {
     return () => {
@@ -175,16 +223,14 @@ export function useChapterGeneration(
       const currentProject = currentProjectRef.current;
       if (currentProject && currentProject.outline) {
         updateProject(currentProject.id, {
-          chapters: currentProject.outline.chapters.map(ch =>
-            ch.index === data.chapterIndex
-              ? { ...ch, content: data.content, status: ChapterStatus.COMPLETED, wordCount: data.content.length, lastModified: Date.now() }
-              : ch
-          ),
-          metadata: {
-            ...currentProject.metadata,
-            totalWordCount: currentProject.outline.chapters.reduce((sum, ch) => sum + (ch.index === data.chapterIndex ? data.content.length : ch.wordCount || 0), 0),
-            completedChapters: currentProject.outline.chapters.filter(ch => ch.index === data.chapterIndex || ch.status === ChapterStatus.COMPLETED).length
-          }
+          outline: {
+            ...currentProject.outline,
+            chapters: currentProject.outline.chapters.map(ch =>
+              ch.index === data.chapterIndex
+                ? { ...ch, content: data.content, status: ChapterStatus.COMPLETED, wordCount: data.content.length, lastModified: Date.now() }
+                : ch
+            ),
+          },
         });
         saveProject();
       }
@@ -417,27 +463,23 @@ export function useChapterGeneration(
     if (window.electronAPI?.writing) {
       await window.electronAPI.writing.autoSaveChapter({ projectId, chapterIndex: currentChapter.index, content });
       setChapterContents(prev => ({ ...prev, [currentChapter.index]: content }));
-      const project = getCurrentProject();
+      const project = currentProjectRef.current;
       if (project && project.outline) {
         updateProject(project.id, {
-          chapters: project.outline.chapters.map(ch =>
-            ch.index === currentChapter.index
-              ? { ...ch, content, status: ChapterStatus.COMPLETED, wordCount: content.length, lastModified: Date.now() }
-              : ch
-          ),
-          metadata: {
-            ...project.metadata,
-            totalWordCount: project.outline.chapters.reduce((sum, ch) =>
-              sum + (ch.index === currentChapter.index ? content.length : ch.wordCount || 0), 0
+          outline: {
+            ...project.outline,
+            chapters: project.outline.chapters.map(ch =>
+              ch.index === currentChapter.index
+                ? { ...ch, content, status: ChapterStatus.COMPLETED, wordCount: content.length, lastModified: Date.now() }
+                : ch
             ),
-            completedChapters: project.outline.chapters.filter(ch => ch.index === currentChapter.index || ch.status === ChapterStatus.COMPLETED).length
-          }
+          },
         });
         saveProject();
       }
       message.success('已保存');
     }
-  }, [streamingContent, chapterContents, selectedChapterIndex, projectId, outline, getCurrentProject, updateProject, saveProject]);
+  }, [streamingContent, chapterContents, selectedChapterIndex, projectId, outline, updateProject, saveProject]);
 
   const handleClearChapter = useCallback(() => {
     const ch = outline?.chapters[selectedChapterIndex];
@@ -447,26 +489,22 @@ export function useChapterGeneration(
     setCurrentChapterWords(0);
     setStreamingContent('');
 
-    const project = getCurrentProject();
+    const project = currentProjectRef.current;
     if (project && project.outline) {
       updateProject(project.id, {
-        chapters: project.outline.chapters.map(c =>
-          c.index === ch.index
-            ? { ...c, content: '', status: ChapterStatus.PENDING, wordCount: 0, lastModified: Date.now() }
-            : c
-        ),
-        metadata: {
-          ...project.metadata,
-          totalWordCount: project.outline.chapters.reduce((sum, c) =>
-            sum + (c.index === ch.index ? 0 : c.wordCount || 0), 0
+        outline: {
+          ...project.outline,
+          chapters: project.outline.chapters.map(c =>
+            c.index === ch.index
+              ? { ...c, content: '', status: ChapterStatus.PENDING, wordCount: 0, lastModified: Date.now() }
+              : c
           ),
-          completedChapters: project.outline.chapters.filter(c => c.index !== ch.index && c.status === ChapterStatus.COMPLETED).length
-        }
+        },
       });
       saveProject();
     }
     message.success('章节内容已清空');
-  }, [selectedChapterIndex, outline, getCurrentProject, updateProject, saveProject]);
+  }, [selectedChapterIndex, outline, updateProject, saveProject]);
 
   const handleRegenerateChapter = useCallback(() => {
     const currentChapter = outline?.chapters[selectedChapterIndex];

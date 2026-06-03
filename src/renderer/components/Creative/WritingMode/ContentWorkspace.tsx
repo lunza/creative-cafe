@@ -58,7 +58,16 @@ interface ContentWorkspaceProps {
 }
 
 const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId, onBack }) => {
+  console.log('[ContentWorkspace] Component mounted/updated', {
+    hasOutline: !!outline,
+    outlineChapterCount: outline?.chapters?.length,
+    outlineChapter0ContentLength: outline?.chapters?.[0]?.content?.length || 0,
+    outlineChapter0ContentPreview: outline?.chapters?.[0]?.content?.substring(0, 50) || 'empty',
+    projectId
+  });
+
   const modalStates = useModalStates();
+
   const chapterGeneration = useChapterGeneration(outline, projectId);
   const versionManagement = useVersionManagement(projectId, outline);
   const plotCheck = usePlotCheck(
@@ -76,6 +85,16 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
     (s) => {},
     (s) => {}
   );
+  
+  // 打印章节内容恢复情况
+  console.log('[ContentWorkspace] chapterContents state:', {
+    chapterCount: outline?.chapters?.length || 0,
+    restoredChapterCount: Object.keys(chapterGeneration.chapterContents).length,
+    firstChapterContentLength: chapterGeneration.chapterContents[0]?.length || 0,
+    firstChapterContentPreview: chapterGeneration.chapterContents[0]?.substring(0, 50) || 'empty',
+    allKeys: Object.keys(chapterGeneration.chapterContents),
+    statusesKeys: Object.keys(chapterGeneration.chapterStatuses)
+  });
 
   const rightPanelVisible = useWritingModeUIStore((state) => state.rightPanelVisible);
   const rightPanelTab = useWritingModeUIStore((state) => state.rightPanelTab);
@@ -486,6 +505,12 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
               </div>
             ) : (
               <>
+                {console.log('[ContentWorkspace] Rendering MarkdownEditor', {
+                  chapterIndex: currentChapter.index,
+                  chapterContents: chapterGeneration.chapterContents,
+                  valueLength: chapterGeneration.chapterContents[currentChapter.index]?.length || 0,
+                  hasContent: !!chapterGeneration.chapterContents[currentChapter.index]
+                })}
                 <MarkdownEditor
                   key={currentChapter.index}
                   value={chapterGeneration.chapterContents[currentChapter.index] || ''}

@@ -43,7 +43,22 @@ export const useWritingProjectStore = create<WritingProjectState>((set, get) => 
             seenIds.add(p.id);
             return true;
           });
-          set({ projects: uniqueProjects, isLoading: false });
+          // 调试：检查加载的项目数据
+          console.log('[writingProjectStore] loadProjects: Loaded raw data check', {
+            projectCount: uniqueProjects.length,
+            firstProjectChapterCount: uniqueProjects[0]?.outline?.chapters?.length || 0,
+            firstProjectChapter0ContentLength: uniqueProjects[0]?.outline?.chapters?.[0]?.content?.length || 0,
+            firstProjectChapter0ContentPreview: uniqueProjects[0]?.outline?.chapters?.[0]?.content?.substring(0, 50) || 'empty'
+          });
+          // 确保 currentProjectId 指向有效的已加载项目
+          const { currentProjectId } = get();
+          if (!currentProjectId && uniqueProjects.length > 0) {
+            console.log('[writingProjectStore] loadProjects: Setting currentProjectId to first project:', uniqueProjects[0].id);
+            set({ projects: uniqueProjects, isLoading: false, currentProjectId: uniqueProjects[0].id });
+          } else {
+            set({ projects: uniqueProjects, isLoading: false });
+          }
+          console.log('[writingProjectStore] loadProjects: Loaded', uniqueProjects.length, 'projects, currentProjectId:', currentProjectId);
         } else {
           set({ isLoading: false });
         }

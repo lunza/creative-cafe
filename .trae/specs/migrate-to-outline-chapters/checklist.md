@@ -50,3 +50,8 @@
 - [x] 模块间解耦程度提升
 - [x] 代码复杂度降低
 - [x] 技术文档已更新
+
+## 清理 project.chapters 残留引用
+- [x] WritingStorageService.loadProject() 中不再引用 project.chapters
+- [x] 全局搜索 project.chapters 无残留引用
+- [x] 所有项目数据访问统一使用 project.outline.chapters

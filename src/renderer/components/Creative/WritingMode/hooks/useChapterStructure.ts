@@ -119,18 +119,7 @@ export function useChapterStructure(
 
     const project = getCurrentProject();
     if (project && project.outline) {
-      const newProjectChapters = project.outline.chapters.slice();
-      newProjectChapters.splice(selectedChapterIndex, 1, ...newChapters.map(ch => ({
-        index: ch.index,
-        title: ch.title,
-        content: splitContents[ch.index] || '',
-        status: ChapterStatus.PENDING,
-        wordCount: (splitContents[ch.index] || '').length,
-        lastModified: Date.now(),
-        versions: []
-      })));
-
-      updateProject(project.id, { chapters: newProjectChapters, outline: newOutline });
+      updateProject(project.id, { outline: newOutline });
       saveProject();
     }
 
@@ -192,18 +181,7 @@ export function useChapterStructure(
 
     const project = getCurrentProject();
     if (project && project.outline) {
-      const newProjectChapters = project.outline.chapters.slice();
-      newProjectChapters.splice(insertIndex, sortedIndices.length, {
-        index: firstChapterIndex,
-        title: mergedChapter.title,
-        content: mergedContent,
-        status: ChapterStatus.PENDING,
-        wordCount: mergedContent.length,
-        lastModified: Date.now(),
-        versions: []
-      });
-
-      updateProject(project.id, { chapters: newProjectChapters, outline: newOutline });
+      updateProject(project.id, { outline: newOutline });
       saveProject();
     }
 

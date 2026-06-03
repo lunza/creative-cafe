@@ -47,10 +47,14 @@ const WritingModeEntry: React.FC = () => {
   const [showConfigModal, setShowConfigModal] = useState(false);
 
   const projects = useWritingProjectStore((state) => state.projects);
+  const currentProjectId = useWritingProjectStore((state) => state.currentProjectId);
   const isLoading = useWritingProjectStore((state) => state.isLoading);
   const loadProjects = useWritingProjectStore((state) => state.loadProjects);
   const setCurrentProject = useWritingProjectStore((state) => state.setCurrentProject);
   const getCurrentProject = useWritingProjectStore((state) => state.getCurrentProject);
+
+  // 直接从 store 订阅的数据派生 currentProject，确保 loadProjects 完成后能正确更新
+  const currentProject = currentProjectId ? projects.find(p => p.id === currentProjectId) || null : null;
 
   const layoutMode = useWritingModeUIStore((state) => state.layoutMode);
   const sidebarCollapsed = useWritingModeUIStore((state) => state.sidebarCollapsed);
@@ -65,6 +69,7 @@ const WritingModeEntry: React.FC = () => {
   const detectLayoutMode = useWritingModeUIStore((state) => state.detectLayoutMode);
 
   useEffect(() => {
+    console.log('[WritingModeEntry] Component mounted, loading projects...');
     loadProjects();
     const handleResize = () => {
       const width = window.innerWidth;
@@ -74,6 +79,17 @@ const WritingModeEntry: React.FC = () => {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  useEffect(() => {
+    console.log('[WritingModeEntry] State changed:', {
+      currentProjectId,
+      projectsCount: projects.length,
+      hasCurrentProject: !!currentProject,
+      outlineExists: !!currentProject?.outline,
+      chapterCount: currentProject?.outline?.chapters?.length,
+      activePanel
+    });
+  }, [currentProjectId, projects, currentProject, activePanel]);
 
   useEffect(() => {
     if (selectedProjectId) {
@@ -139,8 +155,6 @@ const WritingModeEntry: React.FC = () => {
     }
   }, [selectedProjectId]);
 
-  const currentProject = selectedProjectId ? getCurrentProject() : null;
-
   const filteredProjects = projects.filter(p =>
     !searchText ||
     p.config.parameters.creativeDescription.toLowerCase().includes(searchText.toLowerCase())
@@ -184,6 +198,12 @@ const WritingModeEntry: React.FC = () => {
             <FolderOutlined style={{ fontSize: 64, color: token.colorTextTertiary, marginBottom: 16 }} />
             <h3 style={{ color: token.colorTextSecondary, margin: 0 }}>暂无选中项目</h3>
             <p style={{ color: token.colorTextTertiary }}>请先从左侧列表选择一个项目</p>
+            {/* DEBUG UI */}
+            <div style={{ marginTop: 16, padding: 12, background: '#1a1a1a', color: '#ff4d4f', fontSize: 12, fontFamily: 'monospace', textAlign: 'left' }}>
+              <div>currentProjectId: {currentProjectId || 'NULL'}</div>
+              <div>projects.length: {projects.length}</div>
+              <div>selectedProjectId: {selectedProjectId || 'NULL'}</div>
+            </div>
           </div>
         </div>
       );

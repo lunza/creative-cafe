@@ -414,7 +414,7 @@ ${contextParts}
           originalText: origTextEntries.length > 0 ? origTextEntries : undefined,
           references: refs.length > 0 ? refs : undefined,
           quickFixable: !!issue.quickFixSuggestion,
-          quickFixSuggestion: issue.quickFixSuggestion ? this.validateQuickFixSuggestion(issue.quickFixSuggestion, chapterContent) : undefined
+          quickFixSuggestion: issue.quickFixSuggestion ? this.validateQuickFixSuggestion(issue.quickFixSuggestion, chapterContent || '') : undefined
         };
       });
 
@@ -457,6 +457,11 @@ ${contextParts}
         description: issue.description || '',
         analysis: issue.analysis || '',
         suggestion: issue.suggestion || '',
+        position: issue.position || undefined,
+        originalText: issue.originalText || undefined,
+        references: issue.references || undefined,
+        quickFixable: !!issue.quickFixSuggestion,
+        quickFixSuggestion: issue.quickFixSuggestion ? this.validateQuickFixSuggestion(issue.quickFixSuggestion, chapterContent || '') : undefined,
         chapterIndex: chapterIndex
       };
     });
@@ -496,9 +501,6 @@ ${contextParts}
     if (typeof suggestion.originalText !== 'string' || typeof suggestion.fixedText !== 'string') {
       return undefined;
     }
-    if (!chapterContent || typeof chapterContent !== 'string') {
-      return undefined;
-    }
 
     const validated: QuickFixSuggestion = {
       originalText: suggestion.originalText,
@@ -506,56 +508,35 @@ ${contextParts}
       reason: suggestion.reason || '无'
     };
 
-    // 首先尝试精确匹配
-    let matchIndex = chapterContent.indexOf(validated.originalText);
-    if (matchIndex !== -1) {
-      validated.position = {
-        startIndex: matchIndex,
-        endIndex: matchIndex + validated.originalText.length
-      };
-      return validated;
-    }
-
-    // 如果精确匹配失败，尝试模糊匹配（去除首尾空白）
-    const trimmedOriginalText = validated.originalText.trim();
-    if (trimmedOriginalText && trimmedOriginalText !== validated.originalText) {
-      matchIndex = chapterContent.indexOf(trimmedOriginalText);
+    // 尝试精确匹配
+    if (chapterContent && typeof chapterContent === 'string') {
+      let matchIndex = chapterContent.indexOf(validated.originalText);
       if (matchIndex !== -1) {
-        validated.originalText = trimmedOriginalText; // 使用清理后的文本
         validated.position = {
           startIndex: matchIndex,
-          endIndex: matchIndex + trimmedOriginalText.length
+          endIndex: matchIndex + validated.originalText.length
         };
         return validated;
       }
-    }
 
-    // 最后尝试部分匹配（取originalText的前缀和后缀进行搜索）
-    if (validated.originalText.length > 20) { // 只对较长的文本尝试部分匹配
-      const prefix = validated.originalText.substring(0, 10).trim();
-      const suffix = validated.originalText.substring(validated.originalText.length - 10).trim();
-      
-      const prefixIndex = chapterContent.indexOf(prefix);
-      if (prefixIndex !== -1) {
-        // 在前缀位置之后寻找后缀
-        const suffixIndex = chapterContent.indexOf(suffix, prefixIndex + prefix.length);
-        if (suffixIndex !== -1 && suffixIndex > prefixIndex) {
-          // 提取两个位置之间的文本作为匹配内容
-          const matchedText = chapterContent.substring(prefixIndex, suffixIndex + suffix.length);
-          if (matchedText.includes(validated.originalText) || 
-              validated.originalText.includes(matchedText.substring(0, matchedText.length))) {
-            validated.position = {
-              startIndex: prefixIndex,
-              endIndex: suffixIndex + suffix.length
-            };
-            return validated;
-          }
+      // 如果精确匹配失败，尝试模糊匹配（去除首尾空白）
+      const trimmedOriginalText = validated.originalText.trim();
+      if (trimmedOriginalText && trimmedOriginalText !== validated.originalText) {
+        matchIndex = chapterContent.indexOf(trimmedOriginalText);
+        if (matchIndex !== -1) {
+          validated.originalText = trimmedOriginalText;
+          validated.position = {
+            startIndex: matchIndex,
+            endIndex: matchIndex + trimmedOriginalText.length
+          };
+          return validated;
         }
       }
     }
 
-    // 原文本未找到，标记为不可快速修正
-    return undefined;
+    // 即使原文无法精确匹配，也返回建议数据
+    // 这样用户仍可查看建议内容，只是无法自动定位替换位置
+    return validated;
   }
 
   private extractKeywords(description: string, maxCount: number): string[] {

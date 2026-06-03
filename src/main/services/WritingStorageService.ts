@@ -372,6 +372,12 @@ export class WritingStorageService {
       
       const data = fs.readFileSync(projectFile, 'utf8');
       let project: WritingProject = JSON.parse(data);
+      console.log('[WritingStorage] loadProject - After JSON parse:', {
+        projectId,
+        outlineChapterCount: project.outline?.chapters?.length || 0,
+        outlineChapter0ContentLength: project.outline?.chapters?.[0]?.content?.length || 0,
+        outlineChapter0ContentPreview: project.outline?.chapters?.[0]?.content?.substring(0, 50) || 'empty'
+      });
 
       if (!project.metadata) {
         project.metadata = {
@@ -397,12 +403,25 @@ export class WritingStorageService {
                 if (content.length > (chapter.content?.length || 0)) {
                   chapter.content = content;
                   chapter.wordCount = content.length;
+                  console.log('[WritingStorage] loadProject - Filled chapter content from .md file:', {
+                    chapterIndex,
+                    contentLength: content.length
+                  });
                 }
               }
             }
           }
         }
+      } else {
+        console.log('[WritingStorage] loadProject - No chapters directory found:', chaptersDir);
       }
+      
+      console.log('[WritingStorage] loadProject - Final check before return:', {
+        projectId,
+        outlineChapterCount: project.outline?.chapters?.length || 0,
+        outlineChapter0ContentLength: project.outline?.chapters?.[0]?.content?.length || 0,
+        outlineChapter0ContentPreview: project.outline?.chapters?.[0]?.content?.substring(0, 50) || 'empty'
+      });
 
       const computedMeta = computeProjectMetadata(project);
       project.metadata.totalWordCount = computedMeta.totalWordCount;

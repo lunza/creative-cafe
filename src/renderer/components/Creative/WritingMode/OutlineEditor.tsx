@@ -91,22 +91,6 @@ const OutlineEditor: React.FC<OutlineEditorProps> = ({
       outline: finalOutline,
       outlineRaw: JSON.stringify(finalOutline, null, 2),
       status: ProjectStatus.OUTLINING,
-      chapters: finalOutline.chapters.map(ch => ({
-        index: ch.index,
-        title: ch.title,
-        outline: {
-          summary: ch.summary || '',
-          keyPlotPoints: ch.keyPlotPoints || [],
-          characters: ch.characters || [],
-          scenes: ch.scenes || [],
-          targetWordCount: ch.targetWordCount || 3000
-        },
-        content: project.outline?.chapters.find(c => c.index === ch.index)?.content || '',
-        status: ChapterStatus.PENDING,
-        wordCount: project.outline?.chapters.find(c => c.index === ch.index)?.wordCount || 0,
-        versions: project.outline?.chapters.find(c => c.index === ch.index)?.versions || [],
-        lastModified: Date.now()
-      }))
     });
 
     message.success('大纲已保存');

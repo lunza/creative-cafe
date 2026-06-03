@@ -178,11 +178,14 @@ export function usePlotCheck(
         const project = getCurrentProject();
         if (project && project.outline) {
           updateProject(project.id, {
-            chapters: project.outline.chapters.map(ch =>
-              ch.index === currentChapter.index
-                ? { ...ch, content: result.fixedContent, lastModified: Date.now() }
-                : ch
-            ),
+            outline: {
+              ...project.outline,
+              chapters: project.outline.chapters.map(ch =>
+                ch.index === currentChapter.index
+                  ? { ...ch, content: result.fixedContent, lastModified: Date.now() }
+                  : ch
+              ),
+            },
           });
           saveProject();
         }
@@ -214,11 +217,14 @@ export function usePlotCheck(
     const project = getCurrentProject();
     if (project && project.outline) {
       updateProject(project.id, {
-        chapters: project.outline.chapters.map(ch =>
-          ch.index === chapterIndex
-            ? { ...ch, content: fixedContent, lastModified: Date.now() }
-            : ch
-        ),
+        outline: {
+          ...project.outline,
+          chapters: project.outline.chapters.map(ch =>
+            ch.index === chapterIndex
+              ? { ...ch, content: fixedContent, lastModified: Date.now() }
+              : ch
+          ),
+        },
         metadata: {
           ...project.metadata,
           totalWordCount: project.outline.chapters.reduce((sum, ch) =>
@@ -286,11 +292,14 @@ export function usePlotCheck(
       const project = getCurrentProject();
       if (project && project.outline) {
         updateProject(project.id, {
-          chapters: project.outline.chapters.map(ch =>
-            ch.index === currentChapter.index
-              ? { ...ch, content: pendingFixContent, lastModified: Date.now() }
-              : ch
-          ),
+          outline: {
+            ...project.outline,
+            chapters: project.outline.chapters.map(ch =>
+              ch.index === currentChapter.index
+                ? { ...ch, content: pendingFixContent, lastModified: Date.now() }
+                : ch
+            ),
+          },
         });
         saveProject();
       }
@@ -337,11 +346,14 @@ export function usePlotCheck(
       const project = getCurrentProject();
       if (project && project.outline) {
         updateProject(project.id, {
-          chapters: project.outline.chapters.map(ch =>
-            ch.index === currentChapter.index
-              ? { ...ch, content: newContent, lastModified: Date.now() }
-              : ch
-          ),
+          outline: {
+            ...project.outline,
+            chapters: project.outline.chapters.map(ch =>
+              ch.index === currentChapter.index
+                ? { ...ch, content: newContent, lastModified: Date.now() }
+                : ch
+            ),
+          },
         });
         saveProject();
       }
@@ -496,11 +508,14 @@ export function usePlotCheck(
         const project = getCurrentProject();
         if (project && project.outline) {
           updateProject(project.id, {
-            chapters: project.outline.chapters.map(ch =>
-              ch.index === currentChapter.index
-                ? { ...ch, content: result.fixedContent, lastModified: Date.now() }
-                : ch
-            ),
+            outline: {
+              ...project.outline,
+              chapters: project.outline.chapters.map(ch =>
+                ch.index === currentChapter.index
+                  ? { ...ch, content: result.fixedContent, lastModified: Date.now() }
+                  : ch
+              ),
+            },
           });
           saveProject();
         }

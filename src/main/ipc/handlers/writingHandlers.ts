@@ -41,7 +41,18 @@ const activeAbortControllers = new Map<string, AbortController>();
 export function registerWritingHandlers(): void {
   ipcMain.handle('writing:loadProjects', async () => {
     try {
+      console.log('[Writing] writing:loadProjects - Starting load...');
       const projects = await writingStorageService.loadAllProjects();
+      console.log('[Writing] writing:loadProjects - Loaded', projects.length, 'projects');
+      if (projects.length > 0) {
+        const firstProject = projects[0];
+        console.log('[Writing] writing:loadProjects - First project check:', {
+          projectId: firstProject.id,
+          chapterCount: firstProject.outline?.chapters?.length || 0,
+          chapter0ContentLength: firstProject.outline?.chapters?.[0]?.content?.length || 0,
+          chapter0ContentPreview: firstProject.outline?.chapters?.[0]?.content?.substring(0, 50) || 'empty'
+        });
+      }
       return { success: true, projects };
     } catch (error) {
       return {
