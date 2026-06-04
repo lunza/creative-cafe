@@ -9,7 +9,7 @@ import React, {
   createContext,
   useContext,
 } from 'react';
-import { Button, Tooltip, message } from 'antd';
+import { Button, Tooltip, message, theme as antTheme } from 'antd';
 import { SaveOutlined, CheckOutlined, LoadingOutlined } from '@ant-design/icons';
 import { MilkdownProvider } from '@milkdown/react';
 import { Crepe } from '@milkdown/crepe';
@@ -72,6 +72,7 @@ const MarkdownEditorComponent = (
 
   const { fetchSetting } = useSettingStore();
   const { addLog } = useLogStore();
+  const { token } = antTheme.useToken();
 
   const rootRef = useRef<HTMLDivElement>(null);
   const crepeRef = useRef<Crepe | null>(null);
@@ -476,15 +477,18 @@ const MarkdownEditorComponent = (
   }, [containerStyle]);
 
   const wrapperStyle = useMemo(() => {
+    const isDark = theme === 'dark';
     return {
       minHeight,
-      background: theme === 'dark' ? '#1b1c1d' : '#fdfcff',
+      background: isDark ? token.colorBgContainer : '#fdfcff',
       borderRadius: '8px',
       padding: '20px',
-      color: theme === 'dark' ? '#f8f9ff' : '#1b1c1d',
+      color: isDark ? token.colorText : '#1b1c1d',
       ...style,
     };
-  }, [theme, minHeight, style]);
+  }, [theme, minHeight, style, token.colorBgContainer, token.colorText]);
+
+  const isDark = theme === 'dark';
 
   // ==================== 副作用处理 ====================
 
@@ -631,7 +635,7 @@ const MarkdownEditorComponent = (
             alignItems: 'center',
             justifyContent: 'center',
             padding: '40px',
-            color: theme === 'dark' ? '#a0aec0' : '#718096',
+            color: token.colorTextSecondary,
             fontSize: '14px'
           }}>
             <LoadingOutlined style={{ fontSize: '20px', marginRight: '8px', animation: 'spin 1s linear infinite' }} />
@@ -646,8 +650,8 @@ const MarkdownEditorComponent = (
             alignItems: 'center',
             justifyContent: 'center',
             padding: '20px',
-            backgroundColor: theme === 'dark' ? '#4a1f1f' : '#fff5f5',
-            color: theme === 'dark' ? '#fc8181' : '#e53e3e',
+            backgroundColor: isDark ? token.colorErrorBg : '#fff5f5',
+            color: isDark ? token.colorError : '#e53e3e',
             borderRadius: '8px',
             marginBottom: '12px',
             fontSize: '14px'
@@ -658,7 +662,7 @@ const MarkdownEditorComponent = (
               type="link"
               size="small"
               onClick={loadFromStorage}
-              style={{ color: theme === 'dark' ? '#90cdf4' : '#3182ce', marginLeft: '8px' }}
+              style={{ color: isDark ? token.colorInfo : '#3182ce', marginLeft: '8px' }}
             >
               重试
             </Button>
@@ -681,7 +685,7 @@ const MarkdownEditorComponent = (
               )}
               {hasUnsavedChanges && !isSaving && (
                 <span style={{
-                  color: theme === 'dark' ? '#faad14' : '#fa8c16',
+                  color: token.colorWarning,
                   fontSize: '12px'
                 }}>
                   • 有未保存的更改

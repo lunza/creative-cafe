@@ -255,7 +255,8 @@ export function registerWritingHandlers(): void {
         return {
           success: true,
           outline: null,
-          outlineRaw: result.rawContent
+          outlineRaw: result.rawContent,
+          chainOfThought: result.chainOfThought || null
         };
       } catch (error) {
         activeAbortControllers.delete(outlineKey);
@@ -266,6 +267,7 @@ export function registerWritingHandlers(): void {
             success: false,
             outline: null,
             outlineRaw: error.rawContent as string,
+            chainOfThought: (error as any).chainOfThought || null,
             error: '大纲解析失败，但原始内容已保留'
           };
         }

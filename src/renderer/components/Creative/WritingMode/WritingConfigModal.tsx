@@ -1,12 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Modal, Form, Input, Select, InputNumber, Button, Row, Col, message, Checkbox, Collapse, Tag, Spin, List, Slider } from 'antd';
-import { BookOutlined, UserOutlined, EditOutlined, IdcardOutlined, SaveOutlined, FolderOpenOutlined, DeleteOutlined, SettingOutlined } from '@ant-design/icons';
+import { BookOutlined, EditOutlined, SaveOutlined, FolderOpenOutlined, DeleteOutlined, SettingOutlined } from '@ant-design/icons';
 import {
-  NovelType,
-  NarrativePerspective,
   WritingStyle,
-  WritingConfig,
-  WritingErrorCode
+  WritingConfig
 } from '../../../../shared/types/writing.types';
 import {
   NOVEL_TYPE_OPTIONS,
@@ -38,7 +35,6 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
   const [availableWorldBooks, setAvailableWorldBooks] = useState<any[]>([]);
   const [availableCharacters, setAvailableCharacters] = useState<any[]>([]);
   const [availablePersonas, setAvailablePersonas] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
   const [loadingResources, setLoadingResources] = useState(true);
   const [aiConfig, setAiConfig] = useState<any>(null);
   const [isAiConfigLoaded, setIsAiConfigLoaded] = useState(false);
@@ -49,7 +45,6 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
   const [showSavedConfigs, setShowSavedConfigs] = useState(false);
   const [saveModalVisible, setSaveModalVisible] = useState(false);
   const [saveName, setSaveName] = useState('');
-  const [error, setError] = useState<string | null>(null);
   const lastConfigRef = useRef<{ values: any; config: WritingConfig } | null>(null);
   const [pendingRawJson, setPendingRawJson] = useState<string | null>(null);
   const [editableJson, setEditableJson] = useState<string>('');
@@ -289,10 +284,8 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
       modelConfig
     };
 
-    setLoading(true);
     setIsGenerating(true);
     setStreamContent('');
-    setError(null);
     setPendingRawJson(null);
     setGenerationAborted(false);
     lastConfigRef.current = { values, config };
@@ -323,17 +316,17 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
         setPendingRawJson(result.outlineRaw);
         setStreamContent(result.outlineRaw);
         setEditableJson(result.outlineRaw);
+        if (result.chainOfThought) {
+          useWritingModeStore.getState().setChainOfThought(result.chainOfThought);
+        }
       } else if (!result.success) {
-        setError(result.error || '大纲生成失败');
         message.error(result.error || '大纲生成失败');
       }
     } catch (err: any) {
       console.error('[WritingConfig] Outline generation error:', err);
       const errorMessage = err?.message || err?.toString() || '大纲生成出错';
-      setError(errorMessage);
       message.error(errorMessage);
     } finally {
-      setLoading(false);
       setIsGenerating(false);
     }
   };
@@ -341,7 +334,6 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
   const handleCancelGeneration = async () => {
     await window.electronAPI.writing.cancelGeneration('');
     setGenerationAborted(true);
-    setLoading(false);
     setIsGenerating(false);
     message.info('已中止生成');
   };
@@ -380,13 +372,11 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
       message.error('无法重试：未找到上次生成的配置');
       return;
     }
-    setError(null);
     setPendingRawJson(null);
     setEditableJson('');
     setGenerationAborted(false);
     const { values, config: savedConfig } = lastConfigRef.current;
     
-    setLoading(true);
     setIsGenerating(true);
     setStreamContent('');
     try {
@@ -416,17 +406,17 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
         setPendingRawJson(result.outlineRaw);
         setStreamContent(result.outlineRaw);
         setEditableJson(result.outlineRaw);
+        if (result.chainOfThought) {
+          useWritingModeStore.getState().setChainOfThought(result.chainOfThought);
+        }
       } else if (!result.success) {
-        setError(result.error || '大纲生成失败');
         message.error(result.error || '大纲生成失败');
       }
     } catch (retryError: any) {
       console.error('[WritingConfig] Retry error:', retryError);
       const errorMessage = retryError?.message || retryError?.toString() || '大纲生成出错';
-      setError(errorMessage);
       message.error(errorMessage);
     } finally {
-      setLoading(false);
       setIsGenerating(false);
     }
   }, []);
@@ -767,7 +757,7 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
                   )}
                   {!isGenerating && pendingRawJson && (
                     <>
-                      <Button onClick={() => { setPendingRawJson(null); setGenerationAborted(false); setError(null); handleGenerateOutline(form.getFieldsValue()); }}>
+                      <Button onClick={() => { setPendingRawJson(null); setGenerationAborted(false); handleGenerateOutline(form.getFieldsValue()); }}>
                         重新生成
                       </Button>
                       <Button type="primary" loading={saving} onClick={handleSaveOutline} size="large">

@@ -1,5 +1,5 @@
 import React, { useCallback, useState, useEffect } from 'react';
-import { Layout, Menu, Button, Avatar, Badge, Input, Divider, Tooltip, Space, Tag, Popconfirm, message } from 'antd';
+import { Layout, Menu, Button, Input, Divider, Tooltip, Tag, Popconfirm, message } from 'antd';
 import {
   PlusOutlined,
   FileTextOutlined,
@@ -18,7 +18,7 @@ import {
 } from '@ant-design/icons';
 import { theme } from 'antd';
 import { useWritingProjectStore } from '../../../stores/writingProjectStore';
-import { useWritingModeUIStore, LayoutMode, ActivePanel, RightPanelTab } from '../../../stores/writingModeUIStore';
+import { useWritingModeUIStore, LayoutMode, ActivePanel } from '../../../stores/writingModeUIStore';
 import { WritingProject, ProjectStatus, ChapterStatus } from '../../../../shared/types/writing.types';
 import { PROJECT_STATUS_LABELS } from '../../../../shared/constants/writing.constants';
 import WritingConfigModal from './WritingConfigModal';
@@ -241,7 +241,6 @@ const WritingModeEntry: React.FC = () => {
     }
   };
 
-  const rightPanelWidth = layoutMode === LayoutMode.WIDE ? 300 : 0;
   const sidebarWidth = sidebarCollapsed ? 60 : 220;
 
   return (

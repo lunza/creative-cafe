@@ -89,6 +89,7 @@ export class ContentGenerator {
     addLog(`  modelName: ${modelName}`, 'debug');
     addLog(`  temperature: ${modelConfig.temperature}`, 'debug');
     addLog(`  maxTokens: ${modelConfig.maxTokens}`, 'debug');
+    console.log('[ContentGenerator] max_tokens parameter in request body:', modelConfig.maxTokens);
 
     if (!baseUrl) {
       addLog(`[Stage 2/6] 参数验证失败: 未配置AI服务地址`, 'error');

@@ -46,6 +46,10 @@ export enum ProjectStatus {
 export enum ChapterStatus {
   PENDING = 'pending',
   GENERATING = 'generating',
+  GENERATED = 'generated',
+  CHECKED = 'checked',
+  FIXED = 'fixed',
+  ORGANIZED = 'organized',
   COMPLETED = 'completed',
   FAILED = 'failed'
 }
@@ -171,12 +175,21 @@ export interface ModelConfig {
   maxTokens: number;
 }
 
+// 思考链
+export interface ChainOfThought {
+  rawData: string;
+  formattedData: string;
+  timestamp: number;
+  model: string;
+}
+
 // 创作配置
 export interface WritingConfig {
   resources: WritingResourceConfig;
   parameters: WritingParameters;
   modelConfig: ModelConfig;
   manualMode?: boolean;
+  chainOfThought?: ChainOfThought;
 }
 
 // 大纲生成请求
@@ -184,6 +197,13 @@ export interface OutlineGenerationRequest {
   resources: WritingResourceConfig;
   parameters: WritingParameters;
   modelConfig: ModelConfig;
+}
+
+// 大纲生成结果
+export interface OutlineGenerationResult {
+  outline: GeneratedOutline;
+  rawContent: string;
+  chainOfThought?: ChainOfThought;
 }
 
 // 章节信息
@@ -313,6 +333,7 @@ export interface ChapterOutline {
   importantSpans?: string[];
   status?: ChapterStatus;
   wordCount?: number;
+  chainOfThought?: ChainOfThought;
   versions?: ChapterVersion[];
   lastModified?: number;
   generationInfo?: {

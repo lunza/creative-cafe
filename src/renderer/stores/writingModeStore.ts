@@ -8,7 +8,8 @@ import {
   GenerationMode,
   GenerationState,
   OutlineEditMode,
-  OutlineEditSection
+  OutlineEditSection,
+  ChainOfThought
 } from '../../shared/types/writing.types';
 
 interface WritingModeState {
@@ -26,6 +27,9 @@ interface WritingModeState {
   isPaused: boolean;
   error: WritingError | null;
   streamingContent: string;
+
+  // Chain of Thought
+  chainOfThought: ChainOfThought | null;
 
   // Enhanced outline editing state
   activeEditSection: OutlineEditSection;
@@ -51,6 +55,7 @@ interface WritingModeState {
   setError: (error: WritingError | null) => void;
   setStreamingContent: (content: string) => void;
   appendStreamingContent: (chunk: string) => void;
+  setChainOfThought: (cot: ChainOfThought | null) => void;
   reset: () => void;
   resetForNewProject: () => void;
 
@@ -79,6 +84,7 @@ export const useWritingModeStore = create<WritingModeState>((set, get) => ({
   isPaused: false,
   error: null,
   streamingContent: '',
+  chainOfThought: null,
 
   // Enhanced outline editing state
   activeEditSection: OutlineEditSection.STORYLINE,
@@ -127,6 +133,8 @@ export const useWritingModeStore = create<WritingModeState>((set, get) => ({
     streamingContent: state.streamingContent + chunk
   })),
 
+  setChainOfThought: (cot) => set({ chainOfThought: cot }),
+
   reset: () => set({
     currentView: WritingModeView.PROJECT_LIST,
     config: null,
@@ -142,6 +150,7 @@ export const useWritingModeStore = create<WritingModeState>((set, get) => ({
     isPaused: false,
     error: null,
     streamingContent: '',
+    chainOfThought: null,
     activeEditSection: OutlineEditSection.STORYLINE,
     editMode: OutlineEditMode.AI_GENERATED,
     isEditing: false,
@@ -163,6 +172,7 @@ export const useWritingModeStore = create<WritingModeState>((set, get) => ({
     isPaused: false,
     error: null,
     streamingContent: '',
+    chainOfThought: null,
     activeEditSection: OutlineEditSection.STORYLINE,
     editMode: OutlineEditMode.AI_GENERATED,
     isEditing: false,

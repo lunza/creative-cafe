@@ -1,14 +1,14 @@
-import React, { useState, useCallback } from 'react';
-import { Tabs, Input, Button, Empty, Tag, Tooltip, Typography, Spin, Badge, Modal, Progress, Upload, message, Descriptions, Popconfirm } from 'antd';
-import { BookOutlined, SearchOutlined, ReloadOutlined, GlobalOutlined, IdcardOutlined, UserOutlined, UnorderedListOutlined, UploadOutlined, DeleteOutlined, StopOutlined, FileTextOutlined, SafetyOutlined, TableOutlined } from '@ant-design/icons';
-import type { UploadProps } from 'antd';
+import React, { useState, useCallback, useRef } from 'react';
+import { Tabs, Input, Button, Empty, Tag, Tooltip, Typography, Spin, Badge, Modal, Progress, Upload, message, Descriptions, Popconfirm, Select } from 'antd';
+import { BookOutlined, SearchOutlined, ReloadOutlined, GlobalOutlined, IdcardOutlined, UserOutlined, UnorderedListOutlined, UploadOutlined, DeleteOutlined, StopOutlined, FileTextOutlined, SafetyOutlined, TableOutlined, DownloadOutlined, ClearOutlined, SaveOutlined, SyncOutlined, LinkOutlined, RocketOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import { theme } from 'antd';
-import { MaterialItem, MaterialType, PlotCheckReport, PlotCheckDimension, PlotCheckIssue, LogicCheckIssue, IssueSeverity, LogicContradictionType, LOGIC_CONTRADICTION_TYPE_LABELS, PLOT_CHECK_DIMENSION_LABELS, ISSUE_SEVERITY_LABELS } from '../../../../shared/types/writing.types';
+import type { MaterialItem, MaterialType, PlotCheckReport, PlotCheckIssue, LogicCheckIssue } from '../../../../shared/types/writing.types';
+import { PlotCheckDimension, IssueSeverity, LogicContradictionType, LOGIC_CONTRADICTION_TYPE_LABELS, PLOT_CHECK_DIMENSION_LABELS, ISSUE_SEVERITY_LABELS } from '../../../../shared/types/writing.types';
 import { useWritingMaterials } from './useWritingMaterials';
 import MaterialList from './MaterialList';
 import { RightPanelTab } from '../../../stores/writingModeUIStore';
+import { useSettingStore } from '../../../stores/settingStore';
 import {
-  CheckCircleOutlined,
   ExclamationCircleOutlined,
   CloseCircleOutlined,
   InfoCircleOutlined,
@@ -18,14 +18,18 @@ import {
   EditOutlined
 } from '@ant-design/icons';
 
-const { TextArea } = Input;
 const { Text } = Typography;
+const { Option } = Select;
 
 const SEVERITY_COLORS: Record<IssueSeverity, string> = {
   [IssueSeverity.HIGH]: 'red',
   [IssueSeverity.MEDIUM]: 'orange',
   [IssueSeverity.LOW]: 'blue'
 };
+
+const MIN_PANEL_WIDTH = 200;
+const MAX_PANEL_WIDTH = 600;
+const RESIZE_HANDLE_WIDTH = 5;
 
 const LOGIC_TYPE_COLORS: Record<LogicContradictionType, string> = {
   [LogicContradictionType.ITEM_STATE]: 'purple',
@@ -59,6 +63,7 @@ const getOverallStatus = (score: number): { text: string; icon: React.ReactNode;
 
 interface WritingModeRightPanelProps {
   width: number;
+  onResize: (width: number) => void;
   onClose: () => void;
   activeTab: RightPanelTab;
   onTabChange: (tab: RightPanelTab) => void;
@@ -74,6 +79,8 @@ interface WritingModeRightPanelProps {
   tableProjectId?: string;
   tableChapterId?: number;
   tableChapterTitle?: string;
+  onTableOrganizeComplete?: () => void;
+  onTableOrganizeStatusChange?: (isOrganizing: boolean) => void;
 }
 
 interface IssueEntry {
@@ -458,9 +465,9 @@ const PlotCheckPanelContent: React.FC<{
                       {renderOriginalText((issue as PlotCheckIssue).originalText)}
                       {renderReferences((issue as PlotCheckIssue).references)}
                       {fixed && issue.correctedText && (
-                        <div style={{ marginTop: 8, padding: '8px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 4 }}>
-                          <Text strong style={{ color: '#52c41a', fontSize: 11 }}>修正后:</Text>
-                          <div style={{ marginTop: 4, fontSize: 11 }}>{issue.correctedText}</div>
+                        <div style={{ marginTop: 8, padding: '8px', background: token.colorSuccessBg, border: `1px solid ${token.colorSuccessBorder}`, borderRadius: 4 }}>
+                          <Text strong style={{ color: token.colorSuccess, fontSize: 11 }}>修正后:</Text>
+                          <div style={{ marginTop: 4, fontSize: 11, color: token.colorText }}>{issue.correctedText}</div>
                         </div>
                       )}
                       {onQuickFix && chapterContent && issue.quickFixSuggestion && !fixed && (
@@ -550,9 +557,9 @@ const PlotCheckPanelContent: React.FC<{
                 {renderOriginalText((issue as LogicCheckIssue).originalText)}
                 {renderReferences((issue as LogicCheckIssue).references)}
                 {fixed && issue.correctedText && (
-                  <div style={{ marginTop: 8, padding: '8px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 4 }}>
-                    <Text strong style={{ color: '#52c41a', fontSize: 11 }}>修正后:</Text>
-                    <div style={{ marginTop: 4, fontSize: 11 }}>{issue.correctedText}</div>
+                  <div style={{ marginTop: 8, padding: '8px', background: token.colorSuccessBg, border: `1px solid ${token.colorSuccessBorder}`, borderRadius: 4 }}>
+                    <Text strong style={{ color: token.colorSuccess, fontSize: 11 }}>修正后:</Text>
+                    <div style={{ marginTop: 4, fontSize: 11, color: token.colorText }}>{issue.correctedText}</div>
                   </div>
                 )}
                 {onQuickFix && chapterContent && issue.quickFixSuggestion && !fixed && (
@@ -592,7 +599,10 @@ const TableOrganizePanelContent: React.FC<{
   projectId?: string;
   chapterId?: number;
   chapterTitle?: string;
-}> = ({ projectId, chapterId, chapterTitle }) => {
+  chapterContent?: string;
+  onComplete?: () => void;
+  onOrganizeStatusChange?: (isOrganizing: boolean) => void;
+}> = ({ projectId, chapterId, chapterTitle, onComplete, onOrganizeStatusChange }) => {
   const { token } = theme.useToken();
   const [loading, setLoading] = useState(false);
   const [sheets, setSheets] = useState<string[]>([]);
@@ -600,16 +610,78 @@ const TableOrganizePanelContent: React.FC<{
   const [allSheetData, setAllSheetData] = useState<Record<string, Record<string, any>[]>>({});
   const [allSheetHeaders, setAllSheetHeaders] = useState<Record<string, string[]>>({});
   const [tableData, setTableData] = useState<Record<string, any>[]>([]);
-  const [error, setError] = useState<string>('');
   const [pageSize, setPageSize] = useState(20);
   const [editingCell, setEditingCell] = useState<{ rowKey: string; colKey: string } | null>(null);
   const [editValue, setEditValue] = useState('');
+
+  // 模板绑定相关状态
+  const [templateModalVisible, setTemplateModalVisible] = useState(false);
+  const [templates, setTemplates] = useState<Array<{ id: string; name: string; description?: string; sheets: Array<{ name: string; headers: string[]; description?: string }>; isCopy?: boolean }>>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
+  const [bindingLoading, setBindingLoading] = useState(false);
+
+  // 整理相关状态
+  const [organizing, setOrganizing] = useState(false);
+  const [organizeProgress, setOrganizeProgress] = useState<number>(0);
+  const [organizeStatus, setOrganizeStatus] = useState<string>('');
+  const [currentOrganizeInfo, setCurrentOrganizeInfo] = useState<{ processedCount: number; totalChapters: number } | null>(null);
+
+  // 保存/同步状态
+  const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSynced, setLastSynced] = useState<string>('');
+
+  // 表格配置状态
+  const [tableConfig, setTableConfig] = useState<{
+    enabled: boolean;
+    autoOrganize: boolean;
+    organizeMode: string;
+    associatedTemplateId: string | null;
+    associatedTemplateName: string;
+  } | null>(null);
+
+  const DEFAULT_TEMPLATE_ID = 'st-memory-enhancement-default';
+
+  const setting = useSettingStore((state) => state.setting);
+  const aiEngines = setting?.aiEngines || [];
+  const activeEngine = aiEngines.find((e: any) => e.is_active) || aiEngines[0];
+
+  const tableDataRef = useRef(tableData);
+  const allSheetDataRef = useRef(allSheetData);
+  const allSheetHeadersRef = useRef(allSheetHeaders);
+  const currentSheetRef = useRef(currentSheet);
+  const editingCellRef = useRef(editingCell);
+  const editValueRef = useRef(editValue);
+  const tableConfigRef = useRef(tableConfig);
+
+  React.useEffect(() => { tableDataRef.current = tableData; }, [tableData]);
+  React.useEffect(() => { allSheetDataRef.current = allSheetData; }, [allSheetData]);
+  React.useEffect(() => { allSheetHeadersRef.current = allSheetHeaders; }, [allSheetHeaders]);
+  React.useEffect(() => { currentSheetRef.current = currentSheet; }, [currentSheet]);
+  React.useEffect(() => { editingCellRef.current = editingCell; }, [editingCell]);
+  React.useEffect(() => { editValueRef.current = editValue; }, [editValue]);
+  React.useEffect(() => { tableConfigRef.current = tableConfig; }, [tableConfig]);
+
+  const loadTableConfig = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const response = await window.electronAPI.writing.table.getTableConfig(projectId);
+      const configResponse = response?.config || response;
+      if (configResponse && (configResponse.enabled || configResponse.associatedTemplateId)) {
+        setTableConfig(configResponse);
+      } else {
+        setTableConfig(null);
+      }
+    } catch (err) {
+      console.error('Failed to load table config:', err);
+      setTableConfig(null);
+    }
+  }, [projectId]);
 
   const loadTableData = useCallback(async () => {
     if (!projectId) return;
 
     setLoading(true);
-    setError('');
     try {
       const response = await window.electronAPI.writing.table.getTableData(projectId);
 
@@ -624,16 +696,17 @@ const TableOrganizePanelContent: React.FC<{
         const firstSheet = data.sheets[0];
         setCurrentSheet(firstSheet);
         setTableData(sheetData[firstSheet] || []);
-      } else {
-        setError('表格文件不存在或为空');
       }
+      // 表格文件不存在是正常状态，不设置error，让用户看到绑定模板按钮
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      setError(`加载失败: ${errorMsg}`);
+      // 表格文件不存在时不报错，正常显示空状态
+      console.log('[TableOrganize] 表格文件不存在或加载失败，显示绑定模板入口');
     } finally {
       setLoading(false);
     }
-  }, [projectId]);
+
+    await loadTableConfig();
+  }, [projectId, loadTableConfig]);
 
   React.useEffect(() => {
     loadTableData();
@@ -644,50 +717,85 @@ const TableOrganizePanelContent: React.FC<{
     setTableData(allSheetData[sheetName] || []);
   }, [allSheetData]);
 
+  // 导出CSV
+  const handleExport = useCallback(() => {
+    if (!currentSheet || !allSheetHeaders[currentSheet]) return;
+
+    const headers = allSheetHeaders[currentSheet];
+    const data = allSheetData[currentSheet] || [];
+
+    const csvContent = [
+      headers.join(','),
+      ...data.map(row => headers.map(h => {
+        const val = row[h] !== undefined && row[h] !== null ? String(row[h]) : '';
+        return val.includes(',') ? `"${val}"` : val;
+      }).join(','))
+    ].join('\n');
+
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `writing_${projectId}_${currentSheet}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }, [currentSheet, allSheetData, allSheetHeaders, projectId]);
+
   const startEdit = useCallback((record: Record<string, any>, colKey: string) => {
     setEditingCell({ rowKey: record.key, colKey });
     setEditValue(record[colKey] || '');
   }, []);
 
   const saveEdit = useCallback(async () => {
-    if (!editingCell || !currentSheet) return;
+    const cell = editingCellRef.current;
+    const sheet = currentSheetRef.current;
+    const value = editValueRef.current;
+    const headers = allSheetHeadersRef.current[sheet] || [];
+    const data = tableDataRef.current;
+    const allData = allSheetDataRef.current;
+    const projId = projectId;
 
-    const { rowKey, colKey } = editingCell;
+    if (!cell || !sheet) return;
+
+    const { rowKey, colKey } = cell;
     const rowIndex = parseInt(rowKey, 10);
-    const headers = allSheetHeaders[currentSheet] || [];
     const colIndex = headers.findIndex((_, idx) => idx.toString() === colKey);
 
-    if (colIndex < 0 || rowIndex < 0 || rowIndex >= tableData.length) return;
+    if (colIndex < 0 || rowIndex < 0 || rowIndex >= data.length) return;
 
-    const newData = [...tableData];
+    const newData = [...data];
     const updatedRow = { ...newData[rowIndex] };
-    updatedRow[colIndex.toString()] = editValue;
+    updatedRow[colIndex.toString()] = value;
     newData[rowIndex] = updatedRow;
     setTableData(newData);
 
-    const updatedSheetData = { ...allSheetData };
-    updatedSheetData[currentSheet] = newData;
+    const updatedSheetData = { ...allData };
+    updatedSheetData[sheet] = newData;
     setAllSheetData(updatedSheetData);
 
     setEditingCell(null);
     setEditValue('');
 
     try {
+      setSyncing(true);
       const result = await window.electronAPI.writing.table.updateRowInTable(
-        projectId!,
-        currentSheet,
+        projId!,
+        sheet,
         rowIndex,
         updatedRow
       );
       if (result.success) {
+        setLastSynced(new Date().toLocaleTimeString());
         message.success('已同步');
       } else {
         message.error('同步失败');
       }
     } catch (error) {
       message.error(`同步失败: ${error}`);
+    } finally {
+      setSyncing(false);
     }
-  }, [projectId, currentSheet, editingCell, editValue, tableData, allSheetData, allSheetHeaders]);
+  }, [projectId]);
 
   const cancelEdit = useCallback(() => {
     setEditingCell(null);
@@ -744,6 +852,271 @@ const TableOrganizePanelContent: React.FC<{
     });
   }, [tableData, currentSheet, allSheetHeaders]);
 
+  // 保存修改
+  const handleSave = useCallback(async () => {
+    if (!currentSheet || !projectId) return;
+
+    setSaving(true);
+    try {
+      const headers = allSheetHeaders[currentSheet] || [];
+      const storageData = tableData.map(row => {
+        const storageRow: Record<string, any> = {};
+        headers.forEach((_, index) => {
+          storageRow[index.toString()] = row[index.toString()] || '';
+        });
+        return storageRow;
+      });
+
+      await window.electronAPI.writing.table.saveTableData(projectId, currentSheet, storageData);
+      message.success(`表格"${currentSheet}"已保存`);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      message.error(`保存失败: ${errorMsg}`);
+    } finally {
+      setSaving(false);
+    }
+  }, [currentSheet, projectId, allSheetHeaders, tableData]);
+
+  // 清空当前表格
+  const handleClearCurrentSheet = useCallback(async () => {
+    if (!currentSheet || !projectId) return;
+
+    try {
+      await window.electronAPI.writing.table.saveTableData(projectId, currentSheet, []);
+      message.success(`表格"${currentSheet}"已清空`);
+      loadTableData();
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      message.error(`清空失败: ${errorMsg}`);
+    }
+  }, [currentSheet, projectId, loadTableData]);
+
+  // 清空所有表格
+  const handleClearAll = useCallback(async () => {
+    if (!projectId) return;
+
+    try {
+      await window.electronAPI.writing.table.clearTableData(projectId);
+      message.success('所有表格数据已清空');
+      loadTableData();
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      message.error(`清空失败: ${errorMsg}`);
+    }
+  }, [projectId, loadTableData]);
+
+  // 同步到存储
+  const handleManualSync = async () => {
+    if (!currentSheet || !projectId) return;
+
+    setSyncing(true);
+    try {
+      const currentData = allSheetData[currentSheet] || [];
+      let successCount = 0;
+      for (let i = 0; i < currentData.length; i++) {
+        const result = await window.electronAPI.writing.table.updateRowInTable(
+          projectId,
+          currentSheet,
+          i,
+          currentData[i]
+        );
+        if (result.success) successCount++;
+      }
+      setLastSynced(new Date().toLocaleTimeString());
+      message.success(`已同步 ${successCount} 行数据`);
+    } catch (error) {
+      message.error(`同步失败: ${error}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  // 模板绑定相关函数
+  const handleOpenTemplateModal = useCallback(async () => {
+    try {
+      const response = await window.electronAPI.writing.table.getAllTemplates();
+      if (response.success && response.templates) {
+        const originalTemplates = response.templates.filter((t: any) => !t.isCopy);
+        const sortedTemplates = [...originalTemplates].sort((a: any, b: any) => {
+          if (a.id === DEFAULT_TEMPLATE_ID) return -1;
+          if (b.id === DEFAULT_TEMPLATE_ID) return 1;
+          return a.name.localeCompare(b.name);
+        });
+        setTemplates(sortedTemplates);
+        if (tableConfig?.associatedTemplateId) {
+          setSelectedTemplateId(tableConfig.associatedTemplateId);
+        } else {
+          const defaultTemplate = sortedTemplates.find((t: any) => t.id === DEFAULT_TEMPLATE_ID);
+          setSelectedTemplateId(defaultTemplate?.id || '');
+        }
+        setTemplateModalVisible(true);
+      } else {
+        message.error('获取模板列表失败');
+      }
+    } catch (error) {
+      message.error(`获取模板失败: ${error}`);
+    }
+  }, [tableConfig]);
+
+  const handleBindTemplate = useCallback(async () => {
+    if (!selectedTemplateId) {
+      message.warning('请选择要绑定的模板');
+      return;
+    }
+
+    const selectedTemplate = templates.find(t => t.id === selectedTemplateId);
+    if (!selectedTemplate) {
+      message.error('模板不存在');
+      return;
+    }
+
+    const sheetsData = selectedTemplate.sheets;
+    const sheetsValid = sheetsData && Array.isArray(sheetsData) && sheetsData.length > 0;
+
+    if (!sheetsValid) {
+      message.error('模板数据不完整');
+      return;
+    }
+
+    setBindingLoading(true);
+    try {
+      const result = await window.electronAPI.writing.table.associateTableTemplate(
+        projectId!,
+        selectedTemplateId,
+        selectedTemplate.name,
+        sheetsData
+      );
+      if (result.success) {
+        message.success(`已绑定模板: ${selectedTemplate.name}`);
+        setTemplateModalVisible(false);
+        setSelectedTemplateId('');
+        const newConfig = {
+          enabled: true,
+          autoOrganize: false,
+          organizeMode: 'sync' as const,
+          associatedTemplateId: selectedTemplateId,
+          associatedTemplateName: selectedTemplate.name
+        };
+        setTableConfig(newConfig);
+        loadTableData();
+      } else {
+        message.error(`绑定模板失败: ${result.error}`);
+      }
+    } catch (error) {
+      message.error(`绑定模板失败: ${error}`);
+    } finally {
+      setBindingLoading(false);
+    }
+  }, [projectId, selectedTemplateId, templates, loadTableData]);
+
+  // 开始整理
+  const handleStartOrganize = useCallback(async () => {
+    if (organizing) {
+      message.warning('整理任务正在进行中');
+      return;
+    }
+
+    if (chapterId === undefined) {
+      message.warning('请先选择一个章节');
+      return;
+    }
+
+    // 先重新加载配置，确保获取最新状态
+    const response = await window.electronAPI.writing.table.getTableConfig(projectId!);
+    const currentConfig = response?.config || response;
+
+    if (!currentConfig?.associatedTemplateId) {
+      message.error('请先绑定表格模板');
+      handleOpenTemplateModal();
+      return;
+    }
+
+    setTableConfig(currentConfig);
+
+    onOrganizeStatusChange?.(true);
+    setOrganizing(true);
+    setOrganizeProgress(0);
+    setOrganizeStatus(`开始整理章节: ${chapterTitle || `第 ${chapterId} 章`}`);
+    setCurrentOrganizeInfo(null);
+
+    // 注册进度事件监听器
+    let lastLoadTime = 0;
+    const LOAD_THROTTLE_MS = 50;
+
+    const progressListener = (_event: any, _projectId: string, progressData: { current: number; total: number; message: string; percent: number; timestamp: number }) => {
+      try {
+        setOrganizeProgress(progressData.percent || 0);
+        setOrganizeStatus(progressData.message || '处理中...');
+        const now = Date.now();
+        if (now - lastLoadTime >= LOAD_THROTTLE_MS) {
+          lastLoadTime = now;
+          loadTableData();
+        }
+      } catch (listenerError) {
+        console.error('[TableOrganize] 进度监听器错误:', listenerError);
+      }
+    };
+
+    try {
+      window.electronAPI.ipcRenderer.on('writing:table:organizeProgress', progressListener);
+    } catch (registerError) {
+      console.warn('[TableOrganize] 注册进度监听器失败:', registerError);
+    }
+
+    try {
+      // 获取当前活跃的 AI 引擎配置
+      const settingResponse = await window.electronAPI.setting.load();
+      if (!settingResponse.success) {
+        throw new Error('无法获取系统设置');
+      }
+
+      const currentSetting = settingResponse.setting;
+      const activeEngineId = currentSetting?.activeEngineId;
+      const engines = currentSetting?.aiEngines || [];
+      const currentActiveEngine = engines.find((e: any) => e.id === activeEngineId) || engines[0];
+
+      if (!currentActiveEngine) {
+        throw new Error('未配置 AI 引擎，请在设置中配置');
+      }
+
+      const temperature = (typeof currentActiveEngine.temperature === 'number' && currentActiveEngine.temperature >= 0 && currentActiveEngine.temperature <= 2)
+        ? currentActiveEngine.temperature
+        : 0.7;
+
+      const maxTokens = (typeof currentActiveEngine.max_tokens === 'number' && currentActiveEngine.max_tokens > 0)
+        ? currentActiveEngine.max_tokens
+        : 10240;
+
+      const modelConfig = {
+        temperature,
+        maxTokens
+      };
+
+      const result = await window.electronAPI.writing.table.organizeTable(projectId!, modelConfig, chapterId);
+
+      if (result.success) {
+        setOrganizeProgress(100);
+        setOrganizeStatus('整理完成');
+        message.success(`表格整理完成: ${result.errorCount > 0 ? `有 ${result.errorCount} 个错误` : '成功'}`);
+        loadTableData();
+      } else {
+        setOrganizeStatus('整理失败');
+        message.error(`整理失败: ${result.errors?.join(', ') || '未知错误'}`);
+      }
+    } catch (error) {
+      setOrganizeStatus('整理出错');
+      message.error(`整理出错: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      try {
+        window.electronAPI.ipcRenderer.removeListener('writing:table:organizeProgress', progressListener);
+      } catch (unregisterError) {
+        console.warn('[TableOrganize] 移除进度监听器失败:', unregisterError);
+      }
+      onOrganizeStatusChange?.(false);
+      setOrganizing(false);
+    }
+  }, [projectId, organizing, loadTableData, handleOpenTemplateModal, chapterId, chapterTitle, onOrganizeStatusChange, activeEngine]);
+
   if (loading) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
@@ -752,23 +1125,210 @@ const TableOrganizePanelContent: React.FC<{
     );
   }
 
-  if (error) {
-    return <Empty description={error} image={Empty.PRESENTED_IMAGE_SIMPLE} />;
-  }
-
   if (sheets.length === 0) {
     return (
-      <div style={{ padding: '16px 0' }}>
+      <div style={{ padding: '16px 0', height: '100%', display: 'flex', flexDirection: 'column' }}>
+        {/* 操作按钮区域 */}
+        <div style={{ padding: '0 0 8px 0', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          <Button
+            icon={tableConfig?.associatedTemplateId ? <CheckCircleOutlined /> : <LinkOutlined />}
+            onClick={handleOpenTemplateModal}
+            type={tableConfig?.associatedTemplateId ? 'link' : 'default'}
+            size="small"
+          >
+            {tableConfig?.associatedTemplateId
+              ? `已绑定: ${tableConfig.associatedTemplateName}`
+              : '绑定模板'}
+          </Button>
+          <Button
+            icon={<RocketOutlined />}
+            onClick={handleStartOrganize}
+            loading={organizing}
+            disabled={organizing}
+            size="small"
+            type="primary"
+          >
+            {organizing ? '整理中...' : '开始整理'}
+          </Button>
+        </div>
+
+        {/* 整理进度显示 */}
+        {organizing && (
+          <div style={{ marginBottom: 16 }}>
+            <Text strong>整理进度:</Text>
+            <Progress percent={organizeProgress} status="active" size="small" />
+            <Text type="secondary">{organizeStatus}</Text>
+            {currentOrganizeInfo && (
+              <Text type="secondary">
+                {' '}({currentOrganizeInfo.processedCount}/{currentOrganizeInfo.totalChapters})
+              </Text>
+            )}
+          </div>
+        )}
+
         <Empty description="暂无表格数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />
         <div style={{ textAlign: 'center', marginTop: 16 }}>
           <Text type="secondary">请先绑定表格模板并开始整理</Text>
         </div>
+
+        {/* 模板绑定 Modal */}
+        <Modal
+          title="绑定表格模板"
+          open={templateModalVisible}
+          onCancel={() => {
+            setTemplateModalVisible(false);
+            setSelectedTemplateId('');
+          }}
+          onOk={handleBindTemplate}
+          confirmLoading={bindingLoading}
+        >
+          {tableConfig?.associatedTemplateId && (
+            <div style={{ marginBottom: 16 }}>
+              <Text>当前模板:</Text>{' '}
+              <Tag color="green">{tableConfig.associatedTemplateName}</Tag>
+            </div>
+          )}
+
+          <p>请选择要绑定的表格模板：</p>
+          <Select
+            style={{ width: '100%' }}
+            placeholder="选择模板"
+            value={selectedTemplateId}
+            onChange={setSelectedTemplateId}
+          >
+            {templates.length === 0 ? (
+              <Option value="" disabled>
+                暂无可用模板
+              </Option>
+            ) : (
+              templates.map(template => (
+                <Option key={template.id} value={template.id}>
+                  {template.id === DEFAULT_TEMPLATE_ID && '⭐ '}
+                  {template.name}
+                  {template.id === DEFAULT_TEMPLATE_ID && ' 默认模板'}
+                  {template.sheets && template.sheets.length > 0 && ` (${template.sheets.length} 个页签)`}
+                </Option>
+              ))
+            )}
+          </Select>
+          {selectedTemplateId && (
+            <p style={{ marginTop: 8, color: '#888', fontSize: 12 }}>
+              {templates.find(t => t.id === selectedTemplateId)?.description || '暂无描述'}
+            </p>
+          )}
+          <p style={{ marginTop: 16, color: '#888', fontSize: 12 }}>
+            绑定模板将创建对应的表格结构，已有的表格数据将被覆盖。
+          </p>
+        </Modal>
       </div>
     );
   }
 
   return (
     <div style={{ padding: '12px 0', height: '100%', display: 'flex', flexDirection: 'column' }}>
+      {/* 整理进度显示 */}
+      {organizing && (
+        <div style={{ marginBottom: 16, padding: '0 12px' }}>
+          <Text strong>整理进度:</Text>
+          <Progress percent={organizeProgress} status="active" size="small" />
+          <Text type="secondary">{organizeStatus}</Text>
+          {currentOrganizeInfo && (
+            <Text type="secondary">
+              {' '}({currentOrganizeInfo.processedCount}/{currentOrganizeInfo.totalChapters})
+            </Text>
+          )}
+        </div>
+      )}
+
+      {/* 操作按钮区域 */}
+      <div style={{ padding: '0 12px 8px 12px', display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+        <Button
+          icon={tableConfig?.associatedTemplateId ? <CheckCircleOutlined /> : <LinkOutlined />}
+          onClick={handleOpenTemplateModal}
+          type={tableConfig?.associatedTemplateId ? 'link' : 'default'}
+          size="small"
+        >
+          {tableConfig?.associatedTemplateId
+            ? `已绑定: ${tableConfig.associatedTemplateName}`
+            : '绑定模板'}
+        </Button>
+        <Button
+          icon={<RocketOutlined />}
+          onClick={handleStartOrganize}
+          loading={organizing}
+          disabled={organizing}
+          size="small"
+          type="primary"
+        >
+          {organizing ? '整理中...' : '开始整理'}
+        </Button>
+        <Button
+          icon={<SaveOutlined />}
+          onClick={handleSave}
+          loading={saving}
+          disabled={!currentSheet || tableData.length === 0}
+          size="small"
+        >
+          保存修改
+        </Button>
+        <Button
+          icon={<DownloadOutlined />}
+          onClick={handleExport}
+          disabled={!currentSheet || tableData.length === 0}
+          size="small"
+        >
+          导出 CSV
+        </Button>
+        {lastSynced && <Text type="secondary" style={{ fontSize: 11 }}>上次同步: {lastSynced}</Text>}
+        <Button
+          icon={<SyncOutlined spin={syncing} />}
+          onClick={handleManualSync}
+          loading={syncing}
+          disabled={!currentSheet || tableData.length === 0}
+          size="small"
+        >
+          同步到存储
+        </Button>
+        <Popconfirm
+          title={`确定清空表格"${currentSheet}"的所有数据？`}
+          description="此操作不可撤销，确认后表格数据将被清空。"
+          onConfirm={handleClearCurrentSheet}
+          okText="确定"
+          cancelText="取消"
+          okButtonProps={{ danger: true }}
+          disabled={!currentSheet || tableData.length === 0}
+        >
+          <Button
+            icon={<ClearOutlined />}
+            disabled={!currentSheet || tableData.length === 0}
+            size="small"
+          >
+            清空当前表格
+          </Button>
+        </Popconfirm>
+        <Popconfirm
+          title="确定清空所有表格的数据？"
+          description="此操作不可撤销，确认后所有表格数据将被清空。"
+          onConfirm={handleClearAll}
+          okText="确定"
+          cancelText="取消"
+          okButtonProps={{ danger: true }}
+          disabled={sheets.length === 0}
+        >
+          <Button
+            icon={<ClearOutlined />}
+            danger
+            disabled={sheets.length === 0}
+            size="small"
+          >
+            清空所有表格
+          </Button>
+        </Popconfirm>
+        {onComplete && (
+          <Button size="small" type="primary" onClick={() => { onComplete(); }}>标记完成</Button>
+        )}
+      </div>
+
       <Tabs
         activeKey={currentSheet}
         onChange={handleSheetChange}
@@ -777,9 +1337,9 @@ const TableOrganizePanelContent: React.FC<{
           key: sheetName,
           label: `${sheetName} (${(allSheetData[sheetName] || []).length} 行)`,
         }))}
-        style={{ marginBottom: 8 }}
+        style={{ marginBottom: 8, padding: '0 12px' }}
       />
-      <div style={{ flex: 1, overflow: 'auto' }}>
+      <div style={{ flex: 1, overflow: 'auto', padding: '0 12px' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
             <tr>
@@ -842,12 +1402,64 @@ const TableOrganizePanelContent: React.FC<{
           </div>
         )}
       </div>
+
+      {/* 模板绑定 Modal */}
+      <Modal
+        title="绑定表格模板"
+        open={templateModalVisible}
+        onCancel={() => {
+          setTemplateModalVisible(false);
+          setSelectedTemplateId('');
+        }}
+        onOk={handleBindTemplate}
+        confirmLoading={bindingLoading}
+      >
+        {tableConfig?.associatedTemplateId && (
+          <div style={{ marginBottom: 16 }}>
+            <Text>当前模板:</Text>{' '}
+            <Tag color="green">{tableConfig.associatedTemplateName}</Tag>
+          </div>
+        )}
+
+        <p>请选择要绑定的表格模板：</p>
+        <Select
+          style={{ width: '100%' }}
+          placeholder="选择模板"
+          value={selectedTemplateId}
+          onChange={setSelectedTemplateId}
+        >
+          {templates.length === 0 ? (
+            <Option value="" disabled>
+              暂无可用模板
+            </Option>
+          ) : (
+            templates.map(template => (
+              <Option key={template.id} value={template.id}>
+                {template.id === DEFAULT_TEMPLATE_ID && '⭐ '}
+                {template.name}
+                {template.id === DEFAULT_TEMPLATE_ID && ' 默认模板'}
+                {template.sheets && template.sheets.length > 0 && ` (${template.sheets.length} 个页签)`}
+              </Option>
+            ))
+          )}
+        </Select>
+        {selectedTemplateId && (
+          <p style={{ marginTop: 8, color: '#888', fontSize: 12 }}>
+            {templates.find(t => t.id === selectedTemplateId)?.description || '暂无描述'}
+          </p>
+        )}
+        <p style={{ marginTop: 16, color: '#888', fontSize: 12 }}>
+          绑定模板将创建对应的表格结构，已有的表格数据将被覆盖。
+        </p>
+      </Modal>
     </div>
   );
 };
 
+
 const WritingModeRightPanel: React.FC<WritingModeRightPanelProps> = ({
   width,
+  onResize,
   onClose,
   activeTab,
   onTabChange,
@@ -862,7 +1474,9 @@ const WritingModeRightPanel: React.FC<WritingModeRightPanelProps> = ({
   editorContentRef,
   tableProjectId,
   tableChapterId,
-  tableChapterTitle
+  tableChapterTitle,
+  onTableOrganizeComplete,
+  onTableOrganizeStatusChange
 }) => {
   const { token } = theme.useToken();
   const {
@@ -886,6 +1500,39 @@ const WritingModeRightPanel: React.FC<WritingModeRightPanelProps> = ({
   const [activeMaterialTab, setActiveMaterialTab] = useState<string>('worldbook');
   const [selectedSummaryVisible, setSelectedSummaryVisible] = useState(false);
   const [selectedStyleForPreview, setSelectedStyleForPreview] = useState<MaterialItem | null>(null);
+
+  // Resize handle state
+  const [isResizing, setIsResizing] = useState(false);
+  const resizeStartXRef = useRef<number>(0);
+  const resizeStartWidthRef = useRef<number>(0);
+
+  const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+    resizeStartXRef.current = e.clientX;
+    resizeStartWidthRef.current = width;
+  }, [width]);
+
+  React.useEffect(() => {
+    if (!isResizing) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const delta = resizeStartXRef.current - e.clientX;
+      const newWidth = Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, resizeStartWidthRef.current + delta));
+      onResize(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing, onResize]);
 
   const handleRefresh = useCallback(() => {
     refreshMaterials();
@@ -1284,6 +1931,9 @@ const WritingModeRightPanel: React.FC<WritingModeRightPanelProps> = ({
           projectId={tableProjectId}
           chapterId={tableChapterId}
           chapterTitle={tableChapterTitle}
+          chapterContent={chapterContent}
+          onComplete={onTableOrganizeComplete}
+          onOrganizeStatusChange={onTableOrganizeStatusChange}
         />
       ),
     },
@@ -1298,8 +1948,37 @@ const WritingModeRightPanel: React.FC<WritingModeRightPanelProps> = ({
         display: 'flex',
         flexDirection: 'column',
         backgroundColor: token.colorBgContainer,
+        position: 'relative',
       }}
     >
+      {/* Drag resize handle */}
+      <div
+        onMouseDown={handleResizeMouseDown}
+        style={{
+          position: 'absolute',
+          left: 0,
+          top: 0,
+          bottom: 0,
+          width: RESIZE_HANDLE_WIDTH,
+          cursor: 'ew-resize',
+          zIndex: 10,
+          background: isResizing ? token.colorPrimary : 'transparent',
+          opacity: isResizing ? 0.5 : 0,
+          transition: 'opacity 0.2s, background 0.2s',
+        }}
+        onMouseEnter={(e) => {
+          if (!isResizing) {
+            e.currentTarget.style.opacity = '0.3';
+            e.currentTarget.style.background = token.colorPrimaryBorder;
+          }
+        }}
+        onMouseLeave={(e) => {
+          if (!isResizing) {
+            e.currentTarget.style.opacity = '0';
+            e.currentTarget.style.background = 'transparent';
+          }
+        }}
+      />
       <div
         style={{
           padding: '12px 16px',

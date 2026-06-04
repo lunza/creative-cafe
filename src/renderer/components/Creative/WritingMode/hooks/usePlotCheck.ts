@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { message } from 'antd';
-import { GeneratedOutline, PlotCheckReport, PlotCheckDimension, LogicContradictionType, BatchFixIssueInfo, PLOT_CHECK_DIMENSION_LABELS, LOGIC_CONTRADICTION_TYPE_LABELS } from '../../../../../shared/types/writing.types';
+import { GeneratedOutline, PlotCheckReport, PlotCheckDimension, LogicContradictionType, BatchFixIssueInfo, PLOT_CHECK_DIMENSION_LABELS, LOGIC_CONTRADICTION_TYPE_LABELS, ChapterStatus } from '../../../../../shared/types/writing.types';
 import { useWritingProjectStore } from '../../../../stores/writingProjectStore';
 
 interface UsePlotCheckResult {
@@ -16,7 +16,8 @@ interface UsePlotCheckResult {
     chapterIndex: number,
     chapterContents: Record<number, string>,
     outline: GeneratedOutline | null,
-    projectId: string
+    projectId: string,
+    updateChapterStatus?: (chapterIndex: number, status: ChapterStatus) => void
   ) => Promise<void>;
   handleAutoFix: (
     chapterIndex: number,
@@ -26,7 +27,8 @@ interface UsePlotCheckResult {
     projectId: string,
     outline: GeneratedOutline | null,
     setChapterContents: React.Dispatch<React.SetStateAction<Record<number, string>>>,
-    editorContentRef: React.MutableRefObject<string>
+    editorContentRef: React.MutableRefObject<string>,
+    updateChapterStatus?: (chapterIndex: number, status: ChapterStatus) => void
   ) => Promise<{ success: boolean; fixedContent?: string; error?: string }>;
   handleContentUpdated: (
     chapterIndex: number,
@@ -35,7 +37,7 @@ interface UsePlotCheckResult {
     setChapterContents: React.Dispatch<React.SetStateAction<Record<number, string>>>,
     editorContentRef: React.MutableRefObject<string>
   ) => void;
-  handleAcceptFix: () => void;
+  handleAcceptFix: (updateChapterStatus?: (chapterIndex: number, status: ChapterStatus) => void, chapterIndex?: number) => void;
   handleRejectFix: (
     chapterIndex: number,
     outline: GeneratedOutline | null,
@@ -51,7 +53,8 @@ interface UsePlotCheckResult {
     projectId: string,
     outline: GeneratedOutline | null,
     setChapterContents: React.Dispatch<React.SetStateAction<Record<number, string>>>,
-    editorContentRef: React.MutableRefObject<string>
+    editorContentRef: React.MutableRefObject<string>,
+    updateChapterStatus?: (chapterIndex: number, status: ChapterStatus) => void
   ) => Promise<{ success: boolean; fixedContent?: string; results?: Array<{ index: number; success: boolean; error?: string }>; error?: string }>;
   handleQuickFix: (
     chapterContent: string,
@@ -68,7 +71,8 @@ interface UsePlotCheckResult {
     editorContentRef: React.MutableRefObject<string>,
     setChapterContents: React.Dispatch<React.SetStateAction<Record<number, string>>>,
     onRecheck?: () => void,
-    onCompletion?: () => void
+    onCompletion?: () => void,
+    updateChapterStatus?: (chapterIndex: number, status: ChapterStatus) => void
   ) => void;
   handleRejectQuickFix: (onCompletion?: () => void) => void;
 }
@@ -100,7 +104,8 @@ export function usePlotCheck(
     chapterIndex: number,
     chapterContents: Record<number, string>,
     outline: GeneratedOutline | null,
-    projectId: string
+    projectId: string,
+    updateChapterStatus?: (chapterIndex: number, status: ChapterStatus) => void
   ) => {
     const currentChapter = outline?.chapters.find(ch => ch.index === chapterIndex);
     if (!currentChapter) return;
@@ -131,6 +136,10 @@ export function usePlotCheck(
       if (result.success && result.report) {
         setPlotCheckReport(result.report);
         setShowPlotCheckModal(true);
+        // 剧情检查完成后，更新状态为 checked
+        if (updateChapterStatus) {
+          updateChapterStatus(currentChapter.index, ChapterStatus.CHECKED);
+        }
       } else {
         message.error(result.error || '剧情检查失败');
       }
@@ -149,7 +158,8 @@ export function usePlotCheck(
     projectId: string,
     outline: GeneratedOutline | null,
     setChapterContents: React.Dispatch<React.SetStateAction<Record<number, string>>>,
-    editorContentRef: React.MutableRefObject<string>
+    editorContentRef: React.MutableRefObject<string>,
+    updateChapterStatus?: (chapterIndex: number, status: ChapterStatus) => void
   ): Promise<{ success: boolean; fixedContent?: string; error?: string }> => {
     const currentChapter = outline?.chapters.find(ch => ch.index === chapterIndex);
     if (!currentChapter) {
@@ -235,7 +245,7 @@ export function usePlotCheck(
     }
   }, [getCurrentProject, updateProject]);
 
-  const handleAcceptFix = useCallback(() => {
+  const handleAcceptFix = useCallback((updateChapterStatus?: (chapterIndex: number, status: ChapterStatus) => void, chapterIndex?: number) => {
     // Update the report to mark the issue as corrected
     setPlotCheckReport(prev => {
       if (!prev || !pendingFixIssue) return prev;
@@ -273,6 +283,11 @@ export function usePlotCheck(
 
       return updatedReport;
     });
+    
+    // fix 操作完成后更新状态为 fixed
+    if (updateChapterStatus && chapterIndex !== undefined) {
+      updateChapterStatus(chapterIndex, ChapterStatus.FIXED);
+    }
     
     setShowFixResultModal(false);
     message.success('修正已应用到编辑器');
@@ -330,7 +345,8 @@ export function usePlotCheck(
     editorContentRef: React.MutableRefObject<string>,
     setChapterContents: React.Dispatch<React.SetStateAction<Record<number, string>>>,
     onRecheck?: () => void,
-    onCompletion?: () => void
+    onCompletion?: () => void,
+    updateChapterStatus?: (chapterIndex: number, status: ChapterStatus) => void
   ) => {
     const currentChapter = outline?.chapters.find(ch => ch.index === chapterIndex);
     if (pendingQuickFixSuggestion && currentChapter) {
@@ -397,6 +413,11 @@ export function usePlotCheck(
 
       message.success('快速修正已应用');
 
+      // quick fix 完成后更新状态为 fixed
+      if (updateChapterStatus) {
+        updateChapterStatus(currentChapter.index, ChapterStatus.FIXED);
+      }
+
       if (onRecheck) {
         onRecheck();
       }
@@ -462,7 +483,8 @@ export function usePlotCheck(
     projectId: string,
     outline: GeneratedOutline | null,
     setChapterContents: React.Dispatch<React.SetStateAction<Record<number, string>>>,
-    editorContentRef: React.MutableRefObject<string>
+    editorContentRef: React.MutableRefObject<string>,
+    updateChapterStatus?: (chapterIndex: number, status: ChapterStatus) => void
   ): Promise<{ success: boolean; fixedContent?: string; results?: Array<{ index: number; success: boolean; error?: string }>; error?: string }> => {
     const currentChapter = outline?.chapters.find(ch => ch.index === chapterIndex);
     if (!currentChapter) {
@@ -504,6 +526,11 @@ export function usePlotCheck(
 
         setChapterContents(prev => ({ ...prev, [currentChapter.index]: result.fixedContent }));
         editorContentRef.current = result.fixedContent;
+
+        // batch fix 完成后更新状态为 fixed
+        if (updateChapterStatus) {
+          updateChapterStatus(currentChapter.index, ChapterStatus.FIXED);
+        }
 
         const project = getCurrentProject();
         if (project && project.outline) {

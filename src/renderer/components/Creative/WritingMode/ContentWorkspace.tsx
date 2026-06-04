@@ -1,22 +1,15 @@
-import React, { useState } from 'react';
-import { Card, Button, Progress, message, Spin, Menu, Typography, Dropdown, Popconfirm, Empty, Modal, Input, Divider, Layout, List, Table } from 'antd';
+import React from 'react';
+import { theme as antTheme } from 'antd';
+import { Card, Button, Progress, message, Spin, Menu, Typography, Dropdown, Popconfirm, Empty, Modal, Input, Layout, Table, Tag, Tooltip } from 'antd';
 const { Sider, Content } = Layout;
 const { Text } = Typography;
 import {
   PlayCircleOutlined,
-  PauseCircleOutlined,
   StopOutlined,
   SaveOutlined,
   ExportOutlined,
-  ThunderboltOutlined,
   ReloadOutlined,
-  MoreOutlined,
-  HistoryOutlined,
-  CopyOutlined,
   DeleteOutlined,
-  SettingOutlined,
-  PartitionOutlined,
-  MergeCellsOutlined,
   SearchOutlined,
   FileTextOutlined,
   TableOutlined,
@@ -28,28 +21,19 @@ import {
   GenerationState,
   ChapterStatus,
   ExportFormat,
-  ChapterVersion,
-  PlotCheckReport,
   PlotCheckIssue,
   LogicCheckIssue,
-  AISplitSuggestion,
-  AIMergeSuggestion,
-  AIGenerationHistory,
 } from '../../../../shared/types/writing.types';
 import MarkdownEditor from '../../Common/MarkdownEditor';
-import WritingProgressDashboard from './WritingProgressDashboard';
-import ChapterSplitModal from './ChapterSplitModal';
-import ChapterMergeModal from './ChapterMergeModal';
-import AIGenerationHistoryModal from './AIGenerationHistoryModal';
 import AutoFixResultModal from './AutoFixResultModal';
 import QuickFixSuggestionModal from './QuickFixSuggestionModal';
 import WritingModeRightPanel from './WritingModeRightPanel';
 import { useChapterGeneration } from './hooks/useChapterGeneration';
-import { useVersionManagement } from './hooks/useVersionManagement';
 import { useModalStates } from './hooks/useModalStates';
 import { usePlotCheck } from './hooks/usePlotCheck';
 import { useChapterStructure } from './hooks/useChapterStructure';
 import { useWritingModeUIStore, LayoutMode, RightPanelTab } from '../../../stores/writingModeUIStore';
+import { useUIStore } from '../../../stores/uiStore';
 
 interface ContentWorkspaceProps {
   outline: GeneratedOutline | null;
@@ -57,7 +41,7 @@ interface ContentWorkspaceProps {
   onBack: () => void;
 }
 
-const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId, onBack }) => {
+const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId }) => {
   console.log('[ContentWorkspace] Component mounted/updated', {
     hasOutline: !!outline,
     outlineChapterCount: outline?.chapters?.length,
@@ -69,7 +53,6 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
   const modalStates = useModalStates();
 
   const chapterGeneration = useChapterGeneration(outline, projectId);
-  const versionManagement = useVersionManagement(projectId, outline);
   const plotCheck = usePlotCheck(
     projectId,
     modalStates.setShowFixResultModal,
@@ -82,8 +65,8 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
     modalStates.setShowMergeModal,
     modalStates.setShowHistoryModal,
     modalStates.setSplitCount,
-    (s) => {},
-    (s) => {}
+    (_s) => {},
+    (_s) => {}
   );
   
   // 打印章节内容恢复情况
@@ -101,15 +84,23 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
   const setRightPanelTab = useWritingModeUIStore((state) => state.setRightPanelTab);
   const toggleRightPanel = useWritingModeUIStore((state) => state.toggleRightPanel);
   const layoutMode = useWritingModeUIStore((state) => state.layoutMode);
+  const rightPanelWidth = useWritingModeUIStore((state) => state.rightPanelWidth);
+  const setRightPanelWidth = useWritingModeUIStore((state) => state.setRightPanelWidth);
+  const editorTheme = useUIStore((state) => state.theme);
 
-  const [splitTitles, setSplitTitles] = useState<string[]>([]);
-  const [isOrganizing, setIsOrganizing] = useState(false);
+  const [isOrganizing, setIsOrganizing] = React.useState(false);
+
+  const handleTableOrganizeStatusChange = React.useCallback((organizing: boolean) => {
+    setIsOrganizing(organizing);
+  }, []);
 
   if (!outline || !outline.chapters) {
     return <div style={{ padding: 24 }}>未找到大纲信息</div>;
   }
 
-  const completedChapters = Object.values(chapterGeneration.chapterStatuses).filter(s => s === ChapterStatus.COMPLETED).length;
+  const completedChapters = Object.values(chapterGeneration.chapterStatuses).filter(s =>
+    s === ChapterStatus.COMPLETED || s === ChapterStatus.ORGANIZED
+  ).length;
   const totalChapters = outline.chapters.length;
   const overallProgress = Math.round((completedChapters / totalChapters) * 100);
 
@@ -121,43 +112,14 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
 
   const targetWordCount = currentChapter?.targetWordCount || 2000;
   const wordCountPercentage = Math.min((currentWordCount / targetWordCount) * 100, 100);
-  const wordCountColor = wordCountPercentage >= 90 ? '#52c41a' : wordCountPercentage >= 50 ? '#faad14' : '#f5222d';
-
-  const handleOpenSplitModal = () => {
-    chapterStructure.handleOpenSplitModal(chapterGeneration.selectedChapterIndex, outline);
-  };
-
-  const handleSplitConfirm = (mode: 'content' | 'ai', suggestion?: AISplitSuggestion) => {
-    chapterStructure.handleSplitConfirm(
-      mode,
-      chapterGeneration.selectedChapterIndex,
-      modalStates.splitCount,
-      chapterGeneration.chapterContents,
-      outline,
-      suggestion
-    );
-  };
-
-  const handleOpenMergeModal = () => {
-    chapterStructure.handleOpenMergeModal(outline);
-  };
-
-  const handleMergeConfirm = (mode: 'simple' | 'ai', selectedIndices: number[], suggestion?: AIMergeSuggestion) => {
-    chapterStructure.handleMergeConfirm(
-      mode,
-      selectedIndices,
-      chapterGeneration.chapterContents,
-      outline,
-      suggestion
-    );
-  };
 
   const handlePlotCheck = () => {
     plotCheck.handlePlotCheck(
       currentChapter.index,
       chapterGeneration.chapterContents,
       outline,
-      projectId
+      projectId,
+      chapterGeneration.updateChapterStatus
     );
     if (!rightPanelVisible) {
       toggleRightPanel();
@@ -172,36 +134,7 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
     setRightPanelTab(RightPanelTab.TABLE_ORGANIZE);
   };
 
-  const handleSaveVersion = () => {
-    versionManagement.handleSaveVersion(
-      chapterGeneration.selectedChapterIndex,
-      chapterGeneration.streamingContent,
-      chapterGeneration.chapterContents
-    );
-  };
 
-  const handleShowVersionHistory = () => {
-    versionManagement.handleShowVersionHistory(
-      chapterGeneration.selectedChapterIndex,
-      outline
-    );
-  };
-
-  const handleRestoreVersion = (versionId: string) => {
-    versionManagement.handleRestoreVersion(
-      versionId,
-      chapterGeneration.selectedChapterIndex,
-      outline
-    );
-  };
-
-  const handleRestoreHistory = (history: AIGenerationHistory) => {
-    chapterStructure.handleRestoreHistory(history);
-  };
-
-  const handleBackToConfig = () => {
-    chapterStructure.handleBackToConfig(onBack);
-  };
 
   const handleBatchFix = async (selectedIssues: Array<{ key: string; issue: PlotCheckIssue | LogicCheckIssue; issueType: 'dimension' | 'logic' }>) => {
     return plotCheck.handleBatchFix(
@@ -211,7 +144,8 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
       projectId,
       outline,
       chapterGeneration.setChapterContents,
-      chapterGeneration.editorContentRef
+      chapterGeneration.editorContentRef,
+      chapterGeneration.updateChapterStatus
     );
   };
 
@@ -224,7 +158,8 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
       projectId,
       outline,
       chapterGeneration.setChapterContents,
-      chapterGeneration.editorContentRef
+      chapterGeneration.editorContentRef,
+      chapterGeneration.updateChapterStatus
     );
   };
 
@@ -242,7 +177,8 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
       chapterGeneration.editorContentRef,
       chapterGeneration.setChapterContents,
       undefined,
-      onComplete
+      onComplete,
+      chapterGeneration.updateChapterStatus
     );
   };
 
@@ -261,7 +197,7 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
   };
 
   const handleAcceptFix = () => {
-    plotCheck.handleAcceptFix();
+    plotCheck.handleAcceptFix(chapterGeneration.updateChapterStatus, currentChapter.index);
   };
 
   const handleRejectFix = () => {
@@ -277,7 +213,24 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
     plotCheck.handleViewLogicRecords();
   };
 
-  const rightPanelWidth = layoutMode === LayoutMode.WIDE ? 300 : 0;
+  const handleTableOrganizeComplete = () => {
+    chapterGeneration.updateChapterStatus(currentChapter.index, ChapterStatus.ORGANIZED);
+    message.success('表格整理已标记完成');
+  };
+
+
+  const handleExport = async (format: ExportFormat) => {
+    if (window.electronAPI?.writing) {
+      try {
+        const result = await window.electronAPI.writing.exportProject(projectId, format);
+        if (result.success) {
+          message.success('导出成功');
+        }
+      } catch (error: any) {
+        message.error(error.message || '导出失败');
+      }
+    }
+  };
 
   return (
     <Layout style={{ height: '100%' }}>
@@ -336,6 +289,10 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
                       {chapterGeneration.chapterStatuses[ch.index] === ChapterStatus.COMPLETED && <span style={{ color: '#52c41a' }}>✓</span>}
                       {chapterGeneration.chapterStatuses[ch.index] === ChapterStatus.GENERATING && <Spin size="small" />}
                       {chapterGeneration.chapterStatuses[ch.index] === ChapterStatus.FAILED && <span style={{ color: '#ff4d4f' }}>✗</span>}
+                      {chapterGeneration.chapterStatuses[ch.index] === ChapterStatus.GENERATED && <Tag color="blue" style={{ margin: 0, padding: '0 4px', lineHeight: '16px', height: 16, fontSize: 9 }}>已生成</Tag>}
+                      {chapterGeneration.chapterStatuses[ch.index] === ChapterStatus.CHECKED && <Tag color="orange" style={{ margin: 0, padding: '0 4px', lineHeight: '16px', height: 16, fontSize: 9 }}>已检查</Tag>}
+                      {chapterGeneration.chapterStatuses[ch.index] === ChapterStatus.FIXED && <Tag color="purple" style={{ margin: 0, padding: '0 4px', lineHeight: '16px', height: 16, fontSize: 9 }}>已修正</Tag>}
+                      {chapterGeneration.chapterStatuses[ch.index] === ChapterStatus.ORGANIZED && <Tag color="cyan" style={{ margin: 0, padding: '0 4px', lineHeight: '16px', height: 16, fontSize: 9 }}>已整理</Tag>}
                     </span>
                   </div>
                 ),
@@ -356,8 +313,26 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
               </div>
             }
             extra={
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {/* Word count display */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'flex-end' }}>
+                  <Text style={{ fontSize: 12 }}>
+                    字数: {currentWordCount.toLocaleString()}/{targetWordCount.toLocaleString()}
+                  </Text>
+                  <Progress
+                    percent={Math.min(Math.round(wordCountPercentage), 100)}
+                    size="small"
+                    style={{ width: 120 }}
+                    strokeColor={
+                      wordCountPercentage >= 100 ? '#52c41a' :
+                      wordCountPercentage >= 90 ? '#faad14' :
+                      '#f5222d'
+                    }
+                    format={(percent) => `${percent}%`}
+                  />
+                </div>
+                {/* Primary actions row */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                   {!chapterGeneration.isGenerating ? (
                     <>
                       <Button
@@ -369,18 +344,17 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
                         生成
                       </Button>
                       <Button
-                        icon={<ThunderboltOutlined />}
-                        onClick={chapterGeneration.handleContinuousGeneration}
-                        disabled={completedChapters >= totalChapters}
-                      >
-                        连续生成
-                      </Button>
-                      <Button
                         icon={<ReloadOutlined />}
                         onClick={chapterGeneration.handleRegenerateChapter}
                         disabled={!chapterGeneration.chapterContents[currentChapter?.index] && !chapterGeneration.streamingContent}
                       >
                         重新生成
+                      </Button>
+                      <Button
+                        icon={<SaveOutlined />}
+                        onClick={chapterGeneration.handleSaveChapter}
+                      >
+                        保存
                       </Button>
                       <Popconfirm
                         title="确定要清空此章节吗？"
@@ -396,31 +370,11 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
                           清空
                         </Button>
                       </Popconfirm>
-                      <Button
-                        icon={<PartitionOutlined />}
-                        onClick={handleOpenSplitModal}
-                        disabled={chapterGeneration.isGenerating}
-                      >
-                        分解
-                      </Button>
-                      <Button
-                        icon={<MergeCellsOutlined />}
-                        onClick={handleOpenMergeModal}
-                        disabled={outline.chapters.length < 2}
-                      >
-                        合并
-                      </Button>
-                      <Button
-                        icon={<HistoryOutlined />}
-                        onClick={() => modalStates.setShowHistoryModal(true)}
-                      >
-                        AI历史
-                      </Button>
                       <Dropdown menu={{
                         items: [
-                          { key: 'txt', label: 'TXT', onClick: () => versionManagement.handleExport(ExportFormat.TXT) },
-                          { key: 'md', label: 'Markdown', onClick: () => versionManagement.handleExport(ExportFormat.MARKDOWN) },
-                          { key: 'json', label: 'JSON', onClick: () => versionManagement.handleExport(ExportFormat.JSON) },
+                          { key: 'txt', label: 'TXT', onClick: () => handleExport(ExportFormat.TXT) },
+                          { key: 'md', label: 'Markdown', onClick: () => handleExport(ExportFormat.MARKDOWN) },
+                          { key: 'json', label: 'JSON', onClick: () => handleExport(ExportFormat.JSON) },
                         ]
                       }}>
                         <Button icon={<ExportOutlined />}>导出</Button>
@@ -428,37 +382,14 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
                     </>
                   ) : (
                     <>
-                      {chapterGeneration.isPaused ? (
-                        <Button type="primary" icon={<PlayCircleOutlined />} onClick={chapterGeneration.handleResumeGeneration}>
-                          继续
-                        </Button>
-                      ) : (
-                        <Button icon={<PauseCircleOutlined />} onClick={chapterGeneration.handlePauseGeneration}>
-                          暂停
-                        </Button>
-                      )}
                       <Popconfirm title="确定要停止生成吗？已生成的内容将被保留。" onConfirm={chapterGeneration.handleStopGeneration}>
-                        <Button danger icon={<StopOutlined />}>停止</Button>
+                        <Button danger icon={<StopOutlined />}>停止生成</Button>
                       </Popconfirm>
                     </>
                   )}
                 </div>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <Button icon={<SaveOutlined />} onClick={chapterGeneration.handleSaveChapter}>保存</Button>
-                  <Dropdown menu={{
-                    items: [
-                      { key: 'saveVersion', label: '保存版本', icon: <HistoryOutlined />, onClick: handleSaveVersion },
-                      { key: 'versionHistory', label: '版本历史', icon: <HistoryOutlined />, onClick: handleShowVersionHistory },
-                    ]
-                  }}>
-                    <Button icon={<MoreOutlined />}>版本</Button>
-                  </Dropdown>
-                  <Button
-                    icon={<TableOutlined />}
-                    onClick={handleOpenTableOrganize}
-                  >
-                    表格整理
-                  </Button>
+                {/* Secondary actions row */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                   <Button
                     icon={<SearchOutlined />}
                     onClick={handlePlotCheck}
@@ -467,22 +398,29 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
                     剧情检查
                   </Button>
                   <Button
+                    icon={<TableOutlined />}
+                    onClick={handleOpenTableOrganize}
+                  >
+                    表格整理
+                  </Button>
+                  <Button
                     icon={<FileTextOutlined />}
                     onClick={handleViewLogicRecords}
                   >
                     逻辑记录
                   </Button>
                   {layoutMode === LayoutMode.WIDE && (
-                    <Button
-                      type="text"
-                      icon={rightPanelVisible ? <CloseOutlined /> : <AppstoreOutlined />}
-                      onClick={toggleRightPanel}
-                      size="small"
-                    >
-                      {rightPanelVisible ? '关闭面板' : '辅助面板'}
-                    </Button>
+                    <Tooltip title={rightPanelVisible ? '关闭辅助面板' : '打开辅助面板'}>
+                      <Button
+                        type="text"
+                        icon={rightPanelVisible ? <CloseOutlined /> : <AppstoreOutlined />}
+                        onClick={toggleRightPanel}
+                        size="small"
+                      >
+                        {rightPanelVisible ? '关闭面板' : '辅助面板'}
+                      </Button>
+                    </Tooltip>
                   )}
-                  <Button icon={<SettingOutlined />} onClick={handleBackToConfig}>调整参数</Button>
                 </div>
               </div>
             }
@@ -513,14 +451,11 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
                 })}
                 <MarkdownEditor
                   key={currentChapter.index}
+                  theme={editorTheme}
                   value={chapterGeneration.chapterContents[currentChapter.index] || ''}
                   onChange={chapterGeneration.handleEditorChange}
                   readOnly={false}
                 />
-                <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span>字数: {currentWordCount.toLocaleString()} / {targetWordCount.toLocaleString()}</span>
-                  <Progress percent={Math.round(wordCountPercentage)} size="small" style={{ width: 120 }} strokeColor={wordCountColor} />
-                </div>
               </>
             )}
           </Card>
@@ -530,6 +465,7 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
       {layoutMode === LayoutMode.WIDE && rightPanelVisible && (
         <WritingModeRightPanel
           width={rightPanelWidth}
+          onResize={setRightPanelWidth}
           onClose={() => toggleRightPanel()}
           activeTab={rightPanelTab}
           onTabChange={setRightPanelTab}
@@ -540,63 +476,17 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId,
           onPlotCheckBatchFix={handleBatchFix}
           chapterContent={chapterGeneration.chapterContents[currentChapter?.index] || ''}
           onContentUpdated={handleContentUpdated}
-          onRecheck={() => plotCheck.handlePlotCheck(currentChapter.index, chapterGeneration.chapterContents, outline, projectId)}
+          onRecheck={() => plotCheck.handlePlotCheck(currentChapter.index, chapterGeneration.chapterContents, outline, projectId, chapterGeneration.updateChapterStatus)}
           editorContentRef={chapterGeneration.editorContentRef}
           tableProjectId={projectId}
           tableChapterId={currentChapter.index}
           tableChapterTitle={currentChapter.title}
+          onTableOrganizeComplete={handleTableOrganizeComplete}
+          onTableOrganizeStatusChange={handleTableOrganizeStatusChange}
         />
       )}
       
-      <Modal
-        title="版本历史"
-        open={versionManagement.showVersionHistory}
-        onCancel={() => versionManagement.setShowVersionHistory(false)}
-        footer={null}
-        width={500}
-      >
-        <div style={{ maxHeight: '60vh', overflow: 'auto' }}>
-          {versionManagement.versionHistory.map(v => (
-            <div key={v.id} style={{ padding: '8px 12px', marginBottom: 8, background: '#f9f9f9', borderRadius: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <div>{v.note}</div>
-                <Text type="secondary" style={{ fontSize: 12 }}>{new Date(v.timestamp).toLocaleString()} · {v.content.length} 字</Text>
-              </div>
-              <Button size="small" onClick={() => handleRestoreVersion(v.id)}>恢复</Button>
-            </div>
-          ))}
-          {versionManagement.versionHistory.length === 0 && <Empty description="暂无版本" size="small" />}
-        </div>
-      </Modal>
 
-      <ChapterSplitModal
-        visible={modalStates.showSplitModal}
-        chapter={currentChapter}
-        chapterContent={chapterGeneration.chapterContents[currentChapter?.index] || ''}
-        outline={outline}
-        splitCount={modalStates.splitCount}
-        onSplitCountChange={modalStates.setSplitCount}
-        onCancel={() => modalStates.setShowSplitModal(false)}
-        onConfirm={handleSplitConfirm}
-        projectId={projectId}
-      />
-
-      <ChapterMergeModal
-        visible={modalStates.showMergeModal}
-        chapters={outline.chapters}
-        chapterContents={chapterGeneration.chapterContents}
-        outline={outline}
-        onCancel={() => modalStates.setShowMergeModal(false)}
-        onConfirm={handleMergeConfirm}
-        projectId={projectId}
-      />
-
-      <AIGenerationHistoryModal
-        visible={modalStates.showHistoryModal}
-        projectId={projectId}
-        onCancel={() => modalStates.setShowHistoryModal(false)}
-        onRestore={handleRestoreHistory}
-      />
 
       <QuickFixSuggestionModal
         visible={!!plotCheck.pendingQuickFixSuggestion}

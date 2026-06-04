@@ -379,6 +379,11 @@ export class WritingStorageService {
         outlineChapter0ContentPreview: project.outline?.chapters?.[0]?.content?.substring(0, 50) || 'empty'
       });
 
+      // Restore chainOfThought from project config if present
+      if (project.config?.chainOfThought) {
+        console.log('[WritingStorage] loadProject - Restored chainOfThought from config');
+      }
+
       if (!project.metadata) {
         project.metadata = {
           totalWordCount: 0,

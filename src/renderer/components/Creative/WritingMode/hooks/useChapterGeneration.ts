@@ -3,21 +3,13 @@ import { message } from 'antd';
 import {
   GeneratedOutline,
   GenerationState,
-  GenerationMode,
   ChapterStatus,
   WritingProject,
-  ProjectStatus,
 } from '../../../../../shared/types/writing.types';
 import { useWritingProjectStore } from '../../../../stores/writingProjectStore';
 import { useSettingStore } from '../../../../stores/settingStore';
 
 const MAX_PREVIOUS_CHAPTER_CONTENT_LENGTH = 5000;
-
-interface GenerationProgress {
-  currentChapter: number;
-  totalChapters: number;
-  mode: GenerationMode;
-}
 
 interface UseChapterGenerationResult {
   selectedChapterIndex: number;
@@ -27,19 +19,17 @@ interface UseChapterGenerationResult {
   chapterContents: Record<number, string>;
   setChapterContents: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   chapterStatuses: Record<number, ChapterStatus>;
+  setChapterStatuses: React.Dispatch<React.SetStateAction<Record<number, ChapterStatus>>>;
   isGenerating: boolean;
-  isPaused: boolean;
-  generationProgress: GenerationProgress | null;
+  generationProgress: null;
   currentChapterWords: number;
   handleGenerateChapter: (chapterIndex: number) => Promise<void>;
-  handleContinuousGeneration: () => void;
-  handlePauseGeneration: () => void;
-  handleResumeGeneration: () => void;
   handleStopGeneration: () => void;
   handleSaveChapter: () => Promise<void>;
   handleClearChapter: () => void;
   handleRegenerateChapter: () => void;
   handleEditorChange: (content: string) => void;
+  updateChapterStatus: (chapterIndex: number, status: ChapterStatus) => void;
   editorContentRef: React.MutableRefObject<string>;
 }
 
@@ -65,19 +55,15 @@ export function useChapterGeneration(
   const [chapterContents, setChapterContents] = useState<Record<number, string>>({});
   const [chapterStatuses, setChapterStatuses] = useState<Record<number, ChapterStatus>>({});
   const [isGenerating, setIsGenerating] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
-  const [generationProgress, setGenerationProgress] = useState<GenerationProgress | null>(null);
   const [currentChapterWords, setCurrentChapterWords] = useState(0);
 
   const currentProjectRef = useRef<WritingProject | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const pauseRef = useRef(false);
   const stopRef = useRef(false);
-  const isPausedRef = useRef(false);
   const editorContentRef = useRef<string>('');
   const syncTimerRef = useRef<NodeJS.Timeout | null>(null);
   const handleSaveChapterRef = useRef<(() => Promise<void>) | null>(null);
-  const handleContinuousGenerationRef = useRef<(() => void) | null>(null);
+  const activeGenerationRequests = useRef<Set<string>>(new Set()); // Track active generation requests for synchronous dedup
 
   useEffect(() => {
     console.log('[ChapterGeneration] useEffect triggered:', {
@@ -184,26 +170,11 @@ export function useChapterGeneration(
   }, []);
 
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-        e.preventDefault();
-        handleSaveChapterRef.current?.();
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-        e.preventDefault();
-        handleContinuousGenerationRef.current?.();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
-  useEffect(() => {
     if (!window.electronAPI?.writing) return;
 
     const offChunk = window.electronAPI.writing.onStreamChunk((data) => {
       if (stopRef.current) return;
+      
       setStreamingContent(prev => prev + data.chunk);
       setCurrentChapterWords(prev => prev + data.chunk.length);
     });
@@ -212,11 +183,9 @@ export function useChapterGeneration(
       setStreamingContent('');
       setCurrentChapterWords(0);
       setChapterContents(prev => ({ ...prev, [data.chapterIndex]: data.content }));
-      setChapterStatuses(prev => ({ ...prev, [data.chapterIndex]: ChapterStatus.COMPLETED }));
+      setChapterStatuses(prev => ({ ...prev, [data.chapterIndex]: ChapterStatus.GENERATED }));
       setGenerationState(GenerationState.COMPLETED);
       setIsGenerating(false);
-      setIsPaused(false);
-      isPausedRef.current = false;
       const chapterNum = outline?.chapters.findIndex(ch => ch.index === data.chapterIndex);
       message.success(`第 ${(chapterNum >= 0 ? chapterNum : data.chapterIndex) + 1} 章生成完成`);
 
@@ -227,7 +196,7 @@ export function useChapterGeneration(
             ...currentProject.outline,
             chapters: currentProject.outline.chapters.map(ch =>
               ch.index === data.chapterIndex
-                ? { ...ch, content: data.content, status: ChapterStatus.COMPLETED, wordCount: data.content.length, lastModified: Date.now() }
+                ? { ...ch, content: data.content, status: ChapterStatus.GENERATED, wordCount: data.content.length, lastModified: Date.now() }
                 : ch
             ),
           },
@@ -250,27 +219,6 @@ export function useChapterGeneration(
           console.error('[ChapterGeneration] Failed to auto-save after generation:', error);
         }
       }, 500);
-
-      if (generationProgress && generationProgress.mode === GenerationMode.CONTINUOUS) {
-        const nextIndex = data.chapterIndex + 1;
-        if (nextIndex < (outline?.chapters.length || 0)) {
-          if (isPausedRef.current) {
-            setGenerationProgress(null);
-            message.info('连续生成已暂停');
-            return;
-          }
-          setGenerationProgress(prev => prev ? { ...prev, currentChapter: nextIndex } : null);
-          setTimeout(() => handleGenerateChapter(nextIndex), 1000);
-        } else {
-          setGenerationProgress(null);
-          message.success('所有章节生成完成！');
-          const proj = currentProjectRef.current;
-          if (proj) {
-            updateProject(proj.id, { status: ProjectStatus.COMPLETED });
-            saveProject();
-          }
-        }
-      }
     });
 
     const offError = window.electronAPI.writing.onStreamError((data) => {
@@ -281,8 +229,6 @@ export function useChapterGeneration(
       }
       setGenerationState(GenerationState.ERROR);
       setIsGenerating(false);
-      setIsPaused(false);
-      isPausedRef.current = false;
       setChapterStatuses(prev => ({
         ...prev,
         [data.chapterIndex]: prev[data.chapterIndex] === ChapterStatus.GENERATING ? ChapterStatus.FAILED : prev[data.chapterIndex]
@@ -298,14 +244,33 @@ export function useChapterGeneration(
   }, [outline]);
 
   const handleGenerateChapter = useCallback(async (chapterIndex: number) => {
-    if (!outline || isGenerating) return;
+    if (!outline) return;
+
+    // Create a request key to prevent duplicate requests for the same chapter
+    const requestKey = `${projectId}_${chapterIndex}`;
+    
+    // Use the ref for synchronous deduplication (avoids race conditions with React state)
+    if (activeGenerationRequests.current.has(requestKey)) {
+      console.log(`[ChapterGeneration] Duplicate request blocked for chapter ${chapterIndex}`);
+      return;
+    }
+
+    // Add this request to the active set
+    activeGenerationRequests.current.add(requestKey);
 
     const chapter = outline.chapters.find(ch => ch.index === chapterIndex);
-    if (!chapter) return;
+    if (!chapter) {
+      activeGenerationRequests.current.delete(requestKey);
+      return;
+    }
+
+    // Check if already generating (using React state for UI purposes)
+    if (isGenerating) {
+      activeGenerationRequests.current.delete(requestKey);
+      return;
+    }
 
     stopRef.current = false;
-    pauseRef.current = false;
-    isPausedRef.current = false;
     setIsGenerating(true);
     setGenerationState(GenerationState.GENERATING);
     setChapterStatuses(prev => ({ ...prev, [chapterIndex]: ChapterStatus.GENERATING }));
@@ -317,7 +282,21 @@ export function useChapterGeneration(
       abortControllerRef.current = new AbortController();
 
       const currentSetting = useSettingStore.getState().setting;
-      const engines = currentSetting?.aiEngines || currentSetting?.ai_engines || [];
+      
+      // Fix: properly handle aiEngines vs ai_engines fallback
+      // First try aiEngines, check if array is non-empty
+      let engines: any[] | undefined = currentSetting?.aiEngines;
+      if (!engines || engines.length === 0) {
+        engines = currentSetting?.ai_engines;
+        if (!engines || engines.length === 0) {
+          engines = [];
+        }
+      }
+      
+      if (engines.length === 0) {
+        console.warn('[ChapterGeneration] No AI engines configured. aiEngines and ai_engines are both empty/undefined.');
+      }
+      
       const engine = engines.find((e: any) => e.id === currentSetting?.activeEngineId) || engines[0];
 
       if (!engine) {
@@ -330,9 +309,18 @@ export function useChapterGeneration(
       if (engine.temperature === undefined || engine.temperature === null) {
         engine.temperature = 0.7;
       }
-      if (engine.max_tokens === undefined || engine.max_tokens === null) {
-        engine.max_tokens = 10240;
+      
+      // Handle max_tokens: check for undefined, null, NaN, and 0
+      let maxTokens = engine.max_tokens;
+      if (maxTokens === undefined || maxTokens === null || Number.isNaN(maxTokens) || maxTokens === 0) {
+        maxTokens = 32768; // Default to 32768 tokens
+        console.log('[ChapterGeneration] max_tokens was invalid, using default:', maxTokens);
+      } else {
+        console.log('[ChapterGeneration] max_tokens from engine config:', maxTokens);
       }
+      engine.max_tokens = maxTokens;
+
+      console.log('[ChapterGeneration] Final max_tokens being sent to AI:', engine.max_tokens);
 
       const modelConfig = {
         model: engine.model_name,
@@ -391,54 +379,20 @@ export function useChapterGeneration(
         message.info('已停止生成');
       } else {
         message.error(error.message || '生成失败');
+        setChapterStatuses(prev => ({ ...prev, [chapterIndex]: ChapterStatus.FAILED }));
+        setGenerationState(GenerationState.ERROR);
       }
-      setChapterStatuses(prev => ({ ...prev, [chapterIndex]: ChapterStatus.FAILED }));
       setIsGenerating(false);
-      setGenerationState(GenerationState.ERROR);
+    } finally {
+      // Clean up: remove requestKey, stop sync timer
+      activeGenerationRequests.current.delete(requestKey);
+      if (syncTimerRef.current) {
+        clearTimeout(syncTimerRef.current);
+        syncTimerRef.current = null;
+      }
+      // Don't override isGenerating/generationState here - they're set in catch or onStreamComplete
     }
-  }, [outline, isGenerating, chapterContents, projectId, setting]);
-
-  const handleContinuousGeneration = useCallback(() => {
-    if (!outline || isGenerating) return;
-
-    const nextChapter = outline.chapters.find(ch =>
-      chapterStatuses[ch.index] !== ChapterStatus.COMPLETED
-    );
-
-    if (!nextChapter) {
-      message.info('所有章节已完成');
-      return;
-    }
-
-    setGenerationProgress({
-      currentChapter: nextChapter.index,
-      totalChapters: outline.chapters.length,
-      mode: GenerationMode.CONTINUOUS
-    });
-
-    handleGenerateChapter(nextChapter.index);
-  }, [outline, isGenerating, chapterStatuses, handleGenerateChapter]);
-
-  handleContinuousGenerationRef.current = handleContinuousGeneration;
-
-  const handlePauseGeneration = useCallback(() => {
-    pauseRef.current = true;
-    isPausedRef.current = true;
-    setIsPaused(true);
-    setGenerationState(GenerationState.PAUSED);
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    message.info('已暂停生成');
-  }, []);
-
-  const handleResumeGeneration = useCallback(() => {
-    pauseRef.current = false;
-    isPausedRef.current = false;
-    setIsPaused(false);
-    setGenerationState(GenerationState.GENERATING);
-    message.info('已恢复生成');
-  }, []);
+  }, [outline, chapterContents, projectId, setting]);
 
   const handleStopGeneration = useCallback(() => {
     stopRef.current = true;
@@ -446,9 +400,7 @@ export function useChapterGeneration(
       abortControllerRef.current.abort();
     }
     setIsGenerating(false);
-    setIsPaused(false);
     setGenerationState(GenerationState.STOPPED);
-    setGenerationProgress(null);
     message.info('已停止生成');
   }, []);
 
@@ -512,6 +464,10 @@ export function useChapterGeneration(
     handleGenerateChapter(currentChapter.index);
   }, [selectedChapterIndex, outline, handleGenerateChapter]);
 
+  const updateChapterStatus = useCallback((chapterIndex: number, status: ChapterStatus) => {
+    setChapterStatuses(prev => ({ ...prev, [chapterIndex]: status }));
+  }, []);
+
   handleSaveChapterRef.current = handleSaveChapter;
 
   return {
@@ -522,19 +478,17 @@ export function useChapterGeneration(
     chapterContents,
     setChapterContents,
     chapterStatuses,
+    setChapterStatuses,
     isGenerating,
-    isPaused,
-    generationProgress,
+    generationProgress: null,  // Since we removed continuous generation, always return null
     currentChapterWords,
     handleGenerateChapter,
-    handleContinuousGeneration,
-    handlePauseGeneration,
-    handleResumeGeneration,
     handleStopGeneration,
     handleSaveChapter,
     handleClearChapter,
     handleRegenerateChapter,
     handleEditorChange,
+    updateChapterStatus,
     editorContentRef,
   };
 }

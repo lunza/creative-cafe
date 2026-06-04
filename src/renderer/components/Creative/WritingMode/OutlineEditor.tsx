@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Button, Tag, message, Empty, Space } from 'antd';
-import { CheckOutlined, ReloadOutlined, EditOutlined } from '@ant-design/icons';
-import { GeneratedOutline, NovelType, ChapterOutline, ProjectStatus, ChapterStatus } from '../../../../shared/types/writing.types';
+import { Button, Tag, message, Empty, Space, Collapse } from 'antd';
+import { CheckOutlined, ReloadOutlined, EditOutlined, AntCloudOutlined } from '@ant-design/icons';
+import { GeneratedOutline, NovelType, ChapterOutline, ProjectStatus } from '../../../../shared/types/writing.types';
 import { NOVEL_TYPE_LABELS } from '../../../../shared/constants/writing.constants';
 import OutlineEditPanel from './OutlineEditPanel';
 import ManualOutlineEditor from './ManualOutlineEditor';
@@ -27,6 +27,11 @@ const OutlineEditor: React.FC<OutlineEditorProps> = ({
 }) => {
   const [currentMode, setCurrentMode] = useState<'ai' | 'manual'>(initialMode);
   const [manualChapters, setManualChapters] = useState<ChapterOutline[]>(outline?.chapters || []);
+  
+  const chainOfThought = useWritingModeStore((state) => state.chainOfThought);
+  const currentProject = useWritingProjectStore((state) => state.getCurrentProject());
+  const projectCoT = currentProject?.config?.chainOfThought;
+  const displayCoT = chainOfThought || projectCoT;
 
   const handleManualChaptersChange = (chapters: ChapterOutline[]) => {
     setManualChapters(chapters);
@@ -175,6 +180,46 @@ const OutlineEditor: React.FC<OutlineEditorProps> = ({
             chapters={manualChapters}
             onChange={handleManualChaptersChange}
             projectId={projectId}
+          />
+        </div>
+      )}
+
+      {/* Chain of Thought Display */}
+      {displayCoT && displayCoT.rawData && (
+        <div style={{ marginTop: 24 }}>
+          <Collapse
+            items={[
+              {
+                key: 'cot',
+                label: (
+                  <span>
+                    <AntCloudOutlined style={{ marginRight: 8, color: '#1890ff' }} />
+                    AI 思考过程 (Chain of Thought)
+                    {displayCoT.model && (
+                      <Tag style={{ marginLeft: 8 }} color="blue">{displayCoT.model}</Tag>
+                    )}
+                  </span>
+                ),
+                children: (
+                  <div
+                    style={{
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      fontFamily: 'monospace',
+                      fontSize: 13,
+                      lineHeight: 1.6,
+                      padding: 12,
+                      backgroundColor: '#fafafa',
+                      borderRadius: 4,
+                      maxHeight: 600,
+                      overflow: 'auto',
+                    }}
+                  >
+                    {displayCoT.formattedData || displayCoT.rawData}
+                  </div>
+                ),
+              }
+            ]}
           />
         </div>
       )}

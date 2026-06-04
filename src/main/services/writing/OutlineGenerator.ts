@@ -1,9 +1,11 @@
 import {
   OutlineGenerationRequest,
+  OutlineGenerationResult,
   GeneratedOutline,
   ChapterOutline,
   WritingError,
-  WritingErrorCode
+  WritingErrorCode,
+  ChainOfThought
 } from '../../../shared/types/writing.types';
 import { promptBuilder } from './PromptBuilder';
 import { writingResourceManager } from '../WritingResourceManager';
@@ -18,11 +20,6 @@ interface ModelConfig {
   model: string;
   temperature: number;
   maxTokens: number;
-}
-
-export interface OutlineGenerationResult {
-  outline: GeneratedOutline;
-  rawContent: string;
 }
 
 export class OutlineGenerator {
@@ -134,15 +131,84 @@ export class OutlineGenerator {
       );
     }
 
+    // Extract CoT data before parsing the outline
+    const { textWithoutCoT, chainOfThought } = this.extractChainOfThought(rawContent, modelName);
+
     try {
-      const outline = this.parseOutlineResponse(rawContent);
-      return { outline, rawContent };
+      const outline = this.parseOutlineResponse(textWithoutCoT);
+      return { outline, rawContent, chainOfThought };
     } catch (parseError) {
       console.error('[OutlineGenerator] Parse failed but raw content preserved, length:', rawContent.length);
       const error = parseError instanceof Error ? parseError : new Error(String(parseError));
       (error as any).rawContent = rawContent;
+      (error as any).chainOfThought = chainOfThought;
       throw error;
     }
+  }
+
+  /**
+   * Extract Chain of Thought data from AI response.
+   * Supports two formats:
+   * 1. Wrapped in <RichMediaReference>...</RichMediaReference> tags
+   * 2. Contained in a `thinking_process` key in the JSON response
+   */
+  private extractChainOfThought(rawContent: string, model: string): { textWithoutCoT: string; chainOfThought?: ChainOfThought } {
+    let textWithoutCoT = rawContent;
+    let cotRawData = '';
+
+    // Strategy 1: Extract <RichMediaReference>...</RichMediaReference> tags
+    const richMediaRegex = /<RichMediaReference>([\s\S]*?)<\/RichMediaReference>/gi;
+    const richMediaMatches = rawContent.match(richMediaRegex);
+    if (richMediaMatches && richMediaMatches.length > 0) {
+      // Extract content between tags
+      for (const match of richMediaMatches) {
+        const contentMatch = match.match(/<RichMediaReference>([\s\S]*?)<\/RichMediaReference>/i);
+        if (contentMatch && contentMatch[1]) {
+          cotRawData += contentMatch[1].trim() + '\n';
+        }
+      }
+      // Remove RichMediaReference tags from the text
+      textWithoutCoT = rawContent.replace(richMediaRegex, '').trim();
+      console.log('[OutlineGenerator] Extracted CoT from RichMediaReference tags, length:', cotRawData.length);
+    }
+
+    // Strategy 2: Try to parse JSON and check for thinking_process field
+    let jsonStr = textWithoutCoT.trim();
+    // Strip code fences if present
+    const codeFenceRegex = /```(?:json)?\s*([\s\S]*?)```/;
+    const codeFenceMatch = jsonStr.match(codeFenceRegex);
+    if (codeFenceMatch && codeFenceMatch[1]) {
+      jsonStr = codeFenceMatch[1].trim();
+    }
+
+    try {
+      const parsed = JSON.parse(jsonStr);
+      if (parsed.thinking_process) {
+        const thinkingProcess = typeof parsed.thinking_process === 'string'
+          ? parsed.thinking_process
+          : JSON.stringify(parsed.thinking_process, null, 2);
+        cotRawData += (cotRawData ? '\n' : '') + thinkingProcess;
+        // Remove thinking_process from the JSON to avoid interference with outline parsing
+        delete parsed.thinking_process;
+        textWithoutCoT = '```json\n' + JSON.stringify(parsed, null, 2) + '\n```';
+        console.log('[OutlineGenerator] Extracted CoT from thinking_process field, length:', thinkingProcess.length);
+      }
+    } catch {
+      // Not valid JSON, skip this strategy
+    }
+
+    if (!cotRawData.trim()) {
+      return { textWithoutCoT: rawContent };
+    }
+
+    const chainOfThought: ChainOfThought = {
+      rawData: cotRawData.trim(),
+      formattedData: cotRawData.trim(),
+      timestamp: Date.now(),
+      model
+    };
+
+    return { textWithoutCoT, chainOfThought };
   }
 
   private async readStreamResponse(response: Response, abortSignal?: AbortSignal): Promise<string> {
