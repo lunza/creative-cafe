@@ -440,6 +440,7 @@ export function useChapterGeneration(
     setChapterStatuses(prev => ({ ...prev, [ch.index]: ChapterStatus.PENDING }));
     setCurrentChapterWords(0);
     setStreamingContent('');
+    editorContentRef.current = '';
 
     const project = currentProjectRef.current;
     if (project && project.outline) {

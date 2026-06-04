@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Modal, Form, Input, Select, InputNumber, Button, Row, Col, message, Checkbox, Collapse, Tag, Spin, List, Slider } from 'antd';
-import { BookOutlined, EditOutlined, SaveOutlined, FolderOpenOutlined, DeleteOutlined, SettingOutlined } from '@ant-design/icons';
+import { Modal, Form, Input, Select, InputNumber, Button, Row, Col, message, Checkbox, Collapse, Tag, Spin, List } from 'antd';
+import { BookOutlined, EditOutlined, SaveOutlined, FolderOpenOutlined, DeleteOutlined } from '@ant-design/icons';
 import {
   WritingStyle,
   WritingConfig
@@ -681,18 +681,6 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
                   <TextArea rows={2} placeholder="每行一个禁止出现的内容" />
                 </Form.Item>
               </Collapse.Panel>
-
-              <Collapse.Panel key="model" header="模型参数" icon={<SettingOutlined />}>
-                <Form.Item name="temperature" label="Temperature" initialValue={DEFAULT_WRITING_CONFIG.temperature}>
-                  <Slider min={0} max={2} step={0.1} tooltip={{ formatter: (v) => v?.toFixed(1) }} />
-                </Form.Item>
-                <Form.Item name="maxTokens" label="最大 Token" initialValue={DEFAULT_WRITING_CONFIG.maxTokens}>
-                  <Slider min={1000} max={32000} step={1000} tooltip={{ formatter: (v) => v?.toLocaleString() }} />
-                </Form.Item>
-                <div style={{ fontSize: 12, color: '#999', marginTop: 8 }}>
-                  AI 模型使用全局引擎设置中的配置，可在「设置 → AI引擎设置」中修改
-                </div>
-              </Collapse.Panel>
             </Collapse>
 
             {isGenerating && !pendingRawJson && (
@@ -746,14 +734,9 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
                     保存配置
                   </Button>
                   {!isGenerating && !pendingRawJson && (
-                    <>
-                      <Button onClick={handleManualCreateOutline}>
-                        手动创建大纲
-                      </Button>
-                      <Button type="primary" htmlType="submit" size="large">
-                        生成大纲
-                      </Button>
-                    </>
+                    <Button type="primary" htmlType="submit" size="large">
+                      生成大纲
+                    </Button>
                   )}
                   {!isGenerating && pendingRawJson && (
                     <>
