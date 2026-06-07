@@ -5,6 +5,7 @@ import {
   GenerationState,
   ChapterStatus,
   WritingProject,
+  RegenerationSuggestion,
 } from '../../../../../shared/types/writing.types';
 import { useWritingProjectStore } from '../../../../stores/writingProjectStore';
 import { useSettingStore } from '../../../../stores/settingStore';
@@ -23,11 +24,11 @@ interface UseChapterGenerationResult {
   isGenerating: boolean;
   generationProgress: null;
   currentChapterWords: number;
-  handleGenerateChapter: (chapterIndex: number) => Promise<void>;
+  handleGenerateChapter: (chapterIndex: number, userSuggestion?: string) => Promise<void>;
   handleStopGeneration: () => void;
   handleSaveChapter: () => Promise<void>;
   handleClearChapter: () => void;
-  handleRegenerateChapter: () => void;
+  handleRegenerateChapter: (regenerationSuggestion?: RegenerationSuggestion) => void;
   handleEditorChange: (content: string) => void;
   updateChapterStatus: (chapterIndex: number, status: ChapterStatus) => void;
   editorContentRef: React.MutableRefObject<string>;
@@ -64,6 +65,13 @@ export function useChapterGeneration(
   const syncTimerRef = useRef<NodeJS.Timeout | null>(null);
   const handleSaveChapterRef = useRef<(() => Promise<void>) | null>(null);
   const activeGenerationRequests = useRef<Set<string>>(new Set()); // Track active generation requests for synchronous dedup
+  const outlineRef = useRef(outline); // Store latest outline for event listeners
+  const regenerationSuggestionRef = useRef<RegenerationSuggestion | undefined>(undefined);
+  const regenerationPreviousContentRef = useRef<string>('');
+
+  useEffect(() => {
+    outlineRef.current = outline;
+  }, [outline]);
 
   useEffect(() => {
     console.log('[ChapterGeneration] useEffect triggered:', {
@@ -186,7 +194,7 @@ export function useChapterGeneration(
       setChapterStatuses(prev => ({ ...prev, [data.chapterIndex]: ChapterStatus.GENERATED }));
       setGenerationState(GenerationState.COMPLETED);
       setIsGenerating(false);
-      const chapterNum = outline?.chapters.findIndex(ch => ch.index === data.chapterIndex);
+      const chapterNum = outlineRef.current?.chapters.findIndex(ch => ch.index === data.chapterIndex);
       message.success(`第 ${(chapterNum >= 0 ? chapterNum : data.chapterIndex) + 1} 章生成完成`);
 
       const currentProject = currentProjectRef.current;
@@ -227,13 +235,24 @@ export function useChapterGeneration(
         setIsGenerating(false);
         return;
       }
+      // Clear streaming content and word count on error to ensure clean UI
+      setStreamingContent('');
+      setCurrentChapterWords(0);
       setGenerationState(GenerationState.ERROR);
       setIsGenerating(false);
       setChapterStatuses(prev => ({
         ...prev,
         [data.chapterIndex]: prev[data.chapterIndex] === ChapterStatus.GENERATING ? ChapterStatus.FAILED : prev[data.chapterIndex]
       }));
-      message.error(data.error?.message || '生成出错');
+      // Show user-friendly error message based on error type
+      const errorType = data.error?.errorType || 'unknown';
+      const friendlyMessages: Record<string, string> = {
+        timeout: '生成超时，请检查网络连接或减少章节字数后重试',
+        network: '网络连接异常，请检查网络后重试',
+        service: 'AI 服务暂时不可用，请稍后重试',
+        unknown: '生成失败，请稍后重试'
+      };
+      message.error(friendlyMessages[errorType] || friendlyMessages.unknown);
     });
 
     return () => {
@@ -241,9 +260,9 @@ export function useChapterGeneration(
       offComplete();
       offError();
     };
-  }, [outline]);
+  }, []); // Register listeners once - use refs for state access
 
-  const handleGenerateChapter = useCallback(async (chapterIndex: number) => {
+  const handleGenerateChapter = useCallback(async (chapterIndex: number, userSuggestion?: string) => {
     if (!outline) return;
 
     // Create a request key to prevent duplicate requests for the same chapter
@@ -369,8 +388,15 @@ export function useChapterGeneration(
           userPersonaIds: projectResources.userPersonaIds || [],
           knowledgeItemIds: projectResources.knowledgeItemIds || [],
           writingStyleIds: projectResources.writingStyleIds || []
-        }
+        },
+        userSuggestion: userSuggestion?.trim() || undefined,
+        regenerationSuggestion: regenerationSuggestionRef.current,
+        previousChapterContent: regenerationPreviousContentRef.current || undefined
       };
+
+      // Clear regeneration refs after building request
+      regenerationSuggestionRef.current = undefined;
+      regenerationPreviousContentRef.current = '';
 
       await window.electronAPI.writing.generateChapter(request);
     } catch (error: any) {
@@ -459,11 +485,21 @@ export function useChapterGeneration(
     message.success('章节内容已清空');
   }, [selectedChapterIndex, outline, updateProject, saveProject]);
 
-  const handleRegenerateChapter = useCallback(() => {
+  const handleRegenerateChapter = useCallback((regenerationSuggestion?: RegenerationSuggestion) => {
     const currentChapter = outline?.chapters[selectedChapterIndex];
     if (!currentChapter) return;
+
+    // Get previous chapter content for reference in regeneration suggestion
+    const previousContent = chapterContents[currentChapter.index] || '';
+
+    // For regeneration, we need to pass the suggestion through a different mechanism
+    // Since handleGenerateChapter only accepts userSuggestion (simple string),
+    // we'll store regeneration suggestion in a ref and use it in handleGenerateChapter
+    regenerationSuggestionRef.current = regenerationSuggestion;
+    regenerationPreviousContentRef.current = previousContent;
+
     handleGenerateChapter(currentChapter.index);
-  }, [selectedChapterIndex, outline, handleGenerateChapter]);
+  }, [selectedChapterIndex, outline, chapterContents, handleGenerateChapter]);
 
   const updateChapterStatus = useCallback((chapterIndex: number, status: ChapterStatus) => {
     setChapterStatuses(prev => ({ ...prev, [chapterIndex]: status }));

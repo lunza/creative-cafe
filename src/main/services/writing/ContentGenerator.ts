@@ -37,6 +37,7 @@ export class ContentGenerator {
     const continuityConstraints = this.buildContinuityConstraints(request);
     const tableContext = this.buildTableContextForPrompt(request);
 
+    // Build user prompt with optional suggestion extensions
     const userPrompt = promptBuilder.buildContentPrompt(
       request.chapterInfo,
       {
@@ -50,9 +51,43 @@ export class ContentGenerator {
       request.generationParams
     );
 
+    // Append user suggestion if provided (generation mode)
+    let finalUserPrompt = userPrompt;
+    if (request.userSuggestion) {
+      finalUserPrompt += `\n\n## 附加指令\n${request.userSuggestion}`;
+    }
+
+    // Append regeneration suggestion if provided (regeneration mode)
+    if (request.regenerationSuggestion) {
+      const s = request.regenerationSuggestion;
+      const parts: string[] = ['\n\n## 重新生成指令'];
+
+      if (request.previousChapterContent) {
+        parts.push('\n### 上次生成内容（参考）\n');
+        parts.push(this.stripThinkTags(request.previousChapterContent));
+      }
+
+      if (s.keepContent) {
+        parts.push(`\n### 需保留内容\n${s.keepContent}`);
+      }
+      if (s.discardContent) {
+        parts.push(`\n### 需舍弃内容\n${s.discardContent}`);
+      }
+      if (s.adjustContent) {
+        parts.push(`\n### 需调整内容\n${s.adjustContent}`);
+      }
+      if (s.addContent) {
+        parts.push(`\n### 需新增内容\n${s.addContent}`);
+      }
+
+      if (parts.length > 1) {
+        finalUserPrompt += parts.join('');
+      }
+    }
+
     return [
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt }
+      { role: 'user', content: finalUserPrompt }
     ];
   }
 
@@ -219,9 +254,12 @@ export class ContentGenerator {
     }
 
     addLog(`[Stage 5/6] 结果处理 - 最终失败: ${lastError?.message}`, 'error');
+    const errorType = lastError ? this.classifyError(lastError) : 'unknown';
     throw this.createError(
       WritingErrorCode.CONTENT_GENERATION_FAILED,
-      `AI 流请求最终失败: ${lastError?.message ?? '未知错误'}`
+      `AI 流请求最终失败: ${lastError?.message ?? '未知错误'}`,
+      (lastError as Error | undefined)?.stack,
+      errorType
     );
   }
 
@@ -348,6 +386,28 @@ export class ContentGenerator {
     });
 
     return { content: fullContent, generationTime };
+  }
+
+  /**
+   * 分类错误类型
+   * @returns 'timeout' | 'network' | 'service' | 'unknown'
+   */
+  private classifyError(error: Error): 'timeout' | 'network' | 'service' | 'unknown' {
+    const msg = error.message.toLowerCase();
+    if (msg.includes('timeout') || msg.includes('timed out')) {
+      return 'timeout';
+    }
+    if (msg.includes('network') || msg.includes('fetch') || msg.includes('connection') ||
+        msg.includes('econnreset') || msg.includes('econnrefused') || msg.includes('socket') ||
+        msg.includes('enotfound') || msg.includes('eai_again')) {
+      return 'network';
+    }
+    if (msg.includes('429') || msg.includes('rate limit') || msg.includes('unavailable') ||
+        msg.includes('503') || msg.includes('502') || msg.includes('500') ||
+        msg.includes('service') || msg.includes('model')) {
+      return 'service';
+    }
+    return 'unknown';
   }
 
   private isTransientError(error: Error): boolean {
@@ -701,14 +761,31 @@ export class ContentGenerator {
   private createError(
     code: WritingErrorCode,
     message: string,
-    details?: string
+    details?: string,
+    errorType?: 'timeout' | 'network' | 'service' | 'unknown'
   ): WritingError {
     return {
       code,
       message,
       details,
-      recoverable: code !== WritingErrorCode.AI_SERVICE_UNAVAILABLE
+      recoverable: code !== WritingErrorCode.AI_SERVICE_UNAVAILABLE,
+      errorType
     };
+  }
+
+  /**
+   * 剥离内容中的 <think> 标签及其之间的内容
+   * 用于重新生成时处理上次生成内容，避免模型复制思考过程
+   */
+  private stripThinkTags(content: string): string {
+    if (!content) return content;
+    // 移除所有 <think>...</think> 标签及其之间的内容（支持多行匹配）
+    let stripped = content.replace(/<think>[\s\S]*?<\/think>/gi, '');
+    // 清理多余的空行（连续两个以上的换行符缩减为两个）
+    stripped = stripped.replace(/\n{3,}/g, '\n\n');
+    // 去除首尾空白
+    stripped = stripped.trim();
+    return stripped;
   }
 }
 

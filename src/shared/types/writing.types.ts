@@ -274,6 +274,22 @@ export interface ContentGenerationRequest {
     data?: Record<string, Record<string, any>[]>;
     sheetDescriptions?: Record<string, string>;
   };
+  userSuggestion?: string;
+  regenerationSuggestion?: RegenerationSuggestion;
+  previousChapterContent?: string; // 上一次生成的完整内容（重新生成时引用）
+}
+
+// 章节生成用户建议（简洁模式）
+export interface GenerationSuggestion {
+  suggestion: string;
+}
+
+// 章节重新生成结构化建议（高级模式）
+export interface RegenerationSuggestion {
+  keepContent: string;    // 需保留的优秀部分
+  discardContent: string; // 需舍弃的不佳部分
+  adjustContent: string;  // 需调整的部分及具体指示
+  addContent: string;     // 需新增的部分及具体指示
 }
 
 // 作品信息
@@ -569,6 +585,7 @@ export interface WritingError {
   message: string;
   details?: string;
   recoverable: boolean;
+  errorType?: 'timeout' | 'network' | 'service' | 'unknown';
 }
 
 // 流式数据

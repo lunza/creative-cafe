@@ -575,10 +575,13 @@ export function registerWritingHandlers(): void {
         return { success: true };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        const errorObj = {
-          code: WritingErrorCode.CONTENT_GENERATION_FAILED,
+        const writingError = error as WritingError;
+        const errorObj: WritingError = {
+          code: writingError.code || WritingErrorCode.CONTENT_GENERATION_FAILED,
           message: errorMessage,
-          recoverable: true
+          recoverable: writingError.recoverable ?? true,
+          details: writingError.details,
+          errorType: writingError.errorType
         };
 
         event.sender.send('writing:stream:error', {

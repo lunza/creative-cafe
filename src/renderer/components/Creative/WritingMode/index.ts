@@ -7,3 +7,5 @@ export { default as ContentWorkspace } from './ContentWorkspace';
 export { default as ManualOutlineEditor } from './ManualOutlineEditor';
 export { default as WritingModeRightPanel } from './WritingModeRightPanel';
 export { default as WritingProgressDashboard } from './WritingProgressDashboard';
+export { default as GenerationSuggestionModal } from './GenerationSuggestionModal';
+export { default as RegenerationSuggestionModal } from './RegenerationSuggestionModal';

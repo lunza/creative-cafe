@@ -23,10 +23,13 @@ import {
   ExportFormat,
   PlotCheckIssue,
   LogicCheckIssue,
+  RegenerationSuggestion,
 } from '../../../../shared/types/writing.types';
 import MarkdownEditor from '../../Common/MarkdownEditor';
 import AutoFixResultModal from './AutoFixResultModal';
 import QuickFixSuggestionModal from './QuickFixSuggestionModal';
+import GenerationSuggestionModal from './GenerationSuggestionModal';
+import RegenerationSuggestionModal from './RegenerationSuggestionModal';
 import WritingModeRightPanel from './WritingModeRightPanel';
 import { useChapterGeneration } from './hooks/useChapterGeneration';
 import { useModalStates } from './hooks/useModalStates';
@@ -89,6 +92,8 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId 
   const editorTheme = useUIStore((state) => state.theme);
 
   const [isOrganizing, setIsOrganizing] = React.useState(false);
+  const [showGenerationModal, setShowGenerationModal] = React.useState(false);
+  const [showRegenerationModal, setShowRegenerationModal] = React.useState(false);
 
   const handleTableOrganizeStatusChange = React.useCallback((organizing: boolean) => {
     setIsOrganizing(organizing);
@@ -232,6 +237,34 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId 
     }
   };
 
+  // 生成建议面板处理函数
+  const handleOpenGenerationModal = () => {
+    setShowGenerationModal(true);
+  };
+
+  const handleGenerationSubmit = (suggestion: string) => {
+    setShowGenerationModal(false);
+    chapterGeneration.handleGenerateChapter(currentChapter.index, suggestion);
+  };
+
+  const handleGenerationCancel = () => {
+    setShowGenerationModal(false);
+  };
+
+  // 重新生成建议面板处理函数
+  const handleOpenRegenerationModal = () => {
+    setShowRegenerationModal(true);
+  };
+
+  const handleRegenerationSubmit = (suggestion: RegenerationSuggestion) => {
+    setShowRegenerationModal(false);
+    chapterGeneration.handleRegenerateChapter(suggestion);
+  };
+
+  const handleRegenerationCancel = () => {
+    setShowRegenerationModal(false);
+  };
+
   return (
     <Layout style={{ height: '100%' }}>
       <style>{`
@@ -338,14 +371,14 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId 
                       <Button
                         type="primary"
                         icon={<PlayCircleOutlined />}
-                        onClick={() => chapterGeneration.handleGenerateChapter(currentChapter.index)}
+                        onClick={handleOpenGenerationModal}
                         disabled={!currentChapter || chapterGeneration.chapterStatuses[chapterGeneration.selectedChapterIndex] === ChapterStatus.GENERATING}
                       >
                         生成
                       </Button>
                       <Button
                         icon={<ReloadOutlined />}
-                        onClick={chapterGeneration.handleRegenerateChapter}
+                        onClick={handleOpenRegenerationModal}
                         disabled={!chapterGeneration.chapterContents[currentChapter?.index] && !chapterGeneration.streamingContent}
                       >
                         重新生成
@@ -550,6 +583,19 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId 
         onAccept={handleAcceptFix}
         onReject={handleRejectFix}
         onCancel={() => modalStates.setShowFixResultModal(false)}
+      />
+
+      <GenerationSuggestionModal
+        visible={showGenerationModal}
+        onSubmit={handleGenerationSubmit}
+        onCancel={handleGenerationCancel}
+      />
+
+      <RegenerationSuggestionModal
+        visible={showRegenerationModal}
+        onSubmit={handleRegenerationSubmit}
+        onCancel={handleRegenerationCancel}
+        previousContent={chapterGeneration.chapterContents[currentChapter?.index] || ''}
       />
     </Layout>
   );
