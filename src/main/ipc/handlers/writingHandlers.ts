@@ -1317,9 +1317,9 @@ export function registerWritingHandlers(): void {
     }
   });
 
-  ipcMain.handle('writing:table:organizeTable', async (event, projectId: string, modelConfig: ModelConfig, chapterIndex?: number) => {
+  ipcMain.handle('writing:table:organizeTable', async (event, projectId: string, modelConfig: ModelConfig, chapterIndex?: number, requirements?: string) => {
     try {
-      console.log('[WritingOrganize] IPC handler 收到请求:', { projectId, chapterIndex });
+      console.log('[WritingOrganize] IPC handler 收到请求:', { projectId, chapterIndex, requirements: requirements ? requirements.substring(0, 100) : undefined });
       const result = await writingStorageService.organizeTable(
         projectId,
         modelConfig,
@@ -1335,7 +1335,8 @@ export function registerWritingHandlers(): void {
               timestamp: Date.now()
             });
           }
-        }
+        },
+        requirements
       );
       return { success: true, ...result };
     } catch (error) {
@@ -1345,6 +1346,23 @@ export function registerWritingHandlers(): void {
         errorCount: 0,
         errors: [error instanceof Error ? error.message : '整理失败'],
         error: error instanceof Error ? error.message : '整理失败'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:table:reorganizeRow', async (_event, projectId: string, sheet: string, rowIndex: number, rowData: Record<string, any>, requirements: string, modelConfig: ModelConfig) => {
+    try {
+      if (!requirements || requirements.trim() === '') {
+        return { success: false, error: '请输入整理要求' };
+      }
+      const result = await writingStorageService.reorganizeRow(
+        projectId, sheet, rowIndex, rowData, requirements, modelConfig
+      );
+      return { success: true, ...result };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '重新整理失败'
       };
     }
   });

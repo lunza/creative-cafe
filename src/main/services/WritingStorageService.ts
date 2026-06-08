@@ -880,7 +880,8 @@ export class WritingStorageService {
     projectId: string,
     modelConfig: ModelConfig,
     chapterIndex?: number,
-    onProgress?: (current: number, total: number, message: string, percent?: number) => void
+    onProgress?: (current: number, total: number, message: string, percent?: number) => void,
+    requirements?: string
   ): Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[] }> {
     const result = { success: false, processedCount: 0, errorCount: 0, errors: [] as string[] };
     const startTime = Date.now();
@@ -996,7 +997,8 @@ export class WritingStorageService {
                   percent
                 );
               }
-            }
+            },
+            requirements
           );
 
           if (chapterResult.success) {
@@ -1049,6 +1051,186 @@ export class WritingStorageService {
       result.errors.push(errorMsg);
       throw error;
     }
+  }
+
+  /**
+   * 重新整理单行数据
+   * 根据用户输入的整理要求，对指定行进行 AI 整理优化，保持唯一 ID 不变
+   */
+  async reorganizeRow(
+    projectId: string,
+    sheet: string,
+    rowIndex: number,
+    rowData: Record<string, any>,
+    requirements: string,
+    modelConfig: ModelConfig
+  ): Promise<{ success: boolean; updatedRow?: Record<string, any>; error?: string }> {
+    addLog(`[WritingOrganize] 重新整理单行数据: ${projectId}, sheet=${sheet}, row=${rowIndex}`, 'info');
+
+    try {
+      const project = await this.loadProject(projectId);
+      if (!project) {
+        throw new Error('项目不存在');
+      }
+
+      const tableConfig = await this.getTableConfig(projectId);
+      if (!tableConfig || !tableConfig.associatedTemplateId) {
+        throw new Error('未关联表格模板');
+      }
+
+      const template = tableTemplateService.getTemplate(tableConfig.associatedTemplateId);
+      if (!template) {
+        throw new Error(`模板 ${tableConfig.associatedTemplateId} 不存在`);
+      }
+
+      // 找到当前 sheet 的模板定义
+      const sheetTemplate = template.sheets?.find((s: any) => s.name === sheet);
+      if (!sheetTemplate) {
+        throw new Error(`模板中不存在 sheet "${sheet}"`);
+      }
+
+      // 使用与 organizeTable 一致的 AI 调用链路
+      const apiEndpoint = this.buildApiEndpoint(modelConfig);
+
+      // 构建提示词（包含章节内容上下文、表格上下文、用户整理要求）
+      const tableContext = this.buildTableContextForPrompt(projectId, template);
+      const prompt = this.buildRowReorganizePrompt(sheetTemplate, rowData, requirements, tableContext, project);
+
+      // 调用 AI（与 processChapterWithAI 完全一致）
+      const aiResponse = await this.callAIAPI(prompt, modelConfig, apiEndpoint);
+
+      if (!aiResponse || aiResponse.trim() === '') {
+        throw new Error('AI 未返回有效响应');
+      }
+
+      // 解析 AI 返回的新行数据
+      const updatedRow = this.parseAIRowResponse(aiResponse, sheetTemplate.headers, rowData);
+
+      // 保存更新后的行数据到存储
+      const tableData = loadTableData(projectId);
+      if (tableData && tableData.data && tableData.data[sheet]) {
+        tableData.data[sheet][rowIndex] = updatedRow;
+        saveTableDataFile(projectId, tableData);
+      }
+
+      addLog(`[WritingOrganize] 行重新整理完成: row=${rowIndex}`, 'info');
+      return { success: true, updatedRow };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      addLog(`[WritingOrganize] 行重新整理失败: ${errorMsg}`, 'error');
+      throw error;
+    }
+  }
+
+  /**
+   * 构建单行重新整理的提示词
+   * 与 buildWritingTableOrganizePrompt 保持结构一致，包含项目上下文、表格上下文、用户要求
+   */
+  private buildRowReorganizePrompt(
+    sheetTemplate: any,
+    currentRowData: Record<string, any>,
+    requirements: string,
+    tableContext: string,
+    project: any
+  ): string {
+    const fieldsDesc = sheetTemplate.headers.map((h: string, i: number) => `${i + 1}:${h}`).join(', ');
+
+    // 项目上下文
+    const projectContext = `项目名称: ${project.outline?.name || '未命名'}
+主题: ${project.outline?.theme || '未指定'}
+风格: ${project.outline?.style || '未指定'}`;
+
+    // 将行数据格式化为可读文本
+    const currentDataStr = Object.entries(currentRowData)
+      .filter(([key]) => key !== '0')
+      .map(([key, value]) => {
+        const idx = parseInt(key, 10);
+        const headerName = sheetTemplate.headers[idx - 1] || `字段${idx}`;
+        return `${headerName}: ${value}`;
+      }).join('\n');
+
+    return `【角色设定】
+你是一个专业的信息整理专家，擅长根据用户的要求优化和整理表格中的数据行。
+
+【项目上下文】
+${projectContext}
+
+${tableContext}
+【当前待整理行数据】
+Sheet: ${sheetTemplate.name}
+字段定义（索引 → 字段名）：${sheetTemplate.headers.map((h: string, i: number) => `[${i}]${h}`).join(', ')}
+当前行值：${Object.entries(currentRowData).filter(([key]) => key !== '0').map(([key, value]) => {
+      const idx = parseInt(key, 10);
+      const headerName = sheetTemplate.headers[idx] || `字段${idx}`;
+      return `[${idx}]${headerName}=${value}`;
+    }).join(', ')}
+
+【用户整理要求】
+${requirements}
+
+【任务要求】
+1. 根据用户的整理要求，结合项目上下文和表格上下文，优化当前行的所有字段数据
+2. 保持"[0]"索引（流水号）字段的值不变
+3. 保持"[1]"索引（唯一id）字段的值不变
+4. 其他字段根据用户要求进行优化和补充
+5. 返回完整的行数据，格式为 JSON 对象
+
+【返回格式】
+请仅返回 JSON 对象，键名为字段索引字符串，值为对应的字段内容：
+{"0": "流水号的值（保持不变）", "1": "唯一id的值（保持不变）", "2": "字段2的值", "3": "字段3的值", ...}
+
+重要：
+- 键名必须是数字字符串（"0", "1", "2", ...），必须与上方字段定义的索引一一对应
+- "0" 对应第一个字段（流水号），"1" 对应第二个字段（唯一id），依此类推
+- 必须返回所有字段的键值对，数量与字段定义中的字段数相同
+- 不要返回任何其他内容，仅返回 JSON`;
+  }
+
+  /**
+   * 解析 AI 返回的行数据
+   * 保持唯一 ID 和流水号不变
+   */
+  private parseAIRowResponse(
+    aiResponse: string,
+    headers: string[],
+    originalRowData: Record<string, any>
+  ): Record<string, any> {
+    // 尝试从 AI 响应中提取 JSON
+    let jsonStr = aiResponse.trim();
+    const jsonMatch = aiResponse.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (jsonMatch) {
+      jsonStr = jsonMatch[1].trim();
+    }
+
+    // 尝试找到 { } 包裹的内容
+    const braceMatch = jsonStr.match(/\{[\s\S]*\}/);
+    if (braceMatch) {
+      jsonStr = braceMatch[0];
+    }
+
+    let parsed: Record<string, any>;
+    try {
+      parsed = JSON.parse(jsonStr);
+    } catch (e) {
+      throw new Error(`AI 返回的数据格式不正确: ${jsonStr.substring(0, 200)}`);
+    }
+
+    // 构建新的行数据
+    const newRow: Record<string, any> = {};
+
+    for (let i = 0; i < headers.length; i++) {
+      const key = i.toString();
+      const header = headers[i];
+
+      // 保持唯一 ID 和流水号不变
+      if (header === '唯一id' || header === '流水号') {
+        newRow[key] = originalRowData[key] || parsed[key] || '';
+      } else {
+        newRow[key] = parsed[key] !== undefined ? parsed[key] : (originalRowData[key] || '');
+      }
+    }
+
+    return newRow;
   }
 
   private getActiveEngine(): any {
@@ -1156,7 +1338,8 @@ export class WritingStorageService {
     existingTableData: WritingTableData,
     apiEndpoint: { apiUrl: string; apiMode: string; apiKey: string; apiKeyTransmission: string; modelName: string },
     modelConfig: ModelConfig,
-    onChunkProgress?: (chunkIndex: number, totalChunks: number, chapterTitle: string) => void
+    onChunkProgress?: (chunkIndex: number, totalChunks: number, chapterTitle: string) => void,
+    requirements?: string
   ): Promise<{ success: boolean; error?: string }> {
     const content = chapter.content || '';
     const chunks = this.splitChapterContent(content);
@@ -1179,7 +1362,7 @@ export class WritingStorageService {
       }
 
       const tableContext = this.buildTableContextForPrompt(projectId, template);
-      const prompt = this.buildWritingTableOrganizePrompt(chunkContent, template, tableContext);
+      const prompt = this.buildWritingTableOrganizePrompt(chunkContent, template, tableContext, requirements);
 
       addLog(`[WritingOrganize] 开始调用AI API (分块 ${chunkIndex + 1})`, 'debug');
 
@@ -1293,7 +1476,8 @@ export class WritingStorageService {
   private buildWritingTableOrganizePrompt(
     chapterContent: string,
     template: any,
-    tableContext: string
+    tableContext: string,
+    requirements?: string
   ): string {
     const templateDescription = template.sheets.map((sheet: any, index: number) => {
       return `- [索引${index + 1}] ${sheet.name}：字段包括 [${sheet.headers.map((h: string, i: number) => `${i + 1}:${h}`).join(', ')}]
@@ -1317,8 +1501,7 @@ export class WritingStorageService {
 ${chapterContent}
 
 ${tableContext}
-
-【表格模板结构】
+${requirements ? `【用户整理要求】\n${requirements}\n\n` : ''}【表格模板结构】
 ${templateDescription}
 
 【表格提取规则】

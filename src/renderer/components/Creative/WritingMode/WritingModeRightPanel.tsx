@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef } from 'react';
-import { Tabs, Input, Button, Empty, Tag, Tooltip, Typography, Spin, Badge, Modal, Progress, Upload, message, Descriptions, Popconfirm, Select } from 'antd';
-import { BookOutlined, SearchOutlined, ReloadOutlined, GlobalOutlined, IdcardOutlined, UserOutlined, UnorderedListOutlined, UploadOutlined, DeleteOutlined, StopOutlined, FileTextOutlined, SafetyOutlined, TableOutlined, DownloadOutlined, ClearOutlined, SaveOutlined, SyncOutlined, LinkOutlined, RocketOutlined, CheckCircleOutlined } from '@ant-design/icons';
+import { Tabs, Input, Button, Empty, Tag, Tooltip, Typography, Spin, Badge, Modal, Progress, Upload, message, Descriptions, Popconfirm, Select, Space, Table } from 'antd';
+import { BookOutlined, SearchOutlined, ReloadOutlined, GlobalOutlined, IdcardOutlined, UserOutlined, UnorderedListOutlined, UploadOutlined, DeleteOutlined, StopOutlined, FileTextOutlined, SafetyOutlined, TableOutlined, DownloadOutlined, ClearOutlined, SaveOutlined, SyncOutlined, LinkOutlined, RocketOutlined, CheckCircleOutlined, PlusOutlined } from '@ant-design/icons';
 import { theme } from 'antd';
 import type { MaterialItem, MaterialType, PlotCheckReport, PlotCheckIssue, LogicCheckIssue } from '../../../../shared/types/writing.types';
 import { PlotCheckDimension, IssueSeverity, LogicContradictionType, LOGIC_CONTRADICTION_TYPE_LABELS, PLOT_CHECK_DIMENSION_LABELS, ISSUE_SEVERITY_LABELS } from '../../../../shared/types/writing.types';
@@ -18,7 +18,8 @@ import {
   EditOutlined
 } from '@ant-design/icons';
 
-const { Text } = Typography;
+const { Text, Paragraph } = Typography;
+const { TextArea } = Input;
 const { Option } = Select;
 
 const SEVERITY_COLORS: Record<IssueSeverity, string> = {
@@ -624,6 +625,7 @@ const TableOrganizePanelContent: React.FC<{
   const [organizing, setOrganizing] = useState(false);
   const [organizeProgress, setOrganizeProgress] = useState<number>(0);
   const [organizeStatus, setOrganizeStatus] = useState<string>('');
+  const [organizeRequirements, setOrganizeRequirements] = useState<string>('');
   const [currentOrganizeInfo, setCurrentOrganizeInfo] = useState<{ processedCount: number; totalChapters: number } | null>(null);
 
   // 保存/同步状态
@@ -641,6 +643,29 @@ const TableOrganizePanelContent: React.FC<{
   } | null>(null);
 
   const DEFAULT_TEMPLATE_ID = 'st-memory-enhancement-default';
+
+  // Full table modal state
+  const [fullTableModalVisible, setFullTableModalVisible] = useState(false);
+  const [fullTableSearch, setFullTableSearch] = useState('');
+  const [fullTablePageSize, setFullTablePageSize] = useState(20);
+  const [fullTableEditingCell, setFullTableEditingCell] = useState<{ rowKey: string; colKey: string } | null>(null);
+  const [fullTableEditValue, setFullTableEditValue] = useState('');
+  const [fullTableSaving, setFullTableSaving] = useState(false);
+  const [reorganizeModalVisible, setReorganizeModalVisible] = useState(false);
+  const [reorganizeRowKey, setReorganizeRowKey] = useState<string | null>(null);
+  const [reorganizeRowIndex, setReorganizeRowIndex] = useState<number>(-1);
+  const [reorganizeDescription, setReorganizeDescription] = useState('');
+  const [reorganizing, setReorganizing] = useState(false);
+
+  const fullTableDataRef = useRef<Record<string, any>[]>([]);
+  const fullTableSheetRef = useRef('');
+  const fullTableEditingCellRef = useRef(fullTableEditingCell);
+  const fullTableEditValueRef = useRef(fullTableEditValue);
+
+  React.useEffect(() => { fullTableDataRef.current = tableData; }, [tableData]);
+  React.useEffect(() => { fullTableSheetRef.current = currentSheet; }, [currentSheet]);
+  React.useEffect(() => { fullTableEditingCellRef.current = fullTableEditingCell; }, [fullTableEditingCell]);
+  React.useEffect(() => { fullTableEditValueRef.current = fullTableEditValue; }, [fullTableEditValue]);
 
   const setting = useSettingStore((state) => state.setting);
   const aiEngines = setting?.aiEngines || [];
@@ -883,13 +908,15 @@ const TableOrganizePanelContent: React.FC<{
 
     try {
       await window.electronAPI.writing.table.saveTableData(projectId, currentSheet, []);
+      // Directly reset local state instead of relying on loadTableData
+      setAllSheetData(prev => ({ ...prev, [currentSheet]: [] }));
+      setTableData([]);
       message.success(`表格"${currentSheet}"已清空`);
-      loadTableData();
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       message.error(`清空失败: ${errorMsg}`);
     }
-  }, [currentSheet, projectId, loadTableData]);
+  }, [currentSheet, projectId]);
 
   // 清空所有表格
   const handleClearAll = useCallback(async () => {
@@ -897,13 +924,18 @@ const TableOrganizePanelContent: React.FC<{
 
     try {
       await window.electronAPI.writing.table.clearTableData(projectId);
+      // Directly reset all local state
+      setSheets([]);
+      setAllSheetData({});
+      setAllSheetHeaders({});
+      setTableData([]);
+      setCurrentSheet('');
       message.success('所有表格数据已清空');
-      loadTableData();
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       message.error(`清空失败: ${errorMsg}`);
     }
-  }, [projectId, loadTableData]);
+  }, [projectId]);
 
   // 同步到存储
   const handleManualSync = async () => {
@@ -1092,7 +1124,7 @@ const TableOrganizePanelContent: React.FC<{
         maxTokens
       };
 
-      const result = await window.electronAPI.writing.table.organizeTable(projectId!, modelConfig, chapterId);
+      const result = await window.electronAPI.writing.table.organizeTable(projectId!, modelConfig, chapterId, organizeRequirements || undefined);
 
       if (result.success) {
         setOrganizeProgress(100);
@@ -1116,6 +1148,334 @@ const TableOrganizePanelContent: React.FC<{
       setOrganizing(false);
     }
   }, [projectId, organizing, loadTableData, handleOpenTemplateModal, chapterId, chapterTitle, onOrganizeStatusChange, activeEngine]);
+
+  // Full table modal functions
+  const handleOpenFullTableModal = useCallback(() => {
+    setFullTableSearch('');
+    setFullTablePageSize(20);
+    setFullTableEditingCell(null);
+    setFullTableEditValue('');
+    setFullTableModalVisible(true);
+  }, []);
+
+  const handleCloseFullTableModal = useCallback(() => {
+    setFullTableModalVisible(false);
+    setFullTableSearch('');
+    setFullTableEditingCell(null);
+    // Reload to ensure data consistency
+    loadTableData();
+  }, [loadTableData]);
+
+  // Full table data for current sheet
+  const fullTableSheetData = React.useMemo(() => {
+    return allSheetData[currentSheet] || [];
+  }, [allSheetData, currentSheet]);
+
+  const fullTableSheetHeaders = React.useMemo(() => {
+    return allSheetHeaders[currentSheet] || [];
+  }, [allSheetHeaders, currentSheet]);
+
+  // Build data source for full table (all rows)
+  const fullTableDataSource = React.useMemo(() => {
+    return fullTableSheetData.map((row, rowIndex) => {
+      const item: Record<string, any> = { key: rowIndex.toString() };
+      fullTableSheetHeaders.forEach((header, index) => {
+        const val = row[header];
+        if (val !== undefined && val !== null) {
+          item[index.toString()] = String(val);
+        } else if (row[index.toString()] !== undefined) {
+          item[index.toString()] = String(row[index.toString()]);
+        } else {
+          item[index.toString()] = '';
+        }
+      });
+      return item;
+    });
+  }, [fullTableSheetData, fullTableSheetHeaders]);
+
+  // Filter data source based on search
+  const filteredFullTableDataSource = React.useMemo(() => {
+    if (!fullTableSearch.trim()) return fullTableDataSource;
+    const searchLower = fullTableSearch.toLowerCase();
+    return fullTableDataSource.filter(row => {
+      return fullTableSheetHeaders.some((_, idx) => {
+        const val = row[idx.toString()];
+        return val && String(val).toLowerCase().includes(searchLower);
+      });
+    });
+  }, [fullTableDataSource, fullTableSearch, fullTableSheetHeaders]);
+
+  // Full table columns
+  const fullTableColumns = React.useMemo(() => {
+    return fullTableSheetHeaders.map((header, index) => ({
+      title: header,
+      dataIndex: index.toString(),
+      key: header,
+      ellipsis: true,
+      width: Math.max(100, header.length * 20),
+      onCell: (record: Record<string, any>) => ({
+        onDoubleClick: () => {
+          setFullTableEditingCell({ rowKey: record.key, colKey: index.toString() });
+          setFullTableEditValue(record[index.toString()] || '');
+        },
+        style: { cursor: 'pointer', userSelect: 'none' },
+      }),
+      render: (text: string, record: Record<string, any>) => {
+        if (fullTableEditingCell && fullTableEditingCell.rowKey === record.key && fullTableEditingCell.colKey === index.toString()) {
+          return (
+            <Input
+              size="small"
+              value={fullTableEditValue}
+              onChange={(e) => setFullTableEditValue(e.target.value)}
+              onPressEnter={() => {
+                // Save edit
+                const cell = fullTableEditingCellRef.current;
+                const sheet = fullTableSheetRef.current;
+                const value = fullTableEditValueRef.current;
+                const headers = allSheetHeadersRef.current[sheet] || [];
+                const allData = allSheetDataRef.current;
+                const projId = projectId;
+                if (!cell || !sheet) return;
+                const { rowKey, colKey } = cell;
+                const rowIndex = parseInt(rowKey, 10);
+                const colIndex = headers.findIndex((_, idx) => idx.toString() === colKey);
+                if (colIndex < 0 || rowIndex < 0) return;
+                const currentData = allData[sheet] || [];
+                if (rowIndex >= currentData.length) return;
+                const updatedRow = { ...currentData[rowIndex] };
+                updatedRow[colIndex.toString()] = value;
+                const updatedSheetData = { ...allData };
+                updatedSheetData[sheet] = currentData.map((r: any, i: number) => i === rowIndex ? updatedRow : r);
+                setAllSheetData(updatedSheetData);
+                setTableData(updatedSheetData[sheet]);
+                setFullTableEditingCell(null);
+                setFullTableEditValue('');
+                // Sync to storage
+                window.electronAPI.writing.table.updateRowInTable(projId!, sheet, rowIndex, updatedRow)
+                  .then(() => { setLastSynced(new Date().toLocaleTimeString()); })
+                  .catch(() => {});
+              }}
+              onBlur={() => {
+                // Same save logic on blur
+                const cell = fullTableEditingCellRef.current;
+                const sheet = fullTableSheetRef.current;
+                const value = fullTableEditValueRef.current;
+                const headers = allSheetHeadersRef.current[sheet] || [];
+                const allData = allSheetDataRef.current;
+                const projId = projectId;
+                if (!cell || !sheet) return;
+                const { rowKey, colKey } = cell;
+                const rowIndex = parseInt(rowKey, 10);
+                const colIndex = headers.findIndex((_, idx) => idx.toString() === colKey);
+                if (colIndex < 0 || rowIndex < 0) return;
+                const currentData = allData[sheet] || [];
+                if (rowIndex >= currentData.length) return;
+                const updatedRow = { ...currentData[rowIndex] };
+                updatedRow[colIndex.toString()] = value;
+                const updatedSheetData = { ...allData };
+                updatedSheetData[sheet] = currentData.map((r: any, i: number) => i === rowIndex ? updatedRow : r);
+                setAllSheetData(updatedSheetData);
+                setTableData(updatedSheetData[sheet]);
+                setFullTableEditingCell(null);
+                setFullTableEditValue('');
+                window.electronAPI.writing.table.updateRowInTable(projId!, sheet, rowIndex, updatedRow)
+                  .then(() => { setLastSynced(new Date().toLocaleTimeString()); })
+                  .catch(() => {});
+              }}
+              autoFocus
+              onClick={(e) => e.stopPropagation()}
+            />
+          );
+        }
+        return text || '-';
+      },
+    }));
+  }, [fullTableSheetHeaders, fullTableEditingCell, fullTableEditValue, allSheetHeadersRef, allSheetDataRef, projectId, setAllSheetData, setTableData, setLastSynced]);
+
+  // Add new row
+  const handleFullTableAddRow = useCallback(async () => {
+    const sheet = currentSheet;
+    if (!sheet || !projectId) return;
+    const headers = fullTableSheetHeaders;
+    if (headers.length === 0) return;
+
+    const newRow: Record<string, any> = {};
+    headers.forEach((_, idx) => { newRow[idx.toString()] = ''; });
+
+    const updatedSheetData = { ...allSheetData };
+    const currentData = [...(updatedSheetData[sheet] || [])];
+    currentData.push(newRow);
+    updatedSheetData[sheet] = currentData;
+    setAllSheetData(updatedSheetData);
+    setTableData(currentData);
+
+    message.success('已添加新行，请编辑后保存');
+  }, [currentSheet, projectId, fullTableSheetHeaders, allSheetData, setAllSheetData, setTableData]);
+
+  // Delete row
+  const handleFullTableDeleteRow = useCallback(async (rowIndex: number) => {
+    const sheet = currentSheet;
+    if (!sheet || !projectId) return;
+
+    const updatedSheetData = { ...allSheetData };
+    const currentData = [...(updatedSheetData[sheet] || [])];
+    currentData.splice(rowIndex, 1);
+    updatedSheetData[sheet] = currentData;
+    setAllSheetData(updatedSheetData);
+    setTableData(currentData);
+
+    try {
+      // Re-sync all rows after deletion
+      for (let i = 0; i < currentData.length; i++) {
+        await window.electronAPI.writing.table.updateRowInTable(projectId, sheet, i, currentData[i]);
+      }
+      message.success('已删除并同步到存储');
+      setLastSynced(new Date().toLocaleTimeString());
+    } catch (error) {
+      message.error('同步失败');
+    }
+  }, [currentSheet, projectId, allSheetData, setAllSheetData, setTableData, setLastSynced]);
+
+  // Save all in modal
+  const handleFullTableSaveAll = useCallback(async () => {
+    if (!currentSheet || !projectId) return;
+    setFullTableSaving(true);
+    try {
+      const headers = allSheetHeaders[currentSheet] || [];
+      const currentData = allSheetData[currentSheet] || [];
+      const storageData = currentData.map(row => {
+        const storageRow: Record<string, any> = {};
+        headers.forEach((_, index) => {
+          storageRow[index.toString()] = row[index.toString()] || '';
+        });
+        return storageRow;
+      });
+
+      await window.electronAPI.writing.table.saveTableData(projectId, currentSheet, storageData);
+      message.success(`表格"${currentSheet}"已保存`);
+      setLastSynced(new Date().toLocaleTimeString());
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      message.error(`保存失败: ${errorMsg}`);
+    } finally {
+      setFullTableSaving(false);
+    }
+  }, [currentSheet, projectId, allSheetHeaders, allSheetData, setLastSynced]);
+
+  // Full table sync to storage
+  const handleFullTableSync = useCallback(async () => {
+    if (!currentSheet || !projectId) return;
+    setSyncing(true);
+    try {
+      const currentData = allSheetData[currentSheet] || [];
+      let successCount = 0;
+      for (let i = 0; i < currentData.length; i++) {
+        const result = await window.electronAPI.writing.table.updateRowInTable(
+          projectId, currentSheet, i, currentData[i]
+        );
+        if (result.success) successCount++;
+      }
+      setLastSynced(new Date().toLocaleTimeString());
+      message.success(`已同步 ${successCount} 行数据`);
+    } catch (error) {
+      message.error(`同步失败: ${error}`);
+    } finally {
+      setSyncing(false);
+    }
+  }, [currentSheet, projectId, allSheetData, setLastSynced]);
+
+  // Full table export (reuse existing handleExport, but for all data)
+  const handleFullTableExport = useCallback(() => {
+    if (!currentSheet || !allSheetHeaders[currentSheet]) return;
+    const headers = allSheetHeaders[currentSheet];
+    const data = allSheetData[currentSheet] || [];
+    const csvContent = [
+      headers.join(','),
+      ...data.map(row => headers.map(h => {
+        const val = row[h] !== undefined && row[h] !== null ? String(row[h]) : '';
+        return val.includes(',') ? `"${val}"` : val;
+      }).join(','))
+    ].join('\n');
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `writing_${projectId}_${currentSheet}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }, [currentSheet, allSheetData, allSheetHeaders, projectId]);
+
+  // Full table modal sheet change
+  const handleFullTableSheetChange = useCallback((sheetName: string) => {
+    setCurrentSheet(sheetName);
+    setTableData(allSheetData[sheetName] || []);
+    setFullTableSearch('');
+    setFullTableEditingCell(null);
+  }, [allSheetData, setTableData]);
+
+  // 重新整理单行
+  const handleReorganizeRow = useCallback(async () => {
+    if (!reorganizeDescription.trim()) {
+      message.warning('请输入整理要求');
+      return;
+    }
+    if (!projectId || !currentSheet || reorganizeRowIndex < 0) return;
+
+    setReorganizing(true);
+    try {
+      const row = allSheetData[currentSheet]?.[reorganizeRowIndex];
+      if (!row) {
+        message.error('行数据不存在');
+        return;
+      }
+
+      // 获取当前活跃的 AI 引擎配置（与 handleStartOrganize 保持一致）
+      const settingResponse = await window.electronAPI.setting.load();
+      if (!settingResponse.success) {
+        throw new Error('无法获取系统设置');
+      }
+      const currentSetting = settingResponse.setting;
+      const activeEngineId = currentSetting?.activeEngineId;
+      const engines = currentSetting?.aiEngines || [];
+      const currentActiveEngine = engines.find((e: any) => e.id === activeEngineId) || engines[0];
+      if (!currentActiveEngine) {
+        throw new Error('未配置 AI 引擎，请在设置中配置');
+      }
+
+      const temperature = (typeof currentActiveEngine.temperature === 'number' && currentActiveEngine.temperature >= 0 && currentActiveEngine.temperature <= 2)
+        ? currentActiveEngine.temperature
+        : 0.7;
+      const maxTokens = (typeof currentActiveEngine.max_tokens === 'number' && currentActiveEngine.max_tokens > 0)
+        ? currentActiveEngine.max_tokens
+        : 10240;
+      const modelConfig = { temperature, maxTokens };
+
+      const result = await window.electronAPI.writing.table.reorganizeRow(
+        projectId, currentSheet, reorganizeRowIndex, row, reorganizeDescription.trim(), modelConfig
+      );
+
+      if (result.success) {
+        // 更新本地状态
+        const updatedSheetData = { ...allSheetData };
+        const currentData = [...(updatedSheetData[currentSheet] || [])];
+        currentData[reorganizeRowIndex] = result.updatedRow || row;
+        updatedSheetData[currentSheet] = currentData;
+        setAllSheetData(updatedSheetData);
+        setTableData(currentData);
+        message.success('重新整理完成');
+        setReorganizeModalVisible(false);
+        setReorganizeDescription('');
+        setReorganizeRowKey(null);
+        setReorganizeRowIndex(-1);
+      } else {
+        message.error(`重新整理失败: ${result.error}`);
+      }
+    } catch (error) {
+      message.error(`重新整理出错: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setReorganizing(false);
+    }
+  }, [projectId, currentSheet, reorganizeRowIndex, reorganizeDescription, allSheetData, setAllSheetData, setTableData]);
 
   if (loading) {
     return (
@@ -1150,6 +1510,21 @@ const TableOrganizePanelContent: React.FC<{
           >
             {organizing ? '整理中...' : '开始整理'}
           </Button>
+        </div>
+
+        {/* 整理要求输入框 */}
+        <div style={{ padding: '8px 0' }}>
+          <div style={{ marginBottom: 4 }}>
+            <Text type="secondary" style={{ fontSize: 12 }}>整理要求（可选）</Text>
+          </div>
+          <TextArea
+            placeholder="请输入表格整理的侧重点和要求，例如：重点关注角色关系、战斗数据、魔法体系等"
+            value={organizeRequirements}
+            onChange={(e) => setOrganizeRequirements(e.target.value)}
+            autoSize={{ minRows: 2, maxRows: 4 }}
+            size="small"
+            disabled={organizing}
+          />
         </div>
 
         {/* 整理进度显示 */}
@@ -1262,6 +1637,25 @@ const TableOrganizePanelContent: React.FC<{
         >
           {organizing ? '整理中...' : '开始整理'}
         </Button>
+      </div>
+
+      {/* 整理要求输入框 */}
+      <div style={{ padding: '0 12px 8px 12px' }}>
+        <div style={{ marginBottom: 4 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>整理要求（可选）</Text>
+        </div>
+        <TextArea
+          placeholder="请输入表格整理的侧重点和要求，例如：重点关注角色关系、战斗数据、魔法体系等"
+          value={organizeRequirements}
+          onChange={(e) => setOrganizeRequirements(e.target.value)}
+          autoSize={{ minRows: 2, maxRows: 4 }}
+          size="small"
+          disabled={organizing}
+        />
+      </div>
+
+      {/* 操作按钮区域 2 */}
+      <div style={{ padding: '0 12px 8px 12px', display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
         <Button
           icon={<SaveOutlined />}
           onClick={handleSave}
@@ -1278,6 +1672,15 @@ const TableOrganizePanelContent: React.FC<{
           size="small"
         >
           导出 CSV
+        </Button>
+        <Button
+          icon={<UnorderedListOutlined />}
+          onClick={handleOpenFullTableModal}
+          disabled={!currentSheet || tableData.length === 0}
+          size="small"
+          type="primary"
+        >
+          查看全部数据 ({tableData.length} 行)
         </Button>
         {lastSynced && <Text type="secondary" style={{ fontSize: 11 }}>上次同步: {lastSynced}</Text>}
         <Button
@@ -1402,6 +1805,165 @@ const TableOrganizePanelContent: React.FC<{
           </div>
         )}
       </div>
+
+      {/* 完整表格模态框 */}
+      <Modal
+        title={`查看全部数据 - ${currentSheet} (${fullTableDataSource.length} 行)`}
+        open={fullTableModalVisible}
+        onCancel={handleCloseFullTableModal}
+        width="90vw"
+        footer={[
+          <Space key="left">
+            {lastSynced && <Text type="secondary">上次同步: {lastSynced}</Text>}
+          </Space>,
+          <Space key="right">
+            <Button
+              icon={<SyncOutlined spin={syncing} />}
+              onClick={handleFullTableSync}
+              loading={syncing}
+              disabled={fullTableDataSource.length === 0}
+            >
+              同步到存储
+            </Button>
+            <Button
+              icon={<SaveOutlined />}
+              onClick={handleFullTableSaveAll}
+              loading={fullTableSaving}
+              disabled={fullTableDataSource.length === 0}
+            >
+              保存全部
+            </Button>
+            <Button
+              icon={<PlusOutlined />}
+              onClick={handleFullTableAddRow}
+              disabled={!currentSheet}
+            >
+              新增行
+            </Button>
+            <Button
+              icon={<DownloadOutlined />}
+              onClick={handleFullTableExport}
+              disabled={fullTableDataSource.length === 0}
+            >
+              导出CSV
+            </Button>
+            <Button type="primary" onClick={handleCloseFullTableModal}>关闭</Button>
+          </Space>,
+        ]}
+        styles={{ body: { maxHeight: '75vh', overflow: 'auto' } }}
+      >
+        {/* Sheet 切换 */}
+        {sheets.length > 1 && (
+          <Tabs
+            activeKey={currentSheet}
+            onChange={handleFullTableSheetChange}
+            size="small"
+            items={sheets.map(sheetName => ({
+              key: sheetName,
+              label: `${sheetName} (${(allSheetData[sheetName] || []).length} 行)`,
+            }))}
+            style={{ marginBottom: 8 }}
+          />
+        )}
+
+        {/* 搜索框 */}
+        <div style={{ marginBottom: 8 }}>
+          <Input
+            placeholder="搜索表格内容..."
+            prefix={<SearchOutlined />}
+            value={fullTableSearch}
+            onChange={(e) => setFullTableSearch(e.target.value)}
+            allowClear
+            size="small"
+          />
+          {fullTableSearch && (
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              找到 {filteredFullTableDataSource.length} / {fullTableDataSource.length} 行
+            </Text>
+          )}
+        </div>
+
+        {/* 数据表格 */}
+        <Table
+          columns={[
+            ...fullTableColumns,
+            {
+              title: '操作',
+              key: 'actions',
+              width: 100,
+              fixed: 'right' as const,
+              render: (_: any, record: Record<string, any>) => (
+                <Space size="small">
+                  <Tooltip title="重新整理">
+                    <Button
+                      size="small"
+                      icon={<SyncOutlined spin={reorganizing && reorganizeRowKey === record.key} />}
+                      onClick={() => {
+                        setReorganizeRowKey(record.key);
+                        setReorganizeRowIndex(parseInt(record.key, 10));
+                        setReorganizeDescription('');
+                        setReorganizeModalVisible(true);
+                      }}
+                      loading={reorganizing && reorganizeRowKey === record.key}
+                    />
+                  </Tooltip>
+                  <Popconfirm
+                    title={`确定删除第 ${parseInt(record.key, 10) + 1} 行？`}
+                    description="此操作不可撤销"
+                    onConfirm={() => handleFullTableDeleteRow(parseInt(record.key, 10))}
+                    okText="确定"
+                    cancelText="取消"
+                    okButtonProps={{ danger: true }}
+                  >
+                    <Button size="small" danger icon={<DeleteOutlined />} />
+                  </Popconfirm>
+                </Space>
+              ),
+            },
+          ]}
+          dataSource={filteredFullTableDataSource}
+          size="small"
+          pagination={{
+            pageSize: fullTablePageSize,
+            showSizeChanger: true,
+            pageSizeOptions: ['10', '20', '50', '100'],
+            showQuickJumper: true,
+            showTotal: (total) => `共 ${total} 行`,
+            onChange: (_page, size) => { setFullTablePageSize(size); },
+          }}
+          scroll={{ x: 'max-content', y: 500 }}
+          bordered
+        />
+      </Modal>
+
+      {/* 重新整理行数据模态框 */}
+      <Modal
+        title={`重新整理第 ${reorganizeRowIndex + 1} 行`}
+        open={reorganizeModalVisible}
+        onCancel={() => {
+          setReorganizeModalVisible(false);
+          setReorganizeDescription('');
+          setReorganizeRowKey(null);
+          setReorganizeRowIndex(-1);
+        }}
+        onOk={handleReorganizeRow}
+        confirmLoading={reorganizing}
+        okText="提交整理"
+        cancelText="取消"
+        width={600}
+      >
+        <div style={{ marginBottom: 8 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            请输入整理要求，系统将对该行数据进行 AI 优化整理（唯一 ID 将保持不变）
+          </Text>
+        </div>
+        <TextArea
+          placeholder="例如：补充角色的外观描述、完善战斗数据数值、整理魔法体系层级等"
+          value={reorganizeDescription}
+          onChange={(e) => setReorganizeDescription(e.target.value)}
+          autoSize={{ minRows: 3, maxRows: 6 }}
+        />
+      </Modal>
 
       {/* 模板绑定 Modal */}
       <Modal
