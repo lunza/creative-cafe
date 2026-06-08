@@ -38,6 +38,17 @@ import {
 
 const activeAbortControllers = new Map<string, AbortController>();
 
+export function abortAllActiveRequests(): void {
+  const count = activeAbortControllers.size;
+  for (const controller of activeAbortControllers.values()) {
+    controller.abort();
+  }
+  activeAbortControllers.clear();
+  if (count > 0) {
+    addLog(`[Abort] 页面导航，已中止 ${count} 个生成请求`, 'warn');
+  }
+}
+
 export function registerWritingHandlers(): void {
   ipcMain.handle('writing:loadProjects', async () => {
     try {
@@ -541,7 +552,16 @@ export function registerWritingHandlers(): void {
 
       const abortController = new AbortController();
       const { chapterIndex } = request;
-      activeAbortControllers.set(`${projectId}_${chapterIndex}`, abortController);
+      const controllerKey = `${projectId}_${chapterIndex}`;
+
+      // Abort any existing request for the same chapter before starting a new one
+      const existingController = activeAbortControllers.get(controllerKey);
+      if (existingController) {
+        addLog(`  检测到同章节已有活跃请求，先中止旧请求`, 'warn');
+        existingController.abort();
+      }
+
+      activeAbortControllers.set(controllerKey, abortController);
 
       const onStream = (chunk: string) => {
         event.sender.send('writing:stream:chunk', {
@@ -622,7 +642,22 @@ export function registerWritingHandlers(): void {
     for (const key of keysToDelete) {
       activeAbortControllers.delete(key);
     }
-    return { success: true };
+    addLog(`[Abort] 已取消生成: ${keysToDelete.length} 个请求`, 'warn');
+    return { success: true, cancelledCount: keysToDelete.length };
+  });
+
+  // Cleanup all active abort controllers (used on page refresh/unload)
+  ipcMain.handle('writing:cleanupAll', async () => {
+    const keysToDelete: string[] = [];
+    for (const [key, controller] of activeAbortControllers) {
+      controller.abort();
+      keysToDelete.push(key);
+    }
+    for (const key of keysToDelete) {
+      activeAbortControllers.delete(key);
+    }
+    addLog(`[Abort] 已清理所有生成请求: ${keysToDelete.length} 个`, 'warn');
+    return { success: true, cleanedCount: keysToDelete.length };
   });
 
   ipcMain.handle('writing:loadResources', async (_event, params?: { worldBookIds?: string[]; characterCardIds?: string[]; userPersonaIds?: string[] }) => {

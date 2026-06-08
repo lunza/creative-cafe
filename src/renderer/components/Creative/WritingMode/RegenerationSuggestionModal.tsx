@@ -14,13 +14,15 @@ interface RegenerationSuggestionModalProps {
   }) => void;
   onCancel: () => void;
   previousContent?: string;
+  savedGuidance?: string;
 }
 
 const RegenerationSuggestionModal: React.FC<RegenerationSuggestionModalProps> = ({
   visible,
   onSubmit,
   onCancel,
-  previousContent
+  previousContent,
+  savedGuidance
 }) => {
   const [keepContent, setKeepContent] = useState('');
   const [discardContent, setDiscardContent] = useState('');
@@ -56,6 +58,26 @@ const RegenerationSuggestionModal: React.FC<RegenerationSuggestionModalProps> = 
       }
     >
       <Space direction="vertical" style={{ width: '100%' }} size="middle">
+        {/* 已保存的章节创作指导 */}
+        {savedGuidance && (
+          <Collapse
+            size="small"
+            items={[
+              {
+                key: 'saved-guidance',
+                label: <Text type="secondary">已保存的章节创作指导</Text>,
+                children: (
+                  <TextArea
+                    value={savedGuidance}
+                    disabled
+                    rows={3}
+                  />
+                ),
+              },
+            ]}
+          />
+        )}
+
         {/* 上次生成内容（参考） */}
         {previousContent && (
           <Collapse
@@ -121,7 +143,7 @@ const RegenerationSuggestionModal: React.FC<RegenerationSuggestionModalProps> = 
           <TextArea
             value={addContent}
             onChange={(e) => setAddContent(e.target.value)}
-            placeholder="描述需要添加的新内容，例如：增加角色内心独白、添加新的伏笔等..."
+            placeholder="描述需要填充的新内容，例如：增加角色内心独白、添加新的伏笔等..."
             rows={3}
             maxLength={2000}
             showCount

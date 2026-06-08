@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Modal, Button, Input, Space } from 'antd';
+import { Modal, Button, Input, Space, Popconfirm } from 'antd';
 
 const { TextArea } = Input;
 
@@ -7,23 +7,32 @@ interface GenerationSuggestionModalProps {
   visible: boolean;
   onSubmit: (suggestion: string) => void;
   onCancel: () => void;
+  savedGuidance?: string;
+  onClearGuidance?: () => void;
 }
 
 const GenerationSuggestionModal: React.FC<GenerationSuggestionModalProps> = ({
   visible,
   onSubmit,
-  onCancel
+  onCancel,
+  savedGuidance,
+  onClearGuidance
 }) => {
   const [suggestion, setSuggestion] = useState('');
 
   useEffect(() => {
     if (visible) {
-      setSuggestion('');
+      setSuggestion(savedGuidance || '');
     }
-  }, [visible]);
+  }, [visible, savedGuidance]);
 
   const handleSubmit = () => {
     onSubmit(suggestion);
+  };
+
+  const handleClear = () => {
+    setSuggestion('');
+    onClearGuidance?.();
   };
 
   return (
@@ -34,6 +43,17 @@ const GenerationSuggestionModal: React.FC<GenerationSuggestionModalProps> = ({
       footer={
         <Space>
           <Button onClick={onCancel}>取消</Button>
+          {savedGuidance && (
+            <Popconfirm
+              title="确认清空"
+              description="清空后已保存的创作指导将被删除，是否继续？"
+              onConfirm={handleClear}
+              okText="确认清空"
+              cancelText="取消"
+            >
+              <Button danger>清空指导</Button>
+            </Popconfirm>
+          )}
           <Button type="primary" onClick={handleSubmit}>
             开始生成
           </Button>

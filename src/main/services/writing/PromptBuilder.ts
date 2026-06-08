@@ -241,7 +241,7 @@ ${context.continuityConstraints}`);
 
     parts.push(`
 ## 生成要求
-- 目标字数: 约${parameters.targetWordCount}字
+- 目标字数: 不少于${parameters.targetWordCount}字
 - 叙事视角: ${parameters.perspective}
 - 写作风格: ${parameters.style}`);
 

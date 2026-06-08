@@ -51,8 +51,15 @@ export class ContentGenerator {
       request.generationParams
     );
 
-    // Append user suggestion if provided (generation mode)
+    // Build base user prompt, then append optional guidance/suggestions
     let finalUserPrompt = userPrompt;
+
+    // Append generationGuidance (persistent) if provided
+    if (request.generationGuidance) {
+      finalUserPrompt += `\n\n## 章节创作指导\n${request.generationGuidance}`;
+    }
+
+    // Append user suggestion if provided (generation mode)
     if (request.userSuggestion) {
       finalUserPrompt += `\n\n## 附加指令\n${request.userSuggestion}`;
     }
@@ -174,9 +181,6 @@ export class ContentGenerator {
     let fullContent = '';
     const startTime = Date.now();
 
-    // 动态超时: >8192 token 使用 300s, 否则 120s
-    const timeoutMs = modelConfig.maxTokens > 8192 ? 300_000 : 120_000;
-
     const maxRetries = 2;
     let lastError: Error | null = null;
 
@@ -195,8 +199,7 @@ export class ContentGenerator {
       try {
         fullContent = '';
         const result = await this.executeStreamRequest(
-          baseUrl, headers, requestBody, timeoutMs,
-          abortSignal, onStream
+          baseUrl, headers, requestBody, abortSignal, onStream
         );
         fullContent = result.content;
 
@@ -233,9 +236,13 @@ export class ContentGenerator {
       } catch (error) {
         lastError = error as Error;
 
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          addLog(`  请求超时或被取消`, 'error');
-          throw this.createError(WritingErrorCode.CONTENT_GENERATION_FAILED, '请求超时或被取消');
+        // Handle abort errors - check both DOMException and non-DOMException forms
+        const isAbortError = (error instanceof DOMException && error.name === 'AbortError')
+          || (typeof (error as Error).message === 'string' && (error as Error).message.toLowerCase().includes('abort'));
+
+        if (isAbortError) {
+          addLog(`  请求被中止`, 'warn');
+          throw this.createError(WritingErrorCode.CONTENT_GENERATION_FAILED, '请求被中止');
         }
 
         const isTransient = this.isTransientError(error as Error);
@@ -267,21 +274,16 @@ export class ContentGenerator {
     baseUrl: string,
     headers: Record<string, string>,
     requestBody: Record<string, any>,
-    timeoutMs: number,
     abortSignal: AbortSignal,
     onStream: (chunk: string) => void
   ): Promise<{ content: string; generationTime: number }> {
     const startTime = Date.now();
 
-    // 合并用户取消信号与超时信号
-    const timeoutSignal = AbortSignal.timeout(timeoutMs);
-    const combinedSignal = AbortSignal.any([abortSignal, timeoutSignal]);
-
     const response = await fetch(`${baseUrl}/v1/chat/completions`, {
       method: 'POST',
       headers,
       body: JSON.stringify(requestBody),
-      signal: combinedSignal
+      signal: abortSignal
     });
 
     if (!response.ok) {

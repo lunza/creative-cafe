@@ -24,6 +24,7 @@ import {
   PlotCheckIssue,
   LogicCheckIssue,
   RegenerationSuggestion,
+  ChapterOutline,
 } from '../../../../shared/types/writing.types';
 import MarkdownEditor from '../../Common/MarkdownEditor';
 import AutoFixResultModal from './AutoFixResultModal';
@@ -36,6 +37,7 @@ import { useModalStates } from './hooks/useModalStates';
 import { usePlotCheck } from './hooks/usePlotCheck';
 import { useChapterStructure } from './hooks/useChapterStructure';
 import { useWritingModeUIStore, LayoutMode, RightPanelTab } from '../../../stores/writingModeUIStore';
+import { useWritingProjectStore } from '../../../stores/writingProjectStore';
 import { useUIStore } from '../../../stores/uiStore';
 
 interface ContentWorkspaceProps {
@@ -237,18 +239,57 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId 
     }
   };
 
+  // 获取当前章节的持久化创作指导
+  const getCurrentChapterGuidance = (): string | undefined => {
+    const chapter = outline.chapters[chapterGeneration.selectedChapterIndex];
+    return chapter?.generationGuidance;
+  };
+
+  // 保存章节创作指导到项目
+  const saveChapterGuidance = async (guidance: string | undefined) => {
+    const chapter = outline.chapters[chapterGeneration.selectedChapterIndex];
+    if (!chapter) return;
+
+    const currentProject = useWritingProjectStore.getState().getCurrentProject();
+    if (!currentProject || !currentProject.outline) return;
+
+    const updatedChapters = currentProject.outline.chapters.map((ch: ChapterOutline) =>
+      ch.index === chapter.index
+        ? { ...ch, generationGuidance: guidance || undefined }
+        : ch
+    );
+
+    const updatedOutline = { ...currentProject.outline, chapters: updatedChapters };
+    await useWritingProjectStore.getState().updateProject(projectId, { outline: updatedOutline });
+  };
+
   // 生成建议面板处理函数
   const handleOpenGenerationModal = () => {
     setShowGenerationModal(true);
   };
 
-  const handleGenerationSubmit = (suggestion: string) => {
+  const handleGenerationSubmit = async (suggestion: string) => {
+    const trimmed = suggestion.trim();
+    // Save the suggestion as persistent guidance
+    await saveChapterGuidance(trimmed || undefined);
+
     setShowGenerationModal(false);
-    chapterGeneration.handleGenerateChapter(currentChapter.index, suggestion);
+    chapterGeneration.handleGenerateChapter(currentChapter.index, trimmed || undefined);
+
+    if (!trimmed && getCurrentChapterGuidance()) {
+      message.info('已清空章节创作指导');
+    } else if (trimmed) {
+      message.success('创作指导已保存');
+    }
   };
 
   const handleGenerationCancel = () => {
     setShowGenerationModal(false);
+  };
+
+  const handleClearGuidance = async () => {
+    await saveChapterGuidance(undefined);
+    message.info('已清空章节创作指导');
   };
 
   // 重新生成建议面板处理函数
@@ -589,6 +630,8 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId 
         visible={showGenerationModal}
         onSubmit={handleGenerationSubmit}
         onCancel={handleGenerationCancel}
+        savedGuidance={getCurrentChapterGuidance()}
+        onClearGuidance={handleClearGuidance}
       />
 
       <RegenerationSuggestionModal
@@ -596,6 +639,7 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId 
         onSubmit={handleRegenerationSubmit}
         onCancel={handleRegenerationCancel}
         previousContent={chapterGeneration.chapterContents[currentChapter?.index] || ''}
+        savedGuidance={getCurrentChapterGuidance()}
       />
     </Layout>
   );

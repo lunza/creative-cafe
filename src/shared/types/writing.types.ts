@@ -277,6 +277,7 @@ export interface ContentGenerationRequest {
   userSuggestion?: string;
   regenerationSuggestion?: RegenerationSuggestion;
   previousChapterContent?: string; // 上一次生成的完整内容（重新生成时引用）
+  generationGuidance?: string; // 持久化的章节创作指导建议
 }
 
 // 章节生成用户建议（简洁模式）
@@ -352,6 +353,7 @@ export interface ChapterOutline {
   chainOfThought?: ChainOfThought;
   versions?: ChapterVersion[];
   lastModified?: number;
+  generationGuidance?: string;
   generationInfo?: {
     model: string;
     temperature: number;

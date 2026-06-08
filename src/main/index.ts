@@ -5,6 +5,7 @@ import { registerMemoryHandlers } from './ipc/handlers/memoryHandlers';
 import { registerCreativeHandlers } from './ipc/handlers/creativeHandlers';
 import { registerCharacterChatHandlers } from './ipc/handlers/characterChatHandlers';
 import { registerWritingHandlers } from './ipc/handlers/writingHandlers';
+import { abortAllActiveRequests } from './ipc/handlers/writingHandlers';
 
 if (process.platform === 'win32') {
   try {
@@ -81,6 +82,11 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+  });
+
+  // Abort all active generation requests on page refresh (F5/Cmd+R) or navigation
+  mainWindow.webContents.on('will-navigate', () => {
+    abortAllActiveRequests();
   });
 }
 

@@ -177,6 +177,13 @@ export function useChapterGeneration(
     };
   }, []);
 
+  // Cleanup stale generation tasks on mount - prevents orphaned requests after page refresh
+  useEffect(() => {
+    if (projectId && window.electronAPI?.writing?.cancelGeneration) {
+      window.electronAPI.writing.cancelGeneration(projectId).catch(() => {});
+    }
+  }, []); // Run once on mount
+
   useEffect(() => {
     if (!window.electronAPI?.writing) return;
 
@@ -259,6 +266,13 @@ export function useChapterGeneration(
       offChunk();
       offComplete();
       offError();
+      // Abort local controller and send IPC cancel to clean up backend
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      if (projectId && window.electronAPI?.writing?.cancelGeneration) {
+        window.electronAPI.writing.cancelGeneration(projectId).catch(() => {});
+      }
     };
   }, []); // Register listeners once - use refs for state access
 
@@ -391,7 +405,8 @@ export function useChapterGeneration(
         },
         userSuggestion: userSuggestion?.trim() || undefined,
         regenerationSuggestion: regenerationSuggestionRef.current,
-        previousChapterContent: regenerationPreviousContentRef.current || undefined
+        previousChapterContent: regenerationPreviousContentRef.current || undefined,
+        generationGuidance: chapter.generationGuidance?.trim() || undefined
       };
 
       // Clear regeneration refs after building request
