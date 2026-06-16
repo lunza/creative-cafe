@@ -126,6 +126,7 @@ interface WritingTableConfig {
   organizeMode: 'sync' | 'async';
   associatedTemplateId: string | null;
   associatedTemplateName: string;
+  organizeRequirements?: string;
 }
 
 interface WritingOrganizeProgress {
@@ -1024,6 +1025,12 @@ export class WritingStorageService {
       progress.lastProcessedAt = new Date().toISOString();
       this.saveOrganizeProgress(projectId, progress);
 
+      // 所有章节处理完成后，进行全局去重
+      const removedCount = this.deduplicateTableData(projectId);
+      if (removedCount > 0) {
+        addLog(`[WritingOrganize] 已清理 ${removedCount} 行重复数据`, 'info');
+      }
+
       result.success = progress.processedCount > 0;
       result.processedCount = progress.processedCount;
       result.errorCount = progress.errorCount;
@@ -1050,6 +1057,496 @@ export class WritingStorageService {
 
       result.errors.push(errorMsg);
       throw error;
+    }
+  }
+
+  /**
+   * 全局去重：对指定 project 的表格数据，按唯一 ID 去重
+   * 每个 sheet 中保留唯一 ID 相同的行中的第一条
+   */
+  private deduplicateTableData(projectId: string): number {
+    const tableData = loadTableData(projectId);
+    if (!tableData || !tableData.data) return 0;
+
+    let totalRemoved = 0;
+
+    for (const [sheetName, rows] of Object.entries(tableData.data)) {
+      if (!Array.isArray(rows)) continue;
+
+      const seenIds = new Set<string>();
+      const dedupedRows: Record<string, any>[] = [];
+
+      for (const row of rows) {
+        const uniqueId = row['1']; // "1" 对应唯一 ID 字段（索引1）
+
+        if (uniqueId) {
+          if (seenIds.has(uniqueId)) {
+            // 重复行，跳过
+            totalRemoved++;
+            addLog(`[WritingOrganize] 全局去重: 移除 ${sheetName} 重复行, 唯一ID=${uniqueId}`, 'debug');
+            continue;
+          }
+          seenIds.add(uniqueId);
+        }
+
+        dedupedRows.push(row);
+      }
+
+      tableData.data[sheetName] = dedupedRows;
+    }
+
+    // 保存去重后的数据
+    saveTableDataFile(projectId, tableData);
+
+    if (totalRemoved > 0) {
+      addLog(`[WritingOrganize] 全局去重完成: 共移除 ${totalRemoved} 行重复数据`, 'info');
+    }
+
+    return totalRemoved;
+  }
+
+  /**
+   * 整理单个表格（指定 sheet）
+   * 仅对用户指定的单个 sheet 进行整理，其他 sheet 不受影响
+   */
+  async organizeSingleSheet(
+    projectId: string,
+    sheetName: string,
+    modelConfig: ModelConfig,
+    chapterIndex?: number,
+    onProgress?: (current: number, total: number, status: string, percent: number) => void,
+    requirements?: string
+  ): Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[] }> {
+    const startTime = new Date().toISOString();
+    const result = { success: false, processedCount: 0, errorCount: 0, errors: [] as string[] };
+
+    try {
+      addLog(`[WritingOrganize] 开始整理单个表格: ${projectId}, sheet=${sheetName}`, 'info');
+
+      const project = await this.loadProject(projectId);
+      if (!project) {
+        throw new Error('项目不存在');
+      }
+
+      if (!project.outline || !project.outline.chapters || project.outline.chapters.length === 0) {
+        throw new Error('项目大纲不存在或没有章节');
+      }
+
+      const tableConfig = await this.getTableConfig(projectId);
+      if (!tableConfig || !tableConfig.associatedTemplateId) {
+        throw new Error('未关联表格模板，请先绑定模板');
+      }
+
+      const tableData = loadTableData(projectId);
+      if (!tableData || !tableData.sheets || tableData.sheets.length === 0) {
+        throw new Error('表格数据不存在，请先绑定模板');
+      }
+
+      // 验证指定的 sheet 是否存在
+      if (!tableData.sheets.includes(sheetName)) {
+        throw new Error(`表格 "${sheetName}" 不存在`);
+      }
+
+      const template = tableTemplateService.getTemplate(tableConfig.associatedTemplateId);
+      if (!template) {
+        throw new Error(`模板 ${tableConfig.associatedTemplateId} 不存在`);
+      }
+
+      // 验证模板中包含该 sheet
+      const targetSheetTemplate = template.sheets?.find((s: any) => s.name === sheetName);
+      if (!targetSheetTemplate) {
+        throw new Error(`模板中不存在表格 "${sheetName}"`);
+      }
+
+      addLog(`[WritingOrganize] 整理单个表格: ${sheetName}`, 'info');
+
+      // 创建只包含目标 sheet 的临时模板
+      const singleSheetTemplate = {
+        ...template,
+        sheets: [targetSheetTemplate]
+      };
+
+      // 确定要处理的章节列表
+      let chaptersToProcess: Chapter[];
+      if (chapterIndex !== undefined) {
+        const targetChapter = project.outline!.chapters.find(ch => ch.index === chapterIndex);
+        if (!targetChapter) {
+          throw new Error(`章节 ${chapterIndex} 不存在`);
+        }
+        if (!targetChapter.content || targetChapter.content.trim().length === 0) {
+          throw new Error(`章节 ${targetChapter.title} 没有内容`);
+        }
+        chaptersToProcess = [targetChapter as Chapter];
+      } else {
+        chaptersToProcess = project.outline!.chapters.filter(ch => ch.content && ch.content.trim().length > 0) as Chapter[];
+      }
+
+      const totalChapters = chaptersToProcess.length;
+      if (totalChapters === 0) {
+        throw new Error('没有可处理的章节内容');
+      }
+
+      // 预计算总分片数
+      let totalChunks = 0;
+      for (const chapter of chaptersToProcess) {
+        const chunks = this.splitChapterContent(chapter.content || '');
+        totalChunks += chunks.length;
+      }
+
+      const progress: WritingOrganizeProgress = {
+        projectId,
+        status: 'running',
+        currentChapter: 0,
+        totalChapters,
+        processedCount: 0,
+        errorCount: 0,
+        errors: [],
+        startedAt: startTime
+      };
+      this.saveOrganizeProgress(projectId, progress);
+
+      const apiEndpoint = this.buildApiEndpoint(modelConfig);
+      let processedChunks = 0;
+
+      for (let i = 0; i < chaptersToProcess.length; i++) {
+        const chapter = chaptersToProcess[i];
+        progress.currentChapter = chapter.index;
+        this.saveOrganizeProgress(projectId, progress);
+
+        addLog(`[WritingOrganize] 处理章节 ${i + 1}/${totalChapters}: ${chapter.title}`, 'info');
+
+        if (onProgress) {
+          const percent = Math.round((processedChunks / totalChunks) * 100);
+          onProgress(i + 1, totalChapters, `处理章节: ${chapter.title}`, percent);
+        }
+
+        const chapterChunks = this.splitChapterContent(chapter.content || '');
+        const chapterStartChunks = processedChunks;
+
+        try {
+          // 使用单表格整理的 processChapterWithAI 变体
+          const chapterResult = await this.processChapterWithAIForSingleSheet(
+            projectId,
+            chapter,
+            singleSheetTemplate,
+            sheetName,
+            tableData,
+            apiEndpoint,
+            modelConfig,
+            (chunkIndex: number, totalChapterChunks: number, chapterTitle: string) => {
+              processedChunks = chapterStartChunks + chunkIndex;
+              if (onProgress) {
+                const percent = Math.round((processedChunks / totalChunks) * 100);
+                onProgress(
+                  i + 1,
+                  totalChapters,
+                  `处理章节 "${chapterTitle}" 分片 ${chunkIndex}/${totalChapterChunks}`,
+                  percent
+                );
+              }
+            },
+            requirements
+          );
+
+          if (chapterResult.success) {
+            progress.processedCount++;
+            addLog(`[WritingOrganize] 章节处理成功: ${chapter.title}`, 'info');
+          } else {
+            const errorMsg = chapterResult.error || '未知错误';
+            addLog(`[WritingOrganize] 章节处理失败: ${chapter.title} - ${errorMsg}`, 'error');
+            progress.errors.push(`章节 ${chapter.title}: ${errorMsg}`);
+            progress.errorCount++;
+          }
+        } catch (chapterError) {
+          const errorMsg = chapterError instanceof Error ? chapterError.message : String(chapterError);
+          addLog(`[WritingOrganize] 章节处理异常: ${chapter.title} - ${errorMsg}`, 'error');
+          progress.errors.push(`章节 ${chapter.title}: ${errorMsg}`);
+          progress.errorCount++;
+        }
+
+        this.saveOrganizeProgress(projectId, progress);
+      }
+
+      progress.status = progress.errorCount > 0 ? 'error' : 'completed';
+      progress.lastProcessedAt = new Date().toISOString();
+      this.saveOrganizeProgress(projectId, progress);
+
+      // 对目标 sheet 进行去重
+      this.deduplicateSingleSheet(projectId, sheetName);
+
+      result.success = progress.processedCount > 0;
+      result.processedCount = progress.processedCount;
+      result.errorCount = progress.errorCount;
+      result.errors = progress.errors;
+
+      addLog(`[WritingOrganize] 单表格整理完成: ${sheetName}, 处理章节数: ${result.processedCount}`, 'info');
+      return result;
+    } catch (error) {
+      addLog(`[WritingOrganize] 单表格整理失败: ${error instanceof Error ? error.message : String(error)}`, 'error');
+      const errorMsg = error instanceof Error ? error.message : String(error);
+
+      const errorProgress: WritingOrganizeProgress = {
+        projectId,
+        status: 'error',
+        currentChapter: 0,
+        totalChapters: 0,
+        processedCount: 0,
+        errorCount: 1,
+        errors: [errorMsg],
+        startedAt: startTime,
+        lastProcessedAt: new Date().toISOString()
+      };
+      this.saveOrganizeProgress(projectId, errorProgress);
+
+      result.errors.push(errorMsg);
+      throw error;
+    }
+  }
+
+  /**
+   * 单表格整理的章节处理（只更新指定 sheet）
+   */
+  private async processChapterWithAIForSingleSheet(
+    projectId: string,
+    chapter: Chapter,
+    template: any,
+    targetSheetName: string,
+    existingTableData: WritingTableData,
+    apiEndpoint: { apiUrl: string; apiMode: string; apiKey: string; apiKeyTransmission: string; modelName: string },
+    modelConfig: ModelConfig,
+    onChunkProgress?: (chunkIndex: number, totalChunks: number, chapterTitle: string) => void,
+    requirements?: string
+  ): Promise<{ success: boolean; error?: string }> {
+    const content = chapter.content || '';
+    const chunks = this.splitChapterContent(content);
+
+    addLog(`[WritingOrganize] 单表格处理章节: ${chapter.title}, sheet=${targetSheetName}, 分块数: ${chunks.length}`, 'info');
+
+    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+      const chunkContent = chunks[chunkIndex];
+
+      // 每批分片处理前重新加载最新的表格数据
+      const latestTableData = loadTableData(projectId);
+      if (latestTableData) {
+        existingTableData.sheets = latestTableData.sheets;
+        existingTableData.headers = latestTableData.headers;
+        existingTableData.data = latestTableData.data;
+        existingTableData.sheetDescriptions = latestTableData.sheetDescriptions;
+      }
+
+      // 构建单表格整理的提示词（只包含目标 sheet 的信息）
+      const tableContext = this.buildSingleSheetTableContextForPrompt(projectId, template, targetSheetName);
+      const prompt = this.buildSingleSheetOrganizePrompt(chunkContent, template, tableContext, requirements);
+
+      const aiResponse = await this.callAIAPI(prompt, modelConfig, apiEndpoint);
+
+      if (!aiResponse || aiResponse.trim() === '') {
+        addLog(`[WritingOrganize] AI未返回有效响应: ${chapter.title} (分块 ${chunkIndex + 1})`, 'warn');
+        if (onChunkProgress) {
+          onChunkProgress(chunkIndex + 1, chunks.length, chapter.title);
+        }
+        continue;
+      }
+
+      const parseResult = tableEditParser.parse(aiResponse);
+
+      if (!parseResult.success && parseResult.commands.length === 0) {
+        addLog(`[WritingOrganize] 未解析到tableEdit命令: ${chapter.title} (分块 ${chunkIndex + 1})`, 'warn');
+        if (onChunkProgress) {
+          onChunkProgress(chunkIndex + 1, chunks.length, chapter.title);
+        }
+        continue;
+      }
+
+      if (parseResult.commands.length > 0) {
+        addLog(`[WritingOrganize] 执行 ${parseResult.commands.length} 个tableEdit命令 (分块 ${chunkIndex + 1})`, 'info');
+        this.executeTableEditCommands(projectId, parseResult.commands, existingTableData);
+      }
+
+      if (onChunkProgress) {
+        onChunkProgress(chunkIndex + 1, chunks.length, chapter.title);
+      }
+    }
+
+    addLog(`[WritingOrganize] 单表格章节处理完成: ${chapter.title}`, 'info');
+    return { success: true };
+  }
+
+  /**
+   * 构建单表格整理的表格上下文（只包含目标 sheet 的信息）
+   */
+  private buildSingleSheetTableContextForPrompt(projectId: string, template: any, targetSheetName: string): string {
+    const tableData = loadTableData(projectId);
+    if (!tableData) return '【现有表格数据】\n暂无数据\n';
+
+    let context = '【现有表格数据】\n';
+    let quickIndex = '【唯一ID快速查找索引】\n';
+
+    // 只处理目标 sheet
+    const sheet = template.sheets?.find((s: any) => s.name === targetSheetName);
+    if (!sheet) {
+      return context + '未找到指定表格\n';
+    }
+
+    const sheetIndex = template.sheets.indexOf(sheet);
+    const rows = tableData.data[targetSheetName] || [];
+    const tableIndex = sheetIndex + 1;
+
+    if (rows.length > 0) {
+      context += `\n--- 表格${tableIndex}: ${sheet.name} ---\n`;
+      context += `描述: ${sheet.description || '暂无描述'}\n`;
+      context += `字段定义: ${sheet.headers.map((h: string, i: number) => `[${i}]${h}`).join(', ')}\n`;
+      context += `当前已有数据 (${rows.length} 行):\n`;
+
+      // 限制显示行数，避免上下文过长
+      const displayRows = rows.slice(0, 30);
+      displayRows.forEach((row: Record<string, any>, idx: number) => {
+        const rowData = sheet.headers.map((h: string, i: number) => {
+          return `[${i}]${h}=${row[String(i)] || ''}`;
+        }).join(', ');
+        context += `  行${idx}: ${rowData}\n`;
+      });
+
+      if (rows.length > 30) {
+        context += `  ... 还有 ${rows.length - 30} 行数据\n`;
+      }
+
+      // 构建唯一ID快速查找索引
+      const uniqueIdIndex = sheet.headers.findIndex((h: string) => h === '唯一id');
+      if (uniqueIdIndex >= 0) {
+        quickIndex += `表格${tableIndex} (${sheet.name}):\n`;
+        rows.forEach((row: Record<string, any>) => {
+          const uniqueId = row[String(uniqueIdIndex)];
+          const nameField = row['2'] || row['3'] || ''; // 通常第二个或第三个字段是名称
+          if (uniqueId) {
+            quickIndex += `  ${uniqueId} -> ${nameField}\n`;
+          }
+        });
+      }
+    } else {
+      context += `\n--- 表格${tableIndex}: ${sheet.name} ---\n`;
+      context += `描述: ${sheet.description || '暂无描述'}\n`;
+      context += `字段定义: ${sheet.headers.map((h: string, i: number) => `[${i}]${h}`).join(', ')}\n`;
+      context += `当前已有数据: 空表\n`;
+    }
+
+    context += '\n' + quickIndex + '\n';
+    return context;
+  }
+
+  /**
+   * 构建单表格整理的提示词（只包含目标 sheet 的信息）
+   */
+  private buildSingleSheetOrganizePrompt(
+    content: string,
+    template: any,
+    tableContext: string,
+    requirements?: string
+  ): string {
+    const targetSheet = template.sheets[0]; // 单表格模板只有一个 sheet
+
+    const requirementsSection = requirements
+      ? `\n【用户整理要求】\n${requirements}\n`
+      : '';
+
+    return `【角色设定】
+你是一个专业的小说内容分析专家，擅长从小说章节中提取关键信息并整理到结构化表格中。
+
+【任务目标】
+请阅读以下小说章节内容，提取关键信息并整理到指定的表格中。
+
+【章节内容】
+${content}
+
+${tableContext}
+【目标表格信息】
+当前需要整理的表格: ${targetSheet.name}
+表格描述: ${targetSheet.description || '暂无描述'}
+字段定义: ${targetSheet.headers.map((h: string, i: number) => `[${i}]${h}`).join(', ')}
+
+${requirementsSection}
+【输出要求】
+1. 从当前章节内容中提取关键信息，生成对应的tableEdit命令
+2. 将命令放在<tableEdit>标签内
+3. 如果没有需要提取的信息，返回空的<tableEdit></tableEdit>
+4. 确保使用正确的表格索引（表格索引从1开始）
+5. 【最重要】增量更新：已存在的实体必须使用updateRow，禁止使用insertRow重复插入！
+6. 重复检测：在生成insertRow前，必须先在"唯一ID快速查找索引"中查找
+7. 合并重复记录：如果发现表格中存在多个相同或高度相似的记录，应使用updateRow更新其中一条，并使用deleteRow删除其他重复记录
+8. 只提取当前章节中明确提到的信息，不要臆造
+9. 操作结果确认：在生成tableEdit命令后，简要说明每个操作的目的
+10. 【绝对禁止】对于唯一ID已存在的实体，绝对不要使用insertRow！
+
+【tableEdit命令格式】
+<tableEdit>
+{
+  "type": "insertRow",
+  "sheetIndex": 1,
+  "data": {"0": "值1", "1": "值2", ...}
+}
+</tableEdit>
+
+或
+
+<tableEdit>
+{
+  "type": "updateRow",
+  "sheetIndex": 1,
+  "rowIndex": 行索引,
+  "data": {"字段索引": "新值", ...}
+}
+</tableEdit>
+
+或
+
+<tableEdit>
+{
+  "type": "deleteRow",
+  "sheetIndex": 1,
+  "rowIndex": 行索引
+}
+</tableEdit>
+
+注意：
+- sheetIndex 始终为 1（因为只处理单个表格）
+- rowIndex 从 0 开始
+- data 中的键名是字段索引的数字字符串`;
+  }
+
+  /**
+   * 对单个 sheet 进行去重
+   */
+  private deduplicateSingleSheet(projectId: string, sheetName: string): void {
+    const tableData = loadTableData(projectId);
+    if (!tableData || !tableData.data || !tableData.data[sheetName]) return;
+
+    const rows = tableData.data[sheetName];
+    if (!Array.isArray(rows)) return;
+
+    const seenIds = new Set<string>();
+    const dedupedRows: Record<string, any>[] = [];
+    let removedCount = 0;
+
+    for (const row of rows) {
+      const uniqueId = row['1']; // "1" 对应唯一 ID 字段（索引1）
+
+      if (uniqueId) {
+        if (seenIds.has(uniqueId)) {
+          removedCount++;
+          addLog(`[WritingOrganize] 单表格去重: 移除 ${sheetName} 重复行, 唯一ID=${uniqueId}`, 'debug');
+          continue;
+        }
+        seenIds.add(uniqueId);
+      }
+
+      dedupedRows.push(row);
+    }
+
+    tableData.data[sheetName] = dedupedRows;
+    saveTableDataFile(projectId, tableData);
+
+    if (removedCount > 0) {
+      addLog(`[WritingOrganize] 单表格去重完成: ${sheetName}, 移除 ${removedCount} 行重复数据`, 'info');
     }
   }
 
@@ -1598,6 +2095,7 @@ ${uniqueIdGuide}
 9. 重复检测：在生成insertRow前，必须先在"唯一ID快速查找索引"中查找，并在"当前已有数据"中通过名称相似度查找
 10. 合并重复记录：如果发现表格中存在多个相同或高度相似的记录，应使用updateRow更新其中一条，并使用deleteRow删除其他重复记录
 11. 操作结果确认：在生成tableEdit命令后，简要说明每个操作的目的
+12. 【绝对禁止】对于唯一ID已存在的实体，绝对不要使用insertRow！这是最严重的错误，会导致数据重复！
 
 【tableEdit命令格式】
 你需要将操作指令放在<tableEdit>标签内,使用HTML注释格式:
@@ -1896,8 +2394,32 @@ deleteRow(4, 1)
         addLog(`[WritingOrganize] 执行命令: ${type}(表格${tableIndex + 1}=${sheetName}${rowIndex !== undefined ? `,行${rowIndex + 1}` : ''})`, 'debug');
 
         if (type === 'insertRow') {
-          existingTableData.data[sheetName].push(data || {});
-          addLog(`[WritingOrganize] insertRow 成功: ${sheetName}, 新增1行`, 'debug');
+          const rowData = data || {};
+          const uniqueId = rowData['1']; // "1" 对应唯一 ID 字段（索引1）
+
+          if (uniqueId) {
+            // 检查是否已存在相同唯一 ID 的行
+            const existingIndex = existingTableData.data[sheetName].findIndex(
+              (row: any) => row['1'] === uniqueId
+            );
+
+            if (existingIndex >= 0) {
+              // 已存在相同唯一 ID，跳过插入或合并更新
+              existingTableData.data[sheetName][existingIndex] = {
+                ...existingTableData.data[sheetName][existingIndex],
+                ...rowData
+              };
+              addLog(`[WritingOrganize] insertRow 去重: ${sheetName}, 唯一ID=${uniqueId} 已存在，执行合并更新`, 'debug');
+            } else {
+              // 唯一 ID 不存在，正常插入
+              existingTableData.data[sheetName].push(rowData);
+              addLog(`[WritingOrganize] insertRow 成功: ${sheetName}, 新增1行`, 'debug');
+            }
+          } else {
+            // 没有唯一 ID 字段，直接插入
+            existingTableData.data[sheetName].push(rowData);
+            addLog(`[WritingOrganize] insertRow 成功: ${sheetName}, 新增1行（无唯一ID）`, 'debug');
+          }
         } else if (type === 'updateRow' && typeof rowIndex === 'number') {
           if (rowIndex >= 0 && rowIndex < existingTableData.data[sheetName].length) {
             existingTableData.data[sheetName][rowIndex] = {

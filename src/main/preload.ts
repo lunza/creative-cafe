@@ -418,6 +418,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       associateTableTemplate: (projectId: string, templateId: string, templateName: string, templateSheets: Array<{ name: string; headers: string[]; description?: string }>) => ipcRenderer.invoke('writing:table:associateTableTemplate', projectId, templateId, templateName, templateSheets),
       getAllTemplates: () => ipcRenderer.invoke('writing:table:getAllTemplates'),
       organizeTable: (projectId: string, modelConfig: any, chapterIndex?: number, requirements?: string) => ipcRenderer.invoke('writing:table:organizeTable', projectId, modelConfig, chapterIndex, requirements),
+      organizeSingleSheet: (projectId: string, sheetName: string, modelConfig: any, chapterIndex?: number, requirements?: string) => ipcRenderer.invoke('writing:table:organizeSingleSheet', projectId, sheetName, modelConfig, chapterIndex, requirements),
       reorganizeRow: (projectId: string, sheet: string, rowIndex: number, rowData: Record<string, any>, requirements: string, modelConfig: any) => ipcRenderer.invoke('writing:table:reorganizeRow', projectId, sheet, rowIndex, rowData, requirements, modelConfig),
       getOrganizeProgress: (projectId: string) => ipcRenderer.invoke('writing:table:getOrganizeProgress', projectId)
     }

@@ -1350,6 +1350,41 @@ export function registerWritingHandlers(): void {
     }
   });
 
+  // 整理单个表格
+  ipcMain.handle('writing:table:organizeSingleSheet', async (event, projectId: string, sheetName: string, modelConfig: ModelConfig, chapterIndex?: number, requirements?: string) => {
+    try {
+      console.log('[WritingOrganize] 整理单个表格:', { projectId, sheetName, chapterIndex });
+      const result = await writingStorageService.organizeSingleSheet(
+        projectId,
+        sheetName,
+        modelConfig,
+        chapterIndex,
+        // onProgress callback
+        (current: number, total: number, message: string, percent?: number) => {
+          if (event.sender && !event.sender.isDestroyed()) {
+            event.sender.send('writing:table:organizeProgress', projectId, {
+              current,
+              total,
+              message,
+              percent: percent || 0,
+              timestamp: Date.now()
+            });
+          }
+        },
+        requirements
+      );
+      return { success: true, ...result };
+    } catch (error) {
+      return {
+        success: false,
+        processedCount: 0,
+        errorCount: 0,
+        errors: [error instanceof Error ? error.message : '整理失败'],
+        error: error instanceof Error ? error.message : '整理失败'
+      };
+    }
+  });
+
   ipcMain.handle('writing:table:reorganizeRow', async (_event, projectId: string, sheet: string, rowIndex: number, rowData: Record<string, any>, requirements: string, modelConfig: ModelConfig) => {
     try {
       if (!requirements || requirements.trim() === '') {

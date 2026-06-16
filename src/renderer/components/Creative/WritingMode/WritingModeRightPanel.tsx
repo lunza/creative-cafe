@@ -640,6 +640,7 @@ const TableOrganizePanelContent: React.FC<{
     organizeMode: string;
     associatedTemplateId: string | null;
     associatedTemplateName: string;
+    organizeRequirements?: string;
   } | null>(null);
 
   const DEFAULT_TEMPLATE_ID = 'st-memory-enhancement-default';
@@ -656,6 +657,11 @@ const TableOrganizePanelContent: React.FC<{
   const [reorganizeRowIndex, setReorganizeRowIndex] = useState<number>(-1);
   const [reorganizeDescription, setReorganizeDescription] = useState('');
   const [reorganizing, setReorganizing] = useState(false);
+
+  // 整理单个表格相关状态
+  const [singleSheetModalVisible, setSingleSheetModalVisible] = useState(false);
+  const [selectedSingleSheet, setSelectedSingleSheet] = useState<string>('');
+  const [singleSheetOrganizing, setSingleSheetOrganizing] = useState(false);
 
   const fullTableDataRef = useRef<Record<string, any>[]>([]);
   const fullTableSheetRef = useRef('');
@@ -694,6 +700,10 @@ const TableOrganizePanelContent: React.FC<{
       const configResponse = response?.config || response;
       if (configResponse && (configResponse.enabled || configResponse.associatedTemplateId)) {
         setTableConfig(configResponse);
+        // 恢复已保存的整理要求
+        if (configResponse.organizeRequirements) {
+          setOrganizeRequirements(configResponse.organizeRequirements);
+        }
       } else {
         setTableConfig(null);
       }
@@ -702,6 +712,19 @@ const TableOrganizePanelContent: React.FC<{
       setTableConfig(null);
     }
   }, [projectId]);
+
+  // 保存整理要求到表格配置
+  const saveOrganizeRequirements = useCallback(async (requirements: string) => {
+    if (!projectId || !tableConfig) return;
+    try {
+      await window.electronAPI.writing.table.saveTableConfig(projectId, {
+        ...tableConfig,
+        organizeRequirements: requirements
+      });
+    } catch (err) {
+      console.error('Failed to save organize requirements:', err);
+    }
+  }, [projectId, tableConfig]);
 
   const loadTableData = useCallback(async () => {
     if (!projectId) return;
@@ -1065,6 +1088,14 @@ const TableOrganizePanelContent: React.FC<{
 
     setTableConfig(currentConfig);
 
+    // 保存当前的整理要求
+    if (organizeRequirements?.trim()) {
+      saveOrganizeRequirements(organizeRequirements.trim());
+    }
+
+    // 使用已保存的要求作为后备（当输入框为空时）
+    const effectiveRequirements = organizeRequirements?.trim() || currentConfig?.organizeRequirements || '';
+
     onOrganizeStatusChange?.(true);
     setOrganizing(true);
     setOrganizeProgress(0);
@@ -1124,7 +1155,7 @@ const TableOrganizePanelContent: React.FC<{
         maxTokens
       };
 
-      const result = await window.electronAPI.writing.table.organizeTable(projectId!, modelConfig, chapterId, organizeRequirements || undefined);
+      const result = await window.electronAPI.writing.table.organizeTable(projectId!, modelConfig, chapterId, effectiveRequirements || undefined);
 
       if (result.success) {
         setOrganizeProgress(100);
@@ -1148,6 +1179,151 @@ const TableOrganizePanelContent: React.FC<{
       setOrganizing(false);
     }
   }, [projectId, organizing, loadTableData, handleOpenTemplateModal, chapterId, chapterTitle, onOrganizeStatusChange, activeEngine]);
+
+  // 整理单个表格
+  const handleStartSingleSheetOrganize = useCallback(async () => {
+    if (!selectedSingleSheet) {
+      message.warning('请选择要整理的表格');
+      return;
+    }
+
+    if (singleSheetOrganizing) {
+      message.warning('整理任务正在进行中');
+      return;
+    }
+
+    // 先重新加载配置，确保获取最新状态
+    const response = await window.electronAPI.writing.table.getTableConfig(projectId!);
+    const currentConfig = response?.config || response;
+
+    if (!currentConfig?.associatedTemplateId) {
+      message.error('请先绑定表格模板');
+      return;
+    }
+
+    setTableConfig(currentConfig);
+
+    // 保存当前的整理要求
+    if (organizeRequirements?.trim()) {
+      saveOrganizeRequirements(organizeRequirements.trim());
+    }
+
+    // 使用已保存的要求作为后备（当输入框为空时）
+    const effectiveRequirements = organizeRequirements?.trim() || currentConfig?.organizeRequirements || '';
+
+    onOrganizeStatusChange?.(true);
+    setSingleSheetOrganizing(true);
+    setOrganizeProgress(0);
+    setOrganizeStatus(`开始整理表格: ${selectedSingleSheet}`);
+    setCurrentOrganizeInfo(null);
+    setSingleSheetModalVisible(false);
+
+    // 注册进度事件监听器
+    let lastLoadTime = 0;
+    const LOAD_THROTTLE_MS = 50;
+
+    const progressListener = (_event: any, _projectId: string, progressData: { current: number; total: number; message: string; percent: number; timestamp: number }) => {
+      try {
+        setOrganizeProgress(progressData.percent || 0);
+        setOrganizeStatus(progressData.message || '处理中...');
+        const now = Date.now();
+        if (now - lastLoadTime >= LOAD_THROTTLE_MS) {
+          lastLoadTime = now;
+          loadTableData();
+        }
+      } catch (listenerError) {
+        console.error('[TableOrganize] 进度监听器错误:', listenerError);
+      }
+    };
+
+    try {
+      window.electronAPI.ipcRenderer.on('writing:table:organizeProgress', progressListener);
+    } catch (registerError) {
+      console.warn('[TableOrganize] 注册进度监听器失败:', registerError);
+    }
+
+    try {
+      // 获取当前活跃的 AI 引擎配置
+      const settingResponse = await window.electronAPI.setting.load();
+      if (!settingResponse.success) {
+        throw new Error('无法获取系统设置');
+      }
+      const currentSetting = settingResponse.setting;
+      const activeEngineId = currentSetting?.activeEngineId;
+      const engines = currentSetting?.aiEngines || [];
+      const currentActiveEngine = engines.find((e: any) => e.id === activeEngineId) || engines[0];
+
+      if (!currentActiveEngine) {
+        throw new Error('未配置 AI 引擎，请在设置中配置');
+      }
+
+      const temperature = (typeof currentActiveEngine.temperature === 'number' && currentActiveEngine.temperature >= 0 && currentActiveEngine.temperature <= 2)
+        ? currentActiveEngine.temperature
+        : 0.7;
+
+      const maxTokens = (typeof currentActiveEngine.max_tokens === 'number' && currentActiveEngine.max_tokens > 0)
+        ? currentActiveEngine.max_tokens
+        : 10240;
+
+      const modelConfig = {
+        temperature,
+        maxTokens
+      };
+
+      const result = await window.electronAPI.writing.table.organizeSingleSheet(projectId!, selectedSingleSheet, modelConfig, chapterId, effectiveRequirements || undefined);
+
+      if (result.success) {
+        setOrganizeProgress(100);
+        setOrganizeStatus('整理完成');
+        message.success(`表格"${selectedSingleSheet}"整理完成: ${result.errorCount > 0 ? `有 ${result.errorCount} 个错误` : '成功'}`);
+        loadTableData();
+      } else {
+        setOrganizeStatus('整理失败');
+        message.error(`整理失败: ${result.errors?.join(', ') || '未知错误'}`);
+      }
+    } catch (error) {
+      setOrganizeStatus('整理出错');
+      message.error(`整理出错: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      try {
+        window.electronAPI.ipcRenderer.removeListener('writing:table:organizeProgress', progressListener);
+      } catch (unregisterError) {
+        console.warn('[TableOrganize] 移除进度监听器失败:', unregisterError);
+      }
+      onOrganizeStatusChange?.(false);
+      setSingleSheetOrganizing(false);
+      setSelectedSingleSheet('');
+    }
+  }, [projectId, singleSheetOrganizing, loadTableData, chapterId, onOrganizeStatusChange, selectedSingleSheet, organizeRequirements]);
+
+  // 打开单表格选择 Modal
+  const handleOpenSingleSheetModal = useCallback(async () => {
+    if (organizing || singleSheetOrganizing) {
+      message.warning('整理任务正在进行中');
+      return;
+    }
+    if (chapterId === undefined) {
+      message.warning('请先选择一个章节');
+      return;
+    }
+    if (!tableConfig?.associatedTemplateId) {
+      message.error('请先绑定表格模板');
+      handleOpenTemplateModal();
+      return;
+    }
+    // 加载模板列表
+    try {
+      const response = await window.electronAPI.writing.table.getAllTemplates();
+      if (response.success && response.templates) {
+        const originalTemplates = response.templates.filter((t: any) => !t.isCopy);
+        setTemplates(originalTemplates);
+      }
+    } catch (err) {
+      console.error('Failed to load templates:', err);
+    }
+    setSelectedSingleSheet('');
+    setSingleSheetModalVisible(true);
+  }, [organizing, singleSheetOrganizing, chapterId, tableConfig, handleOpenTemplateModal]);
 
   // Full table modal functions
   const handleOpenFullTableModal = useCallback(() => {
@@ -1504,11 +1680,20 @@ const TableOrganizePanelContent: React.FC<{
             icon={<RocketOutlined />}
             onClick={handleStartOrganize}
             loading={organizing}
-            disabled={organizing}
+            disabled={organizing || singleSheetOrganizing}
             size="small"
             type="primary"
           >
             {organizing ? '整理中...' : '开始整理'}
+          </Button>
+          <Button
+            icon={<TableOutlined />}
+            onClick={handleOpenSingleSheetModal}
+            loading={singleSheetOrganizing}
+            disabled={organizing || singleSheetOrganizing || !tableConfig?.associatedTemplateId}
+            size="small"
+          >
+            {singleSheetOrganizing ? '整理中...' : '整理单个表格'}
           </Button>
         </div>
 
@@ -1602,7 +1787,7 @@ const TableOrganizePanelContent: React.FC<{
   return (
     <div style={{ padding: '12px 0', height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* 整理进度显示 */}
-      {organizing && (
+      {(organizing || singleSheetOrganizing) && (
         <div style={{ marginBottom: 16, padding: '0 12px' }}>
           <Text strong>整理进度:</Text>
           <Progress percent={organizeProgress} status="active" size="small" />
@@ -1631,11 +1816,20 @@ const TableOrganizePanelContent: React.FC<{
           icon={<RocketOutlined />}
           onClick={handleStartOrganize}
           loading={organizing}
-          disabled={organizing}
+          disabled={organizing || singleSheetOrganizing}
           size="small"
           type="primary"
         >
           {organizing ? '整理中...' : '开始整理'}
+        </Button>
+        <Button
+          icon={<TableOutlined />}
+          onClick={handleOpenSingleSheetModal}
+          loading={singleSheetOrganizing}
+          disabled={organizing || singleSheetOrganizing || !tableConfig?.associatedTemplateId}
+          size="small"
+        >
+          {singleSheetOrganizing ? '整理中...' : '整理单个表格'}
         </Button>
       </div>
 
@@ -2013,6 +2207,53 @@ const TableOrganizePanelContent: React.FC<{
         <p style={{ marginTop: 16, color: '#888', fontSize: 12 }}>
           绑定模板将创建对应的表格结构，已有的表格数据将被覆盖。
         </p>
+      </Modal>
+
+      {/* 整理单个表格选择 Modal */}
+      <Modal
+        title="选择要整理的表格"
+        open={singleSheetModalVisible}
+        onCancel={() => {
+          setSingleSheetModalVisible(false);
+          setSelectedSingleSheet('');
+        }}
+        onOk={handleStartSingleSheetOrganize}
+        confirmLoading={singleSheetOrganizing}
+        okText="开始整理"
+        cancelText="取消"
+        width={500}
+      >
+        <p style={{ marginBottom: 12, color: '#888', fontSize: 12 }}>
+          请选择要整理的表格。整理完成后仅更新所选表格，其他表格不受影响。
+        </p>
+        {tableConfig?.associatedTemplateId && (
+          <Select
+            style={{ width: '100%' }}
+            placeholder="选择要整理的表格"
+            value={selectedSingleSheet || undefined}
+            onChange={setSelectedSingleSheet}
+            size="large"
+          >
+            {(() => {
+              const template = templates.find(t => t.id === tableConfig.associatedTemplateId);
+              return template?.sheets?.map(sheet => (
+                <Option key={sheet.name} value={sheet.name}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>{sheet.name}</span>
+                    {allSheetData[sheet.name] && (
+                      <Tag color="blue">{allSheetData[sheet.name].length} 行</Tag>
+                    )}
+                  </div>
+                  {sheet.description && (
+                    <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>
+                      {sheet.description}
+                    </div>
+                  )}
+                </Option>
+              )) || [];
+            })()}
+          </Select>
+        )}
       </Modal>
     </div>
   );
