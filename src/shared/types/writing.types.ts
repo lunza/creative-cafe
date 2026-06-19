@@ -293,6 +293,14 @@ export interface RegenerationSuggestion {
   addContent: string;     // 需新增的部分及具体指示
 }
 
+// 建议历史记录
+export interface SuggestionRecord {
+  timestamp: number;
+  chapterIndex: number;
+  chapterTitle: string;
+  suggestion: RegenerationSuggestion;
+}
+
 // 作品信息
 export interface WorkInfo {
   suggestedTitle: string;
@@ -354,6 +362,7 @@ export interface ChapterOutline {
   versions?: ChapterVersion[];
   lastModified?: number;
   generationGuidance?: string;
+  suggestionHistory?: SuggestionRecord[];
   generationInfo?: {
     model: string;
     temperature: number;

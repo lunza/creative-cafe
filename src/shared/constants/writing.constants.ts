@@ -62,7 +62,7 @@ export const DEFAULT_WRITING_CONFIG = {
   chapterCount: 10,
   temperature: undefined,
   maxTokens: undefined,
-  model: 'gpt-4o'
+  model: undefined
 };
 
 export const MIN_TARGET_WORD_COUNT = 1000;

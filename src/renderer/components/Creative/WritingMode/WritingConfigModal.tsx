@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Modal, Form, Input, Select, InputNumber, Button, Row, Col, message, Checkbox, Collapse, Tag, Spin, List } from 'antd';
-import { BookOutlined, EditOutlined, SaveOutlined, FolderOpenOutlined, DeleteOutlined } from '@ant-design/icons';
+import { Modal, Form, Input, Select, InputNumber, Button, Row, Col, message, Checkbox, Collapse, Tag, Spin, Tooltip, List } from 'antd';
+import { BookOutlined, EditOutlined, SaveOutlined, FolderOpenOutlined, DeleteOutlined, ThunderboltOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons';
 import {
   WritingStyle,
   WritingConfig
@@ -51,6 +51,15 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
   const [saving, setSaving] = useState(false);
   const [generationAborted, setGenerationAborted] = useState(false);
 
+  // AI 润色相关状态
+  const [isPolishing, setIsPolishing] = useState(false);
+  const [polishContent, setPolishContent] = useState('');
+  const [polishResult, setPolishResult] = useState<string | null>(null);
+  const [showPolishResult, setShowPolishResult] = useState(false);
+  const polishStreamRef = useRef<HTMLTextAreaElement>(null);
+  const [showPolishDialog, setShowPolishDialog] = useState(false);
+  const [polishInstruction, setPolishInstruction] = useState('');
+
   const CONFIG_STORAGE_KEY = 'writing-config-saved';
 
   useEffect(() => {
@@ -80,6 +89,12 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
       streamRef.current.scrollTop = streamRef.current.scrollHeight;
     }
   }, [streamContent]);
+
+  useEffect(() => {
+    if (polishStreamRef.current) {
+      polishStreamRef.current.scrollTop = polishStreamRef.current.scrollHeight;
+    }
+  }, [polishContent]);
 
   const loadSavedConfigs = () => {
     try {
@@ -254,10 +269,26 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
       return;
     }
 
+    // Check if aiConfig has required fields
+    if (!aiConfig?.model_name && !aiConfig?.model) {
+      message.error('AI 配置未找到模型名称，请先在设置中配置 AI 服务');
+      return;
+    }
+
+    if (aiConfig?.temperature === undefined || aiConfig?.temperature === null) {
+      message.error('AI 配置未找到温度参数，请先在设置中配置 AI 服务');
+      return;
+    }
+
+    if (aiConfig?.max_tokens === undefined && aiConfig?.maxTokens === undefined) {
+      message.error('AI 配置未找到 maxTokens 参数，请先在设置中配置 AI 服务');
+      return;
+    }
+
     const modelConfig = {
-      model: values.model || aiConfig?.model || DEFAULT_WRITING_CONFIG.model,
-      temperature: values.temperature ?? aiConfig?.temperature ?? DEFAULT_WRITING_CONFIG.temperature,
-      maxTokens: values.maxTokens ?? aiConfig?.maxTokens ?? DEFAULT_WRITING_CONFIG.maxTokens
+      model: values.model || aiConfig?.model_name || aiConfig?.model,
+      temperature: values.temperature ?? aiConfig?.temperature,
+      maxTokens: values.maxTokens ?? aiConfig?.max_tokens ?? aiConfig?.maxTokens
     };
 
     const config: WritingConfig = {
@@ -423,6 +454,27 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
 
   const handleManualCreateOutline = () => {
     form.validateFields().then(values => {
+      if (!isAiConfigLoaded) {
+        message.error('AI 配置尚未加载完成，请稍后重试');
+        return;
+      }
+
+      // Check if aiConfig has required fields
+      if (!aiConfig?.model_name && !aiConfig?.model) {
+        message.error('AI 配置未找到模型名称，请先在设置中配置 AI 服务');
+        return;
+      }
+
+      if (aiConfig?.temperature === undefined || aiConfig?.temperature === null) {
+        message.error('AI 配置未找到温度参数，请先在设置中配置 AI 服务');
+        return;
+      }
+
+      if (aiConfig?.max_tokens === undefined && aiConfig?.maxTokens === undefined) {
+        message.error('AI 配置未找到 maxTokens 参数，请先在设置中配置 AI 服务');
+        return;
+      }
+
       const config: WritingConfig = {
         resources: {
           worldBookIds: selectedWorldBooks.map(wb => wb.id),
@@ -440,9 +492,9 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
           forbiddenContent: values.forbiddenContent?.split('\n').filter(Boolean) || []
         },
         modelConfig: {
-          model: values.model || aiConfig?.model || DEFAULT_WRITING_CONFIG.model,
-          temperature: values.temperature ?? aiConfig?.temperature ?? DEFAULT_WRITING_CONFIG.temperature,
-          maxTokens: values.maxTokens ?? aiConfig?.maxTokens ?? DEFAULT_WRITING_CONFIG.maxTokens
+          model: values.model || aiConfig?.model_name || aiConfig?.model,
+          temperature: values.temperature ?? aiConfig?.temperature,
+          maxTokens: values.maxTokens ?? aiConfig?.max_tokens ?? aiConfig?.maxTokens
         },
         manualMode: true
       };
@@ -450,6 +502,160 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
     }).catch(() => {
       message.warning('请先填写必填项后再继续');
     });
+  };
+
+  // AI 润色 - 打开指令对话框
+  const handlePolishDescription = () => {
+    const currentDescription = form.getFieldValue('creativeDescription');
+    if (!currentDescription || currentDescription.length < 10) {
+      message.warning('请输入至少 10 个字符后再润色');
+      return;
+    }
+
+    if (!isAiConfigLoaded) {
+      message.error('AI 配置尚未加载完成，请稍后重试');
+      return;
+    }
+
+    // Check if aiConfig has required fields
+    if (!aiConfig?.model_name && !aiConfig?.model) {
+      message.error('AI 配置未找到模型名称，请先在设置中配置 AI 服务');
+      return;
+    }
+
+    if (aiConfig?.temperature === undefined || aiConfig?.temperature === null) {
+      message.error('AI 配置未找到温度参数，请先在设置中配置 AI 服务');
+      return;
+    }
+
+    if (aiConfig?.max_tokens === undefined && aiConfig?.maxTokens === undefined) {
+      message.error('AI 配置未找到 maxTokens 参数，请先在设置中配置 AI 服务');
+      return;
+    }
+
+    setPolishInstruction('');
+    setShowPolishDialog(true);
+  };
+
+  // AI 润色 - 确认指令后执行
+  const handleConfirmPolish = async () => {
+    setShowPolishDialog(false);
+
+    const currentDescription = form.getFieldValue('creativeDescription');
+    if (!currentDescription || currentDescription.length < 10) {
+      message.warning('请输入至少 10 个字符后再润色');
+      return;
+    }
+
+    setIsPolishing(true);
+    setPolishContent('');
+    setPolishResult(null);
+    setShowPolishResult(false);
+
+    try {
+      const resources = {
+        worldBookIds: selectedWorldBooks.map(wb => wb.id),
+        characterCardIds: selectedCharacters.map(c => c.id),
+        userPersonaIds: selectedPersonas.length > 0 ? selectedPersonas.map(p => p.id) : undefined
+      };
+
+      // Task 4.2: 记录选择的资源 ID 列表
+      console.log('[WritingConfigModal] 润色资源选择:', {
+        worldBookIds: resources.worldBookIds,
+        characterCardIds: resources.characterCardIds,
+        userPersonaIds: resources.userPersonaIds
+      });
+
+      const modelConfig = {
+        model: aiConfig?.model_name || aiConfig?.model,
+        temperature: aiConfig?.temperature ?? aiConfig?.temperature,
+        maxTokens: aiConfig?.max_tokens ?? aiConfig?.maxTokens
+      };
+
+      if (!window.electronAPI?.writing) {
+        message.error('写作模块未加载');
+        return;
+      }
+
+      // Task 4.2: 记录传递给后端的资源对象
+      console.log('[WritingConfigModal] 传递给后端的润色请求:', {
+        descriptionLength: currentDescription.length,
+        instruction: polishInstruction || undefined,
+        resources,
+        modelConfig
+      });
+
+      const unsubscribeChunk = window.electronAPI.writing.onPolishChunk((data: { chunk: string }) => {
+        setPolishContent(prev => prev + data.chunk);
+      });
+
+      const unsubscribeComplete = window.electronAPI.writing.onPolishComplete((_data: { content: string }) => {
+        unsubscribeChunk();
+        unsubscribeComplete();
+        unsubscribeError();
+      });
+
+      const unsubscribeError = window.electronAPI.writing.onPolishError((data: { error: string }) => {
+        unsubscribeChunk();
+        unsubscribeComplete();
+        unsubscribeError();
+        setIsPolishing(false);
+        message.error(`润色失败: ${data.error}`);
+      });
+
+      const result = await window.electronAPI.writing.polishDescription({
+        description: currentDescription,
+        instruction: polishInstruction || undefined,
+        resources,
+        modelConfig
+      });
+
+      if (!result?.success) {
+        setIsPolishing(false);
+        message.error(result?.error || '润色失败');
+        return;
+      }
+
+      setPolishResult(result.content);
+      setShowPolishResult(true);
+    } catch (error) {
+      setIsPolishing(false);
+      message.error(`润色失败: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setIsPolishing(false);
+    }
+  };
+
+  const handleCancelPolish = async () => {
+    await window.electronAPI.writing.cancelGeneration('polish_description');
+    setIsPolishing(false);
+    message.info('已中止润色');
+  };
+
+  const handleApplyPolishResult = () => {
+    if (polishResult) {
+      form.setFieldsValue({ creativeDescription: polishResult });
+      setShowPolishResult(false);
+      setPolishResult(null);
+      setPolishContent('');
+      message.success('已应用润色结果');
+    }
+  };
+
+  const handleRetryPolish = () => {
+    if (polishResult) {
+      form.setFieldsValue({ creativeDescription: polishResult });
+    }
+    setShowPolishResult(false);
+    setPolishResult(null);
+    setPolishContent('');
+    setShowPolishDialog(true);
+  };
+
+  const handleCancelPolishResult = () => {
+    setShowPolishResult(false);
+    setPolishResult(null);
+    setPolishContent('');
   };
 
   return (
@@ -545,6 +751,30 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
                   label="创意描述"
                   name="creativeDescription"
                   rules={[{ required: true, message: '请输入创意描述' }]}
+                  extra={
+                    <div style={{ marginTop: 8 }}>
+                      <Form.Item noStyle shouldUpdate={(prevValues, currentValues) => prevValues.creativeDescription !== currentValues.creativeDescription}>
+                        {({ getFieldValue }) => {
+                          const description = getFieldValue('creativeDescription');
+                          const isDisabled = !description || description.length < 10;
+                          return (
+                            <Tooltip title={isDisabled ? '请输入至少 10 个字符后再润色' : '使用 AI 润色创意描述'}>
+                              <Button
+                                type="primary"
+                                icon={<ThunderboltOutlined />}
+                                onClick={handlePolishDescription}
+                                loading={isPolishing}
+                                disabled={isDisabled || isPolishing || isGenerating}
+                                size="small"
+                              >
+                                AI 润色
+                              </Button>
+                            </Tooltip>
+                          );
+                        }}
+                      </Form.Item>
+                    </div>
+                  }
                 >
                   <TextArea
                     rows={4}
@@ -553,6 +783,70 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
                     maxLength={MAX_DESCRIPTION_LENGTH}
                   />
                 </Form.Item>
+
+                {/* AI 润色流式输出展示区域 */}
+                {isPolishing && (
+                  <div style={{ marginBottom: 16, padding: 12, backgroundColor: '#1a1a1a', borderRadius: 4, border: '1px solid #333' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <span style={{ fontWeight: 'bold', color: '#1890ff' }}>AI 润色中...</span>
+                      <Button
+                        type="text"
+                        danger
+                        size="small"
+                        onClick={handleCancelPolish}
+                      >
+                        中止
+                      </Button>
+                    </div>
+                    <TextArea
+                      ref={polishStreamRef}
+                      value={polishContent}
+                      readOnly
+                      autoSize={{ minRows: 4, maxRows: 12 }}
+                      style={{ backgroundColor: '#2a2a2a', color: '#fff', borderColor: '#444' }}
+                    />
+                  </div>
+                )}
+
+                {/* AI 润色结果展示区域 */}
+                {showPolishResult && polishResult && (
+                  <div style={{ marginBottom: 16, padding: 12, backgroundColor: '#1a2a1a', border: '1px solid #2d5a2d', borderRadius: 4 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <span style={{ fontWeight: 'bold', color: '#52c41a' }}>润色结果</span>
+                      <div>
+                        <Button
+                          type="primary"
+                          size="small"
+                          icon={<CheckOutlined />}
+                          onClick={handleApplyPolishResult}
+                          style={{ marginRight: 8 }}
+                        >
+                          采用
+                        </Button>
+                        <Button
+                          size="small"
+                          onClick={handleRetryPolish}
+                          style={{ marginRight: 8 }}
+                        >
+                          重新润色
+                        </Button>
+                        <Button
+                          size="small"
+                          icon={<CloseOutlined />}
+                          onClick={handleCancelPolishResult}
+                        >
+                          取消
+                        </Button>
+                      </div>
+                    </div>
+                    <TextArea
+                      value={polishResult}
+                      onChange={(e) => setPolishResult(e.target.value)}
+                      autoSize={{ minRows: 4, maxRows: 12 }}
+                      style={{ backgroundColor: '#2a2a2a', color: '#fff', borderColor: '#444' }}
+                    />
+                  </div>
+                )}
 
                 <Row gutter={16}>
                   <Col span={12}>
@@ -793,6 +1087,40 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
                   </List.Item>
                 )}
                 locale={{ emptyText: '暂无已保存的配置' }}
+              />
+            </Modal>
+
+            {/* AI 润色指令对话框 */}
+            <Modal
+              title="AI 润色指令"
+              open={showPolishDialog}
+              onOk={handleConfirmPolish}
+              onCancel={() => setShowPolishDialog(false)}
+              okText="开始润色"
+              cancelText="取消"
+              width={520}
+            >
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ marginBottom: 8, color: '#999', fontSize: 13 }}>预设指令（点击填入）：</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {['提升文采', '精简表达', '增强专业性', '调整语气'].map(tag => (
+                    <Tag
+                      key={tag}
+                      style={{ cursor: 'pointer', userSelect: 'none' }}
+                      onClick={() => setPolishInstruction(prev => prev ? prev + '，' + tag : tag)}
+                    >
+                      {tag}
+                    </Tag>
+                  ))}
+                </div>
+              </div>
+              <TextArea
+                rows={4}
+                placeholder="请输入具体的润色方向，例如：提升文采、精简表达等。留空则使用默认润色目标。"
+                value={polishInstruction}
+                onChange={(e) => setPolishInstruction(e.target.value)}
+                maxLength={500}
+                showCount
               />
             </Modal>
           </Form>

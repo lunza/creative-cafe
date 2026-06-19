@@ -370,6 +370,35 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveAIGenerationHistory: (params: { projectId: string; history: any }) => ipcRenderer.invoke('writing:saveAIGenerationHistory', params),
     loadAIGenerationHistory: (params: { projectId: string }) => ipcRenderer.invoke('writing:loadAIGenerationHistory', params),
     clearAIGenerationHistory: (params: { projectId: string }) => ipcRenderer.invoke('writing:clearAIGenerationHistory', params),
+    polishDescription: (request: {
+      description: string;
+      instruction?: string;
+      resources?: {
+        worldBookIds?: string[];
+        characterCardIds?: string[];
+        userPersonaIds?: string[];
+      };
+      modelConfig?: {
+        model?: string;
+        temperature?: number;
+        maxTokens?: number;
+      };
+    }) => ipcRenderer.invoke('writing:polishDescription', request),
+    onPolishChunk: (callback: (data: { chunk: string }) => void) => {
+      const handler = (_event: any, data: { chunk: string }) => callback(data);
+      ipcRenderer.on('writing:polish:chunk', handler);
+      return () => ipcRenderer.removeListener('writing:polish:chunk', handler);
+    },
+    onPolishComplete: (callback: (data: { content: string }) => void) => {
+      const handler = (_event: any, data: { content: string }) => callback(data);
+      ipcRenderer.on('writing:polish:complete', handler);
+      return () => ipcRenderer.removeListener('writing:polish:complete', handler);
+    },
+    onPolishError: (callback: (data: { error: string }) => void) => {
+      const handler = (_event: any, data: { error: string }) => callback(data);
+      ipcRenderer.on('writing:polish:error', handler);
+      return () => ipcRenderer.removeListener('writing:polish:error', handler);
+    },
     onStreamChunk: (callback: (data: any) => void) => {
       const handler = (_event: any, data: any) => callback(data);
       ipcRenderer.on('writing:stream:chunk', handler);

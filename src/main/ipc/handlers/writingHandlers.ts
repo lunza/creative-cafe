@@ -14,6 +14,7 @@ import { addLog } from '../../services/memory/chatLogService';
 import { worldBookService } from '../../services/worldBookService';
 import { getStorageService } from '../../services/storageService';
 import { tableTemplateService } from '../../services/memory/tableTemplateService';
+import { descriptionPolisher } from '../../services/writing/DescriptionPolisher';
 import {
   WritingConfig,
   WritingProject,
@@ -644,6 +645,158 @@ export function registerWritingHandlers(): void {
     }
     addLog(`[Abort] 已取消生成: ${keysToDelete.length} 个请求`, 'warn');
     return { success: true, cancelledCount: keysToDelete.length };
+  });
+
+  ipcMain.handle('writing:polishDescription', async (event, request: {
+    description: string;
+    instruction?: string;
+    resources?: {
+      worldBookIds?: string[];
+      characterCardIds?: string[];
+      userPersonaIds?: string[];
+    };
+    modelConfig?: {
+      model?: string;
+      temperature?: number;
+      maxTokens?: number;
+    };
+  }) => {
+    try {
+      addLog('===== 写作模式: 创意描述润色请求 =====', 'debug');
+      addLog(`描述长度: ${request.description?.length || 0}`, 'debug');
+      addLog(`指令: ${request.instruction || '(无)'}`, 'debug');
+      addLog(`资源: ${JSON.stringify(request.resources || {})}`, 'debug');
+
+      if (!request.description || request.description.trim().length === 0) {
+        return {
+          success: false,
+          error: '描述内容不能为空'
+        };
+      }
+
+      // Read AI config from settings (same logic as ContentGenerator)
+      const storageService = getStorageService();
+      const settings = storageService.getSettings();
+      const engines = settings?.aiEngines || [];
+      const activeEngine = engines.length > 0
+        ? (engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0])
+        : null;
+
+      const configModel = activeEngine?.model_name || request.modelConfig?.model;
+      const configTemperature = activeEngine?.temperature ?? request.modelConfig?.temperature;
+      const configMaxTokens = activeEngine?.max_tokens ?? request.modelConfig?.maxTokens;
+
+      if (!configModel) {
+        return {
+          success: false,
+          error: 'AI 配置未找到模型名称，请先在设置中配置 AI 服务'
+        };
+      }
+
+      if (configTemperature === undefined || configTemperature === null) {
+        return {
+          success: false,
+          error: 'AI 配置未找到温度参数，请先在设置中配置 AI 服务'
+        };
+      }
+
+      if (configMaxTokens === undefined || configMaxTokens === null) {
+        return {
+          success: false,
+          error: 'AI 配置未找到 maxTokens 参数，请先在设置中配置 AI 服务'
+        };
+      }
+
+      const modelConfig = {
+        model: configModel,
+        temperature: configTemperature,
+        maxTokens: configMaxTokens
+      };
+
+      const abortController = new AbortController();
+      const polishKey = 'polish_description';
+      activeAbortControllers.set(polishKey, abortController);
+
+      // Load resources if provided
+      let resourceContext = '';
+      if (request.resources) {
+        const worldBookIds = request.resources.worldBookIds || [];
+        const characterCardIds = request.resources.characterCardIds || [];
+        const userPersonaIds = request.resources.userPersonaIds || [];
+
+        // Task 4.1: 记录接收到的资源 ID 列表
+        addLog(`润色资源 - 世界书: [${worldBookIds.join(', ')}], 角色卡: [${characterCardIds.join(', ')}], 用户人设: [${userPersonaIds.join(', ')}]`, 'debug');
+
+        if (worldBookIds.length > 0 || characterCardIds.length > 0 || userPersonaIds.length > 0) {
+          const worldBooks = await writingResourceManager.loadWorldBooks(worldBookIds);
+          const characters = await writingResourceManager.loadCharacterCards(characterCardIds);
+          const userPersonas = userPersonaIds.length > 0
+            ? await writingResourceManager.loadUserPersonas(userPersonaIds)
+            : [];
+          resourceContext = writingResourceManager.buildResourceContextSummary(worldBooks, characters, userPersonas);
+
+          // Task 4.1: 记录资源上下文是否为空
+          if (!resourceContext || resourceContext.trim().length === 0) {
+            addLog('润色资源上下文为空，将仅基于创意描述进行润色', 'warn');
+          } else {
+            addLog(`润色资源上下文长度: ${resourceContext.length} 字符`, 'debug');
+          }
+        } else {
+          addLog('润色未选择任何资源，将仅基于创意描述进行润色', 'debug');
+        }
+      } else {
+        addLog('润色未提供资源参数，将仅基于创意描述进行润色', 'debug');
+      }
+
+      const onStream = (chunk: string) => {
+        event.sender.send('writing:polish:chunk', { chunk });
+      };
+
+      try {
+        const polishedContent = await descriptionPolisher.polishStream(
+          {
+            description: request.description,
+            resourceContext,
+            instruction: request.instruction,
+            modelConfig
+          },
+          onStream,
+          abortController.signal
+        );
+
+        activeAbortControllers.delete(polishKey);
+
+        addLog('===== 写作模式: 创意描述润色成功 =====', 'debug');
+        addLog(`润色后长度: ${polishedContent?.length || 0}`, 'debug');
+
+        event.sender.send('writing:polish:complete', { content: polishedContent });
+
+        return {
+          success: true,
+          content: polishedContent
+        };
+      } catch (error) {
+        activeAbortControllers.delete(polishKey);
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+        addLog('===== 写作模式: 创意描述润色错误 =====', 'error');
+        addLog(`错误信息: ${errorMessage}`, 'error');
+
+        event.sender.send('writing:polish:error', { error: errorMessage });
+
+        return {
+          success: false,
+          error: errorMessage
+        };
+      }
+    } catch (error) {
+      addLog('===== 写作模式: 创意描述润色外部错误 =====', 'error');
+      addLog(`错误信息: ${error instanceof Error ? error.message : String(error)}`, 'error');
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
   });
 
   // Cleanup all active abort controllers (used on page refresh/unload)

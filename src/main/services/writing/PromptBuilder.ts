@@ -351,6 +351,49 @@ ${parameters.writingStyleContext}`);
 
     return parts.join('\n');
   }
+
+  buildPolishDescriptionPrompt(description: string, resourceContext?: string, instruction?: string): { role: 'system' | 'user'; content: string }[] {
+    const systemPrompt = `你是一位专业的文案润色专家，擅长优化创意描述文本的表达质量。
+
+## 润色目标
+1. **保持核心不变**：保留原创意的核心思想、主题和关键要素
+2. **提升流畅度**：优化语句结构，使表达更加自然流畅
+3. **增强文采**：运用恰当的修辞手法，提升文本的文学性和感染力
+4. **提高专业度**：使用更精准、专业的词汇，增强文本的说服力
+
+## 润色原则
+- 不改变原意，不添加原文未提及的新概念
+- 保持文本的长度适中，不过度扩展
+- 根据上下文语境选择合适的表达方式
+- 输出纯文本格式，不包含任何解释性文字或 Markdown 标记
+
+## 输出要求
+直接输出润色后的文本，不要包含任何前言、后记或说明文字。`;
+
+    const userPromptParts: string[] = [
+      '请对以下创意描述进行润色：',
+      '',
+      '## 原始创意描述',
+      description
+    ];
+
+    if (resourceContext) {
+      userPromptParts.push('', '## 相关背景资料', resourceContext);
+      userPromptParts.push('', '请结合上述背景资料进行润色，确保润色后的描述与背景设定保持一致。');
+    }
+
+    if (instruction) {
+      userPromptParts.push('', '## 用户润色指令', instruction);
+      userPromptParts.push('', '请根据上述用户指令调整润色方向，同时保持核心不变。');
+    }
+
+    userPromptParts.push('', '请直接输出润色后的文本：');
+
+    return [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPromptParts.join('\n') }
+    ];
+  }
 }
 
 export const promptBuilder = new PromptBuilder();

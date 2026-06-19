@@ -252,10 +252,26 @@ const WritingConfigPanel: React.FC<WritingConfigPanelProps> = ({ onConfirm, onCa
       return;
     }
 
+    // Check if aiConfig has required fields
+    if (!aiConfig?.model_name && !aiConfig?.model) {
+      message.error('AI 配置未找到模型名称，请先在设置中配置 AI 服务');
+      return;
+    }
+
+    if (aiConfig?.temperature === undefined || aiConfig?.temperature === null) {
+      message.error('AI 配置未找到温度参数，请先在设置中配置 AI 服务');
+      return;
+    }
+
+    if (aiConfig?.max_tokens === undefined && aiConfig?.maxTokens === undefined) {
+      message.error('AI 配置未找到 maxTokens 参数，请先在设置中配置 AI 服务');
+      return;
+    }
+
     const modelConfig = {
-      model: aiConfig?.model || DEFAULT_WRITING_CONFIG.model,
-      temperature: aiConfig?.temperature ?? DEFAULT_WRITING_CONFIG.temperature,
-      maxTokens: aiConfig?.maxTokens ?? DEFAULT_WRITING_CONFIG.maxTokens
+      model: aiConfig?.model_name || aiConfig?.model,
+      temperature: aiConfig?.temperature,
+      maxTokens: aiConfig?.max_tokens ?? aiConfig?.maxTokens
     };
 
     const config: WritingConfig = {
