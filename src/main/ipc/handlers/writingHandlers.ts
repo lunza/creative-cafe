@@ -1568,6 +1568,44 @@ export function registerWritingHandlers(): void {
     }
   });
 
+  // 版本控制相关接口
+  ipcMain.handle('writing:table:getVersionSnapshot', async (_event, projectId: string) => {
+    try {
+      const snapshot = await writingStorageService.getVersionSnapshot(projectId);
+      return { success: true, snapshot };
+    } catch (error) {
+      return {
+        success: false,
+        snapshot: null,
+        error: error instanceof Error ? error.message : '获取版本快照失败'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:table:confirmVersion', async (_event, projectId: string) => {
+    try {
+      const result = await writingStorageService.confirmVersion(projectId);
+      return result;
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '确认版本失败'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:table:rollbackVersion', async (_event, projectId: string) => {
+    try {
+      const result = await writingStorageService.rollbackVersion(projectId);
+      return result;
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '回退版本失败'
+      };
+    }
+  });
+
   ipcMain.handle('writing:continueOutline', async (_event, request: { outline: GeneratedOutline; chapterCount: number; instructions: string }) => {
     try {
       addLog('===== 写作模式: 大纲续写请求 =====', 'debug');

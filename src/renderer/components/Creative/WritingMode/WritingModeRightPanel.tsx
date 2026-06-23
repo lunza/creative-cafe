@@ -1,11 +1,12 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { Tabs, Input, Button, Empty, Tag, Tooltip, Typography, Spin, Badge, Modal, Progress, Upload, message, Descriptions, Popconfirm, Select, Space, Table } from 'antd';
-import { BookOutlined, SearchOutlined, ReloadOutlined, GlobalOutlined, IdcardOutlined, UserOutlined, UnorderedListOutlined, UploadOutlined, DeleteOutlined, StopOutlined, FileTextOutlined, SafetyOutlined, TableOutlined, DownloadOutlined, ClearOutlined, SaveOutlined, SyncOutlined, LinkOutlined, RocketOutlined, CheckCircleOutlined, PlusOutlined } from '@ant-design/icons';
+import { BookOutlined, SearchOutlined, ReloadOutlined, GlobalOutlined, IdcardOutlined, UserOutlined, UnorderedListOutlined, UploadOutlined, DeleteOutlined, StopOutlined, FileTextOutlined, SafetyOutlined, TableOutlined, DownloadOutlined, ClearOutlined, SaveOutlined, SyncOutlined, LinkOutlined, RocketOutlined, CheckCircleOutlined, PlusOutlined, RollbackOutlined, CheckOutlined } from '@ant-design/icons';
 import { theme } from 'antd';
 import type { MaterialItem, MaterialType, PlotCheckReport, PlotCheckIssue, LogicCheckIssue } from '../../../../shared/types/writing.types';
 import { PlotCheckDimension, IssueSeverity, LogicContradictionType, LOGIC_CONTRADICTION_TYPE_LABELS, PLOT_CHECK_DIMENSION_LABELS, ISSUE_SEVERITY_LABELS } from '../../../../shared/types/writing.types';
 import { useWritingMaterials } from './useWritingMaterials';
 import MaterialList from './MaterialList';
+import TableVersionCompareModal from './TableVersionCompareModal';
 import { RightPanelTab } from '../../../stores/writingModeUIStore';
 import { useSettingStore } from '../../../stores/settingStore';
 import {
@@ -663,6 +664,10 @@ const TableOrganizePanelContent: React.FC<{
   const [selectedSingleSheet, setSelectedSingleSheet] = useState<string>('');
   const [singleSheetOrganizing, setSingleSheetOrganizing] = useState(false);
 
+  // 版本控制相关状态
+  const [hasPendingVersion, setHasPendingVersion] = useState(false);
+  const [versionCompareModalVisible, setVersionCompareModalVisible] = useState(false);
+
   const fullTableDataRef = useRef<Record<string, any>[]>([]);
   const fullTableSheetRef = useRef('');
   const fullTableEditingCellRef = useRef(fullTableEditingCell);
@@ -759,6 +764,70 @@ const TableOrganizePanelContent: React.FC<{
   React.useEffect(() => {
     loadTableData();
   }, [loadTableData]);
+
+  // 检查是否有待确认的版本
+  const checkPendingVersion = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const response = await window.electronAPI.writing.table.getVersionSnapshot(projectId);
+      if (response.success && response.snapshot) {
+        setHasPendingVersion(true);
+      } else {
+        setHasPendingVersion(false);
+      }
+    } catch (error) {
+      console.error('检查版本快照失败:', error);
+      setHasPendingVersion(false);
+    }
+  }, [projectId]);
+
+  React.useEffect(() => {
+    checkPendingVersion();
+  }, [checkPendingVersion]);
+
+  // 监听章节切换，提示用户处理未确认的版本
+  const prevChapterIdRef = useRef(chapterId);
+  React.useEffect(() => {
+    if (prevChapterIdRef.current !== chapterId && hasPendingVersion) {
+      Modal.confirm({
+        title: '未确认的表格整理结果',
+        content: '有未确认的表格整理结果，是否保留？',
+        okText: '保留并离开',
+        cancelText: '取消',
+        okButtonProps: { type: 'primary' },
+        cancelButtonProps: { danger: true },
+        onOk: () => {
+          // 保留版本，允许切换
+          prevChapterIdRef.current = chapterId;
+        },
+        onCancel: () => {
+          // 用户点击取消，不更新 ref，下次切换章节时仍会提示
+        },
+        footer: (_, { OkBtn, CancelBtn }) => (
+          <>
+            <Button
+              danger
+              onClick={async () => {
+                // 放弃整理结果
+                if (projectId) {
+                  await window.electronAPI.writing.table.clearVersionSnapshot(projectId);
+                  setHasPendingVersion(false);
+                }
+                Modal.destroyAll();
+                prevChapterIdRef.current = chapterId;
+              }}
+            >
+              放弃整理结果
+            </Button>
+            <CancelBtn />
+            <OkBtn />
+          </>
+        ),
+      });
+    }
+    // 只有在用户明确选择"保留并离开"或"放弃整理结果"后才更新 ref
+    // 如果用户点击"取消"，不更新 ref，下次切换章节时仍会提示
+  }, [chapterId, hasPendingVersion, projectId]);
 
   const handleSheetChange = useCallback((sheetName: string) => {
     setCurrentSheet(sheetName);
@@ -1160,8 +1229,9 @@ const TableOrganizePanelContent: React.FC<{
       if (result.success) {
         setOrganizeProgress(100);
         setOrganizeStatus('整理完成');
-        message.success(`表格整理完成: ${result.errorCount > 0 ? `有 ${result.errorCount} 个错误` : '成功'}`);
+        message.success('表格整理完成，请查看结果并确认是否覆盖原始数据');
         loadTableData();
+        checkPendingVersion();
       } else {
         setOrganizeStatus('整理失败');
         message.error(`整理失败: ${result.errors?.join(', ') || '未知错误'}`);
@@ -1653,6 +1723,38 @@ const TableOrganizePanelContent: React.FC<{
     }
   }, [projectId, currentSheet, reorganizeRowIndex, reorganizeDescription, allSheetData, setAllSheetData, setTableData]);
 
+  // 回退版本
+  const handleRollbackVersion = useCallback(async () => {
+    if (!projectId) return;
+    
+    Modal.confirm({
+      title: '确认回退',
+      content: '回退将恢复到整理前的状态，放弃本次整理结果。确定要回退吗？',
+      okText: '确认回退',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          const response = await window.electronAPI.writing.table.rollbackVersion(projectId);
+          if (response.success) {
+            message.success('已恢复到整理前的状态');
+            setHasPendingVersion(false);
+            await loadTableData();
+          } else {
+            message.error(`回退失败: ${response.error || '未知错误'}`);
+          }
+        } catch (error) {
+          console.error('回退版本失败:', error);
+          message.error(`回退出错: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    });
+  }, [projectId, loadTableData]);
+
+  // 确认版本（打开对比弹窗）
+  const handleConfirmVersion = useCallback(() => {
+    setVersionCompareModalVisible(true);
+  }, []);
+
   if (loading) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
@@ -1687,18 +1789,39 @@ const TableOrganizePanelContent: React.FC<{
             {organizing ? '整理中...' : '开始整理'}
           </Button>
           <Button
-            icon={<TableOutlined />}
-            onClick={handleOpenSingleSheetModal}
-            loading={singleSheetOrganizing}
-            disabled={organizing || singleSheetOrganizing || !tableConfig?.associatedTemplateId}
-            size="small"
-          >
-            {singleSheetOrganizing ? '整理中...' : '整理单个表格'}
-          </Button>
-        </div>
+          icon={<TableOutlined />}
+          onClick={handleOpenSingleSheetModal}
+          loading={singleSheetOrganizing}
+          disabled={organizing || singleSheetOrganizing || !tableConfig?.associatedTemplateId}
+          size="small"
+        >
+          {singleSheetOrganizing ? '整理中...' : '整理单个表格'}
+        </Button>
+        {hasPendingVersion && (
+          <>
+            <Button
+              icon={<RollbackOutlined />}
+              onClick={handleRollbackVersion}
+              disabled={organizing || singleSheetOrganizing}
+              size="small"
+            >
+              回退
+            </Button>
+            <Button
+              icon={<CheckOutlined />}
+              onClick={handleConfirmVersion}
+              disabled={organizing || singleSheetOrganizing}
+              size="small"
+              type="primary"
+            >
+              确认
+            </Button>
+          </>
+        )}
+      </div>
 
-        {/* 整理要求输入框 */}
-        <div style={{ padding: '8px 0' }}>
+      {/* 整理要求输入框 */}
+      <div style={{ padding: '8px 0' }}>
           <div style={{ marginBottom: 4 }}>
             <Text type="secondary" style={{ fontSize: 12 }}>整理要求（可选）</Text>
           </div>
@@ -1786,6 +1909,45 @@ const TableOrganizePanelContent: React.FC<{
 
   return (
     <div style={{ padding: '12px 0', height: '100%', display: 'flex', flexDirection: 'column' }}>
+      {/* 版本状态提示栏 */}
+      {hasPendingVersion && (
+        <div style={{
+          margin: '0 12px 12px 12px',
+          padding: '10px 14px',
+          backgroundColor: '#fff7e6',
+          border: '1px solid #ffd591',
+          borderLeft: '3px solid #fa8c16',
+          borderRadius: 4,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8
+        }}>
+          <ExclamationCircleOutlined style={{ color: '#fa8c16', fontSize: 15 }} />
+          <Text strong style={{ fontSize: 13, color: '#d46b08' }}>
+            当前显示：整理后的新版本数据（未确认）
+          </Text>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <Button
+              size="small"
+              icon={<RollbackOutlined />}
+              onClick={handleRollbackVersion}
+              disabled={organizing || singleSheetOrganizing}
+            >
+              回退
+            </Button>
+            <Button
+              size="small"
+              type="primary"
+              icon={<CheckOutlined />}
+              onClick={handleConfirmVersion}
+              disabled={organizing || singleSheetOrganizing}
+            >
+              确认
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* 整理进度显示 */}
       {(organizing || singleSheetOrganizing) && (
         <div style={{ marginBottom: 16, padding: '0 12px' }}>
@@ -2255,6 +2417,30 @@ const TableOrganizePanelContent: React.FC<{
           </Select>
         )}
       </Modal>
+
+      {/* 版本对比弹窗 */}
+      <TableVersionCompareModal
+        visible={versionCompareModalVisible}
+        projectId={projectId!}
+        onClose={() => setVersionCompareModalVisible(false)}
+        onConfirm={async () => {
+          try {
+            const response = await window.electronAPI.writing.table.confirmVersion(projectId!);
+            if (response.success) {
+              message.success('数据已成功覆盖');
+              setHasPendingVersion(false);
+              setVersionCompareModalVisible(false);
+              await loadTableData();
+            } else {
+              message.error(`确认覆盖失败: ${response.error || '未知错误'}`);
+            }
+          } catch (error) {
+            console.error('确认覆盖失败:', error);
+            message.error(`确认覆盖出错: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }}
+        onRollback={handleRollbackVersion}
+      />
     </div>
   );
 };

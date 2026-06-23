@@ -1044,3 +1044,44 @@ export interface BatchFixResult {
   error?: string;
 }
 
+// 表格整理版本控制相关类型
+export interface WritingTableData {
+  sheets: string[];
+  headers: Record<string, string[]>;
+  data: Record<string, Record<string, any>[]>;
+  sheetDescriptions: Record<string, string>;
+}
+
+export interface TableCellChange {
+  sheetName: string;
+  rowIndex: number;
+  columnName: string;
+  oldValue: any;
+  newValue: any;
+}
+
+export interface TableOrganizeChangeRecord {
+  addedRows: Array<{
+    sheetName: string;
+    rowIndex: number;
+    rowData: Record<string, any>;
+  }>;
+  modifiedCells: TableCellChange[];
+  deletedRows: Array<{
+    sheetName: string;
+    rowIndex: number;
+    rowData: Record<string, any>;
+  }>;
+}
+
+export interface TableOrganizeVersionSnapshot {
+  id: string;
+  projectId: string;
+  chapterIndex?: number;
+  originalData: WritingTableData;
+  newData: WritingTableData;
+  changeRecord: TableOrganizeChangeRecord;
+  createdAt: number;
+  expiresAt: number;
+}
+
