@@ -378,3 +378,35 @@ tail -f logs/ai-handler.log
 1. 点击编辑按钮后，输入框正确显示当前章节标题和摘要
 2. 修改标题或摘要时，输入框实时反映用户输入
 3. 保存后状态正确更新并显示成功提示
+
+## 12. 写作模式大纲保存问题
+
+### 12.1 【重点标记】生成一章时无法保存大纲
+
+**问题描述:** 在写作模式生成大纲时，如果用户选择生成一章（chapterCount=1），则无法保存大纲，提示"大纲中未定义章节"错误
+
+**根本原因:** 当AI生成单章大纲时，可能返回 `chapters` 字段为单个对象而非数组（如 `"chapters": {...}` 而非 `"chapters": [{...}]`）。`validateOutline` 方法中的 `Array.isArray(data.chapters)` 检查会失败，导致抛出异常
+
+**解决方案:**
+1. 添加 `normalizeChapters` 方法，在JSON解析后、验证前将单个对象规范化为数组
+2. 在 `parseOutlineResponse` 方法的两个解析路径中都调用该方法：
+   - 直接解析成功路径
+   - 修复策略成功路径
+3. 确保无论AI返回对象还是数组，都能正确处理
+
+**修复文件:** `src/main/services/writing/OutlineGenerator.ts`
+
+**关键代码:**
+```typescript
+private normalizeChapters(data: any): void {
+  if (data.chapters && !Array.isArray(data.chapters)) {
+    console.log('[OutlineGenerator] chapters is not an array, wrapping in array');
+    data.chapters = [data.chapters];
+  }
+}
+```
+
+**验证要点:**
+1. 生成一章时能正常保存大纲
+2. 生成多章时功能不受影响
+3. AI返回对象或数组格式都能正确处理

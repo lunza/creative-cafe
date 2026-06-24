@@ -1,0 +1,9 @@
+- [x] `maxContextTokens` 默认值已从 6000 修改为 32000
+- [x] `reservedForResponse` 默认值已从 1024 修改为 4096
+- [x] `minMessagesToKeep` 默认值已从 2 修改为 3
+- [x] `maxMessagesToKeep` 默认值已从 40 修改为 60
+- [x] DeepSeek V3.2 预设的 `reservedForResponse` 已从 4096 修改为 8192
+- [x] TokenManagementPanel 中的默认显示值已更新为 4096
+- [x] ContextTruncator 在预算低于 2000 tokens 时输出警告日志
+- [x] 代码编译无错误
+- [x] 所有默认配置值在代码中一致

@@ -20,15 +20,10 @@ import {
   QuickFixSuggestion
 } from '../../../shared/types/writing.types';
 import { AI_CHECK_TIMEOUT } from '../../../shared/constants/writing.constants';
-import { getStorageService } from '../storageService';
+import { aiService, ChatMessage } from '../AIService';
 import { writingResourceManager } from '../WritingResourceManager';
 import { WorldBookContext, CharacterCardContext } from '../../../shared/types/writing.types';
 import { addLog } from '../memory/chatLogService';
-
-interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-}
 
 interface ModelConfig {
   model: string;
@@ -65,44 +60,6 @@ export interface PlotCheckRequestData {
 const AI_CHECK_TIMEOUT = 0; // 0 = 无超时限制
 
 export class PlotCheckerService {
-  private async getConfig(): Promise<{ baseUrl: string; apiKey: string; apiKeyTransmission: string; model: string }> {
-    const storageService = getStorageService();
-    const settings = storageService.getSettings();
-    const engines = settings?.aiEngines || [];
-    const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
-
-    if (!activeEngine?.model_name) {
-      throw new Error('未配置 AI 模型名称，请在设置中配置 AI 引擎');
-    }
-
-    return {
-      baseUrl: activeEngine?.api_url || settings?.ai?.baseUrl || '',
-      apiKey: activeEngine?.api_key || settings?.ai?.apiKey || '',
-      apiKeyTransmission: activeEngine?.api_key_transmission || 'header',
-      model: activeEngine.model_name
-    };
-  }
-
-  private async getEngineConfig(): Promise<{ temperature: number; maxTokens: number }> {
-    const storageService = getStorageService();
-    const settings = storageService.getSettings();
-    const engines = settings?.aiEngines || [];
-    const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
-
-    if (activeEngine?.temperature === undefined || activeEngine?.temperature === null) {
-      throw new Error('未配置 AI 温度参数，请在设置中配置 AI 引擎');
-    }
-
-    if (activeEngine?.max_tokens === undefined || activeEngine?.max_tokens === null) {
-      throw new Error('未配置 AI 最大令牌数，请在设置中配置 AI 引擎');
-    }
-
-    return {
-      temperature: activeEngine.temperature,
-      maxTokens: activeEngine.max_tokens
-    };
-  }
-
   private buildCheckPrompt(request: PlotCheckRequestData): string {
     const chapterOutline = request.outline?.chapters?.find(ch => ch.index === request.chapterIndex);
     
@@ -215,102 +172,6 @@ ${contextParts}
 逻辑矛盾类型：item_state（物品状态）/ economic（经济系统）/ character_state（角色状态）/ physical_law（物理规律）/ plot_setting（剧情设定）/ mathematical（数学逻辑）`;
 
     return unifiedPrompt;
-  }
-
-  private async callAIService(
-    messages: ChatMessage[],
-    modelConfig: ModelConfig,
-    timeoutMs: number
-  ): Promise<string> {
-    const config = await this.getConfig();
-
-    if (!config.baseUrl) {
-      throw new Error('未配置 AI 服务地址，请在设置中配置');
-    }
-
-    addLog(`【剧情检查】AI 请求配置: baseUrl=${config.baseUrl}, model=${modelConfig.model}, temperature=${modelConfig.temperature}, maxTokens=${modelConfig.maxTokens}`, 'debug');
-    addLog(`【剧情检查】消息数量: ${messages.length}`, 'debug');
-    
-    addLog(`===== 【剧情检查】System Prompt 开始 =====`, 'debug');
-    addLog(messages[0]?.content || '(无System Prompt)', 'debug');
-    addLog(`===== 【剧情检查】System Prompt 结束 =====`, 'debug');
-    
-    addLog(`===== 【剧情检查】User Prompt 开始 =====`, 'debug');
-    addLog(messages[1]?.content || '(无User Prompt)', 'debug');
-    addLog(`===== 【剧情检查】User Prompt 结束 =====`, 'debug');
-
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-
-    const requestBody: Record<string, any> = {
-      model: modelConfig.model,
-      messages,
-      temperature: modelConfig.temperature,
-      max_tokens: modelConfig.maxTokens,
-      stream: false
-    };
-
-    if (config.apiKey) {
-      if (config.apiKeyTransmission === 'header') {
-        const authValue = config.apiKey.trim().startsWith('Bearer ') ? config.apiKey : `Bearer ${config.apiKey}`;
-        headers['Authorization'] = authValue;
-        addLog(`【剧情检查】API Key 传输方式: header (Bearer)`, 'debug');
-      } else {
-        requestBody.api_key = config.apiKey;
-        addLog(`【剧情检查】API Key 传输方式: body`, 'debug');
-      }
-    }
-
-    addLog(`【剧情检查】请求体: model=${requestBody.model}, temperature=${requestBody.temperature}, max_tokens=${requestBody.max_tokens}`, 'debug');
-    addLog(`【剧情检查】请求 URL: ${config.baseUrl}/v1/chat/completions`, 'debug');
-
-    const controller = new AbortController();
-    const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null;
-
-    try {
-      addLog(`【剧情检查】开始发送 AI 请求${timeoutMs > 0 ? ` (超时: ${timeoutMs / 1000}秒)` : ' (无超时限制)'}...`, 'info');
-      const response = await fetch(`${config.baseUrl}/v1/chat/completions`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(requestBody),
-        signal: controller.signal
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        addLog(`【剧情检查】AI 请求失败: ${response.status} ${response.statusText}`, 'error');
-        addLog(`【剧情检查】错误详情: ${errorText}`, 'error');
-        addLog(`【剧情检查】请求 URL: ${config.baseUrl}/v1/chat/completions`, 'debug');
-        addLog(`【剧情检查】请求体: ${JSON.stringify({ model: requestBody.model, temperature: requestBody.temperature, max_tokens: requestBody.max_tokens })}`, 'debug');
-        throw new Error(`AI 请求失败: ${response.status} ${response.statusText} - ${errorText}`);
-      }
-
-      const data = await response.json();
-      const content = data.choices?.[0]?.message?.content;
-
-      addLog(`===== 【剧情检查】AI 完整响应开始 =====`, 'debug');
-      addLog(JSON.stringify(data, null, 2), 'debug');
-      addLog(`===== 【剧情检查】AI 完整响应结束 =====`, 'debug');
-
-      if (!content) {
-        addLog(`【剧情检查】AI 返回内容为空`, 'error');
-        throw new Error('AI 返回内容为空');
-      }
-
-      addLog(`===== 【剧情检查】AI 返回内容原文 开始 =====`, 'debug');
-      addLog(content, 'debug');
-      addLog(`===== 【剧情检查】AI 返回内容原文 结束 =====`, 'debug');
-      return content;
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        addLog(`【剧情检查】AI 请求超时（${timeoutMs / 1000}秒）`, 'error');
-        throw new Error(`AI 请求超时（${timeoutMs / 1000}秒），请稍后重试`);
-      }
-      throw error;
-    } finally {
-      if (timeoutId !== null) clearTimeout(timeoutId);
-    }
   }
 
   private parseCheckResponse(rawContent: string, chapterIndex: number, chapterContent?: string): PlotCheckReport {
@@ -1039,7 +900,7 @@ ${contextParts}
     addLog('===== 剧情检查: checkChapter 开始 =====', 'debug');
     addLog(`章节索引: ${request.chapterIndex}, 内容长度: ${request.content?.length || 0}`, 'debug');
 
-    const config = await this.getConfig();
+    const config = await aiService.getConfig();
     addLog(`AI 配置: baseUrl=${config.baseUrl}, model=${config.model}`, 'debug');
 
     const systemPrompt = `你是一个专业的小说编辑和质量检查助手。请以JSON格式返回检查结果。`;
@@ -1057,7 +918,7 @@ ${contextParts}
       { role: 'user', content: userPrompt }
     ];
 
-    const engineConfig = await this.getEngineConfig();
+    const engineConfig = await aiService.getEngineConfig();
 
     const modelConfig: ModelConfig = request.modelConfig || {
       model: config.model,
@@ -1074,7 +935,12 @@ ${contextParts}
       const ruleBasedIssues = this.performRuleBasedValidation(request.content);
       addLog(`规则验证发现 ${ruleBasedIssues.length} 个潜在问题`, 'debug');
 
-      const rawContent = await this.callAIService(messages, modelConfig, AI_CHECK_TIMEOUT);
+      const rawContent = await aiService.callChatAPI(messages, {
+        model: modelConfig.model,
+        temperature: modelConfig.temperature,
+        maxTokens: modelConfig.maxTokens,
+        timeoutMs: AI_CHECK_TIMEOUT
+      });
       const report = this.parseCheckResponse(rawContent, request.chapterIndex, request.content);
 
       // 合并规则验证结果
@@ -1189,7 +1055,7 @@ ${contextParts}
     }
     addLog(`问题描述: ${description}`, 'debug');
 
-    const config = await this.getConfig();
+    const config = await aiService.getConfig();
 
     const systemPrompt = `你是一个专业的小说编辑和修订助手。你的任务是根据指出的问题，对章节内容进行定向修正。
 
@@ -1230,7 +1096,7 @@ ${content}
       { role: 'user', content: userPrompt }
     ];
 
-    const engineConfig = await this.getEngineConfig();
+    const engineConfig = await aiService.getEngineConfig();
 
     const effectiveModelConfig: ModelConfig = modelConfig || {
       model: config.model,
@@ -1241,7 +1107,12 @@ ${content}
     addLog(`【自动修正】模型配置: ${JSON.stringify(effectiveModelConfig)}`, 'debug');
 
     try {
-      const rawContent = await this.callAIService(messages, effectiveModelConfig, AI_CHECK_TIMEOUT);
+      const rawContent = await aiService.callChatAPI(messages, {
+        model: effectiveModelConfig.model,
+        temperature: effectiveModelConfig.temperature,
+        maxTokens: effectiveModelConfig.maxTokens,
+        timeoutMs: AI_CHECK_TIMEOUT
+      });
       const fixedContent = rawContent.trim();
       
       addLog(`【自动修正】成功, 修正后内容长度: ${fixedContent.length}`, 'info');
@@ -1286,7 +1157,7 @@ ${content}
       return { success: true, fixedContent: content, results: [] };
     }
 
-    const config = await this.getConfig();
+    const config = await aiService.getConfig();
 
     const systemPrompt = `你是一个专业的小说编辑和修订助手。你的任务是根据列出的一组问题，对章节内容进行精准的批量修正。
 
@@ -1346,7 +1217,7 @@ ${content}
       { role: 'user', content: userPrompt }
     ];
 
-    const engineConfig = await this.getEngineConfig();
+    const engineConfig = await aiService.getEngineConfig();
 
     const effectiveModelConfig: ModelConfig = modelConfig || {
       model: config.model,
@@ -1357,7 +1228,12 @@ ${content}
     addLog(`【批量修正】模型配置: ${JSON.stringify(effectiveModelConfig)}`, 'debug');
 
     try {
-      const rawContent = await this.callAIService(messages, effectiveModelConfig, AI_CHECK_TIMEOUT * 2);
+      const rawContent = await aiService.callChatAPI(messages, {
+        model: effectiveModelConfig.model,
+        temperature: effectiveModelConfig.temperature,
+        maxTokens: effectiveModelConfig.maxTokens,
+        timeoutMs: AI_CHECK_TIMEOUT * 2
+      });
       const fixedContent = rawContent.trim();
 
       addLog(`【批量修正】成功, 修正后内容长度: ${fixedContent.length}`, 'info');

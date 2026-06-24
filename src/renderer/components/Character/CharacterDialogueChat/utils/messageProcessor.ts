@@ -131,6 +131,34 @@ export function restoreCodeBlocks(text: string, blocks: string[]): string {
     .replace(/%%INLINECODE(\d+)%%/g, (_, index) => blocks[parseInt(index, 10)] || '');
 }
 
+/**
+ * 移除文本中的思考标签及其内容
+ * 支持标签变体: <think>, <thinking>, <thought> (不区分大小写)
+ * 处理场景: 完整标签、未关闭标签(流式场景)、自闭合标签、多个标签块
+ */
+export function stripThinkingTags(text: string): string {
+  if (!text) return '';
+
+  let result = text;
+
+  // 1. 移除自闭合标签: <think />, <thinking/>, <thought />
+  const selfClosingPattern = /<(think|thinking|thought)\b[^>]*\/\s*>/gi;
+  result = result.replace(selfClosingPattern, '');
+
+  // 2. 移除完整标签对: <think>...</think>, <thinking>...</thinking>, <thought>...</thought>
+  const completePattern = /<(think|thinking|thought)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
+  result = result.replace(completePattern, '');
+
+  // 3. 移除未关闭标签(流式场景): <think>...到文本末尾
+  const unclosedPattern = /<(think|thinking|thought)\b[^>]*>[\s\S]*$/gi;
+  result = result.replace(unclosedPattern, '');
+
+  // 4. 清理多余的连续空行 (将3个或更多连续换行符替换为2个)
+  result = result.replace(/\n{3,}/g, '\n\n');
+
+  return result;
+}
+
 export function processMessage(
   text: string,
   options: MessageProcessorOptions = {}
@@ -144,6 +172,9 @@ export function processMessage(
     charPlaceholder: opts.charPlaceholder,
     userPlaceholder: opts.userPlaceholder,
   });
+
+  // 在模板替换之后、引号规范化之前移除思考标签
+  result = stripThinkingTags(result);
 
   if (opts.normalizeQuotes) {
     result = normalizeQuotes(result);
@@ -174,6 +205,9 @@ export function preprocessForMarkdown(
     charPlaceholder: opts.charPlaceholder,
     userPlaceholder: opts.userPlaceholder,
   });
+
+  // 在模板替换之后、引号规范化之前移除思考标签
+  result = stripThinkingTags(result);
 
   if (opts.normalizeQuotes) {
     result = normalizeQuotes(result);

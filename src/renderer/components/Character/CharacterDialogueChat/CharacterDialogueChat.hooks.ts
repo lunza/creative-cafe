@@ -669,10 +669,10 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     const tokenManagementEnabled = characterConfig?.tokenManagementEnabled ?? true;
     const truncationConfig: TruncationConfig = {
       enabled: tokenManagementEnabled,
-      maxContextTokens: characterConfig?.maxContextTokens ?? 6000,
-      reservedForResponse: characterConfig?.reservedForResponse ?? 1024,
-      minMessagesToKeep: characterConfig?.minMessagesToKeep ?? 2,
-      maxMessagesToKeep: characterConfig?.maxMessagesToKeep ?? 40,
+      maxContextTokens: characterConfig?.maxContextTokens ?? 32000,
+      reservedForResponse: characterConfig?.reservedForResponse ?? 4096,
+      minMessagesToKeep: characterConfig?.minMessagesToKeep ?? 3,
+      maxMessagesToKeep: characterConfig?.maxMessagesToKeep ?? 60,
     };
 
     let messagesToUse = messagesToSend;
@@ -1281,10 +1281,10 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
 
   const tokenManagementConfig = useMemo(() => ({
     enabled: characterConfig?.tokenManagementEnabled ?? true,
-    maxContextTokens: characterConfig?.maxContextTokens ?? 6000,
-    reservedForResponse: characterConfig?.reservedForResponse ?? 1024,
-    minMessagesToKeep: characterConfig?.minMessagesToKeep ?? 2,
-    maxMessagesToKeep: characterConfig?.maxMessagesToKeep ?? 40,
+    maxContextTokens: characterConfig?.maxContextTokens ?? 32000,
+    reservedForResponse: characterConfig?.reservedForResponse ?? 4096,
+    minMessagesToKeep: characterConfig?.minMessagesToKeep ?? 3,
+    maxMessagesToKeep: characterConfig?.maxMessagesToKeep ?? 60,
   }), [characterConfig]);
 
   const handleTokenManagementConfigChange = useCallback((config: Partial<typeof tokenManagementConfig>) => {

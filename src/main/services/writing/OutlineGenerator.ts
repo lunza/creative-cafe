@@ -385,6 +385,7 @@ export class OutlineGenerator {
     try {
       const parsed = JSON.parse(jsonStr);
       console.log('[OutlineGenerator] JSON parsed successfully');
+      this.normalizeChapters(parsed);
       return this.validateOutline(parsed);
     } catch {
       console.log('[OutlineGenerator] Initial parse failed, attempting fix...');
@@ -409,6 +410,7 @@ export class OutlineGenerator {
         }
         const parsed = JSON.parse(fixed);
         console.log(`[OutlineGenerator] Fix ${name} succeeded, length:`, fixed.length);
+        this.normalizeChapters(parsed);
         return this.validateOutline(parsed);
       } catch (fixError) {
         console.log(`[OutlineGenerator] Fix ${name} failed:`, fixError instanceof Error ? fixError.message : String(fixError));
@@ -424,6 +426,17 @@ export class OutlineGenerator {
     );
     (error as any).rawContent = response;
     throw error;
+  }
+
+  /**
+   * 规范化 chapters 字段：如果 AI 返回的是单个对象而非数组，则包装为数组
+   * 这是为了处理当 chapterCount=1 时，AI 可能返回 "chapters": {...} 而非 "chapters": [{...}] 的情况
+   */
+  private normalizeChapters(data: any): void {
+    if (data.chapters && !Array.isArray(data.chapters)) {
+      console.log('[OutlineGenerator] chapters is not an array, wrapping in array');
+      data.chapters = [data.chapters];
+    }
   }
 
   private validateOutline(data: any): GeneratedOutline {

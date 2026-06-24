@@ -896,7 +896,21 @@ const setGeneratingField = (field: string | null) => {
     message.success('已还原为原始值');
   };
 
-  const handleGenerate = async (field: string) => {
+  // 打开生成指导弹窗
+  const openGenerateModal = (field: string) => {
+    addLog(`[Character] 打开生成指导弹窗，字段: ${field}`);
+    setCurrentGenerateField(field);
+    setGenerateRequirements('');
+    setIsGenerateModalOpen(true);
+  };
+
+  // 执行实际的 AI 生成
+  const performGenerate = async () => {
+    if (!currentGenerateField) return;
+
+    const field = currentGenerateField;
+    const requirements = generateRequirements;
+
     addLog(`[Character] 开始AI生成字段: ${field}`);
     isProcessingRef.current = true;
     setGeneratingField(field);
@@ -907,6 +921,7 @@ const setGeneratingField = (field: string | null) => {
         message.error('请先在配置管理中设置AI引擎');
         setGeneratingField(null);
         isProcessingRef.current = false;
+        setIsGenerateModalOpen(false);
         return;
       }
 
@@ -914,6 +929,7 @@ const setGeneratingField = (field: string | null) => {
         message.error('API地址不能为空');
         setGeneratingField(null);
         isProcessingRef.current = false;
+        setIsGenerateModalOpen(false);
         return;
       }
 
@@ -968,6 +984,7 @@ const setGeneratingField = (field: string | null) => {
         message.error(`不支持的字段: ${field}`);
         setGeneratingField(null);
         isProcessingRef.current = false;
+        setIsGenerateModalOpen(false);
         return;
       }
 
@@ -1008,7 +1025,7 @@ const setGeneratingField = (field: string | null) => {
         finalSystemPrompt = activeEngine.system_prompt + '\n\n' + generationSystemPrompt;
       }
 
-      const userPrompt = `请基于以下角色卡已有信息，为【${targetField.label}】字段生成内容。
+      let userPrompt = `请基于以下角色卡已有信息，为【${targetField.label}】字段生成内容。
 
 【角色卡已有信息】
 ${existingFieldsInfo || '暂无其他字段信息，请基于角色名称和基本设定进行合理推断。'}
@@ -1021,8 +1038,14 @@ ${characterData.character_version ? `【角色版本】${characterData.character
 
 请直接输出为该字段生成的内容，不要添加任何解释或说明文字。`;
 
+      // 拼接用户生成指导
+      if (requirements && requirements.trim()) {
+        userPrompt += `\n\n【用户生成指导】\n${requirements.trim()}`;
+      }
+
       addLog(`[Character] 系统提示词长度: ${finalSystemPrompt.length} 字符`, 'info');
       addLog(`[Character] 用户提示词长度: ${userPrompt.length} 字符`, 'info');
+      addLog(`[Character] 用户生成指导: ${requirements || '无'}`, 'info');
 
       const generatedContent = await sendCharacterAIRequest(activeEngine, finalSystemPrompt, userPrompt);
 
@@ -1047,6 +1070,9 @@ ${characterData.character_version ? `【角色版本】${characterData.character
 
       message.success('生成成功');
       isProcessingRef.current = false;
+      setIsGenerateModalOpen(false);
+      setCurrentGenerateField(null);
+      setGenerateRequirements('');
     } catch (error) {
       addLog(`[Character] 生成失败: ${error instanceof Error ? error.message : '未知错误'}`, 'error');
       message.error(`生成失败: ${error instanceof Error ? error.message : '未知错误'}`);
@@ -1058,6 +1084,11 @@ ${characterData.character_version ? `【角色版本】${characterData.character
 
   const [currentPolishField, setCurrentPolishField] = useState<string | null>(null);
   const [currentPolishText, setCurrentPolishText] = useState<string>('');
+
+  // 生成指导弹窗状态
+  const [isGenerateModalOpen, setIsGenerateModalOpen] = useState<boolean>(false);
+  const [generateRequirements, setGenerateRequirements] = useState<string>('');
+  const [currentGenerateField, setCurrentGenerateField] = useState<string | null>(null);
 
   const handleCancelAIRequest = () => {
     isProcessingRef.current = false;
@@ -2172,7 +2203,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
                 showGenerate
                 onTranslate={handleTranslate}
                 onPolish={handlePolish}
-                onGenerate={handleGenerate}
+                onGenerate={openGenerateModal}
                 onRestore={handleRestore}
                 onCancelAIRequest={handleCancelAIRequest}
                 translatingField={translatingField}
@@ -2189,7 +2220,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
                 showGenerate
                 onTranslate={handleTranslate}
                 onPolish={handlePolish}
-                onGenerate={handleGenerate}
+                onGenerate={openGenerateModal}
                 onRestore={handleRestore}
                 onCancelAIRequest={handleCancelAIRequest}
                 translatingField={translatingField}
@@ -2209,7 +2240,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
             showGenerate
             onTranslate={handleTranslate}
             onPolish={handlePolish}
-            onGenerate={handleGenerate}
+            onGenerate={openGenerateModal}
             onRestore={handleRestore}
             onCancelAIRequest={handleCancelAIRequest}
             translatingField={translatingField}
@@ -2227,7 +2258,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
             showGenerate
             onTranslate={handleTranslate}
             onPolish={handlePolish}
-            onGenerate={handleGenerate}
+            onGenerate={openGenerateModal}
             onRestore={handleRestore}
             onCancelAIRequest={handleCancelAIRequest}
             translatingField={translatingField}
@@ -2245,7 +2276,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
             showGenerate
             onTranslate={handleTranslate}
             onPolish={handlePolish}
-            onGenerate={handleGenerate}
+            onGenerate={openGenerateModal}
             onRestore={handleRestore}
             onCancelAIRequest={handleCancelAIRequest}
             translatingField={translatingField}
@@ -2263,7 +2294,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
             showGenerate
             onTranslate={handleTranslate}
             onPolish={handlePolish}
-            onGenerate={handleGenerate}
+            onGenerate={openGenerateModal}
             onRestore={handleRestore}
             onCancelAIRequest={handleCancelAIRequest}
             translatingField={translatingField}
@@ -2281,7 +2312,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
             showGenerate
             onTranslate={handleTranslate}
             onPolish={handlePolish}
-            onGenerate={handleGenerate}
+            onGenerate={openGenerateModal}
             onRestore={handleRestore}
             onCancelAIRequest={handleCancelAIRequest}
             translatingField={translatingField}
@@ -2299,7 +2330,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
             showGenerate
             onTranslate={handleTranslate}
             onPolish={handlePolish}
-            onGenerate={handleGenerate}
+            onGenerate={openGenerateModal}
             onRestore={handleRestore}
             onCancelAIRequest={handleCancelAIRequest}
             translatingField={translatingField}
@@ -2317,7 +2348,7 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
             showGenerate
             onTranslate={handleTranslate}
             onPolish={handlePolish}
-            onGenerate={handleGenerate}
+            onGenerate={openGenerateModal}
             onRestore={handleRestore}
             onCancelAIRequest={handleCancelAIRequest}
             translatingField={translatingField}
@@ -2377,6 +2408,49 @@ ${polishRequirements || '请优化文本的表达，让它更加通顺自然，�
             onChange={(e) => setPolishRequirements(e.target.value)}
             autoFocus
             disabled={polishingField !== null}
+          />
+        </div>
+      </Modal>
+
+      {/* AI生成指导模态框 */}
+      <Modal
+        title="AI生成"
+        open={isGenerateModalOpen}
+        onCancel={() => {
+          if (!generatingField) {
+            setIsGenerateModalOpen(false);
+            setCurrentGenerateField(null);
+            setGenerateRequirements('');
+          }
+        }}
+        closable={!generatingField}
+        maskClosable={!generatingField}
+        footer={generatingField ? [
+          <Button key="interrupt" danger icon={<StopOutlined />} onClick={handleCancelAIRequest}>
+            中断请求
+          </Button>
+        ] : [
+          <Button key="cancel" onClick={() => {
+            setIsGenerateModalOpen(false);
+            setCurrentGenerateField(null);
+            setGenerateRequirements('');
+          }}>
+            取消
+          </Button>,
+          <Button key="ok" type="primary" onClick={performGenerate}>
+            确认生成
+          </Button>
+        ]}
+      >
+        <div>
+          <p>请输入生成要求（例如：风格偏向可爱、更加正式、增加细节等）：</p>
+          <Input.TextArea
+            rows={4}
+            placeholder="请输入生成要求（选填，如：风格偏向正式、增加细节描述等）"
+            value={generateRequirements}
+            onChange={(e) => setGenerateRequirements(e.target.value)}
+            autoFocus
+            disabled={generatingField !== null}
           />
         </div>
       </Modal>

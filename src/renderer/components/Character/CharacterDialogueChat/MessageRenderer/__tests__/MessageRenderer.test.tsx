@@ -167,4 +167,37 @@ describe('MessageRenderer', () => {
     expect(screen.getByText('italic')).toBeInTheDocument();
     expect(screen.getByText(/code/)).toBeInTheDocument();
   });
+
+  it('should strip <think> tags and hide thinking content', () => {
+    render(<MessageRenderer content="Visible text<think>Hidden thinking content</think>" />);
+    expect(screen.getByText(/Visible text/)).toBeInTheDocument();
+    expect(screen.queryByText(/Hidden thinking content/)).not.toBeInTheDocument();
+  });
+
+  it('should strip multiple thinking tags', () => {
+    const { container } = render(<MessageRenderer content="Start<think>First thinking</think> middle<thinking>Second thinking</thinking> end" />);
+    expect(container.textContent).toContain('Start');
+    expect(container.textContent).toContain('middle');
+    expect(container.textContent).toContain('end');
+    expect(container.textContent).not.toContain('First thinking');
+    expect(container.textContent).not.toContain('Second thinking');
+  });
+
+  it('should handle mixed thinking tags and normal content', () => {
+    const { container } = render(
+      <MessageRenderer content="Before<think>Thinking</think> **Bold text** <thought>More thinking</thought> after" />
+    );
+    expect(container.textContent).toContain('Before');
+    expect(container.textContent).toContain('Bold text');
+    expect(container.textContent).toContain('after');
+    expect(container.textContent).not.toContain('Thinking');
+    expect(container.textContent).not.toContain('More thinking');
+  });
+
+  it('should preserve normal content formatting with thinking tags', () => {
+    render(<MessageRenderer content="<think>Thinking</think> **Bold** and *italic* and `code`" />);
+    expect(screen.getByText('Bold')).toBeInTheDocument();
+    expect(screen.getByText('italic')).toBeInTheDocument();
+    expect(screen.getByText(/code/)).toBeInTheDocument();
+  });
 });

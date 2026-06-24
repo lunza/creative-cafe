@@ -16,7 +16,21 @@ export class ContextTruncator {
       - systemPromptTokens 
       - config.reservedForResponse;
 
+    // 预算过低警告
+    if (availableBudget < 2000) {
+      console.warn(
+        `[ContextTruncator] ⚠️ Token预算过低！可用预算: ${availableBudget} tokens ` +
+        `(maxContextTokens: ${config.maxContextTokens}, systemPromptTokens: ${systemPromptTokens}, reservedForResponse: ${config.reservedForResponse})。` +
+        `建议：增大maxContextTokens或减小reservedForResponse，推荐maxContextTokens >= 32000, reservedForResponse >= 4096`
+      );
+    }
+
     if (availableBudget <= 0) {
+      console.warn(
+        `[ContextTruncator] ⚠️ Token预算为负或零！可用预算: ${availableBudget} tokens。` +
+        `系统提示词(${systemPromptTokens} tokens) + 响应预留(${config.reservedForResponse} tokens) 已超过总预算(${config.maxContextTokens} tokens)。` +
+        `将仅保留最近${config.minMessagesToKeep * 2}条消息，AI可能无法生成详细回复。`
+      );
       return this.getRecentMessages(messages, config.minMessagesToKeep * 2);
     }
 

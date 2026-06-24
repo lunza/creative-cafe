@@ -49,7 +49,7 @@ const modelPresets = [
     contextWindow: '128K tokens',
     maxOutput: '8K (chat) / 64K (reasoner)',
     maxContextTokens: 64000,
-    reservedForResponse: 4096,
+    reservedForResponse: 8192,
     minMessagesToKeep: 3,
     maxMessagesToKeep: 60,
     color: 'purple',
@@ -147,7 +147,7 @@ const TokenManagementPanel: React.FC<TokenManagementPanelProps> = ({
             <div className="token-config-item">
               <div className="token-config-label">
                 <span>最大上下文Token数</span>
-                <Tooltip title="对话上下文（不含System Prompt）的最大Token数。默认6000，适合8K上下文模型">
+                <Tooltip title="对话上下文（不含System Prompt）的最大Token数。默认32000，适合现代大模型">
                   <InfoCircleOutlined style={{ marginLeft: 4, color: '#999', fontSize: 12 }} />
                 </Tooltip>
               </div>
@@ -156,8 +156,8 @@ const TokenManagementPanel: React.FC<TokenManagementPanelProps> = ({
                 max={1000000}
                 step={1000}
                 disabled={config.enabled === false}
-                value={config.maxContextTokens ?? 6000}
-                onChange={(value) => onConfigChange({ maxContextTokens: value ?? 6000 })}
+                value={config.maxContextTokens ?? 32000}
+                onChange={(value) => onConfigChange({ maxContextTokens: value ?? 32000 })}
                 style={{ width: '100%' }}
                 addonAfter="tokens"
               />
@@ -169,7 +169,7 @@ const TokenManagementPanel: React.FC<TokenManagementPanelProps> = ({
             <div className="token-config-item">
               <div className="token-config-label">
                 <span>响应预留Token数</span>
-                <Tooltip title="为AI响应预留的Token数，确保AI有足够的空间生成回复。默认1024">
+                <Tooltip title="为AI响应预留的Token数，确保AI有足够的空间生成回复。默认4096">
                   <InfoCircleOutlined style={{ marginLeft: 4, color: '#999', fontSize: 12 }} />
                 </Tooltip>
               </div>
@@ -178,8 +178,8 @@ const TokenManagementPanel: React.FC<TokenManagementPanelProps> = ({
                 max={65536}
                 step={256}
                 disabled={config.enabled === false}
-                value={config.reservedForResponse ?? 1024}
-                onChange={(value) => onConfigChange({ reservedForResponse: value ?? 1024 })}
+                value={config.reservedForResponse ?? 4096}
+                onChange={(value) => onConfigChange({ reservedForResponse: value ?? 4096 })}
                 style={{ width: '100%' }}
                 addonAfter="tokens"
               />
@@ -191,7 +191,7 @@ const TokenManagementPanel: React.FC<TokenManagementPanelProps> = ({
             <div className="token-config-item">
               <div className="token-config-label">
                 <span>最少保留对话轮数</span>
-                <Tooltip title="即使Token超限，也至少保留的对话轮数（1轮=用户+AI各1条消息）。默认2轮">
+                <Tooltip title="即使Token超限，也至少保留的对话轮数（1轮=用户+AI各1条消息）。默认3轮">
                   <InfoCircleOutlined style={{ marginLeft: 4, color: '#999', fontSize: 12 }} />
                 </Tooltip>
               </div>
@@ -200,8 +200,8 @@ const TokenManagementPanel: React.FC<TokenManagementPanelProps> = ({
                 max={20}
                 step={1}
                 disabled={config.enabled === false}
-                value={config.minMessagesToKeep ?? 2}
-                onChange={(value) => onConfigChange({ minMessagesToKeep: value ?? 2 })}
+                value={config.minMessagesToKeep ?? 3}
+                onChange={(value) => onConfigChange({ minMessagesToKeep: value ?? 3 })}
                 style={{ width: '100%' }}
                 addonAfter="轮"
               />
@@ -213,7 +213,7 @@ const TokenManagementPanel: React.FC<TokenManagementPanelProps> = ({
             <div className="token-config-item">
               <div className="token-config-label">
                 <span>最多保留消息条数</span>
-                <Tooltip title="即使Token未超限，也最多发送的消息条数。默认40条，防止发送过多历史消息">
+                <Tooltip title="即使Token未超限，也最多发送的消息条数。默认60条，防止发送过多历史消息">
                   <InfoCircleOutlined style={{ marginLeft: 4, color: '#999', fontSize: 12 }} />
                 </Tooltip>
               </div>
@@ -222,8 +222,8 @@ const TokenManagementPanel: React.FC<TokenManagementPanelProps> = ({
                 max={500}
                 step={5}
                 disabled={config.enabled === false}
-                value={config.maxMessagesToKeep ?? 40}
-                onChange={(value) => onConfigChange({ maxMessagesToKeep: value ?? 40 })}
+                value={config.maxMessagesToKeep ?? 60}
+                onChange={(value) => onConfigChange({ maxMessagesToKeep: value ?? 60 })}
                 style={{ width: '100%' }}
                 addonAfter="条"
               />
