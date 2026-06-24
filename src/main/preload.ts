@@ -449,7 +449,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       organizeTable: (projectId: string, modelConfig: any, chapterIndex?: number, requirements?: string) => ipcRenderer.invoke('writing:table:organizeTable', projectId, modelConfig, chapterIndex, requirements),
       organizeSingleSheet: (projectId: string, sheetName: string, modelConfig: any, chapterIndex?: number, requirements?: string) => ipcRenderer.invoke('writing:table:organizeSingleSheet', projectId, sheetName, modelConfig, chapterIndex, requirements),
       reorganizeRow: (projectId: string, sheet: string, rowIndex: number, rowData: Record<string, any>, requirements: string, modelConfig: any) => ipcRenderer.invoke('writing:table:reorganizeRow', projectId, sheet, rowIndex, rowData, requirements, modelConfig),
-      getOrganizeProgress: (projectId: string) => ipcRenderer.invoke('writing:table:getOrganizeProgress', projectId)
+      getOrganizeProgress: (projectId: string) => ipcRenderer.invoke('writing:table:getOrganizeProgress', projectId),
+      getVersionSnapshot: (projectId: string) => ipcRenderer.invoke('writing:table:getVersionSnapshot', projectId),
+      confirmVersion: (projectId: string) => ipcRenderer.invoke('writing:table:confirmVersion', projectId),
+      rollbackVersion: (projectId: string) => ipcRenderer.invoke('writing:table:rollbackVersion', projectId)
     }
   }
 });

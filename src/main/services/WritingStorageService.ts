@@ -905,6 +905,9 @@ export class WritingStorageService {
         throw new Error('表格数据不存在，请先绑定模板');
       }
 
+      // 保存原始数据快照（深拷贝）
+      const originalDataSnapshot: WritingTableData = JSON.parse(JSON.stringify(tableData));
+
       const template = tableTemplateService.getTemplate(tableConfig.associatedTemplateId);
       if (!template) {
         throw new Error(`模板 ${tableConfig.associatedTemplateId} 不存在`);
@@ -1036,6 +1039,15 @@ export class WritingStorageService {
       result.errorCount = progress.errorCount;
       result.errors = progress.errors;
 
+      // 如果整理成功，保存版本快照
+      if (result.success) {
+        const newData = loadTableData(projectId);
+        if (newData) {
+          await this.saveVersionSnapshot(projectId, chapterIndex, originalDataSnapshot, newData);
+          addLog(`[WritingOrganize] 版本快照已保存，等待用户确认`, 'info');
+        }
+      }
+
       console.log('[WritingOrganize] 整理完成:', result);
       return result;
     } catch (error) {
@@ -1103,6 +1115,191 @@ export class WritingStorageService {
     }
 
     return totalRemoved;
+  }
+
+  // 版本控制相关方法
+  private getVersionSnapshotFile(projectId: string): string {
+    const tablesDir = getWritingTablesDir(projectId);
+    return path.join(tablesDir, 'version-snapshot.json');
+  }
+
+  async saveVersionSnapshot(
+    projectId: string,
+    chapterIndex: number | undefined,
+    originalData: WritingTableData,
+    newData: WritingTableData
+  ): Promise<void> {
+    const changeRecord = this.compareTableData(originalData, newData);
+    const snapshot = {
+      id: `v-${Date.now()}`,
+      projectId,
+      chapterIndex,
+      originalData,
+      newData,
+      changeRecord,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 24 * 60 * 60 * 1000 // 24小时后过期
+    };
+
+    const snapshotFile = this.getVersionSnapshotFile(projectId);
+    try {
+      fs.writeFileSync(snapshotFile, JSON.stringify(snapshot, null, 2), 'utf8');
+      addLog(`[WritingOrganize] 版本快照已保存: ${snapshot.id}`, 'info');
+    } catch (error) {
+      console.error('[WritingStorage] Failed to save version snapshot:', error);
+      throw error;
+    }
+  }
+
+  async getVersionSnapshot(projectId: string): Promise<any | null> {
+    const snapshotFile = this.getVersionSnapshotFile(projectId);
+    try {
+      if (fs.existsSync(snapshotFile)) {
+        const data = fs.readFileSync(snapshotFile, 'utf8');
+        const snapshot = JSON.parse(data);
+
+        // 检查是否过期
+        if (Date.now() > snapshot.expiresAt) {
+          addLog(`[WritingOrganize] 版本快照已过期，自动清理`, 'info');
+          await this.clearVersionSnapshot(projectId);
+          return null;
+        }
+
+        return snapshot;
+      }
+    } catch (error) {
+      console.error('[WritingStorage] Failed to load version snapshot:', error);
+    }
+    return null;
+  }
+
+  async clearVersionSnapshot(projectId: string): Promise<void> {
+    const snapshotFile = this.getVersionSnapshotFile(projectId);
+    try {
+      if (fs.existsSync(snapshotFile)) {
+        fs.unlinkSync(snapshotFile);
+        addLog(`[WritingOrganize] 版本快照已清除`, 'info');
+      }
+    } catch (error) {
+      console.error('[WritingStorage] Failed to clear version snapshot:', error);
+    }
+  }
+
+  async confirmVersion(projectId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const snapshot = await this.getVersionSnapshot(projectId);
+      if (!snapshot) {
+        return { success: false, error: '无可确认的版本快照' };
+      }
+
+      // 将新版本数据覆盖到原始数据
+      saveTableDataFile(projectId, snapshot.newData);
+      addLog(`[WritingOrganize] 版本已确认，新数据已覆盖`, 'info');
+
+      // 清除快照
+      await this.clearVersionSnapshot(projectId);
+
+      return { success: true };
+    } catch (error) {
+      console.error('[WritingStorage] Failed to confirm version:', error);
+      return { success: false, error: error instanceof Error ? error.message : '确认版本失败' };
+    }
+  }
+
+  async rollbackVersion(projectId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const snapshot = await this.getVersionSnapshot(projectId);
+      if (!snapshot) {
+        return { success: false, error: '无可回退的版本快照' };
+      }
+
+      // 恢复原始数据
+      saveTableDataFile(projectId, snapshot.originalData);
+      addLog(`[WritingOrganize] 版本已回退，原始数据已恢复`, 'info');
+
+      // 清除快照
+      await this.clearVersionSnapshot(projectId);
+
+      return { success: true };
+    } catch (error) {
+      console.error('[WritingStorage] Failed to rollback version:', error);
+      return { success: false, error: error instanceof Error ? error.message : '回退版本失败' };
+    }
+  }
+
+  compareTableData(
+    originalData: WritingTableData,
+    newData: WritingTableData
+  ): {
+    addedRows: Array<{ sheetName: string; rowIndex: number; rowData: Record<string, any> }>;
+    modifiedCells: Array<{ sheetName: string; rowIndex: number; columnName: string; oldValue: any; newValue: any }>;
+    deletedRows: Array<{ sheetName: string; rowIndex: number; rowData: Record<string, any> }>;
+  } {
+    const addedRows: Array<{ sheetName: string; rowIndex: number; rowData: Record<string, any> }> = [];
+    const modifiedCells: Array<{ sheetName: string; rowIndex: number; columnName: string; oldValue: any; newValue: any }> = [];
+    const deletedRows: Array<{ sheetName: string; rowIndex: number; rowData: Record<string, any> }> = [];
+
+    // 遍历所有 sheet
+    for (const sheetName of newData.sheets) {
+      const originalRows = originalData.data[sheetName] || [];
+      const newRows = newData.data[sheetName] || [];
+
+      // 找出新增的行
+      for (let i = 0; i < newRows.length; i++) {
+        const newRow = newRows[i];
+        const uniqueId = newRow['1'];
+
+        // 检查是否在原始数据中存在
+        const existsInOriginal = originalRows.some(row => row['1'] === uniqueId);
+
+        if (!existsInOriginal && uniqueId) {
+          addedRows.push({ sheetName, rowIndex: i, rowData: newRow });
+        }
+      }
+
+      // 找出删除的行
+      for (let i = 0; i < originalRows.length; i++) {
+        const originalRow = originalRows[i];
+        const uniqueId = originalRow['1'];
+
+        // 检查是否在新数据中存在
+        const existsInNew = newRows.some(row => row['1'] === uniqueId);
+
+        if (!existsInNew && uniqueId) {
+          deletedRows.push({ sheetName, rowIndex: i, rowData: originalRow });
+        }
+      }
+
+      // 找出修改的单元格
+      for (let i = 0; i < newRows.length; i++) {
+        const newRow = newRows[i];
+        const uniqueId = newRow['1'];
+
+        // 找到对应的原始行
+        const originalRow = originalRows.find(row => row['1'] === uniqueId);
+
+        if (originalRow) {
+          // 比较每个字段
+          const headers = newData.headers[sheetName] || [];
+          for (const header of headers) {
+            const oldValue = originalRow[header];
+            const newValue = newRow[header];
+
+            if (JSON.stringify(oldValue) !== JSON.stringify(newValue)) {
+              modifiedCells.push({
+                sheetName,
+                rowIndex: i,
+                columnName: header,
+                oldValue,
+                newValue
+              });
+            }
+          }
+        }
+      }
+    }
+
+    return { addedRows, modifiedCells, deletedRows };
   }
 
   /**
