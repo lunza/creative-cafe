@@ -1,22 +1,24 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, lazy, Suspense } from 'react';
 import {
   MessageOutlined,
-  TeamOutlined,
   EditOutlined,
   TrophyOutlined,
-  HeartFilled
+  HeartFilled,
+  CloseOutlined
 } from '@ant-design/icons';
 import { Tooltip, message } from 'antd';
 import { SingleChatDialog } from './SingleChatDialog';
-import { GroupChatDialog } from '../GroupChat/GroupChatDialog';
-import { WritingModeEntry } from '../Creative/WritingMode';
 import { useDataStore } from '../../stores/dataStore';
 import { useFavoritesStore } from '../../stores/favoritesStore';
-import { useGroupChatStore } from '../../stores/groupChatStore';
-import { ActivationStrategy, GenerationMode } from '../../types/groupChat.types';
 import './CreationCenter.css';
 
-type ChatPanelType = 'chat' | 'group' | 'creative' | 'game';
+// Lazy mount WritingModeEntry：仅当用户打开写作模式对话框时才加载其模块
+// （包含 OutlineEditor / ContentWorkspace / WritingConfigModal 等重依赖）
+const WritingModeEntry = lazy(
+  () => import('../Creative/WritingMode').then(m => ({ default: m.WritingModeEntry }))
+);
+
+type ChatPanelType = 'chat' | 'creative' | 'game';
 
 interface PanelConfig {
   label: string;
@@ -35,14 +37,6 @@ const panelConfig: Record<ChatPanelType, PanelConfig> = {
     icon: <MessageOutlined />,
     color: '#6366f1',
     activeColor: '#818cf8',
-  },
-  group: {
-    label: '群聊模式',
-    description: '多个AI角色同时参与对话，体验多角色互动场景',
-    icon: <TeamOutlined />,
-    color: '#ec4899',
-    activeColor: '#f472b6',
-    devBadge: true,
   },
   creative: {
     label: '写作模式',
@@ -64,7 +58,6 @@ const panelConfig: Record<ChatPanelType, PanelConfig> = {
 
 const colorMap: Record<ChatPanelType, string> = {
   chat: '#6366f1',
-  group: '#ec4899',
   creative: '#f59e0b',
   game: '#10b981',
 };
@@ -87,22 +80,18 @@ interface FavoriteCharacterData {
 export const CreationCenter: React.FC = () => {
   const [activePanel, setActivePanel] = useState<ChatPanelType>('chat');
   const [showChatDialog, setShowChatDialog] = useState(false);
-  const [showGroupChatDialog, setShowGroupChatDialog] = useState(false);
   const [showWritingDialog, setShowWritingDialog] = useState(false);
   const [flashingPanel, setFlashingPanel] = useState<ChatPanelType | null>(null);
   const [ripples, setRipples] = useState<Record<ChatPanelType, Ripple[]>>({
     chat: [],
-    group: [],
     creative: [],
     game: [],
   });
   const rippleCounter = useRef(0);
   const { characters, fetchCharacters, loading: charactersLoading } = useDataStore();
   const { getFavoritePaths, toggleFavorite } = useFavoritesStore();
-  const { loadGroups, selectGroup, groups, createGroup } = useGroupChatStore();
   const [favoriteData, setFavoriteData] = useState<FavoriteCharacterData[]>([]);
   const hasFetchedRef = useRef(false);
-  const hasLoadedGroupsRef = useRef(false);
 
   useEffect(() => {
     if (!hasFetchedRef.current && !charactersLoading && characters.length === 0) {
@@ -110,13 +99,6 @@ export const CreationCenter: React.FC = () => {
       fetchCharacters();
     }
   }, [characters.length, charactersLoading, fetchCharacters]);
-
-  useEffect(() => {
-    if (!hasLoadedGroupsRef.current) {
-      hasLoadedGroupsRef.current = true;
-      loadGroups();
-    }
-  }, [loadGroups]);
 
   const favoritePaths = getFavoritePaths();
 
@@ -265,37 +247,13 @@ export const CreationCenter: React.FC = () => {
 
     if (panel === 'chat') {
       setShowChatDialog(true);
-    } else if (panel === 'group') {
-      if (groups.length === 0) {
-        const newGroup = await createGroup({
-          name: '新群聊',
-          members: [],
-          disabled_members: [],
-          activation_strategy: ActivationStrategy.NATURAL,
-          generation_mode: GenerationMode.SWAP,
-          auto_mode_delay: 5,
-          generation_mode_join_prefix: '',
-          generation_mode_join_suffix: '',
-        });
-        if (newGroup) {
-          selectGroup(newGroup);
-        }
-      } else {
-        const existingGroup = groups[0];
-        selectGroup(existingGroup);
-      }
-      setShowGroupChatDialog(true);
     } else if (panel === 'creative') {
       setShowWritingDialog(true);
     }
-  }, [groups, createGroup, selectGroup]);
+  }, []);
 
   const handleCloseChat = useCallback(() => {
     setShowChatDialog(false);
-  }, []);
-
-  const handleCloseGroupChat = useCallback(() => {
-    setShowGroupChatDialog(false);
   }, []);
 
   const handleCloseWriting = useCallback(() => {
@@ -416,11 +374,6 @@ export const CreationCenter: React.FC = () => {
         onCloseDialog={handleCloseChat}
       />
 
-      <GroupChatDialog
-        open={showGroupChatDialog}
-        onClose={handleCloseGroupChat}
-      />
-
       <WritingModeDialog
         visible={showWritingDialog}
         onClose={handleCloseWriting}
@@ -443,31 +396,68 @@ const WritingModeDialog: React.FC<WritingModeDialogProps> = ({ visible, onClose 
         position: 'fixed',
         inset: 0,
         zIndex: 1000,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: 'rgba(0,0,0,0.4)'
+        background: '#1a1a2e'
       }}
-      onClick={onClose}
     >
       <div
         style={{
-          width: '90vw',
-          height: '90vh',
-          background: '#fff',
-          borderRadius: 12,
-          overflow: 'hidden',
+          width: '100%',
+          height: '100%',
           display: 'flex',
-          flexDirection: 'column'
+          flexDirection: 'column',
+          overflow: 'hidden'
         }}
-        onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ padding: '8px 16px', background: 'var(--card-bg-color, #f5f5f5)', borderBottom: '1px solid var(--border-color, #e8e8e8)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h3 style={{ margin: 0 }}>写作模式</h3>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18 }}>×</button>
+        <div style={{
+          padding: '12px 20px',
+          background: 'linear-gradient(135deg, #1e1e2e 0%, #2d2b42 100%)',
+          borderBottom: '1px solid rgba(255,255,255,0.08)',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexShrink: 0
+        }}>
+          <h3 style={{ margin: 0, color: '#fff', fontSize: 16, fontWeight: 600 }}>写作模式</h3>
+          <button
+            onClick={onClose}
+            onMouseEnter={(e) => {
+              const btn = e.currentTarget as HTMLButtonElement;
+              btn.style.background = '#ff7875';
+              btn.style.transform = 'rotate(90deg) scale(1.1)';
+            }}
+            onMouseLeave={(e) => {
+              const btn = e.currentTarget as HTMLButtonElement;
+              btn.style.background = '#ff4d4f';
+              btn.style.transform = 'rotate(0deg) scale(1)';
+            }}
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: '50%',
+              background: '#ff4d4f',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 0,
+              transition: 'all 0.3s ease',
+              boxShadow: '0 2px 8px rgba(255, 77, 79, 0.3)'
+            }}
+          >
+            <CloseOutlined style={{ fontSize: 16, color: '#fff' }} />
+          </button>
         </div>
         <div style={{ flex: 1, overflow: 'auto' }}>
-          <WritingModeEntry />
+          <Suspense
+            fallback={
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888' }}>
+                加载写作模式...
+              </div>
+            }
+          >
+            <WritingModeEntry />
+          </Suspense>
         </div>
       </div>
     </div>

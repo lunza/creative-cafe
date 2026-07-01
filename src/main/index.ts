@@ -1,10 +1,6 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import path from 'path';
 import { setupIpcHandlers } from './ipc';
-import { registerMemoryHandlers } from './ipc/handlers/memoryHandlers';
-import { registerCreativeHandlers } from './ipc/handlers/creativeHandlers';
-import { registerCharacterChatHandlers } from './ipc/handlers/characterChatHandlers';
-import { registerWritingHandlers } from './ipc/handlers/writingHandlers';
 import { abortAllActiveRequests } from './ipc/handlers/writingHandlers';
 
 if (process.platform === 'win32') {
@@ -21,13 +17,6 @@ const isDev = !!(process.env.VITE_DEV_SERVER_URL) || process.env.NODE_ENV === 'd
 let mainWindow: BrowserWindow | null = null;
 
 export function sendLogToRenderer(message: string, type: 'error' | 'warn' | 'info' | 'debug' = 'info') {
-  if (mainWindow && mainWindow.webContents) {
-    try {
-      mainWindow.webContents.send('memory:log', message, type);
-    } catch (error) {
-      console.error('Error sending log to renderer:', error);
-    }
-  }
   console.log(`[${type.toUpperCase()}] ${message}`);
 }
 
@@ -93,10 +82,6 @@ function createWindow() {
 app.whenReady().then(async () => {
   createWindow();
   setupIpcHandlers();
-  registerMemoryHandlers();
-  registerCreativeHandlers();
-  registerCharacterChatHandlers();
-  registerWritingHandlers();
 
   // 初始化向量注册表服务
   (async () => {

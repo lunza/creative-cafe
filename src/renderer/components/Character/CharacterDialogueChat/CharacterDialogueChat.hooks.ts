@@ -643,7 +643,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
 
     // 构建完整的 system prompt
     console.log('[DEBUG-FLOW] Step C: Starting buildCompleteSystemPrompt');
-    const finalSystemPrompt = buildCompleteSystemPrompt(
+    const finalSystemPrompt = await buildCompleteSystemPrompt(
       promptType,
       vectorContextItems,
       memoryTableData,

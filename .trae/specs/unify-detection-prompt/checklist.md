@@ -1,8 +1,0 @@
-- [x] buildCheckPrompt 方法中逻辑矛盾检测引导语移至内容之前
-- [x] buildCheckPrompt 方法包含完整的角色定义、检测维度、逻辑矛盾类型说明
-- [x] buildCheckPrompt 方法统一输出格式为 dimension_scores 和 logic_issues
-- [x] buildCheckPrompt 方法要求每个问题提供 quickFixSuggestion 字段
-- [x] parseCheckResponse 方法适配新的统一输出格式（支持 dimension_scores）
-- [x] parseCheckResponse 方法根据维度正确分配问题
-- [x] TypeScript 编译检查通过
-- [x] 前端 UI 组件无需修改（后端兼容原有类型）

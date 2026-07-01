@@ -1,14 +1,18 @@
 /**
  * AI Service - 统一的 AI 服务调用抽象层
- * 
+ *
  * 封装所有 AI 调用的通用逻辑：
  * - 配置获取和管理
  * - 请求构建和执行
- * - 流式响应解析
+ * - 流式响应解析（通过 SSEStreamParser）
  * - 错误处理和重试
+ *
+ * 注意：SSEStreamParser 已提取为独立工具，位于 `./ai/SSEStreamParser.ts`。
+ * 本文件 re-export 之，保持向后兼容的导入路径。
  */
 
 import { getStorageService } from './storageService';
+import { SSEStreamParser, type StreamChunkCallback } from './ai/SSEStreamParser';
 
 // ==================== Types ====================
 
@@ -50,7 +54,8 @@ export interface StreamResponse {
   model: string;
 }
 
-export type StreamChunkCallback = (chunk: string) => void;
+// Re-export 以保持向后兼容（其他模块从 AIService 导入 StreamChunkCallback 仍可工作）
+export type { StreamChunkCallback } from './ai/SSEStreamParser';
 
 // ==================== AIConfigProvider ====================
 
@@ -160,165 +165,17 @@ export class AIConfigProvider {
   }
 }
 
-// ==================== SSEStreamParser ====================
-
-/**
- * SSE 流式响应解析器
- * 统一处理 Server-Sent Events 格式的流式响应解析
- * 消除 ContentGenerator 和 OutlineGenerator 中重复的流式处理逻辑
- */
-export class SSEStreamParser {
-  /**
-   * 解析 SSE 单行数据，提取 content 字段
-   */
-  parseSSELine(line: string): string | null {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith('data:')) return null;
-
-    const jsonStr = trimmed.substring(6).trim();
-    if (!jsonStr || jsonStr === '[DONE]') return null;
-
-    try {
-      const parsed = JSON.parse(jsonStr);
-      const delta = parsed.choices?.[0]?.delta?.content;
-      if (delta) return delta;
-
-      const message = parsed.choices?.[0]?.message?.content;
-      if (message) return message;
-
-      return null;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * 从原始 SSE 数据中提取 content
-   * 支持多种格式的容错解析
-   */
-  extractContentFromRawData(rawData: string): string {
-    let extracted = '';
-
-    // Strategy 1: 匹配所有 data: 行
-    const dataLineRegex = /^data:\s+(.+)$/gm;
-    let match;
-    while ((match = dataLineRegex.exec(rawData)) !== null) {
-      const jsonStr = match[1].trim();
-      if (jsonStr === '[DONE]') continue;
-      try {
-        const parsed = JSON.parse(jsonStr);
-        const delta = parsed.choices?.[0]?.delta?.content;
-        if (delta) extracted += delta;
-        else if (parsed.choices?.[0]?.message?.content) {
-          extracted += parsed.choices[0].message.content;
-        }
-      } catch {
-        // Skip malformed JSON
-      }
-    }
-
-    // Strategy 2: 直接正则提取 content 字段
-    if (!extracted) {
-      const contentRegex = /"content"\s*:\s*"([^"]*(?:\\.[^"]*)*)"/g;
-      let contentMatch;
-      while ((contentMatch = contentRegex.exec(rawData)) !== null) {
-        const rawContent = contentMatch[1];
-        extracted += rawContent.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"');
-      }
-    }
-
-    return extracted;
-  }
-
-  /**
-   * 解析 Response 流式响应体，实时调用回调
-   */
-  async parseStream(
-    response: Response,
-    onChunk: StreamChunkCallback,
-    abortSignal?: AbortSignal
-  ): Promise<{ content: string; generationTime: number }> {
-    const reader = response.body?.getReader();
-    if (!reader) {
-      throw new Error('无法获取响应流');
-    }
-
-    const decoder = new TextDecoder('utf-8');
-    let fullContent = '';
-    let buffer = '';
-    const startTime = Date.now();
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-
-        if (done) {
-          // 处理 buffer 中残留的不完整 SSE 数据行
-          if (buffer.trim()) {
-            buffer = buffer.trim();
-            if (buffer.startsWith('data:') && !buffer.includes('[DONE]')) {
-              const jsonStr = buffer.substring(6).trim();
-              if (jsonStr) {
-                try {
-                  const chunkData = JSON.parse(jsonStr);
-                  if (chunkData.choices?.[0]) {
-                    const content = chunkData.choices[0].delta?.content || chunkData.choices[0].message?.content || '';
-                    if (content) {
-                      fullContent += content;
-                      onChunk(content);
-                    }
-                  }
-                } catch {
-                  // 忽略解析错误
-                }
-              }
-            }
-          }
-          break;
-        }
-
-        const chunk = decoder.decode(value, { stream: true });
-        buffer += chunk;
-
-        // 按行分割，保留最后一个不完整的行在 buffer 中
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          const parsed = this.parseSSELine(line);
-          if (parsed) {
-            fullContent += parsed;
-            onChunk(parsed);
-          }
-        }
-      }
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        return { content: fullContent, generationTime: Date.now() - startTime };
-      }
-      throw error;
-    } finally {
-      reader.releaseLock();
-    }
-
-    // 回退提取
-    if (fullContent.length < 100 && buffer.length > 0) {
-      const fallbackContent = this.extractContentFromRawData(buffer);
-      if (fallbackContent.length > fullContent.length) {
-        fullContent = fallbackContent;
-      }
-    }
-
-    return { content: fullContent, generationTime: Date.now() - startTime };
-  }
-}
-
 // ==================== AIService ====================
 
 /**
  * 统一的 AI 服务调用类
  * 封装所有 AI 调用的通用逻辑，供 PlotCheckerService、ContentGenerator、OutlineGenerator 复用
+ *
+ * SSE 流式响应解析由独立的 `SSEStreamParser`（位于 `./ai/SSEStreamParser.ts`）负责。
+ * 此处 re-export 以保持向后兼容（其他模块从 AIService 导入 SSEStreamParser 仍可工作）。
  */
+export { SSEStreamParser } from './ai/SSEStreamParser';
+
 export class AIService {
   private configProvider: AIConfigProvider;
   private streamParser: SSEStreamParser;

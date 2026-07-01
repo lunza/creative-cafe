@@ -29,9 +29,10 @@ const DEFAULT_CONFIGS: Record<EmbeddingMode, VectorDefaults> = {
     contextWindowTokens: 4096,
     autoVectorizeWorldBook: true,
     autoVectorizeKnowledge: true,
+    dimension: 4096,
   },
   local: {
-    localModel: 'Xenova/all-MiniLM-L6-v2',
+    localModel: 'onnx-community/Qwen3-Embedding-0.6B-ONNX',
     vectorStoreMode: 'vecstore',
     cacheEnabled: true,
     cacheL1Size: 2000,
@@ -42,14 +43,25 @@ const DEFAULT_CONFIGS: Record<EmbeddingMode, VectorDefaults> = {
     contextWindowTokens: 8192,
     autoVectorizeWorldBook: true,
     autoVectorizeKnowledge: true,
+    dimension: 1024,
   },
+};
+
+// 本地模型 → 向量维度映射（用于本地模型切换时自动联动 dimension 字段）
+const LOCAL_MODEL_DIMENSIONS: Record<string, number> = {
+  'onnx-community/Qwen3-Embedding-0.6B-ONNX': 1024,
+};
+
+// 旧模型名 → 新模型名迁移映射（用户已保存的设置中可能仍含旧名称）
+const MODEL_NAME_MIGRATION: Record<string, string> = {
+  'electroglyph/Qwen3-Embedding-0.6B-ONNX-uint8': 'onnx-community/Qwen3-Embedding-0.6B-ONNX',
 };
 
 // 属性分组配置
 const CONFIG_GROUPS: VectorConfigGroup = {
   common: {
     title: '通用配置',
-    fields: ['cacheEnabled', 'cacheL1Size', 'cacheL1TTL', 'cacheL2TTL'],
+    fields: ['dimension', 'cacheEnabled', 'cacheL1Size', 'cacheL1TTL', 'cacheL2TTL'],
   },
   remote: {
     title: '远程 API 配置',
@@ -101,10 +113,16 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
     const defaults = DEFAULT_CONFIGS[embeddingMode];
     const saved = setting?.vector || {};
 
+    // 迁移旧模型名到新模型名
+    const migrated: any = { ...saved };
+    if (migrated.localModel && MODEL_NAME_MIGRATION[migrated.localModel]) {
+      migrated.localModel = MODEL_NAME_MIGRATION[migrated.localModel];
+    }
+
     return {
       embeddingMode,
       ...defaults,
-      ...saved,
+      ...migrated,
     };
   }, [setting]);
 
@@ -148,6 +166,9 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
         preservedValues[field] = newDefaults[field];
       }
     });
+
+    // Auto-link dimension to mode (local→1024, remote→4096)
+    preservedValues.dimension = newMode === 'local' ? 1024 : 4096;
 
     form.setFieldsValue(preservedValues);
     setActiveEmbeddingMode(newMode);
@@ -237,7 +258,7 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
     }
   };
 
-  const handleFetchModels = async () => {
+  const handleFetchModels = useCallback(async () => {
     const formValues = form.getFieldsValue();
     if (!formValues.remoteApiUrl) {
       message.warning('请先填写远程 API 地址');
@@ -263,10 +284,29 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
     } finally {
       setModelLoading(false);
     }
-  };
+  }, [form]);
 
   const renderField = useCallback((fieldName: string) => {
     switch (fieldName) {
+      case 'dimension':
+        return (
+          <Form.Item
+            name="dimension"
+            label={
+              <Space>
+                向量维度
+                <Tooltip title="1024 维：本地模型 qwen3-emb-0.6b，适合本地降级；4096 维：远程模型 qwen3-embedding-8b，检索精度更高。切换维度时，不同维度的向量数据独立存储，互不影响。">
+                  <QuestionCircleOutlined style={{ color: '#999', cursor: 'pointer' }} />
+                </Tooltip>
+              </Space>
+            }
+          >
+            <Select placeholder="选择向量维度">
+              <Option value={1024}>1024 维（本地模型，兼容 qwen3-emb-0.6b）</Option>
+              <Option value={4096}>4096 维（远程模型，兼容 qwen3-embedding-8b）</Option>
+            </Select>
+          </Form.Item>
+        );
       case 'remoteApiUrl':
         return (
           <Form.Item
@@ -280,7 +320,6 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
       case 'remoteModel':
         return (
           <Form.Item
-            name="remoteModel"
             label={
               <Space>
                 远程模型名称
@@ -290,25 +329,24 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
               </Space>
             }
           >
-            <AutoComplete
-              options={modelOptions}
-              placeholder="text-embedding-ada-002"
-              filterOption={(inputValue, option) =>
-                option!.value.toUpperCase().indexOf(inputValue.toUpperCase()) !== -1
-              }
-            >
-              <Input.Search
-                placeholder="text-embedding-ada-002"
-                enterButton={
-                  <Space>
-                    <SearchOutlined />
-                    获取模型列表
-                  </Space>
-                }
+            <Space.Compact style={{ width: '100%' }}>
+              <Form.Item name="remoteModel" noStyle>
+                <AutoComplete
+                  options={modelOptions}
+                  placeholder="text-embedding-ada-002"
+                  filterOption={false}
+                  style={{ width: '100%' }}
+                />
+              </Form.Item>
+              <Button
+                type="primary"
+                icon={<SearchOutlined />}
+                onClick={handleFetchModels}
                 loading={modelLoading}
-                onSearch={handleFetchModels}
-              />
-            </AutoComplete>
+              >
+                获取模型列表
+              </Button>
+            </Space.Compact>
           </Form.Item>
         );
       case 'remoteApiKey':
@@ -318,7 +356,7 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
             label="远程 API 密钥"
             tooltip="API 密钥或 Token"
           >
-            <Input.Password placeholder="sk-..." visibilityToggle />
+            <Input placeholder="sk-..." />
           </Form.Item>
         );
       case 'remoteApiKeyTransmission':
@@ -400,7 +438,7 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
       default:
         return null;
     }
-  }, []);
+  }, [modelOptions, modelLoading, handleFetchModels]);
 
   const renderModeSection = useCallback(() => {
     const modeFields = MODE_FIELD_MAP[activeEmbeddingMode];
@@ -433,6 +471,12 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
                 isDownloading={modelDownloading}
                 onCheckStatus={checkModelDownloadStatus}
                 onDownload={handleDownloadModel}
+                onModelChange={(model: string) => {
+                  const inferredDim = LOCAL_MODEL_DIMENSIONS[model];
+                  if (inferredDim) {
+                    form.setFieldsValue({ dimension: inferredDim });
+                  }
+                }}
               />
             </div>
           ) : (
@@ -605,7 +649,8 @@ const LocalModelSelector: React.FC<{
   isDownloading: { [key: string]: boolean };
   onCheckStatus: (modelName: string) => void;
   onDownload: (modelName: string) => void;
-}> = ({ form, isDownloaded, isDownloading, onCheckStatus, onDownload }) => {
+  onModelChange?: (model: string) => void;
+}> = ({ form, isDownloaded, isDownloading, onCheckStatus, onDownload, onModelChange }) => {
   const [selectedModel, setSelectedModel] = useState<string>('');
 
   useEffect(() => {
@@ -637,27 +682,14 @@ const LocalModelSelector: React.FC<{
             if (value && isDownloaded[value] === undefined) {
               onCheckStatus(value);
             }
+            onModelChange?.(value);
           }}
         >
-          <Option value="Xenova/all-MiniLM-L6-v2">
+          <Option value="onnx-community/Qwen3-Embedding-0.6B-ONNX">
             <div>
-              <div>all-MiniLM-L6-v2 (384 维, ~80MB)</div>
-              <div style={{ fontSize: 11, color: '#999' }}>英文语义搜索 · 速度快 · 体积最小</div>
-              <div style={{ fontSize: 11, color: '#bbb' }}>https://huggingface.co/Xenova/all-MiniLM-L6-v2</div>
-            </div>
-          </Option>
-          <Option value="Xenova/paraphrase-multilingual-MiniLM-L12-v2">
-            <div>
-              <div>paraphrase-multilingual (384 维, ~130MB)</div>
-              <div style={{ fontSize: 11, color: '#999' }}>多语言支持 · 释义匹配 · 跨语言搜索</div>
-              <div style={{ fontSize: 11, color: '#bbb' }}>https://huggingface.co/Xenova/paraphrase-multilingual-MiniLM-L12-v2</div>
-            </div>
-          </Option>
-          <Option value="Xenova/gte-small">
-            <div>
-              <div>gte-small (384 维, ~130MB)</div>
-              <div style={{ fontSize: 11, color: '#999' }}>中英文双语 · 检索精度高 · 阿里通义</div>
-              <div style={{ fontSize: 11, color: '#bbb' }}>https://huggingface.co/Xenova/gte-small</div>
+              <div>qwen3-emb-0.6b (1024 维, ~250MB)</div>
+              <div style={{ fontSize: 11, color: '#999' }}>中英文双语 · 兼容 qwen3-embedding-8b · 本地降级方案</div>
+              <div style={{ fontSize: 11, color: '#bbb' }}>https://huggingface.co/onnx-community/Qwen3-Embedding-0.6B-ONNX</div>
             </div>
           </Option>
         </Select>

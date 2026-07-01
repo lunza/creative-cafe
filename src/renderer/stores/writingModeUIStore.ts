@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { MIN_PANEL_WIDTH, MAX_PANEL_WIDTH } from '../constants/writingModeConstants';
 
 export enum LayoutMode {
   WIDE = 'wide',
@@ -48,8 +49,6 @@ const getLayoutMode = (width: number): LayoutMode => {
 };
 
 const DEFAULT_PANEL_WIDTH = 300;
-const MIN_PANEL_WIDTH = 200;
-const MAX_PANEL_WIDTH = 600;
 
 const getSavedPanelWidth = (): number => {
   try {

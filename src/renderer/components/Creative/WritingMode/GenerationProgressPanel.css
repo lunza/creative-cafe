@@ -1,0 +1,189 @@
+.generation-progress-panel {
+  background: var(--bg-color-container, #ffffff);
+  border: 1px solid var(--border-color, #e8e8e8);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.progress-header {
+  margin-bottom: 12px;
+}
+
+.progress-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.progress-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-color, #333333);
+}
+
+.progress-stats {
+  font-size: 13px;
+  color: var(--text-color-secondary, #666666);
+  font-family: 'Courier New', monospace;
+}
+
+.progress-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.chunk-info {
+  color: var(--text-color-secondary, #666666);
+}
+
+.time-remaining {
+  color: var(--text-color-secondary, #666666);
+}
+
+/* 分片折叠面板 */
+.chunks-collapse {
+  margin-top: 12px;
+}
+
+.chunks-collapse .ant-collapse-header {
+  padding: 8px 0 !important;
+  font-size: 13px;
+}
+
+.chunks-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+.chunks-summary {
+  color: var(--text-color-secondary, #666666);
+  font-size: 12px;
+}
+
+/* 分片列表 */
+.chunks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.chunk-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--bg-color, #f5f5f5);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.chunk-item:hover {
+  background: var(--bg-color-hover, #e8e8e8);
+}
+
+.chunk-item.completed {
+  background: var(--success-bg, #f6ffed);
+}
+
+.chunk-item.generating {
+  background: var(--primary-bg, #e6f7ff);
+}
+
+.chunk-item.failed {
+  background: var(--error-bg, #fff2f0);
+}
+
+.chunk-status {
+  flex-shrink: 0;
+  font-size: 16px;
+}
+
+.chunk-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.chunk-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-color, #333333);
+}
+
+.chunk-words {
+  font-size: 12px;
+  color: var(--text-color-secondary, #666666);
+  font-family: 'Courier New', monospace;
+}
+
+.chunk-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* 暗色主题适配 */
+@media (prefers-color-scheme: dark) {
+  .generation-progress-panel {
+    background: var(--bg-color-container-dark, #2a2a2a);
+    border-color: var(--border-color-dark, #3a3a3a);
+  }
+
+  .progress-label {
+    color: var(--text-color-dark, #e0e0e0);
+  }
+
+  .progress-stats,
+  .chunk-info,
+  .time-remaining,
+  .chunks-summary {
+    color: var(--text-color-secondary-dark, #999999);
+  }
+
+  .chunk-item {
+    background: var(--bg-color-dark, #1e1e1e);
+  }
+
+  .chunk-item:hover {
+    background: var(--bg-color-hover-dark, #2a2a2a);
+  }
+
+  .chunk-item.completed {
+    background: var(--success-bg-dark, rgba(82, 196, 26, 0.1));
+  }
+
+  .chunk-item.generating {
+    background: var(--primary-bg-dark, rgba(24, 144, 255, 0.1));
+  }
+
+  .chunk-item.failed {
+    background: var(--error-bg-dark, rgba(255, 77, 79, 0.1));
+  }
+
+  .chunk-title {
+    color: var(--text-color-dark, #e0e0e0);
+  }
+
+  .chunk-words {
+    color: var(--text-color-secondary-dark, #999999);
+  }
+}
+
+/* 减少动画偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .chunk-item {
+    transition: none;
+  }
+}

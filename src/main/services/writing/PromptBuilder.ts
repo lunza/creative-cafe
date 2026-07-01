@@ -4,7 +4,8 @@ import {
   NarrativePerspective,
   WritingParameters,
   WritingResourceConfig,
-  ChapterOutline
+  ChapterOutline,
+  ShardOutline
 } from '../../../shared/types/writing.types';
 import { WritingStyleResource, WritingStyleAnalysis } from '../../../shared/types/writing.types';
 import { NovelTypeTemplates, PerspectiveGuidance, StyleGuidance } from './NovelTypeTemplates';
@@ -393,6 +394,227 @@ ${parameters.writingStyleContext}`);
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPromptParts.join('\n') }
     ];
+  }
+
+  /**
+   * 构建分片大纲生成提示词
+   * 将一章规划为多个分片，要求AI输出 ShardOutline[] 的 JSON
+   */
+  buildShardOutlinePrompt(
+    chapterInfo: { index: number; title: string; outline: string; characters: string[]; scenes: string[] },
+    shardCount: number,
+    targetWordCount: number,
+    resourceContext?: string,
+    userSuggestion?: string,
+    generationGuidance?: string
+  ): string {
+    const perShardWords = shardCount > 0 ? Math.round(targetWordCount / shardCount) : targetWordCount;
+    const lastIndex = Math.max(0, shardCount - 1);
+    const parts: string[] = [];
+
+    parts.push(`# 分片大纲生成任务
+
+## 当前章节
+**${chapterInfo.title}**
+
+## 章节大纲
+${chapterInfo.outline}
+
+## 出场角色
+${chapterInfo.characters.join('、')}
+
+## 场景
+${chapterInfo.scenes.join('、')}`);
+
+    if (resourceContext) {
+      parts.push(`
+## 相关背景资料
+${resourceContext}`);
+    }
+
+    parts.push(`
+## 分片规划要求
+请将本章内容规划为 ${shardCount} 个分片。
+- 全章目标字数: ${targetWordCount} 字
+- 每个分片目标字数: 约 ${perShardWords} 字
+- 分片之间剧情连贯，按顺序逐步推进本章情节
+- 每个分片需有明确的剧情走向与重点，覆盖章节大纲中的相应内容
+- 第一个分片负责本章开篇，最后一个分片负责本章收尾`);
+
+    parts.push(`
+## 输出结构
+请按以下JSON结构输出分片大纲（JSON数组，长度为 ${shardCount}）：
+
+[
+  {
+    "index": 0,
+    "title": "分片1标题",
+    "summary": "分片1剧情简介",
+    "targetWordCount": ${perShardWords}
+  },
+  {
+    "index": ${lastIndex},
+    "title": "分片${shardCount}标题",
+    "summary": "分片${shardCount}剧情简介",
+    "targetWordCount": ${perShardWords}
+  }
+]`);
+
+    parts.push(`
+## 分片大纲生成要求
+1. 共生成 ${shardCount} 个分片
+2. 每个分片目标字数约 ${perShardWords} 字
+3. index 从 0 开始，递增至 ${lastIndex}
+4. title 简洁概括该分片内容
+5. summary 详细描述该分片的剧情走向、关键事件与人物表现
+6. 分片内容不得重叠，不得遗漏章节大纲中的关键情节`);
+
+    if (generationGuidance) {
+      parts.push(`
+## 章节创作指导
+${generationGuidance}`);
+    }
+
+    if (userSuggestion) {
+      parts.push(`
+## 附加指令
+${userSuggestion}`);
+    }
+
+    parts.push(`
+## 输出格式要求
+1. 只输出JSON格式的分片大纲数组，不要输出任何解释性文字、前言或后记
+2. JSON必须是合法的格式，所有字符串值中的换行符必须转义为\\n，不能使用真实的换行符
+3. 所有属性名必须使用双引号包裹
+4. 字符串值必须使用双引号包裹，不能使用单引号
+5. 不要在JSON末尾添加多余的逗号
+6. 整个输出必须被包裹在\`\`\`json和\`\`\`代码块中
+7. 确保所有字符串值都完整闭合，不要在字符串中间截断
+8. 输出必须是JSON数组（以 [ 开始，以 ] 结束），不要包裹在对象中
+
+请严格按照上述格式输出完整的JSON分片大纲。`);
+
+    return parts.join('\n');
+  }
+
+  /**
+   * 构建分片内容生成提示词
+   * 整体结构与 buildContentPrompt 一致，新增"当前分片"、"分片剧情简介"、
+   * "前置分片完整内容"等段落，并显式要求与前序分片衔接连贯。
+   */
+  buildShardContentPrompt(
+    shardOutline: ShardOutline,
+    shardIndex: number,
+    totalShards: number,
+    previousShardContents: string,
+    chapterInfo: { index: number; title: string; outline: string; characters: string[]; scenes: string[] },
+    parameters: { targetWordCount: number; style: string; perspective: string; constraints?: string[]; writingStyleContext?: string },
+    context?: { resourceContext?: string; chapterSummaries?: string; longTermContext?: string; continuityConstraints?: string; tableContext?: string },
+    userSuggestion?: string,
+    generationGuidance?: string
+  ): string {
+    const parts: string[] = [];
+
+    parts.push(`# 分片内容生成任务
+
+## 当前章节
+**${chapterInfo.title}**
+
+## 章节大纲
+${chapterInfo.outline}
+
+## 出场角色
+${chapterInfo.characters.join('、')}
+
+## 场景
+${chapterInfo.scenes.join('、')}
+
+## 当前分片
+第 ${shardIndex + 1}/${totalShards} 个分片
+标题：${shardOutline.title}
+
+## 分片剧情简介
+${shardOutline.summary}`);
+
+    if (context?.resourceContext) {
+      parts.push(`
+## 相关背景资料
+${context.resourceContext}`);
+    }
+
+    if (context?.tableContext) {
+      parts.push(`
+${context.tableContext}`);
+    }
+
+    if (context?.chapterSummaries) {
+      parts.push(`
+## 所有章节概要
+${context.chapterSummaries}`);
+    }
+
+    if (context?.longTermContext) {
+      parts.push(`
+## 长期设定信息
+${context.longTermContext}`);
+    }
+
+    if (context?.continuityConstraints) {
+      parts.push(`
+## 连贯性约束
+${context.continuityConstraints}`);
+    }
+
+    if (previousShardContents) {
+      parts.push(`
+## 前置分片完整内容
+以下是本章已生成的前序分片完整正文，新生成内容必须与之叙事连贯、逻辑顺畅、风格统一，不得重复或矛盾：
+
+${previousShardContents}`);
+    }
+
+    parts.push(`
+## 生成要求
+- 目标字数: 不少于${shardOutline.targetWordCount}字
+- 叙事视角: ${parameters.perspective}
+- 写作风格: ${parameters.style}`);
+
+    if (parameters.constraints && parameters.constraints.length > 0) {
+      parts.push(`- 特殊约束: ${parameters.constraints.join('、')}`);
+    }
+
+    parts.push(`
+## 分片衔接要求
+- 与前置分片衔接自然，承接其结尾继续推进剧情
+- 保持风格统一，与前序分片在文风、节奏、用词上保持一致
+- 不要重复前文已写过的情节、对话或描写
+- 保持人物行为与性格一致，不得与前序分片产生矛盾${shardIndex === totalShards - 1 ? '\n- 这是本章最后一个分片，请确保本章剧情完整收尾' : ''}`);
+
+    if (parameters.writingStyleContext) {
+      parts.push(`
+## 学习文风模仿
+请模仿以下文风特征进行创作:
+${parameters.writingStyleContext}`);
+    }
+
+    if (generationGuidance) {
+      parts.push(`
+## 章节创作指导
+${generationGuidance}`);
+    }
+
+    if (userSuggestion) {
+      parts.push(`
+## 附加指令
+${userSuggestion}`);
+    }
+
+    parts.push(`
+## 输出要求
+请直接生成本分片的正文内容，使用Markdown格式。
+不要输出任何解释或说明，直接开始正文。`);
+
+    return parts.join('\n');
   }
 }
 

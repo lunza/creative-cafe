@@ -1,0 +1,91 @@
+.streaming-text-editor {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-color, #ffffff);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.streaming-text-editor.read-only {
+  cursor: default;
+}
+
+.streaming-editor-content {
+  flex: 1;
+  width: 100%;
+  padding: 16px 20px;
+  overflow-y: auto;
+  outline: none;
+  border: none;
+  resize: none;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  font-size: 15px;
+  line-height: 1.8;
+  color: var(--text-color, #333333);
+  background: transparent;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  min-height: 200px;
+}
+
+.streaming-editor-content::placeholder {
+  color: var(--text-color-secondary, #999999);
+  pointer-events: none;
+}
+
+.streaming-editor-content:focus {
+  outline: none;
+}
+
+/* 暗色主题适配 */
+@media (prefers-color-scheme: dark) {
+  .streaming-text-editor {
+    background: var(--bg-color-dark, #1e1e1e);
+  }
+
+  .streaming-editor-content {
+    color: var(--text-color-dark, #e0e0e0);
+  }
+
+  .streaming-editor-content::placeholder {
+    color: var(--text-color-secondary-dark, #666666);
+  }
+}
+
+/* 滚动条样式 */
+.streaming-editor-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.streaming-editor-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.streaming-editor-content::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-color, rgba(0, 0, 0, 0.2));
+  border-radius: 4px;
+}
+
+.streaming-editor-content::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-color-hover, rgba(0, 0, 0, 0.3));
+}
+
+/* 暗色主题滚动条 */
+@media (prefers-color-scheme: dark) {
+  .streaming-editor-content::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-color-dark, rgba(255, 255, 255, 0.2));
+  }
+
+  .streaming-editor-content::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-color-hover-dark, rgba(255, 255, 255, 0.3));
+  }
+}
+
+/* 减少动画偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .streaming-editor-content {
+    will-change: auto;
+  }
+}

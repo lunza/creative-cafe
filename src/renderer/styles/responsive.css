@@ -258,11 +258,6 @@
     white-space: nowrap !important;
   }
 
-  /* Prompt Optimizer - 移动端优化 */
-  .prompt-optimizer {
-    padding: var(--padding-mobile) !important;
-  }
-
   /* Global Log Panel - 移动端优化 */
   .global-log-panel {
     max-width: 100% !important;

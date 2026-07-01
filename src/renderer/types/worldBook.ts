@@ -73,3 +73,37 @@ export interface WorldBookExport {
   description: string;
   entries: Record<string, WorldBookEntry>;
 }
+
+export interface WorldBookMeta {
+  name: string;
+  path: string;
+  size: number;
+  modified: Date;
+}
+
+export interface WorldBookData {
+  name: string;
+  description: string;
+  entries: Record<string, WorldBookEntry>;
+  is_creation?: boolean;
+  scan_depth?: number;
+  token_budget?: number;
+  recursive_scanning?: boolean;
+  extensions?: Record<string, any>;
+}
+
+export interface WorldBookTag {
+  id: string;
+  name: string;
+  color: string;
+}
+
+export interface WorldBookTagAssociation {
+  tagId: string;
+  entryUid: string | number;
+}
+
+export interface WorldBookTagData {
+  tags: WorldBookTag[];
+  associations: WorldBookTagAssociation[];
+}

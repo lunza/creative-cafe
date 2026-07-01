@@ -3,10 +3,25 @@
  * 负责解析 HTML 注释格式中的表格编辑命令
  */
 
-import { sendLogToRenderer } from '../../index';
+import { createLogger } from '../logger';
+
+const logger = createLogger('writing');
 
 const addLog = (message: string, type: 'error' | 'warn' | 'info' | 'debug' = 'info') => {
-  sendLogToRenderer(message, type);
+  switch (type) {
+    case 'error':
+      logger.error(message);
+      break;
+    case 'warn':
+      logger.warn(message);
+      break;
+    case 'debug':
+      logger.debug(message);
+      break;
+    default:
+      logger.info(message);
+      break;
+  }
 };
 
 export interface TableEditCommand {

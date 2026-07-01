@@ -7,16 +7,6 @@ import {
   ChapterOutline,
 } from '../../shared/types/writing.types';
 
-declare global {
-  interface Window {
-    electronAPI: {
-      invoke: (channel: string, ...args: any[]) => Promise<any>;
-      on: (channel: string, callback: (...args: any[]) => void) => void;
-      off: (channel: string, callback: (...args: any[]) => void) => void;
-    };
-  }
-}
-
 export class AIEditService {
   private isLoading = false;
   private abortController: AbortController | null = null;

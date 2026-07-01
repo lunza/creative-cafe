@@ -80,6 +80,8 @@ const WritingTablePreviewModal: React.FC<WritingTablePreviewModalProps> = ({
   const [organizeProgress, setOrganizeProgress] = useState<number>(0);
   const [organizeStatus, setOrganizeStatus] = useState<string>('');
   const [currentOrganizeInfo, setCurrentOrganizeInfo] = useState<{ processedCount: number; totalChapters: number } | null>(null);
+  const [currentChunk, setCurrentChunk] = useState<number>(0);
+  const [totalChunks, setTotalChunks] = useState<number>(0);
 
   const tableDataRef = useRef(tableData);
   const allSheetDataRef = useRef(allSheetData);
@@ -561,11 +563,13 @@ const WritingTablePreviewModal: React.FC<WritingTablePreviewModalProps> = ({
     let lastLoadTime = 0;
     const LOAD_THROTTLE_MS = 50; // 至少间隔50ms再加载表格数据，确保每个分片完成后快速刷新
 
-    const progressListener = (_event: any, _projectId: string, progressData: { current: number; total: number; message: string; percent: number; timestamp: number }) => {
+    const progressListener = (_event: any, _projectId: string, progressData: { current: number; total: number; message: string; percent: number; timestamp: number; currentChunk?: number; totalChunks?: number }) => {
       console.log('[WritingOrganize] 收到进度更新:', progressData);
       try {
         setOrganizeProgress(progressData.percent || 0);
         setOrganizeStatus(progressData.message || '处理中...');
+        if (progressData.currentChunk !== undefined) setCurrentChunk(progressData.currentChunk);
+        if (progressData.totalChunks !== undefined) setTotalChunks(progressData.totalChunks);
         // 节流加载表格数据，避免过于频繁的DOM更新
         const now = Date.now();
         if (now - lastLoadTime >= LOAD_THROTTLE_MS) {
@@ -736,7 +740,11 @@ const WritingTablePreviewModal: React.FC<WritingTablePreviewModalProps> = ({
       {organizing && (
         <div style={{ marginBottom: 16 }}>
           <Text strong>整理进度:</Text>
-          <Progress percent={organizeProgress} status="active" />
+          {totalChunks > 0 ? (
+            <Text>已处理 {currentChunk} / 共 {totalChunks} 个分片</Text>
+          ) : (
+            <Progress percent={organizeProgress} status="active" />
+          )}
           <Text type="secondary">{organizeStatus}</Text>
           {currentOrganizeInfo && (
             <Text type="secondary">

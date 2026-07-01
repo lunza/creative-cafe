@@ -107,64 +107,27 @@ export const WorldBookVectorPanel: React.FC<{ worldBook: WorldBook | null }> = (
     }
   };
 
-  const vectorizeAllEntries = async () => {
-    if (!worldBook) return;
-
-    setLoading(true);
-    let successCount = 0;
-    let failCount = 0;
-
-    for (const entry of worldBook.entries) {
-      if (entry.content) {
-        const embedResult = await window.electronAPI.embedding.generate(entry.content);
-        if (embedResult.success && embedResult.vector) {
-          await window.electronAPI.vector.add(`wb_${worldBook.path}_${entry.uid}`, embedResult.vector, {
-            text: entry.content,
-            source: 'worldbook',
-            sourceId: worldBook.path,
-            entryUid: String(entry.uid),
-            key: entry.key,
-            comment: entry.comment,
-            worldBookPath: worldBook.path,
-            createdAt: Date.now(),
-            updatedAt: Date.now()
-          });
-          successCount++;
-        } else {
-          failCount++;
-        }
-      }
-    }
-
-    message.success(`向量化完成: 成功 ${successCount} 个，失败 ${failCount} 个`);
-    loadVectorStatuses();
-  };
-
-  const searchEntries = async () => {
+  const searchEntries = () => {
     if (!searchQuery.trim() || !worldBook) return;
 
-    setLoading(true);
-    try {
-      const embedResult = await window.electronAPI.embedding.generate(searchQuery);
-      if (!embedResult.success || !embedResult.vector) {
-        message.error('搜索查询失败');
-        return;
-      }
+    const query = searchQuery.replace(/\s/g, '').toLowerCase();
+    const matchedEntries = worldBook.entries.filter(entry => {
+      const keyArr = Array.isArray(entry.key) ? entry.key : [];
+      const keysecondaryArr = Array.isArray(entry.keysecondary) ? entry.keysecondary : [];
+      const keyStr = keyArr.join('').replace(/\s/g, '').toLowerCase();
+      const keysecondaryStr = keysecondaryArr.join('').replace(/\s/g, '').toLowerCase();
+      const commentStr = String(entry.comment ?? '').replace(/\s/g, '').toLowerCase();
+      const contentStr = String(entry.content ?? '').replace(/\s/g, '').toLowerCase();
+      return (
+        keyStr.includes(query) ||
+        keysecondaryStr.includes(query) ||
+        commentStr.includes(query) ||
+        contentStr.includes(query)
+      );
+    });
 
-      const searchResult = await window.electronAPI.vector.search(embedResult.vector, 10, {
-        source: 'worldbook',
-        worldBookPath: worldBook.path
-      });
-
-      if (searchResult.success && searchResult.results) {
-        setSearchResults(searchResult.results);
-        setIsSearchModalVisible(true);
-      }
-    } catch (error) {
-      message.error(`搜索失败: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
-      setLoading(false);
-    }
+    setSearchResults(matchedEntries);
+    setIsSearchModalVisible(true);
   };
 
   const columns: ColumnsType<VectorStatus> = [
@@ -230,10 +193,7 @@ export const WorldBookVectorPanel: React.FC<{ worldBook: WorldBook | null }> = (
               allowClear
             />
             <Button icon={<SearchOutlined />} onClick={searchEntries} loading={loading}>
-              语义搜索
-            </Button>
-            <Button onClick={vectorizeAllEntries} loading={loading}>
-              全部向量化
+              条目搜索
             </Button>
           </Space>
         }
@@ -258,7 +218,7 @@ export const WorldBookVectorPanel: React.FC<{ worldBook: WorldBook | null }> = (
       </Card>
 
       <Modal
-        title="语义搜索结果"
+        title="条目搜索结果"
         open={isSearchModalVisible}
         onCancel={() => setIsSearchModalVisible(false)}
         footer={null}
@@ -266,13 +226,13 @@ export const WorldBookVectorPanel: React.FC<{ worldBook: WorldBook | null }> = (
       >
         <Table
           columns={[
-            { title: '相关性', dataIndex: 'score', key: 'score', width: 100, render: (s: number) => `${(s * 100).toFixed(1)}%` },
-            { title: '关键词', dataIndex: ['metadata', 'key'], key: 'key', width: 200, render: (keys: string[]) => keys?.join(', ') },
-            { title: '注释', dataIndex: ['metadata', 'comment'], key: 'comment', width: 150 },
-            { title: '内容', dataIndex: ['metadata', 'text'], key: 'content', ellipsis: true }
+            { title: 'UID', dataIndex: 'uid', key: 'uid', width: 100 },
+            { title: '关键词', dataIndex: 'key', key: 'key', width: 200, render: (keys: string[]) => keys?.join(', ') },
+            { title: '注释', dataIndex: 'comment', key: 'comment', width: 150 },
+            { title: '内容', dataIndex: 'content', key: 'content', ellipsis: true }
           ]}
           dataSource={searchResults}
-          rowKey="id"
+          rowKey="uid"
           size="small"
           pagination={false}
           scroll={{ y: 400 }}

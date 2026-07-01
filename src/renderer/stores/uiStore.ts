@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-type TabType = 'dashboard' | 'chat' | 'creative' | 'prompt-optimizer' | 'worldbook' | 'avatar' | 'character' | 'plugin' | 'memory' | 'knowledge' | 'settings' | 'test' | 'test-vector' | 'test-markdown' | 'document-vector';
+type TabType = 'dashboard' | 'chat' | 'creative' | 'worldbook' | 'avatar' | 'character' | 'plugin' | 'memory' | 'knowledge' | 'settings' | 'prompt-management' | 'test' | 'test-vector' | 'test-markdown' | 'document-vector';
 type ThemeType = 'light' | 'dark';
 export type CreativeTabType = 'creative' | 'character' | 'worldbook';
 export type CreativeViewType = 'list' | 'edit';

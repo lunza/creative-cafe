@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 import { getStorageService } from './storageService';
 import { VectorConfig, EmbeddingResult, BatchEmbeddingResult, ConnectionTestResult, ModeInfo, ModeSetResult } from '../types/vectorConfig';
-import { normalizeVector } from '../utils/vectorMath';
+import { embeddingWorkerService } from './EmbeddingWorkerService';
 
 export class EmbeddingService {
   private vectorConfig: VectorConfig | null = null;
@@ -26,7 +26,9 @@ export class EmbeddingService {
       const mode = this.vectorConfig?.embeddingMode || 'remote';
 
       if (mode === 'local') {
-        return { success: false, error: '本地模型加载应在渲染进程中进行' };
+        // Facade: 委托给 EmbeddingWorkerService（主进程内加载本地 ONNX 模型并生成 embedding）
+        const localResult = await this.generateLocalEmbeddingFacade(text);
+        return this.validateDimension(localResult);
       }
 
       if (!this.vectorConfig?.remoteApiUrl) {
@@ -83,20 +85,81 @@ export class EmbeddingService {
         // 为保持兼容性，查询向量也不做归一化
         // WASM 的余弦相似度计算会自动处理向量幅度差异
         console.log(`[EmbeddingService] Vector magnitude (not normalized): ${Math.sqrt(vector.reduce((sum: number, v: number) => sum + v * v, 0)).toFixed(6)}`);
-        
-        return {
+
+        return this.validateDimension({
           success: true,
           vector,
           dimension: vector.length,
           model: data.model || this.vectorConfig.remoteModel,
           mode: 'remote'
-        };
+        });
       }
 
       return { success: false, error: 'API 响应格式不正确' };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : '未知错误' };
     }
+  }
+
+  /**
+   * Facade: 将 local 模式的 embedding 生成委托给 EmbeddingWorkerService。
+   * EmbeddingWorkerService 在主进程内加载本地 ONNX 模型（@xenova/transformers），
+   * 不再依赖渲染进程。返回值结构与 remote 模式保持一致（EmbeddingResult）。
+   */
+  private async generateLocalEmbeddingFacade(text: string): Promise<EmbeddingResult> {
+    try {
+      if (!text || text.trim().length === 0) {
+        return { success: false, error: '文本为空' };
+      }
+
+      // 确保本地模型已加载（幂等：若已加载同名模型则直接返回 success）
+      const initResult = await embeddingWorkerService.initializeLocalModel();
+      if (!initResult.success) {
+        return {
+          success: false,
+          error: `本地模型加载失败: ${initResult.error || '未知错误'}`
+        };
+      }
+
+      // 委托生成 embedding
+      const localResult = await embeddingWorkerService.generateLocalEmbedding(text);
+      return {
+        success: localResult.success,
+        vector: localResult.vector,
+        dimension: localResult.dimension,
+        model: localResult.model,
+        mode: 'local',
+        error: localResult.error
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '本地模型生成失败'
+      };
+    }
+  }
+
+  /**
+   * 维度校验：若配置中存在 expected dimension（vectorConfig.dimension > 0），
+   * 与返回的 embedding 数组长度对比，不匹配则降级为失败。
+   * 仅使用已加载的 this.vectorConfig.dimension 字段，不引入新依赖。
+   * 若 dimension 未配置（undefined/0），跳过校验以保持向后兼容。
+   */
+  private validateDimension(result: EmbeddingResult): EmbeddingResult {
+    if (!result.success || !result.vector) {
+      return result;
+    }
+    const expectedDim = this.vectorConfig?.dimension;
+    if (expectedDim && expectedDim > 0 && result.vector.length !== expectedDim) {
+      console.warn(
+        `[EmbeddingService] 维度不匹配: 配置期望 ${expectedDim} 维, 实际返回 ${result.vector.length} 维 (model=${result.model || '?'})`
+      );
+      return {
+        success: false,
+        error: `维度不匹配: 配置期望 ${expectedDim} 维, 实际返回 ${result.vector.length} 维`
+      };
+    }
+    return result;
   }
 
   async generateBatchEmbeddings(texts: string[]): Promise<BatchEmbeddingResult> {
@@ -311,8 +374,8 @@ export class EmbeddingService {
         return { success: false, models: [], error: '未配置远程 Embedding API 地址' };
       }
 
-      const baseUrl = apiUrl.replace(/\/embeddings$/, '').replace(/\/v1\/embeddings$/, '');
-      const modelsUrl = `${baseUrl}/v1/models`;
+      const baseUrl = apiUrl.replace(/\/embeddings$/, '').replace(/\/$/, '');
+      const modelsUrl = baseUrl.endsWith('/v1') ? `${baseUrl}/models` : `${baseUrl}/v1/models`;
 
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       const apiKey = config?.remoteApiKey || this.vectorConfig?.remoteApiKey;
@@ -370,11 +433,7 @@ export class EmbeddingService {
 
     ipcMain.handle('embedding:testConnection', async (_event, config?: Partial<VectorConfig>) => {
       console.log('[EmbeddingService] IPC: testConnection called with config:', JSON.stringify(config || {}, null, 2).slice(0, 500));
-      if (config) {
-        console.log('[EmbeddingService] IPC: Setting config from IPC');
-        this.vectorConfig = config as VectorConfig;
-      }
-      return this.testConnection();
+      return this.testConnection(config);
     });
 
     ipcMain.handle('embedding:setMode', async (_event, { mode }: { mode: string }) => {

@@ -6,11 +6,17 @@ import {
   ChapterStatus,
   WritingProject,
   RegenerationSuggestion,
+  ChunkStatus,
+  ShardStatus,
 } from '../../../../../shared/types/writing.types';
 import { useWritingProjectStore } from '../../../../stores/writingProjectStore';
 import { useSettingStore } from '../../../../stores/settingStore';
-
-const MAX_PREVIOUS_CHAPTER_CONTENT_LENGTH = 5000;
+import { useWritingModeStore } from '../../../../stores/writingModeStore';
+import type { AIEngineSetting } from '../../../../types/setting';
+import { ChapterGenerationSharedState } from './useChapterGeneration.shared';
+import { useChunkedGeneration } from './useChunkedGeneration';
+import { useShardGeneration } from './useShardGeneration';
+import { useGenerationResume } from './useGenerationResume';
 
 interface UseChapterGenerationResult {
   selectedChapterIndex: number;
@@ -25,6 +31,8 @@ interface UseChapterGenerationResult {
   generationProgress: null;
   currentChapterWords: number;
   handleGenerateChapter: (chapterIndex: number, userSuggestion?: string) => Promise<void>;
+  handleGenerateChapterChunked: (chapterIndex: number, userSuggestion?: string) => Promise<void>;
+  handleResumeGeneration: (chapterIndex: number, userSuggestion?: string) => Promise<void>;
   handleStopGeneration: () => void;
   handleSaveChapter: () => Promise<void>;
   handleClearChapter: () => void;
@@ -32,18 +40,30 @@ interface UseChapterGenerationResult {
   handleEditorChange: (content: string) => void;
   updateChapterStatus: (chapterIndex: number, status: ChapterStatus) => void;
   editorContentRef: React.MutableRefObject<string>;
+  handleRegenerateChunk: (chunkIndex: number) => void;
+  getResumePoint: (chapterIndex: number) => number | null;
+  handleGenerateShardOutline: (chapterIndex: number, shardCount: number, userSuggestion?: string) => Promise<void>;
+  handleGenerateShard: (chapterIndex: number, shardIndex: number) => Promise<void>;
+  handleGenerateAllShards: (chapterIndex: number) => Promise<void>;
+  confirmShardToIntegration: (chapterIndex: number, shardIndex: number) => void;
 }
 
+/**
+ * useChapterGeneration：章节生成编排层。
+ *
+ * 职责：
+ * - 维护共享状态（isGenerating、streamingContent、chapterContents、chapterStatuses 等）
+ * - 维护共享 refs（stopRef、currentProjectRef、isShardStreamRef 等）
+ * - 注册全局 IPC 流式事件监听（onStream* / onChunk*），路由到 store 或更新本地状态
+ * - 实现单章生成（handleGenerateChapter）、停止、保存、清空、重新生成等编排逻辑
+ * - 委托分片生成、shard 生成、断点续传给子 hook
+ *
+ * 对外接口与原实现保持一致，调用方无需修改。
+ */
 export function useChapterGeneration(
   outline: GeneratedOutline | null,
   projectId: string
 ): UseChapterGenerationResult {
-  console.log('[ChapterGeneration] Hook called', {
-    hasOutline: !!outline,
-    chapterCount: outline?.chapters?.length,
-    projectId
-  });
-
   const updateProject = useWritingProjectStore((state) => state.updateProject);
   const saveProject = useWritingProjectStore((state) => state.saveProject);
   const currentProjectId = useWritingProjectStore((state) => state.currentProjectId);
@@ -69,65 +89,66 @@ export function useChapterGeneration(
   const regenerationSuggestionRef = useRef<RegenerationSuggestion | undefined>(undefined);
   const regenerationPreviousContentRef = useRef<string>('');
 
+  // 分片流式事件路由：区分分片内容生成与旧 chunk 流程
+  const isShardStreamRef = useRef(false);
+  const activeShardChapterRef = useRef<number>(-1);
+  const activeShardIndexRef = useRef<number>(-1);
+
+  // 构建共享状态对象，向下传递给各子 hook
+  const shared: ChapterGenerationSharedState = {
+    outline,
+    projectId,
+    setIsGenerating,
+    setGenerationState,
+    setChapterStatuses,
+    setChapterContents,
+    setStreamingContent,
+    setCurrentChapterWords,
+    setSelectedChapterIndex,
+    selectedChapterIndex,
+    chapterContents,
+    stopRef,
+    currentProjectRef,
+    editorContentRef,
+    isShardStreamRef,
+    activeShardChapterRef,
+    activeShardIndexRef,
+    regenerationSuggestionRef,
+    regenerationPreviousContentRef,
+    updateProject,
+    saveProject,
+  };
+
+  // 委托子 hook
+  const chunked = useChunkedGeneration(shared, outline);
+  const shard = useShardGeneration(shared, outline);
+  const resume = useGenerationResume(shared, outline);
+
   useEffect(() => {
     outlineRef.current = outline;
   }, [outline]);
 
+  // 从 store 数据恢复章节内容和状态
   useEffect(() => {
-    console.log('[ChapterGeneration] useEffect triggered:', {
-      hasOutline: !!outline,
-      chapterCount: outline?.chapters?.length,
-      currentProjectId,
-      projectsCount: projects.length,
-      outlineChapter0ContentLength: outline?.chapters?.[0]?.content?.length || 0,
-      outlineChapter0ContentPreview: outline?.chapters?.[0]?.content?.substring(0, 50) || 'empty',
-      outlineRef: outline ? 'exists' : 'null'
-    });
-    
     if (!outline || !outline.chapters) {
-      console.warn('[ChapterGeneration] Early return: outline or outline.chapters is missing');
       return;
     }
-    
+
     // 直接从 store 数据中查找当前项目，确保获取到最新加载的章节内容
     // 依赖 projects 数组，当 loadProjects 完成异步加载后会自动触发重新初始化
     const project = projects.find(p => p.id === currentProjectId) || null;
-    console.log('[ChapterGeneration] Current project data:', {
-      projectId: currentProjectId,
-      hasProject: !!project,
-      projectChapterCount: project?.outline?.chapters?.length,
-      projectChapter0ContentLength: project?.outline?.chapters?.[0]?.content?.length || 0,
-      projectChapter0ContentPreview: project?.outline?.chapters?.[0]?.content?.substring(0, 50) || 'empty',
-      projectChapterContentExample: project?.outline?.chapters?.[0]?.content?.substring(0, 50) || 'empty'
-    });
-    
+
     const statuses: Record<number, ChapterStatus> = {};
     const contents: Record<number, string> = {};
-    
+
     for (const ch of outline.chapters) {
       const projectChapter = project?.outline?.chapters?.find(c => c.index === ch.index);
       // 恢复章节内容：从 outline 中的 ch.content 恢复（从磁盘加载的数据）
       // ch.content 来自 WritingStorageService.loadProject，由 project.json 中的 chapters 数组提供
       const chapterContent = ch.content || projectChapter?.content || '';
-      if (ch.index === 0) {
-        console.log('[ChapterGeneration] Chapter 0 content check:', {
-          outlineChapterContentLength: ch.content?.length || 0,
-          outlineChapterContentPreview: ch.content?.substring(0, 50) || 'empty',
-          projectChapterContentLength: projectChapter?.content?.length || 0,
-          projectChapterContentPreview: projectChapter?.content?.substring(0, 50) || 'empty',
-          finalContentLength: chapterContent.length
-        });
-      }
       statuses[ch.index] = chapterContent ? ChapterStatus.COMPLETED : ChapterStatus.PENDING;
       contents[ch.index] = chapterContent;
     }
-    console.log('[ChapterGeneration] Restored contents:', {
-      chapterCount: outline.chapters.length,
-      restoredContentCount: Object.values(contents).filter(c => c.length > 0).length,
-      contentsPreview: Object.fromEntries(
-        Object.entries(contents).map(([k, v]) => [k, v.substring(0, 50) || 'empty'])
-      )
-    });
     setChapterStatuses(statuses);
     setChapterContents(contents);
     if (outline.chapters.length === 0) {
@@ -136,7 +157,7 @@ export function useChapterGeneration(
     if (selectedChapterIndex >= outline.chapters.length) {
       setSelectedChapterIndex(0);
     }
-  }, [outline, currentProjectId, projects]);
+  }, [outline, currentProjectId, projects, selectedChapterIndex]);
 
   useEffect(() => {
     // 当 projects 数据更新时，同步更新 currentProjectRef
@@ -184,12 +205,13 @@ export function useChapterGeneration(
     }
   }, []); // Run once on mount
 
+  // 注册全局 IPC 流式事件监听
   useEffect(() => {
     if (!window.electronAPI?.writing) return;
 
     const offChunk = window.electronAPI.writing.onStreamChunk((data) => {
       if (stopRef.current) return;
-      
+
       setStreamingContent(prev => prev + data.chunk);
       setCurrentChapterWords(prev => prev + data.chunk.length);
     });
@@ -228,7 +250,6 @@ export function useChapterGeneration(
               chapterIndex: data.chapterIndex,
               content: data.content
             });
-            console.log('[ChapterGeneration] Auto-save after generation complete: chapter', data.chapterIndex);
           }
         } catch (error) {
           console.error('[ChapterGeneration] Failed to auto-save after generation:', error);
@@ -262,10 +283,111 @@ export function useChapterGeneration(
       message.error(friendlyMessages[errorType] || friendlyMessages.unknown);
     });
 
+    // 分片生成事件监听
+    const offChunkStart = window.electronAPI.writing.onChunkStart?.((data) => {
+      // 分片流式事件路由：若是分片内容生成则走分片逻辑，不污染旧 chunk 流程
+      if (isShardStreamRef.current && data.chunkIndex === activeShardIndexRef.current) {
+        useWritingModeStore.getState().updateShardStatus(data.chapterIndex, data.chunkIndex, ShardStatus.GENERATING);
+        return;
+      }
+      // 更新分片状态为 GENERATING
+      useWritingModeStore.getState().updateChunkStatus(data.chapterIndex, data.chunkIndex, ChunkStatus.GENERATING);
+    });
+
+    const offChunkProgress = window.electronAPI.writing.onChunkProgress?.((data) => {
+      // 分片流式事件路由
+      if (isShardStreamRef.current && data.chunkIndex === activeShardIndexRef.current) {
+        useWritingModeStore.getState().appendShardContent(data.chapterIndex, data.chunkIndex, data.chunk);
+        setStreamingContent(prev => prev + data.chunk);
+        return;
+      }
+      // 追加分片内容到 store
+      useWritingModeStore.getState().appendChunkContent(data.chapterIndex, data.chunkIndex, data.chunk);
+      // 更新流式内容（用于编辑器实时显示）
+      setStreamingContent(prev => prev + data.chunk);
+      setCurrentChapterWords(prev => prev + data.chunk.length);
+    });
+
+    const offChunkComplete = window.electronAPI.writing.onChunkComplete?.(async (data) => {
+      // 分片流式事件路由
+      if (isShardStreamRef.current && data.chunkIndex === activeShardIndexRef.current) {
+        useWritingModeStore.getState().updateShardContent(data.chapterIndex, data.chunkIndex, data.content);
+        useWritingModeStore.getState().updateShardStatus(data.chapterIndex, data.chunkIndex, ShardStatus.COMPLETED);
+        setStreamingContent('');
+        return;
+      }
+      // 更新分片状态为 COMPLETED
+      useWritingModeStore.getState().updateChunkStatus(data.chapterIndex, data.chunkIndex, ChunkStatus.COMPLETED);
+
+      // 生成分片摘要（异步，不阻塞主流程）
+      let summary = '';
+      if (data.content && data.content.length > 0) {
+        try {
+          // 调用后端生成分片摘要
+          if (window.electronAPI?.writing?.generateChunkSummary) {
+            summary = await window.electronAPI.writing.generateChunkSummary({
+              projectId,
+              chapterIndex: data.chapterIndex,
+              chunkIndex: data.chunkIndex,
+              content: data.content
+            });
+          }
+        } catch (error) {
+          console.error('[ChapterGeneration] 生成分片摘要失败:', error);
+          // 降级：使用内容前 200 字作为简单摘要
+          summary = data.content.substring(0, 200).replace(/\n/g, ' ') + '...';
+        }
+      }
+
+      // 更新分片内容
+      const chunks = useWritingModeStore.getState().chapterChunks.get(data.chapterIndex);
+      if (chunks && chunks[data.chunkIndex]) {
+        const updatedChunks = [...chunks];
+        updatedChunks[data.chunkIndex] = {
+          ...updatedChunks[data.chunkIndex],
+          content: data.content,
+          summary: summary,
+          actualWordCount: data.content.length,
+          status: ChunkStatus.COMPLETED,
+          updatedAt: Date.now()
+        };
+        useWritingModeStore.getState().initializeChunks(data.chapterIndex, updatedChunks);
+      }
+      // 更新进度
+      const completedChunks = chunks?.filter(c => c.status === ChunkStatus.COMPLETED).length || 0;
+      const totalChunks = chunks?.length || 0;
+      // 修复：包含当前刚完成的分片字数
+      const completedWords = chunks?.reduce((sum, c, idx) => idx <= data.chunkIndex ? sum + (c.actualWordCount || 0) : sum, 0) || 0;
+      useWritingModeStore.getState().setGenerationProgress(data.chapterIndex, {
+        totalWords: chunks?.reduce((sum, c) => sum + c.targetWordCount, 0) || 0,
+        completedWords,
+        currentChunkIndex: data.chunkIndex,
+        totalChunks,
+        completedChunks: completedChunks + 1,
+        estimatedTimeRemaining: 0
+      });
+    });
+
+    const offChunkError = window.electronAPI.writing.onChunkError?.((data) => {
+      // 分片流式事件路由
+      if (isShardStreamRef.current) {
+        useWritingModeStore.getState().updateShardStatus(data.chapterIndex, data.chunkIndex, ShardStatus.FAILED);
+        message.error(`分片 ${data.chunkIndex + 1} 生成失败: ${data.error?.message || '未知错误'}`);
+        return;
+      }
+      console.error('[ChapterGeneration] 分片错误:', data.chunkIndex, data.error);
+      useWritingModeStore.getState().updateChunkStatus(data.chapterIndex, data.chunkIndex, ChunkStatus.FAILED);
+      message.error(`分片 ${data.chunkIndex + 1} 生成失败: ${data.error?.message || '未知错误'}`);
+    });
+
     return () => {
       offChunk();
       offComplete();
       offError();
+      offChunkStart?.();
+      offChunkProgress?.();
+      offChunkComplete?.();
+      offChunkError?.();
       // Abort local controller and send IPC cancel to clean up backend
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
@@ -276,15 +398,16 @@ export function useChapterGeneration(
     };
   }, []); // Register listeners once - use refs for state access
 
+  // ========== 单章生成 ==========
+
   const handleGenerateChapter = useCallback(async (chapterIndex: number, userSuggestion?: string) => {
     if (!outline) return;
 
     // Create a request key to prevent duplicate requests for the same chapter
     const requestKey = `${projectId}_${chapterIndex}`;
-    
+
     // Use the ref for synchronous deduplication (avoids race conditions with React state)
     if (activeGenerationRequests.current.has(requestKey)) {
-      console.log(`[ChapterGeneration] Duplicate request blocked for chapter ${chapterIndex}`);
       return;
     }
 
@@ -315,22 +438,11 @@ export function useChapterGeneration(
       abortControllerRef.current = new AbortController();
 
       const currentSetting = useSettingStore.getState().setting;
-      
-      // Fix: properly handle aiEngines vs ai_engines fallback
-      // First try aiEngines, check if array is non-empty
-      let engines: any[] | undefined = currentSetting?.aiEngines;
-      if (!engines || engines.length === 0) {
-        engines = currentSetting?.ai_engines;
-        if (!engines || engines.length === 0) {
-          engines = [];
-        }
-      }
-      
-      if (engines.length === 0) {
-        console.warn('[ChapterGeneration] No AI engines configured. aiEngines and ai_engines are both empty/undefined.');
-      }
-      
-      const engine = engines.find((e: any) => e.id === currentSetting?.activeEngineId) || engines[0];
+
+      // 获取 AI 引擎配置
+      const engines: AIEngineSetting[] = currentSetting?.aiEngines || [];
+
+      const engine = engines.find((e) => e.id === currentSetting?.activeEngineId) || engines[0];
 
       if (!engine) {
         throw new Error('未配置 AI 引擎，请先在设置中配置 AI 服务');
@@ -342,18 +454,13 @@ export function useChapterGeneration(
       if (engine.temperature === undefined || engine.temperature === null) {
         engine.temperature = 0.7;
       }
-      
+
       // Handle max_tokens: check for undefined, null, NaN, and 0
       let maxTokens = engine.max_tokens;
       if (maxTokens === undefined || maxTokens === null || Number.isNaN(maxTokens) || maxTokens === 0) {
         maxTokens = 32768; // Default to 32768 tokens
-        console.log('[ChapterGeneration] max_tokens was invalid, using default:', maxTokens);
-      } else {
-        console.log('[ChapterGeneration] max_tokens from engine config:', maxTokens);
       }
       engine.max_tokens = maxTokens;
-
-      console.log('[ChapterGeneration] Final max_tokens being sent to AI:', engine.max_tokens);
 
       const modelConfig = {
         model: engine.model_name,
@@ -414,12 +521,13 @@ export function useChapterGeneration(
       regenerationPreviousContentRef.current = '';
 
       await window.electronAPI.writing.generateChapter(request);
-    } catch (error: any) {
-      if (error.name === 'AbortError') {
+    } catch (error: unknown) {
+      if (error instanceof Error && error.name === 'AbortError') {
         setGenerationState(GenerationState.STOPPED);
         message.info('已停止生成');
       } else {
-        message.error(error.message || '生成失败');
+        const errMsg = error instanceof Error ? error.message : String(error);
+        message.error(errMsg || '生成失败');
         setChapterStatuses(prev => ({ ...prev, [chapterIndex]: ChapterStatus.FAILED }));
         setGenerationState(GenerationState.ERROR);
       }
@@ -433,7 +541,7 @@ export function useChapterGeneration(
       }
       // Don't override isGenerating/generationState here - they're set in catch or onStreamComplete
     }
-  }, [outline, chapterContents, projectId, setting]);
+  }, [outline, chapterContents, projectId, setting, isGenerating]);
 
   const handleStopGeneration = useCallback(() => {
     stopRef.current = true;
@@ -532,9 +640,11 @@ export function useChapterGeneration(
     chapterStatuses,
     setChapterStatuses,
     isGenerating,
-    generationProgress: null,  // Since we removed continuous generation, always return null
+    generationProgress: null,
     currentChapterWords,
     handleGenerateChapter,
+    handleGenerateChapterChunked: chunked.handleGenerateChapterChunked,
+    handleResumeGeneration: resume.handleResumeGeneration,
     handleStopGeneration,
     handleSaveChapter,
     handleClearChapter,
@@ -542,5 +652,11 @@ export function useChapterGeneration(
     handleEditorChange,
     updateChapterStatus,
     editorContentRef,
+    handleRegenerateChunk: chunked.handleRegenerateChunk,
+    getResumePoint: resume.getResumePoint as (chapterIndex: number) => number | null,
+    handleGenerateShardOutline: shard.handleGenerateShardOutline,
+    handleGenerateShard: shard.handleGenerateShard,
+    handleGenerateAllShards: shard.handleGenerateAllShards,
+    confirmShardToIntegration: shard.confirmShardToIntegration,
   };
 }

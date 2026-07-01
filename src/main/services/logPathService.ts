@@ -23,6 +23,18 @@ export function getLogDir(): string {
   return logBaseDir;
 }
 
+/**
+ * 获取模块专属日志目录：logs/<moduleName>/
+ * 按模块分目录存放日志文件，避免所有日志散落在 logs 根目录
+ */
+export function getModuleLogDir(moduleName: string): string {
+  const moduleDir = path.join(getLogDir(), moduleName);
+  if (!fs.existsSync(moduleDir)) {
+    fs.mkdirSync(moduleDir, { recursive: true });
+  }
+  return moduleDir;
+}
+
 export function getLogFilePath(fileName: string): string {
   return path.join(getLogDir(), fileName);
 }

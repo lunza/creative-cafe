@@ -9,7 +9,8 @@ import {
 } from '../../../shared/types/writing.types';
 import { promptBuilder } from './PromptBuilder';
 import { writingResourceManager } from '../WritingResourceManager';
-import { getStorageService } from '../storageService';
+import { aiConfigProvider } from '../ai/AIConfigProvider';
+import { SSEStreamParser } from '../ai/SSEStreamParser';
 
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -24,6 +25,10 @@ interface ModelConfig {
 
 export class OutlineGenerator {
   private streamChunkCallback: ((chunk: string) => void) | null = null;
+  /**
+   * SSE 流式响应解析器（统一复用，避免本类重复实现 parseSSELine/extractContentFromRawData）
+   */
+  private readonly streamParser: SSEStreamParser = new SSEStreamParser();
 
   onStreamChunk(callback: (chunk: string) => void): void {
     this.streamChunkCallback = callback;
@@ -58,11 +63,12 @@ export class OutlineGenerator {
     modelConfig: ModelConfig,
     abortSignal?: AbortSignal
   ): Promise<OutlineGenerationResult> {
-    const baseUrl = await this.getBaseUrl();
-    const apiKey = await this.getApiKey();
-    const apiKeyTransmission = await this.getApiKeyTransmission();
-    const modelName = await this.getModelName(modelConfig.model);
-    const engineSystemPrompt = await this.getEngineSystemPrompt();
+    const aiConfig = aiConfigProvider.getAIConfig();
+    const baseUrl = aiConfig.baseUrl;
+    const apiKey = aiConfig.apiKey;
+    const apiKeyTransmission = aiConfig.apiKeyTransmission;
+    const engineSystemPrompt = aiConfig.systemPrompt;
+    const modelName = aiConfig.modelName || modelConfig.model;
 
     if (!baseUrl) {
       throw this.createError(WritingErrorCode.AI_SERVICE_UNAVAILABLE, '未配置 AI 服务地址');
@@ -211,146 +217,30 @@ export class OutlineGenerator {
     return { textWithoutCoT, chainOfThought };
   }
 
+  /**
+   * 读取流式响应并累积完整内容
+   *
+   * 实现说明：
+   * - SSE 行解析、buffer 拼接、`[DONE]` 跳过、容错回退等逻辑全部委托给 `SSEStreamParser`
+   * - 本方法仅负责将 `streamChunkCallback` 桥接到 parser 的 onChunk 回调
+   * - 行为与原 readStreamResponse 一致：实时回调 + 返回完整内容
+   */
   private async readStreamResponse(response: Response, abortSignal?: AbortSignal): Promise<string> {
-    const reader = response.body?.getReader();
-    if (!reader) {
-      throw new Error('Stream reader not available');
-    }
-
-    const decoder = new TextDecoder();
-    let accumulatedData = '';
-    let fullContent = '';
-    let lastProcessedLineCount = 0;
-    let parsedLineCount = 0;
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          if (accumulatedData.length > 0) {
-            const lines = accumulatedData.split('\n');
-            const remainingLines = lines.slice(lastProcessedLineCount);
-            for (const line of remainingLines) {
-              const parsed = this.parseSSELine(line);
-              if (parsed) {
-                fullContent += parsed;
-                parsedLineCount++;
-                if (this.streamChunkCallback) {
-                  this.streamChunkCallback(parsed);
-                }
-              }
-            }
-          }
-          break;
-        }
-
-        const chunk = decoder.decode(value, { stream: true });
-        accumulatedData += chunk;
-
-        const lines = accumulatedData.split('\n');
-        const dataLines = lines.filter(line => {
-          const trimmed = line.trim();
-          return trimmed.startsWith('data: ') && trimmed.substring(6).trim() !== '[DONE]';
-        });
-
-        const completeDataLines = dataLines.length > 0 ? dataLines.slice(0, -1) : [];
-        const newLines = completeDataLines.slice(lastProcessedLineCount);
-        lastProcessedLineCount = dataLines.length - 1;
-
-        for (const line of newLines) {
-          const parsed = this.parseSSELine(line);
-          if (parsed) {
-            fullContent += parsed;
-            parsedLineCount++;
-            if (this.streamChunkCallback) {
-              this.streamChunkCallback(parsed);
-            }
-          }
-        }
+    const onChunk = (chunk: string) => {
+      if (this.streamChunkCallback) {
+        this.streamChunkCallback(chunk);
       }
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        console.log('[OutlineGenerator] Stream aborted, returning accumulated content (length:', fullContent.length, ')');
-        return fullContent;
-      }
-      throw error;
-    } finally {
-      reader.releaseLock();
-    }
+    };
 
-    if (fullContent.length < 100 && accumulatedData.length > 0) {
-      const fallbackContent = this.extractContentFromRawData(accumulatedData);
-      if (fallbackContent.length > fullContent.length) {
-        console.log('[OutlineGenerator] Using fallback content extraction (length:', fallbackContent.length, ')');
-        fullContent = fallbackContent;
-      }
-    }
+    const result = await this.streamParser.parseStream(response, onChunk, abortSignal);
 
     console.log('[OutlineGenerator] Stream complete:', {
-      accumulatedDataLength: accumulatedData.length,
-      totalDataLines: lastProcessedLineCount,
-      parsedLines: parsedLineCount,
-      extractedContentLength: fullContent.length,
-      preview: fullContent.substring(0, 200)
+      extractedContentLength: result.content.length,
+      generationTime: result.generationTime,
+      preview: result.content.substring(0, 200)
     });
 
-    return fullContent;
-  }
-
-  private parseSSELine(line: string): string | null {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith('data: ')) return null;
-
-    const jsonStr = trimmed.substring(6).trim();
-    if (!jsonStr || jsonStr === '[DONE]') return null;
-
-    try {
-      const parsed = JSON.parse(jsonStr);
-      const delta = parsed.choices?.[0]?.delta?.content;
-      if (delta) return delta;
-      
-      const message = parsed.choices?.[0]?.message?.content;
-      if (message) return message;
-      
-      return null;
-    } catch (e) {
-      // Silently ignore parse failures for incomplete lines
-      return null;
-    }
-  }
-
-  private extractContentFromRawData(rawData: string): string {
-    let extracted = '';
-
-    // Strategy 1: Regex match all data: lines
-    const dataLineRegex = /^data:\s+(.+)$/gm;
-    let match;
-    while ((match = dataLineRegex.exec(rawData)) !== null) {
-      const jsonStr = match[1].trim();
-      if (jsonStr === '[DONE]') continue;
-      try {
-        const parsed = JSON.parse(jsonStr);
-        const delta = parsed.choices?.[0]?.delta?.content;
-        if (delta) extracted += delta;
-        else if (parsed.choices?.[0]?.message?.content) {
-          extracted += parsed.choices[0].message.content;
-        }
-      } catch {
-        // Skip malformed JSON
-      }
-    }
-
-    // Strategy 2: If still no content, try regex extraction of content field
-    if (!extracted) {
-      const contentRegex = /"content"\s*:\s*"([^"]*(?:\\.[^"]*)*)"/g;
-      let contentMatch;
-      while ((contentMatch = contentRegex.exec(rawData)) !== null) {
-        const rawContent = contentMatch[1];
-        extracted += rawContent.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"');
-      }
-    }
-
-    return extracted;
+    return result.content;
   }
 
   parseOutlineResponse(response: string): GeneratedOutline {
@@ -974,11 +864,12 @@ export class OutlineGenerator {
     modelConfig: ModelConfig,
     abortSignal?: AbortSignal
   ): Promise<ChapterOutline[]> {
-    const baseUrl = await this.getBaseUrl();
-    const apiKey = await this.getApiKey();
-    const apiKeyTransmission = await this.getApiKeyTransmission();
-    const modelName = await this.getModelName(modelConfig.model);
-    const engineSystemPrompt = await this.getEngineSystemPrompt();
+    const aiConfig = aiConfigProvider.getAIConfig();
+    const baseUrl = aiConfig.baseUrl;
+    const apiKey = aiConfig.apiKey;
+    const apiKeyTransmission = aiConfig.apiKeyTransmission;
+    const engineSystemPrompt = aiConfig.systemPrompt;
+    const modelName = aiConfig.modelName || modelConfig.model;
 
     if (!baseUrl) {
       throw this.createError(WritingErrorCode.OUTLINE_GENERATION_FAILED, '未配置 AI 服务地址');
@@ -1178,115 +1069,11 @@ ${instructions ? `\n## 额外指令\n${instructions}` : ''}
     return styleMap[novelType] || 'serious';
   }
 
-  private async getBaseUrl(): Promise<string | undefined> {
-    try {
-      const storageService = getStorageService();
-      const settings = storageService.getSettings();
-      
-      console.log('[OutlineGenerator] getBaseUrl - raw settings type:', typeof settings);
-      console.log('[OutlineGenerator] getBaseUrl - has aiEngines:', Array.isArray(settings?.aiEngines));
-      console.log('[OutlineGenerator] getBaseUrl - aiEngines count:', settings?.aiEngines?.length || 0);
-      console.log('[OutlineGenerator] getBaseUrl - activeEngineId:', settings?.activeEngineId);
-      
-      if (Array.isArray(settings?.aiEngines)) {
-        settings.aiEngines.forEach((e: any, i: number) => {
-          console.log(`[OutlineGenerator] Engine[${i}]:`, {
-            id: e.id,
-            name: e.name,
-            api_url: e.api_url,
-            api_key_len: e.api_key?.length || 0,
-            api_key_tx: e.api_key_transmission
-          });
-        });
-      }
-      
-      const engines = settings?.aiEngines || [];
-      if (engines.length > 0) {
-        const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
-        const url = activeEngine?.api_url;
-        console.log('[OutlineGenerator] getBaseUrl - SELECTED engine:', activeEngine?.name, 'url:', url);
-        return url;
-      }
-      
-      console.warn('[OutlineGenerator] getBaseUrl - no aiEngines found, falling back to legacy path');
-      return settings?.ai?.baseUrl || settings?.ai?.apiBaseUrl || settings?.baseUrl;
-    } catch (error) {
-      console.error('[OutlineGenerator] getBaseUrl error:', error);
-      return undefined;
-    }
-  }
-
-  private async getApiKey(): Promise<string | undefined> {
-    try {
-      const storageService = getStorageService();
-      const settings = storageService.getSettings();
-      
-      const engines = settings?.aiEngines || [];
-      if (engines.length > 0) {
-        const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
-        const key = activeEngine?.api_key;
-        console.log('[OutlineGenerator] getApiKey - engine name:', activeEngine?.name, 'hasKey:', !!key, 'keyLen:', key?.length || 0);
-        if (key && key.length > 20) {
-          console.log('[OutlineGenerator] getApiKey - key preview:', `${key.substring(0, 10)}...${key.substring(key.length - 4)}`);
-        }
-        return key;
-      }
-      
-      console.warn('[OutlineGenerator] getApiKey - no aiEngines, fallback to legacy');
-      return settings?.ai?.apiKey || settings?.ai?.apiToken || settings?.apiKey;
-    } catch (error) {
-      console.error('[OutlineGenerator] getApiKey error:', error);
-      return undefined;
-    }
-  }
-
-  private async getApiKeyTransmission(): Promise<string> {
-    try {
-      const storageService = getStorageService();
-      const settings = storageService.getSettings();
-      
-      const engines = settings?.aiEngines || [];
-      if (engines.length > 0) {
-        const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
-        const transmission = activeEngine?.api_key_transmission || 'body';
-        console.log('[OutlineGenerator] getApiKeyTransmission - using:', transmission);
-        return transmission;
-      }
-      
-      return 'body';
-    } catch (error) {
-      console.error('[OutlineGenerator] getApiKeyTransmission error:', error);
-      return 'body';
-    }
-  }
-
-  private async getEngineSystemPrompt(): Promise<string> {
-    try {
-      const storageService = getStorageService();
-      const settings = storageService.getSettings();
-      
-      const engines = settings?.aiEngines || [];
-      if (engines.length > 0) {
-        const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
-        const prompt = activeEngine?.system_prompt || '';
-        if (prompt) {
-          console.log('[OutlineGenerator] getEngineSystemPrompt - using engine system prompt, length:', prompt.length);
-        }
-        return prompt;
-      }
-      
-      return '';
-    } catch (error) {
-      console.error('[OutlineGenerator] getEngineSystemPrompt error:', error);
-      return '';
-    }
-  }
-
   private enrichSystemPrompt(messages: ChatMessage[], engineSystemPrompt: string): ChatMessage[] {
     if (!engineSystemPrompt || !engineSystemPrompt.trim()) {
       return messages;
     }
-    
+
     const enriched = messages.map((msg, index) => {
       if (index === 0 && msg.role === 'system') {
         return {
@@ -1296,31 +1083,8 @@ ${instructions ? `\n## 额外指令\n${instructions}` : ''}
       }
       return msg;
     });
-    
-    return enriched;
-  }
 
-  private async getModelName(fallbackModel: string): Promise<string> {
-    try {
-      const storageService = getStorageService();
-      const settings = storageService.getSettings();
-      
-      const engines = settings?.aiEngines || [];
-      if (engines.length > 0) {
-        const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
-        const engineModel = activeEngine?.model_name;
-        if (engineModel) {
-          console.log('[OutlineGenerator] getModelName - using engine model:', engineModel, '(fallback was:', fallbackModel, ')');
-          return engineModel;
-        }
-      }
-      
-      console.log('[OutlineGenerator] getModelName - no engine model found, using fallback:', fallbackModel);
-      return fallbackModel;
-    } catch (error) {
-      console.error('[OutlineGenerator] getModelName error:', error);
-      return fallbackModel;
-    }
+    return enriched;
   }
 
   private createError(

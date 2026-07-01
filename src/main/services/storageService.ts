@@ -3,13 +3,16 @@
  * 集成 StorageManager
  */
 
-import { ipcMain, ipcRenderer, BrowserWindow } from 'electron';
+import { ipcMain, ipcRenderer } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
+import { createLogger } from './logger';
 import { getStorageManager, StorageManager } from './storageManager';
 import { CURRENT_VERSION } from './storage.types';
 import { getUserDataPath } from '../utils/appPath';
 import { pathService } from './pathService';
+
+const logger = createLogger('storage');
 
 // 存储键名（保持向后兼容）
 const STORAGE_KEYS = {
@@ -44,20 +47,19 @@ class StorageService {
    * 向渲染进程发送日志
    */
   private sendLog(message: string, type: 'error' | 'warn' | 'info' | 'debug' = 'info', context?: any) {
-    try {
-      const windows = BrowserWindow.getAllWindows();
-      windows.forEach(window => {
-        if (window.webContents && !window.isDestroyed()) {
-          window.webContents.send('memory:addLog', message, type);
-        }
-      });
-    } catch (error) {
-      // 如果发送失败，使用 console
-      if (context) {
-        console.log(`[StorageService] ${type.toUpperCase()}: ${message}`, context);
-      } else {
-        console.log(`[StorageService] ${type.toUpperCase()}: ${message}`);
-      }
+    switch (type) {
+      case 'error':
+        logger.error(message, undefined, context);
+        break;
+      case 'warn':
+        logger.warn(message, undefined, context);
+        break;
+      case 'debug':
+        logger.debug(message, undefined, context);
+        break;
+      default:
+        logger.info(message, undefined, context);
+        break;
     }
   }
 
@@ -125,7 +127,6 @@ class StorageService {
               send_if_empty: '',
               impersonation_prompt: "[Write your next reply from the point of view of {{user}}, using the chat history so far as a guideline for the writing style of {{user}}. Don't write as {{char}} or system. Don't describe actions of {{char}}.]",
               new_chat_prompt: "[Start a new Chat]",
-              new_group_chat_prompt: "[Start a new group chat. Group members: {{group}}]",
               new_example_chat_prompt: "[Example Chat]",
               continue_nudge_prompt: "[Continue your last message without repeating its original content.]",
               bias_preset_selected: "Default (none)",
@@ -133,7 +134,6 @@ class StorageService {
               wi_format: "{0}",
               scenario_format: "{{scenario}}",
               personality_format: "{{personality}}",
-              group_nudge_prompt: "[Write the next reply only as {{char}}.]",
               assistant_prefill: "",
               assistant_impersonation: "",
               use_sysprompt: false,
@@ -338,7 +338,7 @@ class StorageService {
   private async ensureModuleDirectories(): Promise<void> {
     try {
       const userDataPath = getUserDataPath();
-      const modules = ['characters', 'worldbooks', 'avatars', 'creatives', 'memories', 'plugins', 'groups', 'groupchats'];
+      const modules = ['characters', 'worldbooks', 'avatars', 'creatives', 'memories', 'plugins'];
       for (const mod of modules) {
         const dirPath = path.join(userDataPath, 'data', mod);
         if (!fs.existsSync(dirPath)) {

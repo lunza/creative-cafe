@@ -1,5 +1,4 @@
 import React from 'react';
-import { theme as antTheme } from 'antd';
 import { Card, Button, Progress, message, Spin, Menu, Typography, Dropdown, Popconfirm, Empty, Modal, Input, Layout, Table, Tag, Tooltip } from 'antd';
 const { Sider, Content } = Layout;
 const { Text } = Typography;
@@ -26,7 +25,9 @@ import {
   RegenerationSuggestion,
   ChapterOutline,
 } from '../../../../shared/types/writing.types';
-import MarkdownEditor from '../../Common/MarkdownEditor';
+import StreamingTextEditor, { StreamingTextEditorRef } from './StreamingTextEditor';
+import GenerationProgressPanel from './GenerationProgressPanel';
+import ShardDetailPanel from './ShardDetailPanel';
 import AutoFixResultModal from './AutoFixResultModal';
 import QuickFixSuggestionModal from './QuickFixSuggestionModal';
 import GenerationSuggestionModal from './GenerationSuggestionModal';
@@ -38,7 +39,7 @@ import { usePlotCheck } from './hooks/usePlotCheck';
 import { useChapterStructure } from './hooks/useChapterStructure';
 import { useWritingModeUIStore, LayoutMode, RightPanelTab } from '../../../stores/writingModeUIStore';
 import { useWritingProjectStore } from '../../../stores/writingProjectStore';
-import { useUIStore } from '../../../stores/uiStore';
+import { useWritingModeStore } from '../../../stores/writingModeStore';
 
 interface ContentWorkspaceProps {
   outline: GeneratedOutline | null;
@@ -47,14 +48,6 @@ interface ContentWorkspaceProps {
 }
 
 const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId }) => {
-  console.log('[ContentWorkspace] Component mounted/updated', {
-    hasOutline: !!outline,
-    outlineChapterCount: outline?.chapters?.length,
-    outlineChapter0ContentLength: outline?.chapters?.[0]?.content?.length || 0,
-    outlineChapter0ContentPreview: outline?.chapters?.[0]?.content?.substring(0, 50) || 'empty',
-    projectId
-  });
-
   const modalStates = useModalStates();
 
   const chapterGeneration = useChapterGeneration(outline, projectId);
@@ -74,16 +67,6 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId 
     (_s) => {}
   );
   
-  // 打印章节内容恢复情况
-  console.log('[ContentWorkspace] chapterContents state:', {
-    chapterCount: outline?.chapters?.length || 0,
-    restoredChapterCount: Object.keys(chapterGeneration.chapterContents).length,
-    firstChapterContentLength: chapterGeneration.chapterContents[0]?.length || 0,
-    firstChapterContentPreview: chapterGeneration.chapterContents[0]?.substring(0, 50) || 'empty',
-    allKeys: Object.keys(chapterGeneration.chapterContents),
-    statusesKeys: Object.keys(chapterGeneration.chapterStatuses)
-  });
-
   const rightPanelVisible = useWritingModeUIStore((state) => state.rightPanelVisible);
   const rightPanelTab = useWritingModeUIStore((state) => state.rightPanelTab);
   const setRightPanelTab = useWritingModeUIStore((state) => state.setRightPanelTab);
@@ -91,7 +74,30 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId 
   const layoutMode = useWritingModeUIStore((state) => state.layoutMode);
   const rightPanelWidth = useWritingModeUIStore((state) => state.rightPanelWidth);
   const setRightPanelWidth = useWritingModeUIStore((state) => state.setRightPanelWidth);
-  const editorTheme = useUIStore((state) => state.theme);
+
+  // 编辑器引用，用于在生成过程中控制编辑器
+  const editorRef = React.useRef<StreamingTextEditorRef>(null);
+
+  // 从 writingModeStore 获取分片状态
+  const chapterChunks = useWritingModeStore((state) => state.chapterChunks);
+  const generationProgressMap = useWritingModeStore((state) => state.generationProgress);
+
+  // 用户可控分片生成：从 store 获取分片大纲与详情
+  const shardOutlinesMap = useWritingModeStore((state) => state.shardOutlines);
+  const shardDetailsMap = useWritingModeStore((state) => state.shardDetails);
+  const updateShardContent = useWritingModeStore((state) => state.updateShardContent);
+
+  // 获取当前章节的分片和进度信息
+  const currentChapterChunks = chapterChunks.get(chapterGeneration.selectedChapterIndex) || [];
+  const currentGenerationProgress = generationProgressMap.get(chapterGeneration.selectedChapterIndex) || null;
+
+  // 进度面板可见性（生成时显示，完成后可折叠）
+  const [progressPanelVisible, setProgressPanelVisible] = React.useState(true);
+  React.useEffect(() => {
+    if (chapterGeneration.isGenerating) {
+      setProgressPanelVisible(true);
+    }
+  }, [chapterGeneration.isGenerating]);
 
   const [isOrganizing, setIsOrganizing] = React.useState(false);
   const [showGenerationModal, setShowGenerationModal] = React.useState(false);
@@ -116,6 +122,10 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId 
   if (!currentChapter) {
     return <div style={{ padding: 24 }}>未找到章节信息</div>;
   }
+
+  // 当前章节的分片大纲与详情
+  const currentShardOutlines = shardOutlinesMap.get(currentChapter.index) || [];
+  const currentShardDetails = shardDetailsMap.get(currentChapter.index) || [];
 
   const targetWordCount = currentChapter?.targetWordCount || 2000;
   const wordCountPercentage = Math.min((currentWordCount / targetWordCount) * 100, 100);
@@ -233,8 +243,9 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId 
         if (result.success) {
           message.success('导出成功');
         }
-      } catch (error: any) {
-        message.error(error.message || '导出失败');
+      } catch (error: unknown) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        message.error(errMsg || '导出失败');
       }
     }
   };
@@ -268,13 +279,24 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId 
     setShowGenerationModal(true);
   };
 
-  const handleGenerationSubmit = async (suggestion: string) => {
+  const handleGenerationSubmit = async (suggestion: string, shardCount: number) => {
     const trimmed = suggestion.trim();
     // Save the suggestion as persistent guidance
     await saveChapterGuidance(trimmed || undefined);
 
     setShowGenerationModal(false);
-    chapterGeneration.handleGenerateChapter(currentChapter.index, trimmed || undefined);
+
+    if (shardCount === 1) {
+      // 不分片：一次性生成完整章节
+      chapterGeneration.handleGenerateChapter(currentChapter.index, trimmed || undefined);
+    } else {
+      // 分片模式：先生成分片大纲
+      chapterGeneration.handleGenerateShardOutline(
+        currentChapter.index,
+        shardCount,
+        trimmed || undefined
+      );
+    }
 
     if (!trimmed && getCurrentChapterGuidance()) {
       message.info('已清空章节创作指导');
@@ -373,7 +395,7 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId 
                 disabled: chapterGeneration.chapterStatuses[ch.index] === ChapterStatus.GENERATING || isOrganizing
               };
             })
-            .filter(Boolean) as any[]}
+            .filter((item): item is NonNullable<typeof item> => item !== null)}
           style={{ maxHeight: 'calc(100vh - 260px)', overflow: 'auto' }}
         />
       </Sider>
@@ -499,39 +521,67 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId 
               </div>
             }
           >
-            {chapterGeneration.isGenerating && chapterGeneration.generationState === GenerationState.GENERATING ? (
-              <div style={{ minHeight: 400 }}>
-                <div style={{ marginBottom: 8 }}>
-                  <Text type="secondary">正在生成中... 已生成 {chapterGeneration.currentChapterWords} 字</Text>
-                </div>
-                <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8, fontFamily: 'monospace', fontSize: 14 }}>
-                  {chapterGeneration.streamingContent}
-                  <span style={{
-                    display: 'inline-block',
-                    width: 2,
-                    height: 16,
-                    background: '#1890ff',
-                    animation: 'writing-cursor-blink 1s steps(1) infinite'
-                  }} />
-                </div>
+            {/* 分片生成进度面板：在生成时显示，完成后可折叠 */}
+            <GenerationProgressPanel
+              visible={progressPanelVisible && currentShardOutlines.length === 0 && (chapterGeneration.isGenerating || currentGenerationProgress !== null)}
+              progress={currentGenerationProgress}
+              chunks={currentChapterChunks}
+              isGenerating={chapterGeneration.isGenerating}
+              onRegenerateChunk={(chunkIndex) => {
+                // 重新生成指定分片
+                chapterGeneration.handleRegenerateChunk?.(chunkIndex);
+              }}
+              onScrollToChunk={() => {
+                // 滚动编辑器到对应分片位置
+                editorRef.current?.scrollToBottom();
+              }}
+              className="chapter-progress-panel"
+            />
+            {/* 进度面板显示/隐藏切换 */}
+            {currentGenerationProgress && !chapterGeneration.isGenerating && (
+              <div style={{ marginBottom: 8, textAlign: 'right' }}>
+                <Button
+                  type="text"
+                  size="small"
+                  onClick={() => setProgressPanelVisible(!progressPanelVisible)}
+                >
+                  {progressPanelVisible ? '隐藏进度' : '显示进度'}
+                </Button>
               </div>
-            ) : (
-              <>
-                {console.log('[ContentWorkspace] Rendering MarkdownEditor', {
-                  chapterIndex: currentChapter.index,
-                  chapterContents: chapterGeneration.chapterContents,
-                  valueLength: chapterGeneration.chapterContents[currentChapter.index]?.length || 0,
-                  hasContent: !!chapterGeneration.chapterContents[currentChapter.index]
-                })}
-                <MarkdownEditor
-                  key={currentChapter.index}
-                  theme={editorTheme}
-                  value={chapterGeneration.chapterContents[currentChapter.index] || ''}
-                  onChange={chapterGeneration.handleEditorChange}
-                  readOnly={false}
-                />
-              </>
             )}
+            {/* 用户可控分片详情面板：仅当当前章节存在分片大纲时显示 */}
+            {currentShardOutlines.length > 0 && (
+              <ShardDetailPanel
+                chapterIndex={currentChapter.index}
+                shardOutlines={currentShardOutlines}
+                shardDetails={currentShardDetails}
+                onGenerateShard={(shardIndex) => chapterGeneration.handleGenerateShard(currentChapter.index, shardIndex)}
+                onGenerateAll={() => chapterGeneration.handleGenerateAllShards(currentChapter.index)}
+                onShardContentChange={(shardIndex, content) => updateShardContent(currentChapter.index, shardIndex, content)}
+                onConfirmShard={(shardIndex) => chapterGeneration.confirmShardToIntegration(currentChapter.index, shardIndex)}
+              />
+            )}
+            {/* 编辑器区域：使用 StreamingTextEditor 替代 MarkdownEditor */}
+            <StreamingTextEditor
+              ref={editorRef}
+              key={currentChapter.index}
+              value={
+                chapterGeneration.isGenerating && chapterGeneration.generationState === GenerationState.GENERATING
+                  ? chapterGeneration.streamingContent
+                  : (chapterGeneration.chapterContents[currentChapter.index] || '')
+              }
+              onChange={chapterGeneration.handleEditorChange}
+              readOnly={
+                chapterGeneration.isGenerating && chapterGeneration.generationState === GenerationState.GENERATING
+              }
+              placeholder="在此输入或生成章节内容..."
+              enableMarkdown={true}
+              className={
+                chapterGeneration.isGenerating && chapterGeneration.generationState === GenerationState.GENERATING
+                  ? 'generating'
+                  : ''
+              }
+            />
           </Card>
         </Content>
       </Layout>

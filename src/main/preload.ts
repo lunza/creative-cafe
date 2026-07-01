@@ -165,11 +165,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getTableData: (chatId: string) => ipcRenderer.invoke('memory:getTableData', chatId),
     saveTableData: (chatId: string, sheetName: string, sheetData: any[]) => ipcRenderer.invoke('memory:saveTableData', chatId, sheetName, sheetData),
     autoInitializeSession: (chatId: string) => ipcRenderer.invoke('memory:autoInitializeSession', chatId),
-    onLog: (callback: (message: string, type: string) => void) => {
-      ipcRenderer.on('memory:addLog', (event, message, type) => {
-        callback(message, type);
-      });
-    },
 
     getCharacterChatRecords: () => ipcRenderer.invoke('memory:getCharacterChatRecords'),
     getCharacterChatRecord: (fileName: string) => ipcRenderer.invoke('memory:getCharacterChatRecord', fileName),
@@ -186,9 +181,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   // AI 请求 API
   ai: {
-    request: (config: { url: string; method: string; headers: Record<string, string>; body: any; timeout?: number; streaming?: boolean }) => 
+    request: (config: { url: string; method: string; headers: Record<string, string>; body: any; timeout?: number; streaming?: boolean }) =>
       ipcRenderer.invoke('ai:request', config),
-    cancel: () => ipcRenderer.invoke('ai:cancel')
+    cancel: () => ipcRenderer.invoke('ai:cancel'),
+    listModels: (params: { apiUrl?: string; apiKey?: string; apiKeyTransmission?: string }) =>
+      ipcRenderer.invoke('ai:listModels', params)
   },
   // 创意数据 API
   creative: {
@@ -330,21 +327,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     delete: (characterId: string) => ipcRenderer.invoke('chatVector:delete', characterId),
     search: (characterId: string, query: string, topK?: number) => ipcRenderer.invoke('chatVector:search', characterId, query, topK)
   },
-  // 群组聊天 API
-  group: {
-    getAll: () => ipcRenderer.invoke('group:getAll'),
-    get: (id: string) => ipcRenderer.invoke('group:get', id),
-    create: (data: any) => ipcRenderer.invoke('group:create', data),
-    edit: (group: any) => ipcRenderer.invoke('group:edit', group),
-    delete: (id: string) => ipcRenderer.invoke('group:delete', id)
-  },
-  groupChat: {
-    get: (chatId: string) => ipcRenderer.invoke('group-chat:get', chatId),
-    save: (chatId: string, chat: any[], force?: boolean) => ipcRenderer.invoke('group-chat:save', chatId, chat, force),
-    delete: (chatId: string) => ipcRenderer.invoke('group-chat:delete', chatId),
-    info: (chatId: string) => ipcRenderer.invoke('group-chat:info', chatId),
-    import: (content: string, suggestedId?: string) => ipcRenderer.invoke('group-chat:import', content, suggestedId)
-  },
   writing: {
     loadProjects: () => ipcRenderer.invoke('writing:loadProjects'),
     createProject: (config: any) => ipcRenderer.invoke('writing:createProject', config),
@@ -354,7 +336,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
     generateOutline: (request: any) => ipcRenderer.invoke('writing:generateOutline', request),
     saveOutline: (rawContent: string, config: any) => ipcRenderer.invoke('writing:saveOutline', { rawContent, config }),
     generateChapter: (request: any) => ipcRenderer.invoke('writing:generateChapter', request),
+    generateChapterChunk: (request: any) => ipcRenderer.invoke('writing:generateChapterChunk', request),
+    generateShardOutline: (request: any) => ipcRenderer.invoke('writing:generateShardOutline', request),
+    generateShardContent: (request: any) => ipcRenderer.invoke('writing:generateShardContent', request),
+    generateChunkSummary: (request: { projectId: string; chapterIndex: number; chunkIndex: number; content: string }) => 
+      ipcRenderer.invoke('writing:generateChunkSummary', request),
+    saveChunkCheckpoint: (request: { projectId: string; chapterIndex: number; chunkIndex: number; content: string }) => 
+      ipcRenderer.invoke('writing:saveChunkCheckpoint', request),
+    getChunkCheckpoint: (projectId: string, chapterIndex: number, chunkIndex: number) => 
+      ipcRenderer.invoke('writing:getChunkCheckpoint', projectId, chapterIndex, chunkIndex),
+    clearChunkCheckpoint: (projectId: string, chapterIndex: number) => 
+      ipcRenderer.invoke('writing:clearChunkCheckpoint', projectId, chapterIndex),
     cancelGeneration: (projectId: string) => ipcRenderer.invoke('writing:cancelGeneration', projectId),
+    cancelChunkGeneration: (projectId: string, chapterIndex: number, chunkIndex: number) => ipcRenderer.invoke('writing:cancelChunkGeneration', projectId, chapterIndex, chunkIndex),
     loadResources: (params: { worldBookIds: string[]; characterCardIds: string[] }) => ipcRenderer.invoke('writing:loadResources', params),
     autoSaveChapter: (params: { projectId: string; chapterIndex: number; content: string }) => ipcRenderer.invoke('writing:autoSaveChapter', params),
     saveVersion: (params: { projectId: string; chapterIndex: number; content: string; note?: string }) => ipcRenderer.invoke('writing:saveVersion', params),
@@ -414,6 +408,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('writing:stream:error', handler);
       return () => ipcRenderer.removeListener('writing:stream:error', handler);
     },
+    // 分片生成事件监听
+    onChunkStart: (callback: (data: any) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('writing:chunk:start', handler);
+      return () => ipcRenderer.removeListener('writing:chunk:start', handler);
+    },
+    onChunkProgress: (callback: (data: any) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('writing:chunk:progress', handler);
+      return () => ipcRenderer.removeListener('writing:chunk:progress', handler);
+    },
+    onChunkComplete: (callback: (data: any) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('writing:chunk:complete', handler);
+      return () => ipcRenderer.removeListener('writing:chunk:complete', handler);
+    },
+    onChunkError: (callback: (data: any) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('writing:chunk:error', handler);
+      return () => ipcRenderer.removeListener('writing:chunk:error', handler);
+    },
     style: {
       upload: (request: { filePath: string; fileName: string; fileSize: number }) => ipcRenderer.invoke('writing:style:upload', request),
       list: () => ipcRenderer.invoke('writing:style:list'),
@@ -446,13 +461,29 @@ contextBridge.exposeInMainWorld('electronAPI', {
       saveTableConfig: (projectId: string, config: any) => ipcRenderer.invoke('writing:table:saveTableConfig', projectId, config),
       associateTableTemplate: (projectId: string, templateId: string, templateName: string, templateSheets: Array<{ name: string; headers: string[]; description?: string }>) => ipcRenderer.invoke('writing:table:associateTableTemplate', projectId, templateId, templateName, templateSheets),
       getAllTemplates: () => ipcRenderer.invoke('writing:table:getAllTemplates'),
-      organizeTable: (projectId: string, modelConfig: any, chapterIndex?: number, requirements?: string) => ipcRenderer.invoke('writing:table:organizeTable', projectId, modelConfig, chapterIndex, requirements),
+      organizeTable: (projectId: string, modelConfig: any, chapterIndex?: number, requirements?: string, skipOrganized?: boolean) => ipcRenderer.invoke('writing:table:organizeTable', projectId, modelConfig, chapterIndex, requirements, skipOrganized),
       organizeSingleSheet: (projectId: string, sheetName: string, modelConfig: any, chapterIndex?: number, requirements?: string) => ipcRenderer.invoke('writing:table:organizeSingleSheet', projectId, sheetName, modelConfig, chapterIndex, requirements),
       reorganizeRow: (projectId: string, sheet: string, rowIndex: number, rowData: Record<string, any>, requirements: string, modelConfig: any) => ipcRenderer.invoke('writing:table:reorganizeRow', projectId, sheet, rowIndex, rowData, requirements, modelConfig),
       getOrganizeProgress: (projectId: string) => ipcRenderer.invoke('writing:table:getOrganizeProgress', projectId),
+      getChapterOrganizeStatus: (projectId: string) => ipcRenderer.invoke('writing:table:getChapterOrganizeStatus', projectId),
       getVersionSnapshot: (projectId: string) => ipcRenderer.invoke('writing:table:getVersionSnapshot', projectId),
       confirmVersion: (projectId: string) => ipcRenderer.invoke('writing:table:confirmVersion', projectId),
       rollbackVersion: (projectId: string) => ipcRenderer.invoke('writing:table:rollbackVersion', projectId)
     }
+  },
+  prompt: {
+    getAll: () => ipcRenderer.invoke('prompt:getAll'),
+    get: (moduleId: string) => ipcRenderer.invoke('prompt:get', moduleId),
+    save: (template: any, modifiedBy: string, changeSummary: string) =>
+      ipcRenderer.invoke('prompt:save', template, modifiedBy, changeSummary),
+    getHistory: (moduleId: string) => ipcRenderer.invoke('prompt:getHistory', moduleId),
+    rollback: (moduleId: string, version: number, modifiedBy: string) =>
+      ipcRenderer.invoke('prompt:rollback', moduleId, version, modifiedBy),
+    clearHistory: (moduleId: string) => ipcRenderer.invoke('prompt:clearHistory', moduleId),
+    build: (moduleId: string, variables: Record<string, string>) =>
+      ipcRenderer.invoke('prompt:build', moduleId, variables),
+    validate: (template: any) => ipcRenderer.invoke('prompt:validate', template),
+    reset: (moduleId: string) => ipcRenderer.invoke('prompt:reset', moduleId),
+    optimize: (request: any) => ipcRenderer.invoke('prompt:optimize', request)
   }
 });

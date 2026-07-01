@@ -1,0 +1,670 @@
+import React, { useCallback, useMemo, useRef, useState } from 'react';
+import { Modal, Button, Space, Checkbox, Input, message } from 'antd';
+import { PlusOutlined, StopOutlined } from '@ant-design/icons';
+import { FieldEditor } from './FieldEditor';
+import { WorldBookRelationPanel } from './WorldBookRelationPanel';
+import { useCharacterAIOperations } from './hooks/useCharacterAIOperations';
+import type { AIEngine } from '../../types/setting';
+
+export interface CharacterEditCharacter {
+  name: string;
+  path: string;
+  size: number;
+  modified: Date;
+  characterName?: string;
+  version?: string;
+  creator?: string;
+  tags?: string[];
+  cardVersion?: 'v1' | 'v2' | 'v3';
+}
+
+export interface CharacterEditModalProps {
+  open: boolean;
+  editingItem: CharacterEditCharacter | null;
+  editingContent: any;
+  formValues: any;
+  setFormValues: React.Dispatch<React.SetStateAction<any>>;
+  originalValues: any;
+  setOriginalValues: React.Dispatch<React.SetStateAction<any>>;
+  setEditingItem: React.Dispatch<React.SetStateAction<CharacterEditCharacter | null>>;
+  setEditingContent: React.Dispatch<React.SetStateAction<any>>;
+  worldBookRelations: any[];
+  setWorldBookRelations: React.Dispatch<React.SetStateAction<any[]>>;
+  worldBooks: Array<{ path: string; name: string }>;
+  uploadedImage: string | null;
+  setUploadedImage: React.Dispatch<React.SetStateAction<string | null>>;
+  uploadedImageName: string;
+  setUploadedImageName: React.Dispatch<React.SetStateAction<string>>;
+  characterDir: string;
+  addLog: (msg: string, level?: 'info' | 'error' | 'warn' | 'debug') => void;
+  getActiveEngineConfig: () => AIEngine | null;
+  onCancel: () => void;
+  /**
+   * Called after a successful save. `savedPath` is the absolute path of the
+   * saved card (existing-card edit) or `null` for newly-created cards.
+   * Parent uses this to refresh the character list and (if applicable) the
+   * currently-open View modal content.
+   */
+  onSaved: (savedPath: string | null) => void;
+}
+
+/**
+ * Character edit Modal — migrated from `CharacterManager.handleEditModalOk`
+ * (originally ~182 lines) and the inline edit-modal JSX.
+ *
+ * The AI translate/polish/generate operations are delegated to the
+ * `useCharacterAIOperations` hook, which is instantiated here so that the
+ * parent (CharacterManager) doesn't need to know about AI internals.
+ *
+ * Behavior is preserved verbatim:
+ *  - New-card branch requires an uploaded PNG (extracted as base64 and passed
+ *    to `character.createFromImage`).
+ *  - Existing-card branch writes the JSON content back via `character.write`.
+ *  - Both branches persist world-book relations.
+ */
+const CharacterEditModal: React.FC<CharacterEditModalProps> = ({
+  open,
+  editingItem,
+  editingContent,
+  formValues,
+  setFormValues,
+  originalValues,
+  setOriginalValues,
+  setEditingItem,
+  setEditingContent,
+  worldBookRelations,
+  setWorldBookRelations,
+  worldBooks,
+  uploadedImage,
+  setUploadedImage,
+  uploadedImageName,
+  setUploadedImageName,
+  characterDir,
+  addLog,
+  getActiveEngineConfig,
+  onCancel,
+  onSaved,
+}) => {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [imageUploadLoading, setImageUploadLoading] = useState<boolean>(false);
+
+  const aiOps = useCharacterAIOperations({
+    formValues,
+    setFormValues,
+    originalValues,
+    addLog,
+    getActiveEngineConfig,
+  });
+
+  const {
+    translatingField,
+    polishingField,
+    generatingField,
+    handleTranslate,
+    handlePolish,
+    openGenerateModal,
+    handleRestore,
+    handleCancelAIRequest,
+    performPolish,
+    performGenerate,
+    isPolishModalOpen,
+    setIsPolishModalOpen,
+    polishRequirements,
+    setPolishRequirements,
+    setCurrentPolishField,
+    setCurrentPolishText,
+    isGenerateModalOpen,
+    setIsGenerateModalOpen,
+    generateRequirements,
+    setGenerateRequirements,
+    setCurrentGenerateField,
+  } = aiOps;
+
+  const handleEditModalOk = useCallback(async () => {
+    addLog(`[Character] 开始保存角色卡: ${editingItem?.name || '未命名'}`);
+    try {
+      if (!editingItem) {
+        addLog(`[Character] 错误: editingItem 为空`, 'error');
+        message.error('保存失败: 编辑项为空');
+        return;
+      }
+
+      addLog(`[Character] editingItem.path: ${editingItem.path || '(空，新建模式)'}`);
+      addLog(`[Character] 已上传图片: ${uploadedImage ? '是' : '否'}`);
+      addLog(`[Character] uploadedImageName: ${uploadedImageName || '(空)'}`);
+
+      // 处理表单数据
+      const updatedData = {
+        ...(editingContent?.data || {}),
+        name: formValues.name || '',
+        description: formValues.description || '',
+        personality: formValues.personality || '',
+        scenario: formValues.scenario || '',
+        first_mes: formValues.first_mes || '',
+        mes_example: (formValues.mes_example || '').split('\n\n').filter((item: string) => item),
+        creator_notes: formValues.creator_notes || '',
+        nickname: formValues.nickname || '',
+        source: formValues.source || '',
+        character_version: formValues.character_version || '',
+        creator: formValues.creator || '',
+        tags: (formValues.tags || '').split(/[,，]/).map((item: string) => item.trim()).filter((item: string) => item),
+        system_prompt: formValues.system_prompt || '',
+        post_history_instructions: formValues.post_history_instructions || '',
+        alternate_greetings: (formValues.alternate_greetings || '').split('\n\n').filter((item: string) => item),
+        group_only_greetings: formValues.group_only_greetings || ''
+      };
+
+      addLog(`[Character] 处理后的表单数据字段数: ${Object.keys(updatedData).length}`);
+
+      const updatedContent = {
+        ...(editingContent || {}),
+        data: updatedData
+      };
+
+      // 如果是新建角色卡且有上传的图片，需要先处理图片
+      if (!editingItem.path && uploadedImage) {
+        try {
+          addLog(`[Character] === 新建角色卡流程 ===`);
+          addLog(`[Character] 步骤1: 提取图片base64数据...`);
+
+          const dataUrlPrefix = 'data:';
+          if (!uploadedImage.startsWith(dataUrlPrefix)) {
+            throw new Error('无效的图片数据格式');
+          }
+
+          const commaIndex = uploadedImage.indexOf(',');
+          if (commaIndex === -1) {
+            throw new Error('图片数据格式错误: 未找到逗号分隔符');
+          }
+          const base64String = uploadedImage.substring(commaIndex + 1);
+          addLog(`[Character] Base64字符串长度: ${base64String.length}`);
+
+          const charName = formValues.name || 'unnamed';
+          const fileName = charName.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_') + '.png';
+          addLog(`[Character] 生成的文件名: ${fileName}`);
+
+          addLog(`[Character] 步骤2: 获取角色卡目录...`);
+          const charDir = characterDir || (await window.electronAPI.setting.getCharacterDir());
+          addLog(`[Character] 角色卡目录: ${charDir}`);
+
+          if (!charDir) {
+            throw new Error('角色卡目录为空');
+          }
+
+          const fullPath = charDir.replace(/[/\\]+$/, '') + '/' + fileName;
+          addLog(`[Character] 完整保存路径: ${fullPath}`);
+
+          addLog(`[Character] 步骤3: 调用createFromImage...`);
+          const createResult = await window.electronAPI.character.createFromImage(fullPath, base64String, updatedContent);
+          addLog(`[Character] createFromImage 返回结果: ${JSON.stringify(createResult)}`);
+
+          if (!createResult.success) {
+            throw new Error(`创建角色卡PNG失败: ${createResult.error || '未知错误'}`);
+          }
+          addLog(`[Character] 角色卡PNG创建成功`);
+
+          addLog(`[Character] 步骤4: 保存世界书关联...`);
+          const relationsToSave = worldBookRelations.map(rel => ({
+            worldBookPath: rel.worldBookPath,
+            enabled: rel.enabled,
+            priority: rel.priority,
+            filterTags: rel.filterTags
+          }));
+          addLog(`[Character] 世界书关联数量: ${relationsToSave.length}`);
+
+          const relationsResult = await window.electronAPI.character.setWorldBookRelations(fullPath, relationsToSave);
+          addLog(`[Character] setWorldBookRelations 返回结果: ${JSON.stringify(relationsResult)}`);
+
+          addLog(`[Character] === 新建角色卡流程完成 ===`, 'info');
+          message.success('角色卡创建成功');
+
+          // 关闭编辑模态框（与原实现一致：清除本地状态后由父组件刷新列表）
+          setEditingItem(null);
+          setEditingContent(null);
+          setFormValues({});
+          setOriginalValues({});
+          setUploadedImage(null);
+          setUploadedImageName('');
+          onSaved(null);
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          const errorStack = error instanceof Error ? error.stack : '';
+          addLog(`[Character] === 新建角色卡失败 ===`, 'error');
+          addLog(`[Character] 错误信息: ${errorMsg}`, 'error');
+          if (errorStack) {
+            addLog(`[Character] 错误堆栈: ${errorStack.substring(0, 500)}`, 'error');
+          }
+          message.error(`保存角色卡失败: ${errorMsg}`);
+          throw error; // Re-throw to be caught by outer catch
+        }
+      } else if (editingItem.path) {
+        // 已有路径的编辑模式
+        addLog(`[Character] 写入文件: ${editingItem.path}`);
+        await window.electronAPI.character.write(editingItem.path, updatedContent);
+
+        const relationsToSave = worldBookRelations.map(rel => ({
+          worldBookPath: rel.worldBookPath,
+          enabled: rel.enabled,
+          priority: rel.priority,
+          filterTags: rel.filterTags
+        }));
+        await window.electronAPI.character.setWorldBookRelations(editingItem.path, relationsToSave);
+
+        addLog(`[Character] 角色卡编辑保存成功: ${editingItem.name}`, 'info');
+        message.success('编辑成功');
+
+        setEditingItem(null);
+        setEditingContent(null);
+        setFormValues({});
+        setOriginalValues({});
+        setUploadedImage(null);
+        setUploadedImageName('');
+        onSaved(editingItem.path);
+      } else {
+        // 新建角色卡但没有上传图片
+        message.warning('请上传一张PNG格式的图片作为角色卡载体');
+      }
+    } catch (error) {
+      // 检查是否已经处理过的错误（从内层重新抛出的）
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      addLog(`[Character] === 保存角色卡异常 ===`, 'error');
+      addLog(`[Character] 编辑项: ${editingItem?.name || '未命名'}`, 'error');
+      addLog(`[Character] 编辑项路径: ${editingItem?.path || '(空，新建)'}`, 'error');
+      addLog(`[Character] 错误信息: ${errorMsg}`, 'error');
+      if (error instanceof Error && error.stack) {
+        addLog(`[Character] 错误堆栈: ${error.stack.substring(0, 500)}`, 'error');
+      }
+
+      // 只有当错误信息还没有被内层处理时才显示message
+      if (!errorMsg.includes('请上传') && !errorMsg.includes('新建角色卡')) {
+        message.error(`保存角色卡失败: ${errorMsg}`);
+      }
+    }
+  }, [
+    addLog, characterDir, editingContent, editingItem, formValues, onSaved,
+    originalValues, setEditingContent, setEditingItem, setFormValues,
+    setOriginalValues, setUploadedImage, setUploadedImageName, uploadedImage,
+    uploadedImageName, worldBookRelations,
+  ]);
+
+  const handleFileInputChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setImageUploadLoading(true);
+      try {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          setUploadedImage(ev.target?.result as string);
+          setUploadedImageName(file.name);
+          setImageUploadLoading(false);
+        };
+        reader.onerror = () => {
+          message.error('图片读取失败');
+          setImageUploadLoading(false);
+        };
+        reader.readAsDataURL(file);
+      } catch (error) {
+        message.error('图片读取失败');
+        setImageUploadLoading(false);
+      }
+    }
+    if (e.target) e.target.value = '';
+  }, [setUploadedImage, setUploadedImageName]);
+
+  const handleRemoveImage = useCallback(() => {
+    setUploadedImage(null);
+    setUploadedImageName('');
+  }, [setUploadedImage, setUploadedImageName]);
+
+  const handlePolishModalClose = useCallback(() => {
+    if (!polishingField) {
+      setIsPolishModalOpen(false);
+      setCurrentPolishField(null);
+      setCurrentPolishText('');
+      setPolishRequirements('');
+    }
+  }, [polishingField, setIsPolishModalOpen, setCurrentPolishField, setCurrentPolishText, setPolishRequirements]);
+
+  const handlePolishModalCancel = useCallback(() => {
+    setIsPolishModalOpen(false);
+    setCurrentPolishField(null);
+    setCurrentPolishText('');
+    setPolishRequirements('');
+  }, [setIsPolishModalOpen, setCurrentPolishField, setCurrentPolishText, setPolishRequirements]);
+
+  const handleGenerateModalClose = useCallback(() => {
+    if (!generatingField) {
+      setIsGenerateModalOpen(false);
+      setCurrentGenerateField(null);
+      setGenerateRequirements('');
+    }
+  }, [generatingField, setIsGenerateModalOpen, setCurrentGenerateField, setGenerateRequirements]);
+
+  const handleGenerateModalCancel = useCallback(() => {
+    setIsGenerateModalOpen(false);
+    setCurrentGenerateField(null);
+    setGenerateRequirements('');
+  }, [setIsGenerateModalOpen, setCurrentGenerateField, setGenerateRequirements]);
+
+  const fieldEditorCommonProps = useMemo(() => ({
+    onTranslate: handleTranslate,
+    onPolish: handlePolish,
+    onGenerate: openGenerateModal,
+    onRestore: handleRestore,
+    onCancelAIRequest: handleCancelAIRequest,
+    translatingField,
+    polishingField,
+    generatingField,
+  }), [handleTranslate, handlePolish, openGenerateModal, handleRestore, handleCancelAIRequest, translatingField, polishingField, generatingField]);
+
+  const setField = useCallback((field: string) => (value: any) => {
+    setFormValues((prev: any) => ({ ...prev, [field]: value }));
+  }, [setFormValues]);
+
+  return (
+    <>
+      <Modal
+        title={`编辑角色卡: ${editingItem?.name}`}
+        open={open}
+        onCancel={onCancel}
+        onOk={handleEditModalOk}
+        width={1200}
+        style={{
+          backgroundColor: 'var(--bg-color, #fff)',
+          color: 'var(--text-color, #000)'
+        }}
+      >
+        <div style={{ maxHeight: 600, overflowY: 'auto' }}>
+          {/* 图片上传区域 */}
+          <div style={{ marginBottom: 20 }}>
+            <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1890ff' }}>角色图片（必需）</label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              style={{ display: 'none' }}
+              onChange={handleFileInputChange}
+            />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+              {uploadedImage ? (
+                <>
+                  <img
+                    src={uploadedImage}
+                    alt="角色图片"
+                    style={{ width: 80, height: 80, borderRadius: 8, objectFit: 'cover', border: '1px solid var(--border-base, #333)' }}
+                  />
+                  <div>
+                    <div style={{ color: 'var(--text-primary, #ffffff)', marginBottom: 4 }}>
+                      {uploadedImageName}
+                    </div>
+                    <Space>
+                      <Button
+                        size="small"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={imageUploadLoading}
+                      >
+                        {imageUploadLoading ? '加载中...' : '更换图片'}
+                      </Button>
+                      <Button
+                        size="small"
+                        danger
+                        onClick={handleRemoveImage}
+                      >
+                        移除图片
+                      </Button>
+                    </Space>
+                  </div>
+                </>
+              ) : (
+                <div>
+                  <Button
+                    icon={<PlusOutlined />}
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={imageUploadLoading}
+                  >
+                    {imageUploadLoading ? '加载图片中...' : '上传角色图片'}
+                  </Button>
+                  <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-secondary, #8c8c8c)' }}>
+                    保存角色卡需要PNG格式的图片载体
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+            <div>
+              <FieldEditor
+                label="角色名称"
+                field="name"
+                value={formValues.name}
+                onChange={setField('name')}
+                {...fieldEditorCommonProps}
+              />
+              <FieldEditor
+                label="昵称"
+                field="nickname"
+                value={formValues.nickname}
+                onChange={setField('nickname')}
+                {...fieldEditorCommonProps}
+              />
+              <FieldEditor
+                label="来源"
+                field="source"
+                value={formValues.source}
+                onChange={setField('source')}
+                {...fieldEditorCommonProps}
+              />
+              <FieldEditor
+                label="创建者"
+                field="creator"
+                value={formValues.creator}
+                onChange={setField('creator')}
+                {...fieldEditorCommonProps}
+              />
+              <FieldEditor
+                label="版本信息"
+                field="character_version"
+                value={formValues.character_version}
+                onChange={setField('character_version')}
+                {...fieldEditorCommonProps}
+              />
+              <FieldEditor
+                label="标签（用逗号分隔）"
+                field="tags"
+                value={formValues.tags}
+                onChange={setField('tags')}
+                {...fieldEditorCommonProps}
+              />
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1890ff' }}>仅群组问候</label>
+                <Checkbox
+                  checked={formValues.group_only_greetings}
+                  onChange={(e) => setFormValues({ ...formValues, group_only_greetings: e.target.checked })}
+                >
+                  仅群组问候
+                </Checkbox>
+              </div>
+            </div>
+            <div>
+              <FieldEditor
+                label="个性"
+                field="personality"
+                value={formValues.personality}
+                onChange={setField('personality')}
+                inputType="textarea"
+                rows={4}
+                showGenerate
+                {...fieldEditorCommonProps}
+              />
+              <FieldEditor
+                label="场景"
+                field="scenario"
+                value={formValues.scenario}
+                onChange={setField('scenario')}
+                inputType="textarea"
+                rows={4}
+                showGenerate
+                {...fieldEditorCommonProps}
+              />
+            </div>
+          </div>
+
+          <FieldEditor
+            label="描述"
+            field="description"
+            value={formValues.description}
+            onChange={setField('description')}
+            inputType="textarea"
+            rows={6}
+            showGenerate
+            {...fieldEditorCommonProps}
+          />
+
+          <FieldEditor
+            label="初始消息"
+            field="first_mes"
+            value={formValues.first_mes}
+            onChange={setField('first_mes')}
+            inputType="textarea"
+            rows={4}
+            showGenerate
+            {...fieldEditorCommonProps}
+          />
+
+          <FieldEditor
+            label="示例消息（每条消息占一行）"
+            field="mes_example"
+            value={formValues.mes_example}
+            onChange={setField('mes_example')}
+            inputType="textarea"
+            rows={6}
+            showGenerate
+            {...fieldEditorCommonProps}
+          />
+
+          <FieldEditor
+            label="系统提示"
+            field="system_prompt"
+            value={formValues.system_prompt}
+            onChange={setField('system_prompt')}
+            inputType="textarea"
+            rows={4}
+            showGenerate
+            {...fieldEditorCommonProps}
+          />
+
+          <FieldEditor
+            label="历史记录后指令"
+            field="post_history_instructions"
+            value={formValues.post_history_instructions}
+            onChange={setField('post_history_instructions')}
+            inputType="textarea"
+            rows={4}
+            showGenerate
+            {...fieldEditorCommonProps}
+          />
+
+          <FieldEditor
+            label="替代问候（每条问候占一行）"
+            field="alternate_greetings"
+            value={formValues.alternate_greetings}
+            onChange={setField('alternate_greetings')}
+            inputType="textarea"
+            rows={4}
+            showGenerate
+            {...fieldEditorCommonProps}
+          />
+
+          <FieldEditor
+            label="创建者笔记"
+            field="creator_notes"
+            value={formValues.creator_notes}
+            onChange={setField('creator_notes')}
+            inputType="textarea"
+            rows={6}
+            showGenerate
+            {...fieldEditorCommonProps}
+          />
+
+          <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid var(--border-color, #e8e8e8)' }}>
+            <WorldBookRelationPanel
+              characterId={editingItem?.path || ''}
+              relations={worldBookRelations}
+              availableWorldBooks={worldBooks}
+              onChange={setWorldBookRelations}
+            />
+          </div>
+        </div>
+      </Modal>
+
+      {/* AI润色要求模态框 */}
+      <Modal
+        title="AI润色"
+        open={isPolishModalOpen}
+        onCancel={handlePolishModalClose}
+        closable={!polishingField}
+        maskClosable={!polishingField}
+        footer={polishingField ? [
+          <Button key="interrupt" danger icon={<StopOutlined />} onClick={handleCancelAIRequest}>
+            中断请求
+          </Button>
+        ] : [
+          <Button key="cancel" onClick={handlePolishModalCancel}>
+            取消
+          </Button>,
+          <Button key="ok" type="primary" onClick={performPolish}>
+            开始润色
+          </Button>
+        ]}
+      >
+        <div>
+          <p>请输入润色要求（例如：风格偏向可爱、更加正式、增加细节等）：</p>
+          <Input.TextArea
+            rows={4}
+            placeholder="请输入润色要求"
+            value={polishRequirements}
+            onChange={(e) => setPolishRequirements(e.target.value)}
+            autoFocus
+            disabled={polishingField !== null}
+          />
+        </div>
+      </Modal>
+
+      {/* AI生成指导模态框 */}
+      <Modal
+        title="AI生成"
+        open={isGenerateModalOpen}
+        onCancel={handleGenerateModalClose}
+        closable={!generatingField}
+        maskClosable={!generatingField}
+        footer={generatingField ? [
+          <Button key="interrupt" danger icon={<StopOutlined />} onClick={handleCancelAIRequest}>
+            中断请求
+          </Button>
+        ] : [
+          <Button key="cancel" onClick={handleGenerateModalCancel}>
+            取消
+          </Button>,
+          <Button key="ok" type="primary" onClick={performGenerate}>
+            确认生成
+          </Button>
+        ]}
+      >
+        <div>
+          <p>请输入生成要求（例如：风格偏向可爱、更加正式、增加细节等）：</p>
+          <Input.TextArea
+            rows={4}
+            placeholder="请输入生成要求（选填，如：风格偏向正式、增加细节描述等）"
+            value={generateRequirements}
+            onChange={(e) => setGenerateRequirements(e.target.value)}
+            autoFocus
+            disabled={generatingField !== null}
+          />
+        </div>
+      </Modal>
+    </>
+  );
+};
+
+export default React.memo(CharacterEditModal);

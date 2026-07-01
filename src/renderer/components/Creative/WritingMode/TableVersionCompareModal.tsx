@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Modal, Table, Button, Space, Typography, Tag, Statistic, Row, Col, Input, message, Tooltip } from 'antd';
-import { EditOutlined, SaveOutlined, CloseOutlined, CheckOutlined, RollbackOutlined } from '@ant-design/icons';
-import type { TableOrganizeVersionSnapshot, TableOrganizeChangeRecord } from '../../../../shared/types/writing.types';
+import { Modal, Table, Button, Tabs, Typography, Tag, Statistic, Row, Col, Input, message, Tooltip, theme } from 'antd';
+import { EditOutlined, CheckOutlined, SwapOutlined } from '@ant-design/icons';
+import type { TableOrganizeVersionSnapshot } from '../../../../shared/types/writing.types';
 
 const { Text, Title } = Typography;
-const { TextArea } = Input;
 
 interface TableVersionCompareModalProps {
   visible: boolean;
@@ -22,6 +21,64 @@ interface CellChange {
   newValue: any;
 }
 
+// 单元格内容组件：截断 + hover tooltip
+const CellContent: React.FC<{
+  text: any;
+  isAdded?: boolean;
+  isModified?: boolean;
+  isDeleted?: boolean;
+  editMode?: boolean;
+  isEditing?: boolean;
+  editValue?: string;
+  onEditStart?: () => void;
+  onEditChange?: (v: string) => void;
+  onEditSave?: () => void;
+  token: any;
+}> = ({ text, isAdded, isModified, isDeleted, editMode, isEditing, editValue, onEditStart, onEditChange, onEditSave, token }) => {
+  const displayText = String(text ?? '');
+  const maxLen = 30;
+  const isTruncated = displayText.length > maxLen;
+
+  if (isEditing) {
+    return (
+      <Input
+        value={editValue}
+        onChange={e => onEditChange?.(e.target.value)}
+        onBlur={onEditSave}
+        onPressEnter={onEditSave}
+        autoFocus
+        size="small"
+      />
+    );
+  }
+
+  const bgColor = isAdded ? token.colorSuccessBg : isModified ? token.colorWarningBg : isDeleted ? token.colorErrorBg : 'transparent';
+  const borderLeft = isAdded ? `3px solid ${token.colorSuccess}` : isDeleted ? `3px solid ${token.colorError}` : 'none';
+
+  const cell = (
+    <div
+      style={{
+        backgroundColor: bgColor,
+        padding: '4px 8px',
+        borderLeft,
+        cursor: editMode ? 'pointer' : 'default',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+        maxWidth: 200,
+      }}
+      onDoubleClick={() => editMode && onEditStart?.()}
+    >
+      {displayText}
+    </div>
+  );
+
+  if (isTruncated) {
+    return <Tooltip title={displayText} mouseEnterDelay={0.3}>{cell}</Tooltip>;
+  }
+  return cell;
+};
+
 const TableVersionCompareModal: React.FC<TableVersionCompareModalProps> = ({
   visible,
   projectId,
@@ -33,11 +90,13 @@ const TableVersionCompareModal: React.FC<TableVersionCompareModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [editedData, setEditedData] = useState<any>(null);
+  const [activeSheet, setActiveSheet] = useState<string>('');
   const [editingCell, setEditingCell] = useState<{ rowKey: string; colKey: string } | null>(null);
   const [editValue, setEditValue] = useState('');
   const [confirmLoading, setConfirmLoading] = useState(false);
+  const [confirmModalVisible, setConfirmModalVisible] = useState(false);
+  const { token } = theme.useToken();
 
-  // 加载版本快照
   useEffect(() => {
     if (visible && projectId) {
       loadSnapshot();
@@ -51,6 +110,7 @@ const TableVersionCompareModal: React.FC<TableVersionCompareModalProps> = ({
       if (response.success && response.snapshot) {
         setSnapshot(response.snapshot);
         setEditedData(JSON.parse(JSON.stringify(response.snapshot.newData)));
+        setActiveSheet(response.snapshot.newData.sheets?.[0] || '');
       } else {
         message.error('加载版本快照失败');
       }
@@ -65,107 +125,100 @@ const TableVersionCompareModal: React.FC<TableVersionCompareModalProps> = ({
   // 计算变更统计
   const changeStats = useMemo(() => {
     if (!snapshot) return { added: 0, modified: 0, deleted: 0, modifiedCells: [] as CellChange[] };
-
     const oldData = snapshot.originalData;
     const newData = editedData || snapshot.newData;
-    const changeRecord = snapshot.changeRecord;
-
-    // 重新计算变更（考虑用户编辑）
-    let added = 0;
-    let modified = 0;
-    let deleted = 0;
+    let added = 0, modified = 0, deleted = 0;
     const modifiedCells: CellChange[] = [];
 
     for (const sheetName of newData.sheets) {
       const oldRows = oldData.data[sheetName] || [];
       const newRows = newData.data[sheetName] || [];
-
-      // 统计新增行
       for (const row of newRows) {
-        const uniqueId = row['1'];
-        const existsInOld = oldRows.some(r => r['1'] === uniqueId);
-        if (!existsInOld && uniqueId) {
-          added++;
-        }
+        const uid = row['1'];
+        if (uid && !oldRows.some(r => r['1'] === uid)) added++;
       }
-
-      // 统计删除行
       for (const row of oldRows) {
-        const uniqueId = row['1'];
-        const existsInNew = newRows.some(r => r['1'] === uniqueId);
-        if (!existsInNew && uniqueId) {
-          deleted++;
-        }
+        const uid = row['1'];
+        if (uid && !newRows.some(r => r['1'] === uid)) deleted++;
       }
-
-      // 统计修改的单元格
       const headers = newData.headers[sheetName] || [];
       for (let i = 0; i < newRows.length; i++) {
         const newRow = newRows[i];
-        const uniqueId = newRow['1'];
-        const oldRow = oldRows.find(r => r['1'] === uniqueId);
-
+        const uid = newRow['1'];
+        const oldRow = oldRows.find(r => r['1'] === uid);
         if (oldRow) {
           for (const header of headers) {
-            const oldVal = oldRow[header];
-            const newVal = newRow[header];
-            if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) {
+            if (JSON.stringify(oldRow[header]) !== JSON.stringify(newRow[header])) {
               modified++;
-              modifiedCells.push({
-                sheetName,
-                rowIndex: i,
-                columnName: header,
-                oldValue: oldVal,
-                newValue: newVal
-              });
+              modifiedCells.push({ sheetName, rowIndex: i, columnName: header, oldValue: oldRow[header], newValue: newRow[header] });
             }
           }
         }
       }
     }
-
     return { added, modified, deleted, modifiedCells };
   }, [snapshot, editedData]);
 
-  // 检查单元格是否被修改
-  const isCellModified = (sheetName: string, rowIndex: number, columnName: string): boolean => {
-    return changeStats.modifiedCells.some(
-      c => c.sheetName === sheetName && c.rowIndex === rowIndex && c.columnName === columnName
-    );
-  };
+  // 当前 sheet 的变更统计
+  const sheetChangeStats = useMemo(() => {
+    if (!snapshot || !activeSheet) return { added: 0, modified: 0, deleted: 0 };
+    const oldData = snapshot.originalData;
+    const newData = editedData || snapshot.newData;
+    const oldRows = oldData.data[activeSheet] || [];
+    const newRows = newData.data[activeSheet] || [];
+    let added = 0, modified = 0, deleted = 0;
+    for (const row of newRows) {
+      const uid = row['1'];
+      if (uid && !oldRows.some(r => r['1'] === uid)) added++;
+    }
+    for (const row of oldRows) {
+      const uid = row['1'];
+      if (uid && !newRows.some(r => r['1'] === uid)) deleted++;
+    }
+    const headers = newData.headers[activeSheet] || [];
+    for (let i = 0; i < newRows.length; i++) {
+      const newRow = newRows[i];
+      const uid = newRow['1'];
+      const oldRow = oldRows.find(r => r['1'] === uid);
+      if (oldRow) {
+        for (const header of headers) {
+          if (JSON.stringify(oldRow[header]) !== JSON.stringify(newRow[header])) modified++;
+        }
+      }
+    }
+    return { added, modified, deleted };
+  }, [snapshot, editedData, activeSheet]);
 
-  // 检查行是否新增
+  const isCellModified = (sheetName: string, rowIndex: number, columnName: string): boolean =>
+    changeStats.modifiedCells.some(c => c.sheetName === sheetName && c.rowIndex === rowIndex && c.columnName === columnName);
+
   const isRowAdded = (sheetName: string, rowIndex: number): boolean => {
     if (!snapshot) return false;
     const oldRows = snapshot.originalData.data[sheetName] || [];
     const newRows = (editedData || snapshot.newData).data[sheetName] || [];
     const row = newRows[rowIndex];
     if (!row) return false;
-    const uniqueId = row['1'];
-    return !oldRows.some(r => r['1'] === uniqueId) && !!uniqueId;
+    const uid = row['1'];
+    return !!uid && !oldRows.some(r => r['1'] === uid);
   };
 
-  // 检查行是否删除
   const isRowDeleted = (sheetName: string, rowIndex: number): boolean => {
     if (!snapshot) return false;
     const oldRows = snapshot.originalData.data[sheetName] || [];
     const newRows = (editedData || snapshot.newData).data[sheetName] || [];
     const row = oldRows[rowIndex];
     if (!row) return false;
-    const uniqueId = row['1'];
-    return !newRows.some(r => r['1'] === uniqueId) && !!uniqueId;
+    const uid = row['1'];
+    return !!uid && !newRows.some(r => r['1'] === uid);
   };
 
-  // 开始编辑单元格
   const startEdit = (record: any, colKey: string) => {
     setEditingCell({ rowKey: record.key, colKey });
     setEditValue(record[colKey] || '');
   };
 
-  // 保存编辑
   const saveEdit = () => {
     if (!editingCell || !editedData) return;
-
     const newData = { ...editedData };
     for (const sheetName of newData.sheets) {
       const rows = [...(newData.data[sheetName] || [])];
@@ -176,235 +229,221 @@ const TableVersionCompareModal: React.FC<TableVersionCompareModalProps> = ({
         break;
       }
     }
-
     setEditedData(newData);
     setEditingCell(null);
     setEditValue('');
   };
 
-  // 确认覆盖
-  const handleConfirm = async () => {
-    Modal.confirm({
-      title: '确认覆盖原始数据',
-      content: '此操作将用新版本数据覆盖原始数据，覆盖后将无法恢复。确定要继续吗？',
-      okText: '确认覆盖',
-      cancelText: '取消',
-      onOk: async () => {
-        setConfirmLoading(true);
-        try {
-          // 如果有编辑，先保存编辑后的数据
-          if (editMode && editedData) {
-            // TODO: 保存编辑后的数据到临时存储
-            // await window.electronAPI.writing.table.updateVersionSnapshot(projectId, editedData);
-          }
-          
-          await onConfirm();
-          message.success('数据已成功覆盖');
-          onClose();
-        } catch (error) {
-          console.error('确认覆盖失败:', error);
-          message.error('确认覆盖失败');
-        } finally {
-          setConfirmLoading(false);
-        }
-      }
-    });
+  const handleConfirm = () => setConfirmModalVisible(true);
+
+  const handleConfirmOk = async () => {
+    setConfirmLoading(true);
+    try {
+      await onConfirm();
+      message.success('数据已成功覆盖');
+      setConfirmModalVisible(false);
+      onClose();
+    } catch (error) {
+      console.error('确认覆盖失败:', error);
+      message.error('确认覆盖失败');
+    } finally {
+      setConfirmLoading(false);
+    }
   };
 
-  // 渲染旧版本表格
-  const renderOldTable = () => {
-    if (!snapshot) return null;
-    const oldData = snapshot.originalData;
-    const sheets = oldData.sheets;
-    
-    return sheets.map(sheetName => {
-      const headers = oldData.headers[sheetName] || [];
-      const rows = oldData.data[sheetName] || [];
-      
-      const columns = headers.map((header, idx) => ({
-        title: header,
-        dataIndex: String(idx),
-        key: String(idx),
-        render: (text: any, record: any, rowIndex: number) => {
-          const isDeleted = isRowDeleted(sheetName, rowIndex);
+  // 构建表格列
+  const buildColumns = (sheetName: string, headers: string[], isOld: boolean) =>
+    headers.map((header, idx) => ({
+      title: header,
+      dataIndex: String(idx),
+      key: String(idx),
+      width: 150,
+      render: (text: any, record: any, rowIndex: number) => {
+        const colKey = String(idx);
+        const isEditing = editingCell?.rowKey === record.key && editingCell?.colKey === colKey;
+        if (isOld) {
           return (
-            <div style={{
-              backgroundColor: isDeleted ? '#fff1f0' : 'transparent',
-              padding: '4px 8px',
-              borderLeft: isDeleted ? '3px solid #ff4d4f' : 'none'
-            }}>
-              {text}
-            </div>
+            <CellContent
+              text={text}
+              isDeleted={isRowDeleted(sheetName, rowIndex)}
+              token={token}
+            />
           );
         }
-      }));
-
-      const dataSource = rows.map((row, idx) => ({
-        ...row,
-        key: row['1'] || `row-${idx}`
-      }));
-
-      return (
-        <div key={sheetName} style={{ marginBottom: 24 }}>
-          <Title level={5}>{sheetName}</Title>
-          <Table
-            columns={columns}
-            dataSource={dataSource}
-            pagination={false}
-            size="small"
-            scroll={{ y: 400 }}
+        return (
+          <CellContent
+            text={text}
+            isAdded={isRowAdded(sheetName, rowIndex)}
+            isModified={isCellModified(sheetName, rowIndex, colKey)}
+            editMode={editMode}
+            isEditing={isEditing}
+            editValue={editValue}
+            onEditStart={() => startEdit(record, colKey)}
+            onEditChange={setEditValue}
+            onEditSave={saveEdit}
+            token={token}
           />
-        </div>
-      );
-    });
+        );
+      },
+    }));
+
+  const renderSheetTable = (sheetName: string, data: any, isOld: boolean) => {
+    const headers = data.headers[sheetName] || [];
+    const rows = data.data[sheetName] || [];
+    const columns = buildColumns(sheetName, headers, isOld);
+    const dataSource = rows.map((row: any, idx: number) => ({ ...row, key: row['1'] || `row-${idx}` }));
+
+    return (
+      <Table
+        columns={columns}
+        dataSource={dataSource}
+        pagination={false}
+        size="small"
+        scroll={{ x: 'max-content', y: 450 }}
+        style={{ width: '100%' }}
+      />
+    );
   };
 
-  // 渲染新版本表格
-  const renderNewTable = () => {
-    if (!editedData && !snapshot) return null;
-    const data = editedData || snapshot?.newData;
-    if (!data) return null;
-    
-    const sheets = data.sheets;
-    
-    return sheets.map(sheetName => {
-      const headers = data.headers[sheetName] || [];
-      const rows = data.data[sheetName] || [];
-      
-      const columns = headers.map((header, idx) => ({
-        title: header,
-        dataIndex: String(idx),
-        key: String(idx),
-        render: (text: any, record: any, rowIndex: number) => {
-          const isAdded = isRowAdded(sheetName, rowIndex);
-          const isModified = isCellModified(sheetName, rowIndex, String(idx));
-          const isEditing = editingCell?.rowKey === record.key && editingCell?.colKey === String(idx);
-
-          if (isEditing) {
-            return (
-              <Input
-                value={editValue}
-                onChange={e => setEditValue(e.target.value)}
-                onBlur={saveEdit}
-                onPressEnter={saveEdit}
-                autoFocus
-                size="small"
-              />
-            );
+  // Sheet 页签
+  const sheetTabs = snapshot
+    ? (editedData || snapshot.newData).sheets.map((name: string) => {
+        const stats = (() => {
+          const oldRows = snapshot.originalData.data[name] || [];
+          const newRows = (editedData || snapshot.newData).data[name] || [];
+          let a = 0, m = 0, d = 0;
+          for (const row of newRows) { const uid = row['1']; if (uid && !oldRows.some(r => r['1'] === uid)) a++; }
+          for (const row of oldRows) { const uid = row['1']; if (uid && !newRows.some(r => r['1'] === uid)) d++; }
+          const headers = (editedData || snapshot.newData).headers[name] || [];
+          for (let i = 0; i < newRows.length; i++) {
+            const newRow = newRows[i];
+            const uid = newRow['1'];
+            const oldRow = oldRows.find(r => r['1'] === uid);
+            if (oldRow) {
+              for (const header of headers) {
+                if (JSON.stringify(oldRow[header]) !== JSON.stringify(newRow[header])) m++;
+              }
+            }
           }
-
-          return (
-            <div
-              style={{
-                backgroundColor: isAdded ? '#f6ffed' : isModified ? '#fffbe6' : 'transparent',
-                padding: '4px 8px',
-                borderLeft: isAdded ? '3px solid #52c41a' : 'none',
-                cursor: editMode ? 'pointer' : 'default'
-              }}
-              onDoubleClick={() => editMode && startEdit(record, String(idx))}
-            >
-              {text}
+          return { a, m, d };
+        })();
+        const hasChanges = stats.a > 0 || stats.m > 0 || stats.d > 0;
+        return {
+          key: name,
+          label: (
+            <span>
+              {name}
+              {hasChanges && (
+                <Tag style={{ marginLeft: 6, fontSize: 11 }} color={stats.a > 0 ? 'green' : stats.d > 0 ? 'red' : 'orange'}>
+                  {stats.a > 0 && `+${stats.a}`}
+                  {stats.d > 0 && ` -${stats.d}`}
+                  {stats.m > 0 && ` ~${stats.m}`}
+                </Tag>
+              )}
+            </span>
+          ),
+          children: (
+            <div style={{ display: 'flex', gap: 16, height: 520 }}>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Title level={5} style={{ margin: 0 }}>原始版本</Title>
+                  <Tag color="default">只读</Tag>
+                </div>
+                <div style={{ flex: 1, overflow: 'auto', border: `1px solid ${token.colorBorder}`, borderRadius: 6 }}>
+                  {renderSheetTable(name, snapshot.originalData, true)}
+                </div>
+              </div>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Title level={5} style={{ margin: 0 }}>新版本</Title>
+                  {editMode && <Tag color="blue">编辑中</Tag>}
+                </div>
+                <div style={{ flex: 1, overflow: 'auto', border: `1px solid ${token.colorBorder}`, borderRadius: 6 }}>
+                  {renderSheetTable(name, editedData || snapshot.newData, false)}
+                </div>
+              </div>
             </div>
-          );
-        }
-      }));
-
-      const dataSource = rows.map((row, idx) => ({
-        ...row,
-        key: row['1'] || `row-${idx}`
-      }));
-
-      return (
-        <div key={sheetName} style={{ marginBottom: 24 }}>
-          <Title level={5}>{sheetName}</Title>
-          <Table
-            columns={columns}
-            dataSource={dataSource}
-            pagination={false}
-            size="small"
-            scroll={{ y: 400 }}
-          />
-        </div>
-      );
-    });
-  };
+          ),
+        };
+      })
+    : [];
 
   return (
+    <>
     <Modal
       title="版本对比"
       open={visible}
       onCancel={onClose}
-      width="90vw"
+      width="95vw"
+      style={{ top: 20 }}
+      bodyStyle={{ padding: '16px 24px' }}
       footer={[
-        <Button key="cancel" onClick={onClose}>
-          取消
-        </Button>,
-        <Button
-          key="edit"
-          icon={<EditOutlined />}
-          onClick={() => setEditMode(!editMode)}
-        >
+        <Button key="cancel" onClick={onClose}>取消</Button>,
+        <Button key="edit" icon={<EditOutlined />} onClick={() => setEditMode(!editMode)}>
           {editMode ? '退出编辑' : '编辑模式'}
         </Button>,
-        <Button
-          key="confirm"
-          type="primary"
-          icon={<CheckOutlined />}
-          onClick={handleConfirm}
-          loading={confirmLoading}
-        >
+        <Button key="confirm" type="primary" icon={<CheckOutlined />} onClick={handleConfirm} loading={confirmLoading}>
           确认覆盖
-        </Button>
+        </Button>,
       ]}
     >
       {loading ? (
-        <div style={{ textAlign: 'center', padding: 40 }}>
-          <Text>加载中...</Text>
-        </div>
-      ) : (
+        <div style={{ textAlign: 'center', padding: 40 }}><Text>加载中...</Text></div>
+      ) : snapshot ? (
         <>
-          {/* 变更统计 */}
-          <Row gutter={16} style={{ marginBottom: 24 }}>
+          {/* 全局变更统计 */}
+          <Row gutter={16} style={{ marginBottom: 16 }}>
             <Col span={8}>
-              <Statistic
-                title="新增行数"
-                value={changeStats.added}
-                valueStyle={{ color: '#52c41a' }}
-              />
+              <Statistic title="新增行数" value={changeStats.added} valueStyle={{ color: token.colorSuccess }} />
             </Col>
             <Col span={8}>
-              <Statistic
-                title="修改单元格数"
-                value={changeStats.modified}
-                valueStyle={{ color: '#faad14' }}
-              />
+              <Statistic title="修改单元格数" value={changeStats.modified} valueStyle={{ color: token.colorWarning }} />
             </Col>
             <Col span={8}>
-              <Statistic
-                title="删除行数"
-                value={changeStats.deleted}
-                valueStyle={{ color: '#ff4d4f' }}
-              />
+              <Statistic title="删除行数" value={changeStats.deleted} valueStyle={{ color: token.colorError }} />
             </Col>
           </Row>
 
-          {/* 对比表格 */}
-          <div style={{ display: 'flex', gap: 16 }}>
-            <div style={{ flex: 1 }}>
-              <Title level={4}>原始版本</Title>
-              {renderOldTable()}
-            </div>
-            <div style={{ flex: 1 }}>
-              <Title level={4}>
-                新版本
-                {editMode && <Tag color="blue" style={{ marginLeft: 8 }}>编辑中</Tag>}
-              </Title>
-              {renderNewTable()}
-            </div>
+          {/* Sheet 页签 + 对比表格 */}
+          <Tabs
+            activeKey={activeSheet}
+            onChange={setActiveSheet}
+            items={sheetTabs}
+            tabBarExtraContent={
+              activeSheet ? (
+                <div style={{ display: 'flex', gap: 16, fontSize: 13 }}>
+                  <Text type="success">当前 Sheet 新增: {sheetChangeStats.added}</Text>
+                  <Text type="warning">修改: {sheetChangeStats.modified}</Text>
+                  <Text type="danger">删除: {sheetChangeStats.deleted}</Text>
+                </div>
+              ) : null
+            }
+          />
+
+          {/* 图例 */}
+          <div style={{ display: 'flex', gap: 24, marginTop: 12, fontSize: 12 }}>
+            <span><span style={{ display: 'inline-block', width: 12, height: 12, backgroundColor: token.colorSuccessBg, border: `2px solid ${token.colorSuccess}`, marginRight: 4, verticalAlign: 'middle' }} />新增行</span>
+            <span><span style={{ display: 'inline-block', width: 12, height: 12, backgroundColor: token.colorWarningBg, marginRight: 4, verticalAlign: 'middle' }} />修改单元格</span>
+            <span><span style={{ display: 'inline-block', width: 12, height: 12, backgroundColor: token.colorErrorBg, border: `2px solid ${token.colorError}`, marginRight: 4, verticalAlign: 'middle' }} />删除行</span>
+            <span style={{ color: token.colorTextSecondary }}>💡 内容过长时 hover 查看完整内容</span>
           </div>
         </>
-      )}
+      ) : null}
     </Modal>
+
+    {/* 二次确认弹窗 */}
+    <Modal
+      title="确认覆盖原始数据"
+      open={confirmModalVisible}
+      onOk={handleConfirmOk}
+      onCancel={() => setConfirmModalVisible(false)}
+      okText="确认覆盖"
+      cancelText="取消"
+      confirmLoading={confirmLoading}
+    >
+      <Text>此操作将用新版本数据覆盖原始数据，覆盖后将无法恢复。确定要继续吗？</Text>
+    </Modal>
+    </>
   );
 };
 

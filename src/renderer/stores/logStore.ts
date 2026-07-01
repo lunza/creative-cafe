@@ -1,39 +1,16 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
 import { useSettingStore } from './settingStore';
 
 type LogLevel = 'error' | 'warn' | 'info' | 'debug';
 type LogCategory = 'system' | 'ai' | 'setting' | 'network' | 'user' | 'other';
 
-interface LogEntry {
-  id: string;
-  timestamp: string;
-  isoTimestamp: string;
-  message: string;
-  type: LogLevel;
-  category: LogCategory;
-  details?: string;
-  stack?: string;
-  context?: any;
-}
-
 interface LogState {
-  logs: LogEntry[];
-  isLogPanelOpen: boolean;
-  unreadCount: number;
   addLog: (message: string, type?: LogLevel, options?: {
     details?: string;
     error?: Error;
     context?: any;
     category?: LogCategory;
   }) => void;
-  clearLogs: () => void;
-  toggleLogPanel: () => void;
-  setLogPanelOpen: (open: boolean) => void;
-  markAsRead: () => void;
-  filterByCategory: (category: LogCategory | 'all') => LogEntry[];
-  filterByLevel: (level: LogLevel | 'all') => LogEntry[];
-  searchLogs: (keyword: string) => LogEntry[];
 }
 
 // 日志级别优先级映射
@@ -61,14 +38,8 @@ const shouldLog = (level: LogLevel): boolean => {
   return logLevelPriority[level] >= logLevelPriority[currentLevel];
 };
 
-export const useLogStore = create<LogState>()(
-  persist(
-    (set, get) => ({
-      logs: [],
-      isLogPanelOpen: false,
-      unreadCount: 0,
-      
-      addLog: (message, type = 'info', options = {}) => {
+export const useLogStore = create<LogState>()(() => ({
+  addLog: (message, type = 'info', options = {}) => {
     const { details, error, context, category = 'other' } = options;
 
     if (!shouldLog(type)) {
@@ -109,7 +80,6 @@ export const useLogStore = create<LogState>()(
     })();
 
     const now = new Date();
-    const isoTimestamp = now.toISOString();
     const displayTime = now.toLocaleString('zh-CN', {
       year: 'numeric',
       month: '2-digit',
@@ -119,18 +89,6 @@ export const useLogStore = create<LogState>()(
       second: '2-digit',
       hour12: false
     });
-
-    const newLog: LogEntry = {
-      id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-      timestamp: displayTime,
-      isoTimestamp,
-      message: safeMessage,
-      type,
-      category,
-      details: safeDetails,
-      stack: error?.stack,
-      context
-    };
 
     const levelPrefix = `[${type.toUpperCase().padEnd(5)}]`;
     const timePrefix = `[${displayTime}]`;
@@ -163,66 +121,5 @@ export const useLogStore = create<LogState>()(
         if (contextInfo) console.debug('%cContext:', 'color: green; font-weight: bold;', contextInfo);
         break;
     }
-
-    set((state) => {
-      const newLogs = [...state.logs, newLog];
-      if (newLogs.length > 1000) {
-        newLogs.shift();
-      }
-      return {
-        logs: newLogs,
-        unreadCount: state.isLogPanelOpen ? 0 : state.unreadCount + 1
-      };
-    });
-  },
-      
-      clearLogs: () => set({ logs: [], unreadCount: 0 }),
-      
-      toggleLogPanel: () => set((state) => ({ 
-        isLogPanelOpen: !state.isLogPanelOpen,
-        unreadCount: !state.isLogPanelOpen ? 0 : state.unreadCount
-      })),
-      
-      setLogPanelOpen: (open) => set({ 
-        isLogPanelOpen: open,
-        unreadCount: open ? 0 : get().unreadCount
-      }),
-      
-      markAsRead: () => set({ unreadCount: 0 }),
-
-      filterByCategory: (category: LogCategory | 'all') => {
-        const { logs } = get();
-        if (category === 'all') {
-          return logs;
-        }
-        return logs.filter(log => log.category === category);
-      },
-
-      filterByLevel: (level: LogLevel | 'all') => {
-        const { logs } = get();
-        if (level === 'all') {
-          return logs;
-        }
-        return logs.filter(log => log.type === level);
-      },
-
-      searchLogs: (keyword: string) => {
-        const { logs } = get();
-        if (!keyword) {
-          return logs;
-        }
-        const lowerKeyword = keyword.toLowerCase();
-        return logs.filter(log => {
-          const messageMatch = log.message.toLowerCase().includes(lowerKeyword);
-          const contextMatch = log.context ? JSON.stringify(log.context).toLowerCase().includes(lowerKeyword) : false;
-          const detailsMatch = log.details ? log.details.toLowerCase().includes(lowerKeyword) : false;
-          return messageMatch || contextMatch || detailsMatch;
-        });
-      }
-    }),
-    {
-      name: 'log-storage',
-      partialize: (state) => ({ logs: state.logs })
-    }
-  )
-);
+  }
+}));

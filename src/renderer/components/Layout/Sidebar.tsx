@@ -1,164 +1,59 @@
 import React from 'react';
 import { Layout, Menu, Button, Tooltip } from 'antd';
 import {
-  DashboardOutlined,
-  SettingOutlined,
-  BookOutlined,
-  UserOutlined,
-  ToolOutlined,
-  RocketOutlined,
   MenuFoldOutlined,
-  MenuUnfoldOutlined,
-  AppstoreOutlined,
-  ThunderboltOutlined,
-  DatabaseOutlined,
-  FileTextOutlined,
-  EditOutlined,
-  MessageOutlined
+  MenuUnfoldOutlined
 } from '@ant-design/icons';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingStore } from '../../stores/settingStore';
 import { AppSetting } from '../../settings';
+import { getMenuRoutes, RouteConfig } from '../../routeConfig';
 import './Sidebar.css';
 
 const { Sider } = Layout;
+
+/**
+ * 根据 RouteConfig 构建 antd Menu item。
+ * devOnly 项追加 DEV 徽标；子项的徽标样式略小，保持原视觉行为。
+ */
+function buildMenuItem(route: RouteConfig, isChild = false): any {
+  const Icon = route.icon;
+  const iconEl = <Icon />;
+
+  let label: React.ReactNode = route.label;
+  if (route.devOnly) {
+    const badgeStyle: React.CSSProperties = isChild
+      ? { marginLeft: 4, fontSize: 9, padding: '0px 3px', background: '#faad14', color: '#fff', borderRadius: 2 }
+      : { marginLeft: 4, fontSize: 10, padding: '1px 4px', background: '#faad14', color: '#fff', borderRadius: 2 };
+    label = (
+      <span>
+        {route.label}
+        <span className="dev-menu-badge" style={badgeStyle}>
+          DEV
+        </span>
+      </span>
+    );
+  }
+
+  return {
+    key: route.key,
+    icon: iconEl,
+    label,
+    children: route.children?.map((child) => buildMenuItem(child, true))
+  };
+}
 
 const Sidebar: React.FC = () => {
   const { activeTab, setActiveTab, sidebarCollapsed, toggleSidebar, theme } = useUIStore();
   const { setting } = useSettingStore();
   const debugMode = setting?.debugMode || false;
 
-  const stableMenuItems = [
-    {
-      key: 'dashboard',
-      icon: <DashboardOutlined />,
-      label: '仪表盘'
-    },
-    {
-      key: 'chat',
-      icon: <MessageOutlined />,
-      label: '创作中心'
-    },
-    {
-      key: 'creative',
-      icon: <RocketOutlined />,
-      label: '创意管理'
-    },
-    {
-      key: 'worldbook',
-      icon: <BookOutlined />,
-      label: '世界书'
-    },
-    {
-      key: 'avatar',
-      icon: <ThunderboltOutlined />,
-      label: '用户人设'
-    },
-    {
-      key: 'character',
-      icon: <UserOutlined />,
-      label: '角色卡'
-    },
-    {
-      key: 'memory',
-      icon: <DatabaseOutlined />,
-      label: '记忆管理'
-    },
-    {
-      key: 'knowledge',
-      icon: <FileTextOutlined />,
-      label: '知识库'
-    },
-    {
-      key: 'settings',
-      icon: <SettingOutlined />,
-      label: '设置'
-    }
-  ];
-
-  const devMenuItems = [
-    {
-      key: 'prompt-optimizer',
-      icon: <RocketOutlined />,
-      label: (
-        <span>
-          提示词优化
-          <span className="dev-menu-badge" style={{ marginLeft: 4, fontSize: 10, padding: '1px 4px', background: '#faad14', color: '#fff', borderRadius: 2 }}>
-            DEV
-          </span>
-        </span>
-      )
-    },
-    {
-      key: 'plugin',
-      icon: <AppstoreOutlined />,
-      label: (
-        <span>
-          插件管理
-          <span className="dev-menu-badge" style={{ marginLeft: 4, fontSize: 10, padding: '1px 4px', background: '#faad14', color: '#fff', borderRadius: 2 }}>
-            DEV
-          </span>
-        </span>
-      )
-    },
-    {
-      key: 'test',
-      icon: <ToolOutlined />,
-      label: (
-        <span>
-          测试
-          <span className="dev-menu-badge" style={{ marginLeft: 4, fontSize: 10, padding: '1px 4px', background: '#faad14', color: '#fff', borderRadius: 2 }}>
-            DEV
-          </span>
-        </span>
-      ),
-      children: [
-        {
-          key: 'test-vector',
-          icon: <DatabaseOutlined />,
-          label: (
-            <span>
-              向量化测试
-              <span className="dev-menu-badge" style={{ marginLeft: 4, fontSize: 9, padding: '0px 3px', background: '#faad14', color: '#fff', borderRadius: 2 }}>
-                DEV
-              </span>
-            </span>
-          )
-        },
-        {
-          key: 'document-vector',
-          icon: <FileTextOutlined />,
-          label: (
-            <span>
-              文档向量化
-              <span className="dev-menu-badge" style={{ marginLeft: 4, fontSize: 9, padding: '0px 3px', background: '#faad14', color: '#fff', borderRadius: 2 }}>
-                DEV
-              </span>
-            </span>
-          )
-        },
-        {
-          key: 'test-markdown',
-          icon: <EditOutlined />,
-          label: (
-            <span>
-              Markdown 测试
-              <span className="dev-menu-badge" style={{ marginLeft: 4, fontSize: 9, padding: '0px 3px', background: '#faad14', color: '#fff', borderRadius: 2 }}>
-                DEV
-              </span>
-            </span>
-          )
-        }
-      ]
-    }
-  ];
-
-  const menuItems = [...stableMenuItems, ...(debugMode ? devMenuItems : [])];
+  const menuRoutes = getMenuRoutes(debugMode);
+  const menuItems = menuRoutes.map((route) => buildMenuItem(route, false));
 
   // 根据主题设置背景色
   const isDark = theme === 'dark';
   const bgColor = isDark ? '#141414' : '#ffffff';
-  const textColor = isDark ? '#ffffff' : '#000000';
 
   return (
     <Sider
@@ -168,18 +63,18 @@ const Sidebar: React.FC = () => {
       className="sidebar"
       theme={isDark ? 'dark' : 'light'}
       width={240}
-      style={{ 
+      style={{
         background: bgColor,
         boxShadow: isDark ? '2px 0 8px rgba(0,0,0,0.3)' : '2px 0 8px rgba(0,0,0,0.05)'
       }}
     >
       <div className="sidebar-header" style={{ background: bgColor }}>
-        <Tooltip 
+        <Tooltip
           title={
             <div>
               <p>Creative-Cafe: v{AppSetting.version}</p>
             </div>
-          } 
+          }
           placement="right"
         >
           <div className="sidebar-logo" style={{ cursor: 'pointer' }}>

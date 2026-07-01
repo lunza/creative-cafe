@@ -3,7 +3,9 @@ import path from 'path';
 import { BrowserWindow } from 'electron';
 import { getUserDataPath } from '../utils/appPath';
 import { getStorageService } from './storageService';
+import { aiConfigProvider } from './ai/AIConfigProvider';
 import { textSplitterService } from './TextSplitterService';
+import { SSEStreamParser } from './ai/SSEStreamParser';
 import {
   WritingStyleResource,
   WritingStyleAnalysis,
@@ -20,6 +22,10 @@ const ALLOWED_EXTENSIONS = ['.txt'];
 export class WritingStyleLearningService {
   private activeLearningTasks: Map<string, AbortController> = new Map();
   private currentProgress: WritingStyleProgress | null = null;
+  /**
+   * SSE 流式响应解析器（统一复用，避免本类重复实现 readStreamResponse/parseSSELine）
+   */
+  private readonly streamParser: SSEStreamParser = new SSEStreamParser();
 
   private getWritingStylesDir(): string {
     const dataDir = path.join(getUserDataPath(), 'data');
@@ -31,82 +37,6 @@ export class WritingStyleLearningService {
       fs.mkdirSync(writingDir, { recursive: true });
     }
     return path.join(writingDir, 'writing-styles');
-  }
-
-  private async getBaseUrl(): Promise<string | undefined> {
-    try {
-      const storageService = getStorageService();
-      const settings = storageService.getSettings();
-      
-      const engines = settings?.aiEngines || [];
-      if (engines.length > 0) {
-        const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
-        return activeEngine?.api_url;
-      }
-      
-      return settings?.ai?.baseUrl || settings?.ai?.apiBaseUrl || settings?.baseUrl;
-    } catch (error) {
-      console.error('[WritingStyleLearningService] getBaseUrl error:', error);
-      return undefined;
-    }
-  }
-
-  private async getApiKey(): Promise<string | undefined> {
-    try {
-      const storageService = getStorageService();
-      const settings = storageService.getSettings();
-      
-      const engines = settings?.aiEngines || [];
-      if (engines.length > 0) {
-        const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
-        return activeEngine?.api_key;
-      }
-      
-      return settings?.ai?.apiKey || settings?.ai?.apiToken || settings?.apiKey;
-    } catch (error) {
-      console.error('[WritingStyleLearningService] getApiKey error:', error);
-      return undefined;
-    }
-  }
-
-  private async getApiKeyTransmission(): Promise<string> {
-    try {
-      const storageService = getStorageService();
-      const settings = storageService.getSettings();
-      
-      const engines = settings?.aiEngines || [];
-      if (engines.length > 0) {
-        const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
-        return activeEngine?.api_key_transmission || 'body';
-      }
-      
-      return 'body';
-    } catch (error) {
-      console.error('[WritingStyleLearningService] getApiKeyTransmission error:', error);
-      return 'body';
-    }
-  }
-
-  private async getModelName(): Promise<string> {
-    try {
-      const storageService = getStorageService();
-      const settings = storageService.getSettings();
-      
-      const engines = settings?.aiEngines || [];
-      if (engines.length > 0) {
-        const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
-        const engineModel = activeEngine?.model_name;
-        if (engineModel) return engineModel;
-      }
-      
-      throw new Error('未配置 AI 模型名称，请在设置中配置 AI 引擎');
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('未配置 AI 模型名称')) {
-        throw error;
-      }
-      console.error('[WritingStyleLearningService] getModelName error:', error);
-      throw new Error('未配置 AI 模型名称，请在设置中配置 AI 引擎');
-    }
   }
 
   private async getTemperature(): Promise<number> {
@@ -152,24 +82,6 @@ export class WritingStyleLearningService {
       }
       console.error('[WritingStyleLearningService] getMaxTokens error:', error);
       throw new Error('未配置 AI 最大令牌数，请在设置中配置 AI 引擎');
-    }
-  }
-
-  private async getEngineSystemPrompt(): Promise<string> {
-    try {
-      const storageService = getStorageService();
-      const settings = storageService.getSettings();
-      
-      const engines = settings?.aiEngines || [];
-      if (engines.length > 0) {
-        const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
-        return activeEngine?.system_prompt || '';
-      }
-      
-      return '';
-    } catch (error) {
-      console.error('[WritingStyleLearningService] getEngineSystemPrompt error:', error);
-      return '';
     }
   }
 
@@ -242,16 +154,20 @@ export class WritingStyleLearningService {
   }
 
   async analyzeChunk(text: string, chunkIndex: number, abortSignal?: AbortSignal): Promise<WritingStyleChunkAnalysis> {
-    const baseUrl = await this.getBaseUrl();
-    const apiKey = await this.getApiKey();
-    const apiKeyTransmission = await this.getApiKeyTransmission();
-    const modelName = await this.getModelName();
+    const aiConfig = aiConfigProvider.getAIConfig();
+    const baseUrl = aiConfig.baseUrl;
+    const apiKey = aiConfig.apiKey;
+    const apiKeyTransmission = aiConfig.apiKeyTransmission;
+    const engineSystemPrompt = aiConfig.systemPrompt;
+    const modelName = aiConfig.modelName;
     const temperature = await this.getTemperature();
     const maxTokens = await this.getMaxTokens();
-    const engineSystemPrompt = await this.getEngineSystemPrompt();
 
     if (!baseUrl) {
       throw this.createError('AI_SERVICE_UNAVAILABLE', '未配置 AI 服务地址');
+    }
+    if (!modelName) {
+      throw this.createError('AI_SERVICE_UNAVAILABLE', '未配置 AI 模型名称，请在设置中配置 AI 引擎');
     }
 
     const systemPrompt = `你是一位专业的文学分析师，擅长分析各种文本的写作风格。请仔细分析以下文本片段，并从以下几个维度进行详细分析：
@@ -328,85 +244,18 @@ ${text}
     return this.parseChunkAnalysis(rawContent, chunkIndex);
   }
 
+  /**
+   * 读取流式响应并累积完整内容
+   *
+   * 实现说明：
+   * - SSE 行解析、buffer 拼接、`[DONE]` 跳过、容错回退等逻辑全部委托给 `SSEStreamParser`
+   * - 本服务不需要流式回调（chunk-by-chunk），仅返回完整内容
+   * - 行为与原 readStreamResponse 一致：返回完整内容字符串
+   */
   private async readStreamResponse(response: Response, abortSignal?: AbortSignal): Promise<string> {
-    const reader = response.body?.getReader();
-    if (!reader) {
-      throw new Error('Stream reader not available');
-    }
-
-    const decoder = new TextDecoder();
-    let accumulatedData = '';
-    let fullContent = '';
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value, { stream: true });
-        accumulatedData += chunk;
-
-        const lines = accumulatedData.split('\n');
-        const dataLines = lines.filter(line => {
-          const trimmed = line.trim();
-          return trimmed.startsWith('data: ') && trimmed.substring(6).trim() !== '[DONE]';
-        });
-
-        const completeDataLines = dataLines.length > 0 ? dataLines.slice(0, -1) : [];
-
-        for (const line of completeDataLines) {
-          const parsed = this.parseSSELine(line);
-          if (parsed) {
-            fullContent += parsed;
-          }
-        }
-      }
-
-      if (accumulatedData.length > 0) {
-        const lines = accumulatedData.split('\n');
-        const dataLines = lines.filter(line => {
-          const trimmed = line.trim();
-          return trimmed.startsWith('data: ') && trimmed.substring(6).trim() !== '[DONE]';
-        });
-
-        for (const line of dataLines) {
-          const parsed = this.parseSSELine(line);
-          if (parsed) {
-            fullContent += parsed;
-          }
-        }
-      }
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        return fullContent;
-      }
-      throw error;
-    } finally {
-      reader.releaseLock();
-    }
-
-    return fullContent;
-  }
-
-  private parseSSELine(line: string): string | null {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith('data: ')) return null;
-
-    const jsonStr = trimmed.substring(6).trim();
-    if (!jsonStr || jsonStr === '[DONE]') return null;
-
-    try {
-      const parsed = JSON.parse(jsonStr);
-      const delta = parsed.choices?.[0]?.delta?.content;
-      if (delta) return delta;
-      
-      const message = parsed.choices?.[0]?.message?.content;
-      if (message) return message;
-      
-      return null;
-    } catch {
-      return null;
-    }
+    // 本服务对 SSE 流式 chunk 无实时回调需求，传一个 no-op 回调即可
+    const result = await this.streamParser.parseStream(response, () => {}, abortSignal);
+    return result.content;
   }
 
   private parseChunkAnalysis(rawContent: string, chunkIndex: number): WritingStyleChunkAnalysis {
@@ -447,16 +296,20 @@ ${text}
   }
 
   async integrateResults(chunkAnalyses: WritingStyleChunkAnalysis[], abortSignal?: AbortSignal): Promise<WritingStyleAnalysis> {
-    const baseUrl = await this.getBaseUrl();
-    const apiKey = await this.getApiKey();
-    const apiKeyTransmission = await this.getApiKeyTransmission();
-    const modelName = await this.getModelName();
+    const aiConfig = aiConfigProvider.getAIConfig();
+    const baseUrl = aiConfig.baseUrl;
+    const apiKey = aiConfig.apiKey;
+    const apiKeyTransmission = aiConfig.apiKeyTransmission;
+    const engineSystemPrompt = aiConfig.systemPrompt;
+    const modelName = aiConfig.modelName;
     const temperature = await this.getTemperature();
     const maxTokens = await this.getMaxTokens();
-    const engineSystemPrompt = await this.getEngineSystemPrompt();
 
     if (!baseUrl) {
       throw this.createError('AI_SERVICE_UNAVAILABLE', '未配置 AI 服务地址');
+    }
+    if (!modelName) {
+      throw this.createError('AI_SERVICE_UNAVAILABLE', '未配置 AI 模型名称，请在设置中配置 AI 引擎');
     }
 
     const summaries = chunkAnalyses.map((a, i) => 

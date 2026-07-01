@@ -203,16 +203,11 @@ const CharacterCardGenerateModal: React.FC<CharacterCardGenerateModalProps> = ({
     setIsGenerating(true);
     isGeneratingRef.current = true;
     try {
-      const systemPrompt = `你是一个专业的SillyTavern角色卡创建助手。你的任务是根据用户提供的参考信息和参数，生成高质量的角色卡数据。
-
-【SillyTavern角色卡标准】
-- 角色卡应包含完整的角色信息，使AI能够准确扮演该角色
-- 内容应该详细、连贯、符合逻辑
-- 使用Markdown格式（如适用）
-- 保持内容的一致性，各字段之间不应该矛盾
-
-【输出格式要求】
-你必须返回标准的JSON格式数据，包含所有必需的字段。确保JSON格式正确，可以被直接解析。`;
+      const promptResult = await window.electronAPI.prompt.build('character-card.generate', {});
+      if (!promptResult.success || !promptResult.data) {
+        throw new Error('获取提示词模板失败: ' + (promptResult.error || '未知错误'));
+      }
+      const systemPrompt = promptResult.data.systemPrompt;
 
       const userPrompt = buildGenerationPrompt();
 

@@ -2,6 +2,15 @@ import { ipcMain, app } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 
+// 旧模型名 → 新模型名迁移映射
+const MODEL_NAME_MIGRATIONS: Record<string, string> = {
+  'electroglyph/Qwen3-Embedding-0.6B-ONNX-uint8': 'onnx-community/Qwen3-Embedding-0.6B-ONNX',
+};
+
+function normalizeModelName(name: string): string {
+  return MODEL_NAME_MIGRATIONS[name] || name;
+}
+
 export class EmbeddingWorkerService {
   private modelCacheDir: string = '';
   private localModelLoaded = false;
@@ -16,6 +25,9 @@ export class EmbeddingWorkerService {
       const result = storage.get<any>('settings');
       if (result && result.vector) {
         this.vectorConfig = result.vector;
+        if (this.vectorConfig.localModel) {
+          this.vectorConfig.localModel = normalizeModelName(this.vectorConfig.localModel);
+        }
       }
     } catch (e) {
       console.warn('[EmbeddingWorker] Failed to load config:', e);
@@ -95,7 +107,7 @@ export class EmbeddingWorkerService {
   async initializeLocalModel(modelName?: string): Promise<{ success: boolean; error?: string }> {
     try {
       await this.ensureConfigLoaded();
-      const localModelName = modelName || this.vectorConfig?.localModel || 'Xenova/all-MiniLM-L6-v2';
+      const localModelName = modelName || this.vectorConfig?.localModel || 'onnx-community/Qwen3-Embedding-0.6B-ONNX';
 
       const modelPath = this.getModelLocalPath(localModelName);
 
@@ -195,7 +207,7 @@ export class EmbeddingWorkerService {
         success: true,
         vector,
         dimension: vector.length,
-        model: this.vectorConfig?.localModel || 'Xenova/all-MiniLM-L6-v2'
+        model: this.vectorConfig?.localModel || 'onnx-community/Qwen3-Embedding-0.6B-ONNX'
       };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : '未知错误' };
@@ -207,7 +219,7 @@ export class EmbeddingWorkerService {
     const startTime = Date.now();
 
     try {
-      const localModelName = modelName || this.vectorConfig?.localModel || 'Xenova/all-MiniLM-L6-v2';
+      const localModelName = modelName || this.vectorConfig?.localModel || 'onnx-community/Qwen3-Embedding-0.6B-ONNX';
       const modelPath = this.getModelLocalPath(localModelName);
 
       const fileCheck = this.validateModelFiles(modelPath);

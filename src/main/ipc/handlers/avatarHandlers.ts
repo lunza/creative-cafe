@@ -1,13 +1,6 @@
 import { ipcMain } from 'electron';
 import { avatarService } from '../../services/avatarService';
-import { getUserDataPath } from '../../utils/appPath';
-
-function resolveUserDataPlaceholder(dir: string): string {
-  if (dir.startsWith('__USER_DATA__')) {
-    return dir.replace('__USER_DATA__', getUserDataPath());
-  }
-  return dir;
-}
+import { resolveUserDataPlaceholder } from '../../utils/appPath';
 
 export function avatarHandlers() {
   ipcMain.handle('avatar:list', async () => {

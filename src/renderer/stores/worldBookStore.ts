@@ -33,6 +33,9 @@ interface WorldBookState {
   setError: (error: string | null) => void;
   setCurrentWorldBook: (data: WorldBookData | null, path: string | null) => void;
   setTags: (tags: WorldBookTag[], associations: WorldBookTagAssociation[]) => void;
+  // Task 15.3: 同步设置世界书目录路径（替代 useWorldBookFormState 中的本地 useState 副本）。
+  // 与 setDirectory 不同，本方法不调用 IPC，仅更新 store 状态。
+  setWorldBookDir: (dir: string) => void;
   clearCurrentWorldBook: () => void;
 }
 
@@ -51,6 +54,8 @@ export const useWorldBookStore = create<WorldBookState>((set, get) => ({
 
   setCurrentWorldBook: (data, path) => set({ currentWorldBook: data, currentWorldBookPath: path }),
   setTags: (tags, associations) => set({ tags, associations }),
+  // Task 15.3: 同步设置 worldBookDir，仅更新 store 状态，不调用 IPC。
+  setWorldBookDir: (dir) => set({ worldBookDir: dir }),
 
   clearCurrentWorldBook: () => set({
     currentWorldBook: null,

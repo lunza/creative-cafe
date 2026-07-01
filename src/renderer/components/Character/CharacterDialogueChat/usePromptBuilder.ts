@@ -43,32 +43,32 @@ export function usePromptBuilder(
 
   const personaRef = useMemo(() => selectedPersona, [selectedPersona?.id]);
 
-  const buildDialoguePrompt = useCallback((organizeMode?: 'sync' | 'async'): string => {
+  const buildDialoguePrompt = useCallback(async (organizeMode?: 'sync' | 'async'): Promise<string> => {
     return buildDialoguePromptPure(characterInfoRef, personaRef, organizeMode);
   }, [characterInfoRef, personaRef]);
 
-  const buildContinuationPrompt = useCallback((organizeMode?: 'sync' | 'async'): string => {
+  const buildContinuationPrompt = useCallback(async (organizeMode?: 'sync' | 'async'): Promise<string> => {
     return buildContinuationPromptPure(characterInfoRef, personaRef, organizeMode);
   }, [characterInfoRef, personaRef]);
 
-  const buildFinalPrompt = useCallback((
+  const buildFinalPrompt = useCallback(async (
     promptType: 'dialogue' | 'continuation',
     vectorContextItems: ContextVectorItem[],
     organizeMode?: 'sync' | 'async'
-  ): string => {
+  ): Promise<string> => {
     const basePrompt = promptType === 'continuation'
-      ? buildContinuationPrompt(organizeMode)
-      : buildDialoguePrompt(organizeMode);
-    return buildFinalSystemPrompt(basePrompt, vectorContextItems);
+      ? await buildContinuationPrompt(organizeMode)
+      : await buildDialoguePrompt(organizeMode);
+    return await buildFinalSystemPrompt(basePrompt, vectorContextItems);
   }, [buildDialoguePrompt, buildContinuationPrompt]);
 
-  const buildCompleteSystemPrompt = useCallback((
+  const buildCompleteSystemPrompt = useCallback(async (
     promptType: 'dialogue' | 'continuation',
     vectorContextItems: ContextVectorItem[],
     memoryTableData?: string,
     organizeMode?: 'sync' | 'async',
     tableStructure?: { sheets: string[]; headers: Record<string, string[]>; descriptions: Record<string, string> }
-  ): string => {
+  ): Promise<string> => {
     console.log('[usePromptBuilder] buildCompleteSystemPrompt 调用:');
     console.log('  - promptType:', promptType);
     console.log('  - vectorContextItems 数量:', vectorContextItems?.length || 0);
@@ -79,7 +79,7 @@ export function usePromptBuilder(
     }
     console.log('  - organizeMode:', organizeMode);
     console.log('  - tableStructure sheets:', tableStructure?.sheets);
-    const result = buildSystemPromptPure(characterInfoRef, personaRef, promptType, vectorContextItems, memoryTableData, organizeMode, tableStructure);
+    const result = await buildSystemPromptPure(characterInfoRef, personaRef, promptType, vectorContextItems, memoryTableData, organizeMode, tableStructure);
     console.log('  - 最终 system prompt 长度:', result.length);
     console.log('  - 最终 system prompt 末尾 300 字符:', result.substring(Math.max(0, result.length - 300)));
     return result;

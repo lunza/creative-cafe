@@ -1,6 +1,6 @@
-import { ipcMain, app } from 'electron';
+import { ipcMain } from 'electron';
 import { characterService, encode } from '../../services/characterService';
-import { getUserDataPath } from '../../utils/appPath';
+import { resolveUserDataPlaceholder } from '../../utils/appPath';
 import { getStorageService } from '../../services/storageService';
 import fs from 'fs/promises';
 import path from 'path';
@@ -14,19 +14,6 @@ function getConfigFilePath(characterCardPath: string): string {
   return characterCardPath.replace(new RegExp(`${ext.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`), '.json');
 }
 
-function resolveUserDataPlaceholder(dir: string): string {
-  console.log('[resolveUserDataPlaceholder] 输入路径:', dir);
-  const userDataPath = getUserDataPath();
-  console.log('[resolveUserDataPlaceholder] 用户数据目录:', userDataPath);
-  if (dir.includes('__USER_DATA__')) {
-    const resolved = dir.replace(/__USER_DATA__/g, userDataPath);
-    console.log('[resolveUserDataPlaceholder] 解析后路径:', resolved);
-    return resolved;
-  }
-  console.log('[resolveUserDataPlaceholder] 路径不含占位符,直接返回');
-  return dir;
-}
-
 export function characterHandlers() {
   // 初始化时从设置中加载角色卡路径
   try {
@@ -34,12 +21,10 @@ export function characterHandlers() {
     const settings = storageService.getSettings();
     if (settings && settings.characterPath) {
       const resolvedPath = resolveUserDataPlaceholder(settings.characterPath);
-      console.log('[characterHandlers] 从设置中加载角色卡路径:', resolvedPath);
       characterService.setCharacterDir(resolvedPath);
     } else {
       // 如果没有设置，使用默认路径
       const defaultPath = resolveUserDataPlaceholder('__USER_DATA__/data/characters');
-      console.log('[characterHandlers] 使用默认角色卡路径:', defaultPath);
       characterService.setCharacterDir(defaultPath);
     }
   } catch (error) {
@@ -82,11 +67,8 @@ export function characterHandlers() {
 
   ipcMain.handle('character:setDirectory', async (_event, dir: string) => {
     const resolvedDir = resolveUserDataPlaceholder(dir);
-    console.log('character:setDirectory called with dir:', dir);
-    console.log('character:setDirectory resolved dir:', resolvedDir);
     characterService.setCharacterDir(resolvedDir);
     const characterDir = characterService.getCharacterDir();
-    console.log('Character directory after setting:', characterDir);
     return { success: true, characterDir };
   });
 
@@ -105,19 +87,14 @@ export function characterHandlers() {
   // Character config save/load handlers
   ipcMain.handle('characterConfig:save', async (_event, characterCardId: string, config: any) => {
     try {
-      console.log('[characterConfig:save] Saving config for characterCardId:', characterCardId);
-      console.log('[characterConfig:save] Config data:', config ? JSON.stringify(config, null, 2).substring(0, 200) : 'null');
-      
       if (!characterCardId) {
         console.error('[characterConfig:save] characterCardId is empty!');
         return { success: false, error: '角色卡ID无效' };
       }
       
       const filePath = getConfigFilePath(characterCardId);
-      console.log('[characterConfig:save] File path:', filePath);
       
       await fs.writeFile(filePath, JSON.stringify(config, null, 2), 'utf-8');
-      console.log('[characterConfig:save] Successfully saved config to:', filePath);
       return { success: true };
     } catch (error) {
       console.error('[characterConfig:save] Failed to save config:', error);
@@ -129,12 +106,9 @@ export function characterHandlers() {
   ipcMain.handle('characterConfig:load', async (_event, characterCardId: string) => {
     try {
       const filePath = getConfigFilePath(characterCardId);
-      console.log('[characterConfig:load] Trying to load config from:', filePath);
       const content = await fs.readFile(filePath, 'utf-8');
-      console.log('[characterConfig:load] Successfully loaded config from:', filePath);
       return { success: true, config: JSON.parse(content) };
     } catch (error) {
-      console.log('[characterConfig:load] No saved config for:', characterCardId, error instanceof Error ? error.message : 'Unknown error');
       return { success: false, config: null };
     }
   });
@@ -153,8 +127,6 @@ export function characterHandlers() {
     characterData: any;
   }) => {
     try {
-      console.log('[character:savePNGToDirectory] Starting save:', { filename: params.filename });
-      
       const { base64Image, filename, characterData } = params;
       
       // 从base64解码为Buffer
@@ -165,7 +137,8 @@ export function characterHandlers() {
       const chunks = extract(new Uint8Array(imageBuffer));
       
       // 移除已有的chara和ccv3 chunks（如果有）
-      const tEXtChunks = chunks.filter(chunk => chunk.name === 'tEXt');
+      // 已分析但保留：png-chunks-extract 无类型声明文件，chunks 为 any[]，需显式标注 chunk
+      const tEXtChunks = chunks.filter((chunk: any) => chunk.name === 'tEXt');
       for (const tEXtChunk of tEXtChunks) {
         const chunkData = PNGtext.decode(tEXtChunk.data);
         if (chunkData.keyword.toLowerCase() === 'chara' || chunkData.keyword.toLowerCase() === 'ccv3') {
@@ -174,7 +147,6 @@ export function characterHandlers() {
       }
       
       // 创建V2格式的chara chunk
-      console.log('[character:savePNGToDirectory] V2 data:', characterData.data);
       const v2Data = JSON.stringify(characterData.data);
       const v2Base64 = Buffer.from(v2Data, 'utf8').toString('base64');
       chunks.splice(-1, 0, PNGtext.encode('chara', v2Base64));
@@ -185,33 +157,26 @@ export function characterHandlers() {
         spec_version: '3.0',
         data: characterData.data
       };
-      console.log('[character:savePNGToDirectory] V3 data:', v3Data);
       const v3Base64 = Buffer.from(JSON.stringify(v3Data), 'utf8').toString('base64');
       chunks.splice(-1, 0, PNGtext.encode('ccv3', v3Base64));
       
       // 使用png-chunks-encode重新编码PNG
       const newBuffer = Buffer.from(encode(chunks));
       
-      console.log('[character:savePNGToDirectory] PNG encoded successfully, size:', newBuffer.length);
-      
       const characterDir = characterService.getCharacterDir();
-      console.log('[character:savePNGToDirectory] Character directory:', characterDir);
       
       // 确保目录存在
       try {
         await fs.access(characterDir);
       } catch {
         await fs.mkdir(characterDir, { recursive: true });
-        console.log('[character:savePNGToDirectory] Created character directory:', characterDir);
       }
       
       // 构建完整文件路径
       const filePath = path.join(characterDir, `${filename}.png`);
-      console.log('[character:savePNGToDirectory] File path:', filePath);
       
       // 写入处理后的PNG文件
       await fs.writeFile(filePath, newBuffer);
-      console.log('[character:savePNGToDirectory] Successfully saved:', filePath);
       
       return { success: true, path: filePath };
     } catch (error) {
@@ -249,31 +214,31 @@ export function characterHandlers() {
     characterData: any;
   }) => {
     try {
-      console.log('[character:exportCharacterCard] Starting export:', { filename: params.filename });
-      
-      const { base64Image, filename, characterData } = params;
-      
+      // filename 在导出流程中未使用（保留在 params 类型中以维持 IPC 契约）
+      const { base64Image, characterData } = params;
+
       // 从base64解码为Buffer
       const base64Data = base64Image.replace(/^data:image\/png;base64,/, '');
       const imageBuffer = Buffer.from(base64Data, 'base64');
-      
+
       // 使用png-chunks-extract解析PNG chunks
       const chunks = extract(new Uint8Array(imageBuffer));
-      
+
       // 移除已有的chara和ccv3 chunks（如果有）
-      const tEXtChunks = chunks.filter(chunk => chunk.name === 'tEXt');
+      // 已分析但保留：png-chunks-extract 无类型声明文件，chunks 为 any[]，需显式标注 chunk
+      const tEXtChunks = chunks.filter((chunk: any) => chunk.name === 'tEXt');
       for (const tEXtChunk of tEXtChunks) {
         const chunkData = PNGtext.decode(tEXtChunk.data);
         if (chunkData.keyword.toLowerCase() === 'chara' || chunkData.keyword.toLowerCase() === 'ccv3') {
           chunks.splice(chunks.indexOf(tEXtChunk), 1);
         }
       }
-      
+
       // 创建V2格式的chara chunk
       const v2Data = JSON.stringify(characterData.data);
       const v2Base64 = Buffer.from(v2Data, 'utf8').toString('base64');
       chunks.splice(-1, 0, PNGtext.encode('chara', v2Base64));
-      
+
       // 创建V3格式的ccv3 chunk
       const v3Data = {
         spec: 'chara_card_v3',
@@ -282,12 +247,10 @@ export function characterHandlers() {
       };
       const v3Base64 = Buffer.from(JSON.stringify(v3Data), 'utf8').toString('base64');
       chunks.splice(-1, 0, PNGtext.encode('ccv3', v3Base64));
-      
+
       // 使用png-chunks-encode重新编码PNG
       const newBuffer = Buffer.from(encode(chunks));
-      
-      console.log('[character:exportCharacterCard] PNG encoded successfully, size:', newBuffer.length);
-      
+
       // 将编码后的PNG转回base64返回给前端
       const resultBase64 = newBuffer.toString('base64');
       

@@ -5,11 +5,23 @@ import {
   WritingErrorCode,
   NovelType,
   WritingStyle,
-  NarrativePerspective
+  NarrativePerspective,
+  ChapterOutline,
+  ChapterChunk,
+  ChunkStatus,
+  GenerationProgress,
+  ShardOutline,
+  ShardOutlineGenerationRequest,
+  ShardOutlineGenerationResult,
+  ShardContentGenerationRequest,
+  WritingResourceConfig
 } from '../../../shared/types/writing.types';
 import { promptBuilder } from './PromptBuilder';
-import { getStorageService } from '../storageService';
-import { addLog, generateNewRequestId, getCurrentRequestId } from '../memory/chatLogService';
+import { writingResourceManager } from '../WritingResourceManager';
+import { aiConfigProvider } from '../ai/AIConfigProvider';
+import { addLog, generateNewRequestId } from '../memory/chatLogService';
+import { chapterChunkService } from './ChapterChunkService';
+import { SSEStreamParser } from '../ai/SSEStreamParser';
 
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -23,6 +35,11 @@ interface ModelConfig {
 }
 
 export class ContentGenerator {
+  /**
+   * SSE 流式响应解析器（统一复用，避免本类重复实现 parseSSELine/extractContentFromRawData）
+   */
+  private readonly streamParser: SSEStreamParser = new SSEStreamParser();
+
   buildPrompt(request: ContentGenerationRequest): ChatMessage[] {
     const systemPrompt = promptBuilder.buildSystemPrompt(
       this.getNovelTypeFromRequest(request),
@@ -53,6 +70,20 @@ export class ContentGenerator {
 
     // Build base user prompt, then append optional guidance/suggestions
     let finalUserPrompt = userPrompt;
+
+    // Append chunk context for chunked generation
+    if (request.previousChunkContent) {
+      finalUserPrompt += `\n\n## 前文衔接\n${request.previousChunkContent}`;
+    }
+
+    if (request.chunkContext) {
+      const { chunkIndex, totalChunks, isLastChunk } = request.chunkContext;
+      finalUserPrompt += `\n\n## 分片信息\n`;
+      finalUserPrompt += `当前是第 ${chunkIndex + 1}/${totalChunks} 个分片`;
+      if (isLastChunk) {
+        finalUserPrompt += `（最后一个分片，请确保章节完整收尾）`;
+      }
+    }
 
     // Append generationGuidance (persistent) if provided
     if (request.generationGuidance) {
@@ -118,11 +149,12 @@ export class ContentGenerator {
     addLog(`  用户人设数量: ${(request as any).userPersonaContext?.length || 0}`, 'debug');
     addLog(`  知识库数量: ${(request as any).knowledgeContext?.length || 0}`, 'debug');
 
-    const baseUrl = await this.getBaseUrl();
-    const apiKey = await this.getApiKey();
-    const apiKeyTransmission = await this.getApiKeyTransmission();
-    const modelName = await this.getModelName(modelConfig.model);
-    const engineSystemPrompt = await this.getEngineSystemPrompt();
+    const aiConfig = aiConfigProvider.getAIConfig();
+    const baseUrl = aiConfig.baseUrl;
+    const apiKey = aiConfig.apiKey;
+    const apiKeyTransmission = aiConfig.apiKeyTransmission;
+    const engineSystemPrompt = aiConfig.systemPrompt;
+    const modelName = aiConfig.modelName || modelConfig.model;
 
     addLog(`[Stage 2/6] 参数验证`, 'debug');
     addLog(`  baseUrl: ${baseUrl || '(未配置)'}`, 'debug');
@@ -277,8 +309,6 @@ export class ContentGenerator {
     abortSignal: AbortSignal,
     onStream: (chunk: string) => void
   ): Promise<{ content: string; generationTime: number }> {
-    const startTime = Date.now();
-
     const response = await fetch(`${baseUrl}/v1/chat/completions`, {
       method: 'POST',
       headers,
@@ -295,99 +325,18 @@ export class ContentGenerator {
       );
     }
 
-    const reader = response.body?.getReader();
-    if (!reader) {
-      throw this.createError(
-        WritingErrorCode.CONTENT_GENERATION_FAILED,
-        '无法获取响应流'
-      );
-    }
-
-    const decoder = new TextDecoder('utf-8');
-    let fullContent = '';
-    let buffer = '';
-    let lastProcessedLineCount = 0;
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-
-        if (done) {
-          // 处理 buffer 中残留的不完整 SSE 数据行
-          if (buffer.trim()) {
-            buffer = buffer.trim();
-            if (buffer.startsWith('data:') && !buffer.includes('[DONE]')) {
-              const jsonStr = buffer.substring(6).trim();
-              if (jsonStr) {
-                try {
-                  const chunkData = JSON.parse(jsonStr);
-                  if (chunkData.choices?.[0]) {
-                    const content = chunkData.choices[0].delta?.content || chunkData.choices[0].message?.content || '';
-                    if (content) {
-                      fullContent += content;
-                      onStream(content);
-                    }
-                  }
-                } catch {
-                  // 忽略解析错误
-                }
-              }
-            }
-          }
-          break;
-        }
-
-        const chunk = decoder.decode(value, { stream: true });
-        buffer += chunk;
-
-        // 按行分割，保留最后一个不完整的行在 buffer 中
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith('data:') || trimmed.substring(6).trim() === '[DONE]') {
-            continue;
-          }
-
-          const jsonStr = trimmed.substring(6).trim();
-          if (!jsonStr) continue;
-
-          try {
-            const chunkData = JSON.parse(jsonStr);
-            if (chunkData.choices?.[0]) {
-              const content = chunkData.choices[0].delta?.content || chunkData.choices[0].message?.content || '';
-              if (content) {
-                fullContent += content;
-                onStream(content);
-              }
-            }
-          } catch {
-            // 忽略不完整行的解析错误
-          }
-        }
-      }
-    } finally {
-      reader.releaseLock();
-    }
-
-    // 回退提取: 仅记录日志，不再调用 onStream 避免重复
-    if (fullContent.length < 100 && buffer.length > 0) {
-      const fallbackContent = this.extractContentFromRawData(buffer);
-      if (fallbackContent.length > fullContent.length) {
-        console.log('[ContentGenerator] Using fallback content extraction (length:', fallbackContent.length, ')');
-        fullContent = fallbackContent;
-      }
-    }
-
-    const generationTime = Date.now() - startTime;
+    // SSE 行解析、buffer 拼接、`[DONE]` 跳过、容错回退等逻辑全部委托给 SSEStreamParser
+    // 本方法仅负责 fetch + 错误转换 + 将 onStream 桥接到 parser 的 onChunk 回调
+    const result = await this.streamParser.parseStream(response, onStream, abortSignal);
 
     console.log('[ContentGenerator] Stream complete:', {
-      totalContentLength: fullContent.length,
-      preview: fullContent.substring(0, 200)
+      totalContentLength: result.content.length,
+      generationTime: result.generationTime,
+      preview: result.content.substring(0, 200)
     });
 
-    return { content: fullContent, generationTime };
+    // 保持原返回结构（generationTime 由 SSEStreamParser 内部计时返回）
+    return { content: result.content, generationTime: result.generationTime };
   }
 
   /**
@@ -513,7 +462,7 @@ export class ContentGenerator {
     return `## 连贯性约束\n${constraints.join('\n')}`;
   }
 
-  private buildTableContextForPrompt(request: ContentGenerationRequest): string {
+  private buildTableContextForPrompt(request: { writingTableData?: ContentGenerationRequest['writingTableData'] }): string {
     if (!request.writingTableData) {
       return '';
     }
@@ -596,95 +545,6 @@ export class ContentGenerator {
     return perspectiveMap[perspective] || NarrativePerspective.THIRD_PERSON;
   }
 
-  private async getBaseUrl(): Promise<string | undefined> {
-    try {
-      const storageService = getStorageService();
-      const settings = storageService.getSettings();
-      
-      console.log('[ContentGenerator] getBaseUrl - settings structure:', {
-        hasAiEngines: !!settings?.aiEngines,
-        aiEnginesCount: settings?.aiEngines?.length || 0,
-        aiBaseUrl: settings?.ai?.baseUrl,
-        rawBaseUrl: settings?.baseUrl
-      });
-      
-      const engines = settings?.aiEngines || [];
-      if (engines.length > 0) {
-        const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
-        const url = activeEngine?.api_url;
-        console.log('[ContentGenerator] getBaseUrl - using engine:', activeEngine?.name, 'url:', url);
-        return url;
-      }
-      
-      return settings?.ai?.baseUrl || settings?.ai?.apiBaseUrl || settings?.baseUrl;
-    } catch (error) {
-      console.error('[ContentGenerator] getBaseUrl error:', error);
-      return undefined;
-    }
-  }
-
-  private async getApiKey(): Promise<string | undefined> {
-    try {
-      const storageService = getStorageService();
-      const settings = storageService.getSettings();
-      
-      const engines = settings?.aiEngines || [];
-      if (engines.length > 0) {
-        const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
-        const key = activeEngine?.api_key;
-        console.log('[ContentGenerator] getApiKey - using engine:', activeEngine?.name, 'hasKey:', !!key);
-        return key;
-      }
-      
-      return settings?.ai?.apiKey || settings?.ai?.apiToken || settings?.apiKey;
-    } catch (error) {
-      console.error('[ContentGenerator] getApiKey error:', error);
-      return undefined;
-    }
-  }
-
-  private async getApiKeyTransmission(): Promise<string> {
-    try {
-      const storageService = getStorageService();
-      const settings = storageService.getSettings();
-      
-      const engines = settings?.aiEngines || [];
-      if (engines.length > 0) {
-        const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
-        const transmission = activeEngine?.api_key_transmission || 'body';
-        console.log('[ContentGenerator] getApiKeyTransmission - using:', transmission);
-        return transmission;
-      }
-      
-      return 'body';
-    } catch (error) {
-      console.error('[ContentGenerator] getApiKeyTransmission error:', error);
-      return 'body';
-    }
-  }
-
-  private async getEngineSystemPrompt(): Promise<string> {
-    try {
-      const storageService = getStorageService();
-      const settings = storageService.getSettings();
-      
-      const engines = settings?.aiEngines || [];
-      if (engines.length > 0) {
-        const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
-        const prompt = activeEngine?.system_prompt || '';
-        if (prompt) {
-          console.log('[ContentGenerator] getEngineSystemPrompt - using engine system prompt, length:', prompt.length);
-        }
-        return prompt;
-      }
-      
-      return '';
-    } catch (error) {
-      console.error('[ContentGenerator] getEngineSystemPrompt error:', error);
-      return '';
-    }
-  }
-
   private enrichSystemPrompt(messages: ChatMessage[], engineSystemPrompt: string): ChatMessage[] {
     if (!engineSystemPrompt || !engineSystemPrompt.trim()) {
       return messages;
@@ -701,63 +561,6 @@ export class ContentGenerator {
     });
     
     return enriched;
-  }
-
-  private extractContentFromRawData(rawData: string): string {
-    let extracted = '';
-
-    // Strategy 1: Regex match all data: lines
-    const dataLineRegex = /^data:\s+(.+)$/gm;
-    let match;
-    while ((match = dataLineRegex.exec(rawData)) !== null) {
-      const jsonStr = match[1].trim();
-      if (jsonStr === '[DONE]') continue;
-      try {
-        const parsed = JSON.parse(jsonStr);
-        const delta = parsed.choices?.[0]?.delta?.content;
-        if (delta) extracted += delta;
-        else if (parsed.choices?.[0]?.message?.content) {
-          extracted += parsed.choices[0].message.content;
-        }
-      } catch {
-        // Skip malformed JSON
-      }
-    }
-
-    // Strategy 2: If still no content, try regex extraction of content field
-    if (!extracted) {
-      const contentRegex = /"content"\s*:\s*"([^"]*(?:\\.[^"]*)*)"/g;
-      let contentMatch;
-      while ((contentMatch = contentRegex.exec(rawData)) !== null) {
-        const rawContent = contentMatch[1];
-        extracted += rawContent.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"');
-      }
-    }
-
-    return extracted;
-  }
-
-  private async getModelName(fallbackModel: string): Promise<string> {
-    try {
-      const storageService = getStorageService();
-      const settings = storageService.getSettings();
-      
-      const engines = settings?.aiEngines || [];
-      if (engines.length > 0) {
-        const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
-        const engineModel = activeEngine?.model_name;
-        if (engineModel) {
-          console.log('[ContentGenerator] getModelName - using engine model:', engineModel, '(fallback was:', fallbackModel, ')');
-          return engineModel;
-        }
-      }
-      
-      console.log('[ContentGenerator] getModelName - no engine model found, using fallback:', fallbackModel);
-      return fallbackModel;
-    } catch (error) {
-      console.error('[ContentGenerator] getModelName error:', error);
-      return fallbackModel;
-    }
   }
 
   private createError(
@@ -788,6 +591,520 @@ export class ContentGenerator {
     // 去除首尾空白
     stripped = stripped.trim();
     return stripped;
+  }
+
+  /**
+   * 分片流式生成章节内容
+   * 将长章节拆分为多个分片，依次生成并拼接
+   * @param outline 章节大纲
+   * @param request 生成请求
+   * @param modelConfig 模型配置
+   * @param onStream 流式回调（每个分片的内容）
+   * @param onProgress 进度回调
+   * @param abortSignal 中止信号
+   */
+  async generateChunkStream(
+    outline: ChapterOutline,
+    request: ContentGenerationRequest,
+    modelConfig: ModelConfig,
+    onStream: (chunk: string, chunkIndex: number) => void,
+    onProgress: (progress: GenerationProgress) => void,
+    abortSignal: AbortSignal
+  ): Promise<{
+    content: string;
+    chunks: ChapterChunk[];
+    metadata: any;
+  }> {
+    const startTime = Date.now();
+    const targetWords = outline.targetWordCount || request.generationParams.targetWordCount;
+
+    addLog(`[分片生成] 开始 - 目标字数: ${targetWords}`, 'info');
+
+    // 1. 计算分片策略
+    const strategy = chapterChunkService.calculateChunkStrategy(targetWords, modelConfig.maxTokens);
+    addLog(`[分片生成] 策略: 分片大小=${strategy.chunkSize}, 最大分片数=${strategy.maxChunks}`, 'info');
+
+    // 2. 初始化分片列表
+    const chunks: ChapterChunk[] = [];
+    for (let i = 0; i < strategy.maxChunks; i++) {
+      chunks.push({
+        id: `chunk_${Date.now()}_${i}`,
+        index: i,
+        status: ChunkStatus.PENDING,
+        targetWordCount: strategy.chunkSize,
+        actualWordCount: 0,
+        content: '',
+        summary: '',
+        checkpoint: '',
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      });
+    }
+
+    // 3. 依次生成每个分片
+    let fullContent = '';
+    let completedWords = 0;
+    let completedChunks = 0;
+
+    for (let i = 0; i < strategy.maxChunks; i++) {
+      if (abortSignal.aborted) {
+        addLog(`[分片生成] 用户取消`, 'warn');
+        break;
+      }
+
+      const chunk = chunks[i];
+      chunk.status = ChunkStatus.GENERATING;
+      chunk.updatedAt = Date.now();
+
+      addLog(`[分片生成] 生成分片 ${i + 1}/${strategy.maxChunks}`, 'info');
+
+      // 构建当前分片的 prompt
+      const chunkPrompt = chapterChunkService.generateChunkPrompt(outline, chunks.slice(0, i), i);
+
+      // 构造分片生成请求
+      const chunkRequest: ContentGenerationRequest = {
+        ...request,
+        chapterInfo: {
+          ...request.chapterInfo,
+          outline: chunkPrompt
+        },
+        generationParams: {
+          ...request.generationParams,
+          targetWordCount: strategy.chunkSize
+        }
+      };
+
+      // 生成当前分片
+      let chunkContent = '';
+      const onChunkStream = (text: string) => {
+        chunkContent += text;
+        onStream(text, i);
+      };
+
+      try {
+        const result = await this.generateStream(
+          chunkRequest,
+          modelConfig,
+          onChunkStream,
+          abortSignal
+        );
+
+        // 检测是否被截断
+        const truncationCheck = chapterChunkService.detectTruncation(result.content);
+        if (truncationCheck.isTruncated) {
+          addLog(`[分片生成] 分片 ${i + 1} 被截断，截取到最后一个完整句子`, 'warn');
+          chunkContent = result.content.substring(0, truncationCheck.lastSentenceEnd);
+        } else {
+          chunkContent = result.content;
+        }
+
+        // 更新分片状态
+        chunk.content = chunkContent;
+        chunk.actualWordCount = chunkContent.length;
+        chunk.status = ChunkStatus.COMPLETED;
+        chunk.updatedAt = Date.now();
+
+        // 生成检查点（最后 200 字）
+        chunk.checkpoint = chunkContent.length > 200
+          ? chunkContent.substring(chunkContent.length - 200)
+          : chunkContent;
+
+        // 注意：摘要生成由前端通过 generateChunkSummary IPC 处理，避免重复生成
+
+        // 更新进度
+        fullContent += chunkContent;
+        completedWords += chunkContent.length;
+        completedChunks++;
+
+        const progress: GenerationProgress = {
+          totalWords: targetWords,
+          completedWords,
+          currentChunkIndex: i,
+          totalChunks: strategy.maxChunks,
+          completedChunks,
+          estimatedTimeRemaining: this.estimateTimeRemaining(startTime, completedWords, targetWords)
+        };
+        onProgress(progress);
+
+        addLog(`[分片生成] 分片 ${i + 1} 完成 - 字数: ${chunkContent.length}`, 'info');
+      } catch (error) {
+        addLog(`[分片生成] 分片 ${i + 1} 失败: ${(error as Error).message}`, 'error');
+        chunk.status = ChunkStatus.FAILED;
+        chunk.updatedAt = Date.now();
+        throw error;
+      }
+    }
+
+    // 4. 返回完整结果
+    const generationTime = Date.now() - startTime;
+    addLog(`[分片生成] 全部完成 - 总字数: ${fullContent.length}, 耗时: ${generationTime}ms`, 'info');
+
+    return {
+      content: fullContent,
+      chunks: chunks.filter(c => c.status === ChunkStatus.COMPLETED),
+      metadata: {
+        model: modelConfig.model,
+        temperature: modelConfig.temperature,
+        tokensUsed: Math.round(fullContent.length * 0.25),
+        generationTime,
+        finishReason: 'stop',
+        chunkCount: completedChunks
+      }
+    };
+  }
+
+  /**
+   * 估算剩余生成时间
+   */
+  private estimateTimeRemaining(startTime: number, completedWords: number, targetWords: number): number {
+    const elapsed = Date.now() - startTime;
+    if (completedWords === 0) return 0;
+
+    const wordsPerMs = completedWords / elapsed;
+    const remainingWords = targetWords - completedWords;
+    return Math.max(0, remainingWords / wordsPerMs);
+  }
+
+  /**
+   * 根据 WritingResourceConfig 加载参考素材并拼接成 resourceContext
+   * 复用 WritingResourceManager 的加载/拼接逻辑。
+   * - includeWritingStylesInContext=true: 将写作风格并入 resourceContext（用于分片大纲，无独立 writingStyleContext 入参）
+   * - includeWritingStylesInContext=false: 写作风格单独返回 writingStyleContext，resourceContext 仅含世界书/角色卡/用户人设（用于分片内容，与 buildContentPrompt 流程一致）
+   */
+  private async loadResourceContext(
+    resources: WritingResourceConfig,
+    includeWritingStylesInContext: boolean
+  ): Promise<{ resourceContext: string; writingStyleContext: string }> {
+    const worldBookIds = resources.worldBookIds || [];
+    const characterCardIds = resources.characterCardIds || [];
+    const userPersonaIds = resources.userPersonaIds || [];
+    const writingStyleIds = resources.writingStyleIds || [];
+
+    const [worldBooks, characters, userPersonas, writingStyles] = await Promise.all([
+      worldBookIds.length > 0 ? writingResourceManager.loadWorldBooks(worldBookIds) : Promise.resolve([]),
+      characterCardIds.length > 0 ? writingResourceManager.loadCharacterCards(characterCardIds) : Promise.resolve([]),
+      userPersonaIds.length > 0 ? writingResourceManager.loadUserPersonas(userPersonaIds) : Promise.resolve([]),
+      writingStyleIds.length > 0 ? writingResourceManager.loadWritingStyles(writingStyleIds) : Promise.resolve([])
+    ]);
+
+    const resourceContext = includeWritingStylesInContext
+      ? writingResourceManager.buildResourceContextSummary(worldBooks, characters, userPersonas, writingStyles)
+      : writingResourceManager.buildResourceContextSummary(worldBooks, characters, userPersonas);
+
+    const writingStyleContext = includeWritingStylesInContext
+      ? ''
+      : promptBuilder.buildWritingStylePrompt(writingStyles);
+
+    return { resourceContext, writingStyleContext };
+  }
+
+  private getNovelTypeFromParams(params: { novelType?: string }): NovelType {
+    const novelType = params.novelType || 'web_novel';
+    return NovelType[novelType.toUpperCase().replace(/-/g, '_') as keyof typeof NovelType] || NovelType.WEB_NOVEL;
+  }
+
+  private getStyleFromParams(params: { style?: string }): WritingStyle {
+    const style = params.style || 'serious';
+    return WritingStyle[style.toUpperCase() as keyof typeof WritingStyle] || WritingStyle.SERIOUS;
+  }
+
+  private getPerspectiveFromParams(params: { perspective?: string }): NarrativePerspective {
+    const perspective = params.perspective || 'third_person';
+    const perspectiveMap: Record<string, NarrativePerspective> = {
+      first_person: NarrativePerspective.FIRST_PERSON,
+      third_person: NarrativePerspective.THIRD_PERSON,
+      omniscient: NarrativePerspective.OMNISCIENT,
+      first: NarrativePerspective.FIRST_PERSON,
+      third: NarrativePerspective.THIRD_PERSON
+    };
+    return perspectiveMap[perspective] || NarrativePerspective.THIRD_PERSON;
+  }
+
+  /**
+   * 修复 AI 返回的中文引号问题（与 OutlineGenerator.fixChineseQuotes 保持一致）
+   */
+  private fixChineseQuotes(jsonStr: string): string {
+    let result = jsonStr;
+    result = result.replace(/\u201c/g, '"');
+    result = result.replace(/\u201d/g, '"');
+    return result;
+  }
+
+  /**
+   * 解析分片大纲响应：剥离 think 标签 → 提取 ```json 代码块 → 修复中文引号 → JSON.parse
+   * 复用 OutlineGenerator.parseOutlineResponse 的提取模式，适配 ShardOutline[] 结构。
+   */
+  private parseShardOutlines(rawContent: string): ShardOutline[] {
+    let jsonStr = this.stripThinkTags(rawContent).trim();
+
+    const patterns = [
+      /```(?:json)?\s*([\s\S]*?)```/,
+      /```\s*([\s\S]*?)```/,
+    ];
+    for (const pattern of patterns) {
+      const match = jsonStr.match(pattern);
+      if (match && match[1]) {
+        jsonStr = match[1].trim();
+        break;
+      }
+    }
+
+    if (jsonStr.startsWith('```')) {
+      jsonStr = jsonStr.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+    }
+
+    jsonStr = this.fixChineseQuotes(jsonStr);
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(jsonStr);
+    } catch (parseError) {
+      throw new Error(`分片大纲JSON解析失败: ${parseError instanceof Error ? parseError.message : String(parseError)}`);
+    }
+
+    if (!Array.isArray(parsed)) {
+      throw new Error('分片大纲应为JSON数组');
+    }
+
+    const shards: ShardOutline[] = parsed.map((item: any, idx: number) => ({
+      index: typeof item.index === 'number' ? item.index : idx,
+      title: String(item.title || `分片${idx + 1}`),
+      summary: String(item.summary || ''),
+      targetWordCount: typeof item.targetWordCount === 'number' ? item.targetWordCount : 0
+    }));
+
+    return shards;
+  }
+
+  /**
+   * 生成分片大纲（非流式，返回完整 JSON）
+   * 复用 executeStreamRequest 收集完整响应，再解析为 ShardOutline[]。
+   */
+  async generateShardOutline(
+    request: ShardOutlineGenerationRequest,
+    modelConfig: ModelConfig,
+    abortSignal?: AbortSignal
+  ): Promise<ShardOutlineGenerationResult> {
+    const chapterTitle = request.chapterInfo?.title || 'unknown';
+    const chapterIndex = request.chapterInfo?.index ?? request.chapterIndex;
+
+    addLog(`[分片大纲生成] 接收请求 - 章节${chapterIndex}: ${chapterTitle}, 分片数: ${request.shardCount}`, 'debug');
+
+    try {
+      const { resourceContext } = await this.loadResourceContext(request.resources, true);
+      const tableContext = this.buildTableContextForPrompt(request);
+      const fullResourceContext = tableContext
+        ? (resourceContext ? resourceContext + '\n\n' + tableContext : tableContext)
+        : resourceContext;
+
+      const systemPrompt = promptBuilder.buildSystemPrompt(
+        this.getNovelTypeFromParams(request.generationParams),
+        this.getStyleFromParams(request.generationParams),
+        this.getPerspectiveFromParams(request.generationParams)
+      );
+      const userPrompt = promptBuilder.buildShardOutlinePrompt(
+        request.chapterInfo,
+        request.shardCount,
+        request.generationParams.targetWordCount,
+        fullResourceContext,
+        request.userSuggestion,
+        request.generationGuidance
+      );
+
+      const messages: ChatMessage[] = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ];
+
+      const aiConfig = aiConfigProvider.getAIConfig();
+      const baseUrl = aiConfig.baseUrl;
+      const apiKey = aiConfig.apiKey;
+      const apiKeyTransmission = aiConfig.apiKeyTransmission;
+      const engineSystemPrompt = aiConfig.systemPrompt;
+      const modelName = aiConfig.modelName || modelConfig.model;
+
+      if (!baseUrl) {
+        addLog(`[分片大纲生成] 参数验证失败: 未配置AI服务地址`, 'error');
+        return { shards: [], success: false, error: '未配置 AI 服务地址' };
+      }
+
+      const enrichedMessages = this.enrichSystemPrompt(messages, engineSystemPrompt);
+
+      addLog(`[分片大纲生成] system prompt长度: ${enrichedMessages[0]?.content?.length || 0}字符`, 'debug');
+      addLog(`[分片大纲生成] user prompt长度: ${enrichedMessages[1]?.content?.length || 0}字符`, 'debug');
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      const requestBody: Record<string, any> = {
+        model: modelName,
+        messages: enrichedMessages,
+        temperature: modelConfig.temperature,
+        max_tokens: modelConfig.maxTokens,
+        stream: true,
+      };
+
+      if (apiKey) {
+        if (apiKeyTransmission === 'header') {
+          const authValue = apiKey.trim().startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
+          headers['Authorization'] = authValue;
+        } else {
+          requestBody.api_key = apiKey;
+        }
+      }
+
+      addLog(`[分片大纲生成] AI调用 - 端点: ${baseUrl}/v1/chat/completions, 模型: ${modelName}`, 'debug');
+
+      // 非流式：复用 executeStreamRequest 收集完整响应（onStream 留空）
+      const controller = abortSignal ? null : new AbortController();
+      const signal = abortSignal || controller!.signal;
+
+      const { content: rawContent } = await this.executeStreamRequest(
+        baseUrl, headers, requestBody, signal, () => {}
+      );
+
+      addLog(`[分片大纲生成] AI响应完成 - 长度: ${rawContent.length}`, 'debug');
+
+      const shards = this.parseShardOutlines(rawContent);
+      addLog(`[分片大纲生成] 解析成功 - 分片数: ${shards.length}`, 'info');
+
+      return { shards, success: true };
+    } catch (error) {
+      const message = (error as Error).message || '分片大纲生成失败';
+      addLog(`[分片大纲生成] 失败: ${message}`, 'error');
+      return { shards: [], success: false, error: message };
+    }
+  }
+
+  /**
+   * 流式生成分片内容
+   * 携带本章节已生成的所有前置分片完整内容作为上下文，通过 onStream 回调流式输出。
+   * 复用 executeStreamRequest 的流式读取逻辑，最终返回内容经过 stripThinkTags 处理。
+   */
+  async generateShardContent(
+    request: ShardContentGenerationRequest,
+    modelConfig: ModelConfig,
+    onStream: (chunk: string) => void,
+    abortSignal: AbortSignal
+  ): Promise<{ content: string; metadata?: any }> {
+    const startTime = Date.now();
+    const chapterTitle = request.chapterInfo?.title || 'unknown';
+    const chapterIndex = request.chapterInfo?.index ?? request.chapterIndex;
+    const shardIndex = request.shardIndex;
+    const totalShards = request.totalShards;
+
+    addLog(`[分片内容生成] 接收请求 - 章节${chapterIndex}: ${chapterTitle}, 分片 ${shardIndex + 1}/${totalShards}`, 'debug');
+
+    try {
+      const { resourceContext, writingStyleContext } = await this.loadResourceContext(request.resources, false);
+      const tableContext = this.buildTableContextForPrompt(request);
+
+      const systemPrompt = promptBuilder.buildSystemPrompt(
+        this.getNovelTypeFromParams(request.generationParams),
+        this.getStyleFromParams(request.generationParams),
+        this.getPerspectiveFromParams(request.generationParams),
+        writingStyleContext
+      );
+
+      const previousShardContents = request.previousShardContents || '';
+
+      const userPrompt = promptBuilder.buildShardContentPrompt(
+        request.shardOutline,
+        shardIndex,
+        totalShards,
+        previousShardContents,
+        request.chapterInfo,
+        {
+          targetWordCount: request.generationParams.targetWordCount,
+          style: request.generationParams.style,
+          perspective: request.generationParams.perspective,
+          writingStyleContext
+        },
+        { resourceContext, tableContext },
+        request.userSuggestion,
+        request.generationGuidance
+      );
+
+      const messages: ChatMessage[] = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ];
+
+      const aiConfig = aiConfigProvider.getAIConfig();
+      const baseUrl = aiConfig.baseUrl;
+      const apiKey = aiConfig.apiKey;
+      const apiKeyTransmission = aiConfig.apiKeyTransmission;
+      const engineSystemPrompt = aiConfig.systemPrompt;
+      const modelName = aiConfig.modelName || modelConfig.model;
+
+      if (!baseUrl) {
+        addLog(`[分片内容生成] 参数验证失败: 未配置AI服务地址`, 'error');
+        throw this.createError(WritingErrorCode.AI_SERVICE_UNAVAILABLE, '未配置 AI 服务地址');
+      }
+
+      const enrichedMessages = this.enrichSystemPrompt(messages, engineSystemPrompt);
+
+      addLog(`[分片内容生成] system prompt长度: ${enrichedMessages[0]?.content?.length || 0}字符`, 'debug');
+      addLog(`[分片内容生成] user prompt长度: ${enrichedMessages[1]?.content?.length || 0}字符`, 'debug');
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      const requestBody: Record<string, any> = {
+        model: modelName,
+        messages: enrichedMessages,
+        temperature: modelConfig.temperature,
+        max_tokens: modelConfig.maxTokens,
+        stream: true,
+      };
+
+      if (apiKey) {
+        if (apiKeyTransmission === 'header') {
+          const authValue = apiKey.trim().startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
+          headers['Authorization'] = authValue;
+        } else {
+          requestBody.api_key = apiKey;
+        }
+      }
+
+      addLog(`[分片内容生成] AI调用 - 端点: ${baseUrl}/v1/chat/completions, 模型: ${modelName}`, 'debug');
+
+      const { content: rawContent } = await this.executeStreamRequest(
+        baseUrl, headers, requestBody, abortSignal, onStream
+      );
+
+      const strippedContent = this.stripThinkTags(rawContent);
+      const generationTime = Date.now() - startTime;
+
+      addLog(`[分片内容生成] AI响应完成 - 长度: ${strippedContent.length}, 耗时: ${generationTime}ms`, 'debug');
+
+      return {
+        content: strippedContent,
+        metadata: {
+          model: modelConfig.model,
+          temperature: modelConfig.temperature,
+          tokensUsed: Math.round(strippedContent.length * 0.25),
+          generationTime,
+          finishReason: 'stop',
+          shardIndex,
+          totalShards
+        }
+      };
+    } catch (error) {
+      const isAbortError = (error instanceof DOMException && error.name === 'AbortError')
+        || (typeof (error as Error).message === 'string' && (error as Error).message.toLowerCase().includes('abort'));
+      if (isAbortError) {
+        addLog(`[分片内容生成] 请求被中止`, 'warn');
+        throw this.createError(WritingErrorCode.CONTENT_GENERATION_FAILED, '请求被中止');
+      }
+      addLog(`[分片内容生成] 失败: ${(error as Error).message}`, 'error');
+      if (error instanceof this.WritingError) throw error;
+      throw this.createError(
+        WritingErrorCode.CONTENT_GENERATION_FAILED,
+        `分片内容生成失败: ${(error as Error).message}`,
+        (error as Error).stack
+      );
+    }
   }
 }
 

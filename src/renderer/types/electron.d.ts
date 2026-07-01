@@ -3,6 +3,10 @@ import {
   WritingStyleLearningRequest,
   WritingStyleProgress
 } from '../../shared/types/writing.types';
+import type {
+  PromptPolishRequest,
+  PromptPolishResult
+} from '../../shared/types/promptTemplate.types';
 
 declare global {
   interface Window {
@@ -14,6 +18,10 @@ interface ElectronAPI {
   // 通用 invoke 方法，用于直接调用 IPC handler
   invoke: (channel: string, ...args: any[]) => Promise<any>;
 
+  // 通用方法，用于监听 IPC 事件
+  on: (channel: string, callback: (...args: any[]) => void) => void;
+
+  off: (channel: string, callback: (...args: any[]) => void) => void;
   setting: {
     load: () => Promise<{ success: boolean; setting?: any; error?: string }>;
     save: (setting: any) => Promise<{ success: boolean; error?: string }>;
@@ -33,11 +41,11 @@ interface ElectronAPI {
     deleteTags: (path: string) => Promise<any>;
     saveToKnowledgeBase: (data: any, fileName: string) => Promise<{ success: boolean; filePath?: string; message?: string; fileExists?: boolean; error?: string }>;
     checkFileExists: (fileName: string) => Promise<{ success: boolean; exists: boolean; filePath?: string; error?: string }>;
-    vectorize: (path: string) => Promise<{ 
-      success: boolean; 
-      descriptionVectorized: boolean; 
-      entriesVectorized: number; 
-      entriesFailed: number; 
+    vectorize: (path: string) => Promise<{
+      success: boolean;
+      descriptionVectorized: boolean;
+      entriesVectorized: number;
+      entriesFailed: number;
       error?: string;
       descriptionVectorId?: string;
       entryVectorIds: string[];
@@ -78,9 +86,9 @@ interface ElectronAPI {
     setDirectory: (dir: string) => Promise<{ success: boolean; pluginDir: string }>;
     checkUpdates: () => Promise<{ success: boolean; plugins?: any[]; error?: string }>;
     updateDescriptions: (translatedPlugins: any[]) => Promise<{ success: boolean; error?: string }>;
-    install: (url: string, branch?: string) => Promise<{ 
-      success: boolean; 
-      plugin?: any; 
+    install: (url: string, branch?: string) => Promise<{
+      success: boolean;
+      plugin?: any;
       error?: string;
       displayName?: string;
       version?: string;
@@ -97,6 +105,7 @@ interface ElectronAPI {
     writeBinary: (path: string, content: string, isBase64?: boolean) => Promise<{ success: boolean; error?: string }>;
     copyFile: (sourcePath: string, targetPath: string) => Promise<{ success: boolean; error?: string }>;
     openFolder: (path: string) => Promise<{ success: boolean; error?: string }>;
+    openFile: (path: string) => Promise<{ success: boolean; error?: string }>;
     validatePath: (path: string) => Promise<{ valid: boolean; exists: boolean; isDirectory: boolean; canRead: boolean; canWrite: boolean; error?: string }>;
     readJson: (fileName: string) => Promise<any>;
     readAsBase64: (path: string) => Promise<{ success: boolean; data?: string; error?: string }>;
@@ -126,7 +135,7 @@ interface ElectronAPI {
     getVersionHistory: (templateId: string) => Promise<string[]>;
     restoreVersion: (templateId: string, version: string) => Promise<any | null>;
     getTemplateBindingStatus: () => Promise<Record<string, boolean>>;
-    
+
     // 聊天记录管理
     getChatSessions: () => Promise<any[]>;
     getChatSession: (chatId: string) => Promise<any | null>;
@@ -139,37 +148,35 @@ interface ElectronAPI {
     associateTemplate: (chatId: string, templateId: string) => Promise<void>;
     getAssociatedTemplate: (chatId: string) => Promise<string | null>;
     processChat: (chatId: string, templateId: string, selectedMessageIds?: string[], config?: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }) => Promise<void>;
-    processChatProgressive: (chatId: string, templateId: string, config?: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }, restart?: boolean) => Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[]; resumed: boolean }>;
+    processChatProgressive: (chatId: string, templateId: string, config?: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }, options?: { continueFromLast?: boolean; minInterval?: number }) => Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[]; resumed: boolean }>;
     getOrganizingProgress: (chatId: string) => Promise<{ processedCount: number; totalMessages: number; lastProcessedAt?: string } | null>;
     clearOrganizingProgress: (chatId: string) => Promise<boolean>;
     clearTableData: (chatId: string) => Promise<{ success: boolean }>;
     copyTemplate: (sourceTemplateId: string, newTemplateName: string) => Promise<any>;
-    
+
     // 表格数据管理
     getTableData: (chatId: string) => Promise<any>;
     saveTableData: (chatId: string, sheetName: string, sheetData: any[]) => Promise<void>;
-    
+
     // 自动初始化（首次对话时自动绑定模板并创建空表格）
     autoInitializeSession: (chatId: string) => Promise<{ success: boolean; templateId: string | null }>;
-    
-    // 日志
-    onLog?: (message: string, type: string) => void;
   };
   // AI 请求 API
   ai: {
-    request: (config: { 
-      url: string; 
-      method: string; 
-      headers: Record<string, string>; 
-      body: any; 
+    request: (config: {
+      url: string;
+      method: string;
+      headers: Record<string, string>;
+      body: any;
       timeout?: number;
-      streaming?: boolean 
-    }) => Promise<{ 
-      success: boolean; 
-      data?: any; 
-      error?: string; 
-      details?: string 
+      streaming?: boolean
+    }) => Promise<{
+      success: boolean;
+      data?: any;
+      error?: string;
+      details?: string
     }>;
+    listModels: (params: { apiUrl?: string; apiKey?: string; apiKeyTransmission?: string }) => Promise<{ success: boolean; models: string[]; error?: string }>;
   };
   // 创意数据 API
   creative: {
@@ -234,8 +241,8 @@ interface ElectronAPI {
   context: {
     retrieve: (conversation: Array<{ role: string; content: string }>, options: { topK?: number; minScore?: number; sources?: string[]; filter?: Record<string, any>; scopeIds?: string[] }) => Promise<{ success: boolean; items?: Array<{ id: string; source: string; content: string; score: number; metadata: Record<string, any> }>; error?: string }>;
     retrieveWithKeywords: (
-      conversation: Array<{ role: string; content: string }>, 
-      options: { topK?: number; minScore?: number; sources?: string[]; filter?: Record<string, any>; scopeIds?: string[] }, 
+      conversation: Array<{ role: string; content: string }>,
+      options: { topK?: number; minScore?: number; sources?: string[]; filter?: Record<string, any>; scopeIds?: string[] },
       enableKeywordMatch?: boolean,
       scanDepth?: number,
       globalScanData?: {
@@ -269,22 +276,6 @@ interface ElectronAPI {
     selectFile: () => Promise<string | null>;
   };
 
-  // 群组聊天 API
-  group: {
-    getAll: () => Promise<any[]>;
-    get: (id: string) => Promise<any | null>;
-    create: (data: any) => Promise<any>;
-    edit: (group: any) => Promise<boolean>;
-    delete: (id: string) => Promise<boolean>;
-  };
-  groupChat: {
-    get: (chatId: string) => Promise<any[]>;
-    save: (chatId: string, chat: any[], force?: boolean) => Promise<{ ok: true } | { error: string }>;
-    delete: (chatId: string) => Promise<boolean>;
-    info: (chatId: string) => Promise<any>;
-    import: (content: string, suggestedId?: string) => Promise<string>;
-  };
-
   // 对话记录向量化 API
   chatVector: {
     vectorize: (characterId: string, messages: Array<{ role: string; content: string; name?: string; create_date?: number }>) => Promise<{
@@ -316,13 +307,19 @@ interface ElectronAPI {
     generateOutline: (request: any) => Promise<{ success: boolean; outline?: any; outlineRaw?: string; error?: string; parseError?: string }>;
     saveProjectRaw: (projectId: string, rawContent: string) => Promise<{ success: boolean; error?: string }>;
     generateChapter: (request: any) => Promise<{ success: boolean }>;
+    generateChapterChunk: (request: any) => Promise<{ success: boolean }>;
     cancelGeneration: (projectId: string) => Promise<{ success: boolean }>;
+    cancelChunkGeneration: (projectId: string, chapterIndex: number, chunkIndex: number) => Promise<{ success: boolean }>;
     autoSaveChapter: (data: { projectId: string; chapterIndex: number; content: string }) => Promise<{ success: boolean }>;
     saveVersion: (data: { projectId: string; chapterIndex: number; content: string; note?: string }) => Promise<{ success: boolean }>;
     restoreVersion: (data: { projectId: string; chapterIndex: number; versionId: string }) => Promise<{ success: boolean }>;
     onStreamChunk: (callback: (data: { projectId: string; chapterIndex: number; chunk: string }) => void) => () => void;
     onStreamComplete: (callback: (data: { projectId: string; chapterIndex: number; content: string; metadata: any }) => void) => () => void;
     onStreamError: (callback: (data: { projectId: string; chapterIndex: number; error: any }) => void) => () => void;
+    onChunkStart: (callback: (data: { projectId: string; chapterIndex: number; chunkIndex: number }) => void) => () => void;
+    onChunkProgress: (callback: (data: { projectId: string; chapterIndex: number; chunkIndex: number; chunk: string }) => void) => () => void;
+    onChunkComplete: (callback: (data: { projectId: string; chapterIndex: number; chunkIndex: number; content: string }) => void) => () => void;
+    onChunkError: (callback: (data: { projectId: string; chapterIndex: number; chunkIndex: number; error: any }) => void) => () => void;
     offStreamChunk: (callback: (data: any) => void) => void;
     offStreamComplete: (callback: (data: any) => void) => void;
     offStreamError: (callback: (data: any) => void) => void;
@@ -351,6 +348,19 @@ interface ElectronAPI {
       organizeTable: (projectId: string, modelConfig: any, chapterIndex?: number) => Promise<{ success: boolean; message: string; processedCount?: number; errorCount?: number; errors?: string[] }>;
       getOrganizeProgress: (projectId: string) => Promise<{ progress: number; status: string } | null>;
     };
+  };
+
+  prompt: {
+    getAll: () => Promise<{ success: boolean; data?: any[]; error?: string }>;
+    get: (moduleId: string) => Promise<{ success: boolean; data?: any; error?: string }>;
+    save: (template: any, modifiedBy: string, changeSummary: string) => Promise<{ success: boolean; data?: any; error?: string }>;
+    getHistory: (moduleId: string) => Promise<{ success: boolean; data?: any[]; error?: string }>;
+    rollback: (moduleId: string, version: number, modifiedBy: string) => Promise<{ success: boolean; data?: any; error?: string }>;
+    clearHistory: (moduleId: string) => Promise<{ success: boolean; error?: string }>;
+    build: (moduleId: string, variables: Record<string, string>) => Promise<{ success: boolean; data?: { systemPrompt: string; userPrompt: string }; error?: string }>;
+    validate: (template: any) => Promise<{ success: boolean; data?: any; error?: string }>;
+    reset: (moduleId: string) => Promise<{ success: boolean; data?: any; error?: string }>;
+    optimize: (request: PromptPolishRequest) => Promise<{ success: boolean; data?: PromptPolishResult; error?: string }>;
   };
 }
 

@@ -1,80 +1,13 @@
-export type EmbeddingMode = 'remote' | 'local';
-export type VectorStoreMode = 'vecstore';
+/**
+ * 向量类型 re-export 兼容层
+ *
+ * 注意向量数据类型的统一真源已迁移至 `./vector.types.ts`。
+ * 本文件保留为兼容入口，使历史引用 `from './types/vector'`（如
+ * `src/shared/settings.ts`）继续可用，无需修改消费方。
+ *
+ * 后续消费方迁移至 `@shared/types` 后，本文件可移除。
+ *
+ * 详见 `./vector.types.ts` 获取字段语义与设计说明。
+ */
 
-export interface VectorItem {
-  id: string;
-  vector: number[];
-  metadata: VectorMetadata;
-}
-
-export interface VectorMetadata {
-  text: string;
-  source: string;
-  sourceId: string;
-  entryUid?: string;
-  characterId?: string;
-  tags?: string[];
-  createdAt: number;
-  updatedAt: number;
-  [key: string]: any;
-}
-
-export interface SearchResult {
-  id: string;
-  score: number;
-  metadata: Record<string, any>;
-}
-
-export interface KnowledgeItem {
-  id: string;
-  title: string;
-  content: string;
-  source: string;
-  category: string[];
-  tags: string[];
-  relatedCharacterIds: string[];
-  relatedWorldBookPaths: string[];
-  vector?: number[];
-  metadata: KnowledgeMetadata;
-}
-
-export interface KnowledgeMetadata {
-  createdAt: number;
-  updatedAt: number;
-  createdBy: string;
-  embeddingMode: EmbeddingMode;
-  embeddingModel: string;
-  tokenCount: number;
-}
-
-export interface CharacterWorldBookRelation {
-  characterId: string;
-  worldBookPath: string;
-  enabled: boolean;
-  priority: number;
-  filterTags?: string[];
-}
-
-export interface RetrieveOptions {
-  topK: number;
-  sources: string[];
-  minScore: number;
-  filter?: Record<string, any>;
-}
-
-export interface ContextItem {
-  id: string;
-  source: string;
-  content: string;
-  score: number;
-  metadata: Record<string, any>;
-}
-
-export interface SearchOptions {
-  topK: number;
-  minScore: number;
-  categories?: string[];
-  tags?: string[];
-  sources?: string[];
-  characterId?: string;
-}
+export * from './vector.types';

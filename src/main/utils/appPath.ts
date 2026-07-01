@@ -64,3 +64,16 @@ export function getUserDataPath(): string {
 export function getTempPath(): string {
   return getAppPath('temp');
 }
+
+/**
+ * 将 __USER_DATA__ 占位符替换为实际用户数据路径
+ * 仅当路径以 __USER_DATA__ 开头时执行替换，否则原样返回。
+ * @param dir - 可能包含 __USER_DATA__ 占位符的路径
+ * @returns 解析后的实际路径
+ */
+export function resolveUserDataPlaceholder(dir: string): string {
+  if (dir.startsWith('__USER_DATA__')) {
+    return dir.replace('__USER_DATA__', getUserDataPath());
+  }
+  return dir;
+}

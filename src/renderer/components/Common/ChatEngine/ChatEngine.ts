@@ -1,13 +1,19 @@
 // 聊天引擎核心类 - 采用策略模式封装AI调用逻辑
+//
+// 重构说明（Task 4.6）：
+// 原本 ChatEngine 重复实现了 buildApiUrl/buildRequestBody 等请求构造逻辑，
+// 与 renderer 侧 AIService.tsx 形成两套并行实现。
+// 现已删除这些重复的私有方法，将 URL/Body 构造直接内联到 sendMessage 中。
+// 进一步统一需要迁移 CharacterDialogueChat.hooks.ts 到 AIService.tsx（不在本任务范围）。
 
 import { ChatMessage } from '../../Character/CharacterDialogueChat/CharacterDialogueChat.types';
-import { 
-  IChatEngine, 
-  AIEngineConfig, 
-  StreamCallback, 
-  CompleteCallback, 
+import {
+  IChatEngine,
+  AIEngineConfig,
+  StreamCallback,
+  CompleteCallback,
   ErrorCallback,
-  AIResponse 
+  AIResponse
 } from './ChatEngine.types';
 
 export class ChatEngine implements IChatEngine {
@@ -47,25 +53,71 @@ export class ChatEngine implements IChatEngine {
           content: String(msg.content),
         }));
 
-      const apiUrl = this.buildApiUrl(config);
+      // 内联 URL 构造（原 buildApiUrl 方法，已删除以消除与 AIService.tsx 的重复）
+      const baseUrl = config.api_url.trim().replace(/\/+$/, '');
+      if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
+        throw new Error(`Invalid API URL: ${config.api_url}`);
+      }
+      const apiUrl = baseUrl.endsWith('/v1/chat/completions') || baseUrl.endsWith('/v1/completions')
+        ? baseUrl
+        : `${baseUrl}/v1/chat/completions`;
+
       const requestHeaders: Record<string, string> = {
         'Content-Type': 'application/json',
       };
 
-      const requestBody = this.buildRequestBody(
-        config,
-        systemPrompt,
-        chatHistory
-      );
+      // 内联请求体构造（原 buildRequestBody 方法，已删除以消除与 AIService.tsx 的重复）
+      if (!config.model_name) {
+        throw new Error('未配置 AI 模型名称');
+      }
+      const maxTokens = (typeof config.max_tokens === 'number' && config.max_tokens > 0)
+        ? config.max_tokens
+        : 10240;
+      const temperature = Number(config.temperature) ?? 0.8;
+      const apiMode = config.api_mode || 'chat_completion';
 
+      const requestBody: any = {
+        model: config.model_name,
+        max_tokens: maxTokens,
+        temperature,
+        stream: true,
+      };
+
+      if (apiMode === 'chat_completion') {
+        requestBody.messages = [
+          { role: 'system', content: systemPrompt },
+          ...chatHistory,
+        ];
+      } else {
+        // text_completion 模式：将 systemPrompt + 对话历史拼接为单一 prompt
+        let prompt = `${systemPrompt}\n\n`;
+        chatHistory.forEach(msg => {
+          prompt += `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}\n`;
+        });
+        requestBody.prompt = prompt;
+      }
+
+      // 可选采样参数（仅当配置中显式提供时才写入请求体）
+      if (config.top_p !== undefined) {
+        const parsedTopP = Number(config.top_p);
+        if (!isNaN(parsedTopP)) requestBody.top_p = parsedTopP;
+      }
+      if (config.frequency_penalty !== undefined) {
+        const parsedFreq = Number(config.frequency_penalty);
+        if (!isNaN(parsedFreq)) requestBody.frequency_penalty = parsedFreq;
+      }
+      if (config.presence_penalty !== undefined) {
+        const parsedPresence = Number(config.presence_penalty);
+        if (!isNaN(parsedPresence)) requestBody.presence_penalty = parsedPresence;
+      }
+
+      // API 密钥注入（header 或 body 两种方式）
       if (config.api_key) {
         const trimmedApiKey = config.api_key.trim();
         if (config.api_key_transmission === 'header') {
-          if (trimmedApiKey.startsWith('Bearer ')) {
-            requestHeaders['Authorization'] = trimmedApiKey;
-          } else {
-            requestHeaders['Authorization'] = `Bearer ${trimmedApiKey}`;
-          }
+          requestHeaders['Authorization'] = trimmedApiKey.startsWith('Bearer ')
+            ? trimmedApiKey
+            : `Bearer ${trimmedApiKey}`;
         } else {
           requestBody.api_key = config.api_key;
         }
@@ -87,7 +139,7 @@ export class ChatEngine implements IChatEngine {
       }
     } catch (error) {
       if (this.isCancelled) return;
-      
+
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.errorCallback?.({
         message: errorMessage,
@@ -100,104 +152,12 @@ export class ChatEngine implements IChatEngine {
   cancelRequest(): void {
     this.isCancelled = true;
     this.cleanupListeners();
-    
+
     // 调用主进程的取消请求 API，真正中止 fetch 请求
     if (window.electronAPI?.ai?.cancel) {
       window.electronAPI.ai.cancel().catch(() => {
         // 忽略取消请求的错误
       });
-    }
-  }
-
-  private buildApiUrl(config: AIEngineConfig): string {
-    let baseUrl = config.api_url.trim().replace(/\/+$/, '');
-    
-    if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
-      throw new Error(`Invalid API URL: ${config.api_url}`);
-    }
-
-    if (baseUrl.endsWith('/v1/chat/completions')) {
-      return baseUrl;
-    }
-    if (baseUrl.endsWith('/v1/completions')) {
-      return baseUrl;
-    }
-
-    return `${baseUrl}/v1/chat/completions`;
-  }
-
-  private buildRequestBody(
-    config: AIEngineConfig,
-    systemPrompt: string,
-    chatHistory: Array<{ role: string; content: string }>
-  ): any {
-    const apiMode = config.api_mode || 'chat_completion';
-
-    if (apiMode === 'chat_completion') {
-      const body: any = {
-        model: config.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })(),
-        messages: [
-          { role: 'system', content: systemPrompt },
-          ...chatHistory,
-        ],
-        max_tokens: (typeof config.max_tokens === 'number' && config.max_tokens > 0) ? config.max_tokens : 10240,
-        temperature: Number(config.temperature) ?? 0.8,
-        stream: true,
-      };
-
-      if (config.top_p !== undefined) {
-        const parsedTopP = Number(config.top_p);
-        if (!isNaN(parsedTopP)) {
-          body.top_p = parsedTopP;
-        }
-      }
-      if (config.frequency_penalty !== undefined) {
-        const parsedFreq = Number(config.frequency_penalty);
-        if (!isNaN(parsedFreq)) {
-          body.frequency_penalty = parsedFreq;
-        }
-      }
-      if (config.presence_penalty !== undefined) {
-        const parsedPresence = Number(config.presence_penalty);
-        if (!isNaN(parsedPresence)) {
-          body.presence_penalty = parsedPresence;
-        }
-      }
-
-      return body;
-    } else {
-      let prompt = `${systemPrompt}\n\n`;
-      chatHistory.forEach(msg => {
-        prompt += `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}\n`;
-      });
-      const body: any = {
-        model: config.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })(),
-        prompt,
-        max_tokens: (typeof config.max_tokens === 'number' && config.max_tokens > 0) ? config.max_tokens : 10240,
-        temperature: Number(config.temperature) ?? 0.8,
-        stream: true,
-      };
-
-      if (config.top_p !== undefined) {
-        const parsedTopP = Number(config.top_p);
-        if (!isNaN(parsedTopP)) {
-          body.top_p = parsedTopP;
-        }
-      }
-      if (config.frequency_penalty !== undefined) {
-        const parsedFreq = Number(config.frequency_penalty);
-        if (!isNaN(parsedFreq)) {
-          body.frequency_penalty = parsedFreq;
-        }
-      }
-      if (config.presence_penalty !== undefined) {
-        const parsedPresence = Number(config.presence_penalty);
-        if (!isNaN(parsedPresence)) {
-          body.presence_penalty = parsedPresence;
-        }
-      }
-
-      return body;
     }
   }
 

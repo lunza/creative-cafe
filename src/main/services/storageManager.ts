@@ -268,8 +268,8 @@ export class StorageManager {
    * 从键名推断模块
    */
   private inferFromKey(key: string): { module: StorageModule; storeKey: string; isSettingsFileKey: boolean } {
-    // 检查 settings、version、lastUpdated 这些直接写入 settings.json 的键
-    if (key === 'settings' || key === 'version' || key === 'lastUpdated') {
+    // 检查直接写入 settings.json 的键
+    if (key === 'settings' || key === 'version' || key === 'lastUpdated' || key === 'knowledgeBase') {
       return {
         module: StorageModule.CONFIG,
         storeKey: key,
@@ -311,14 +311,14 @@ export class StorageManager {
     try {
       const { module, storeKey, isSettingsFileKey } = this.inferFromKey(key);
 
+      // settings 文件键直接从 settings.json 文件读取（优先于 migratedModules 检查）
+      if (isSettingsFileKey) {
+        return this.readFromSettingsFile(key) as StorageResult<T>;
+      }
+
       // 已迁移的模块不再生成 JSON 文件，返回空数据
       if (this.migratedModules.has(module)) {
         return { success: true, data: {} as T };
-      }
-
-      // settings、version、lastUpdated 键直接从 settings.json 文件读取
-      if (isSettingsFileKey) {
-        return this.readFromSettingsFile(key) as StorageResult<T>;
       }
 
       if (!this.hasPermission(module, 'read')) {
@@ -518,16 +518,16 @@ export class StorageManager {
     try {
       const { module, storeKey, isSettingsFileKey } = this.inferFromKey(key);
       
-      // 已迁移的模块始终返回 false（不生成文件）
-      if (this.migratedModules.has(module)) {
-        return { success: true, exists: false };
-      }
-
-      // settings、version、lastUpdated 键直接检查 settings.json 文件
+      // settings 文件键直接检查 settings.json 文件（优先于 migratedModules 检查）
       if (isSettingsFileKey) {
         const settingsPath = path.join(this.baseDataPath, 'settings.json');
         const exists = fs.existsSync(settingsPath);
         return { success: true, exists };
+      }
+
+      // 已迁移的模块始终返回 false（不生成文件）
+      if (this.migratedModules.has(module)) {
+        return { success: true, exists: false };
       }
 
       if (!this.hasPermission(module, 'read')) {

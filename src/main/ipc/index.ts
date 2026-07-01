@@ -8,8 +8,11 @@ import { appHandlers } from './handlers/appHandlers';
 import { pluginHandlers } from './handlers/pluginHandlers';
 import { documentHandlers } from './handlers/documentHandlers';
 import { updateHandlers } from './handlers/updateHandlers';
-import { registerGroupHandlers } from './handlers/groupHandlers';
-import { registerGroupChatHandlers } from './handlers/groupChatHandlers';
+import { registerMemoryHandlers } from './handlers/memoryHandlers';
+import { registerCreativeHandlers } from './handlers/creativeHandlers';
+import { registerCharacterChatHandlers } from './handlers/characterChatHandlers';
+import { registerWritingHandlers } from './handlers/writingHandlers';
+import { registerPromptHandlers } from './handlers/promptHandlers';
 import './handlers/aiHandlers';
 import { getStorageService } from '../services/storageService';
 import { embeddingService } from '../services/EmbeddingService';
@@ -22,7 +25,7 @@ import { modelDownloadService } from '../services/ModelDownloadService';
 
 export function setupIpcHandlers() {
   getStorageService();
-  
+
   settingHandlers();
   worldBookHandlers();
   characterHandlers();
@@ -32,6 +35,14 @@ export function setupIpcHandlers() {
   pluginHandlers();
   documentHandlers();
   updateHandlers();
+
+  // Task 25.2: 从 main/index.ts 迁入的 registerXxxHandlers 调用，
+  // 使 main/index.ts 仅依赖 setupIpcHandlers 单一入口
+  registerMemoryHandlers();
+  registerCreativeHandlers();
+  registerCharacterChatHandlers();
+  registerWritingHandlers();
+  registerPromptHandlers();
 
   embeddingService.initialize();
   embeddingService.registerIpcHandlers();
@@ -49,7 +60,4 @@ export function setupIpcHandlers() {
 
   embeddingWorkerService.initialize();
   embeddingWorkerService.registerIpcHandlers();
-
-  registerGroupHandlers();
-  registerGroupChatHandlers();
 }

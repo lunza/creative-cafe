@@ -1,10 +1,19 @@
 /**
  * 向量配置管理器
  * 专门管理向量配置参数，与向量数据完全解耦
+ *
+ * 三层抽象架构（Task 3 - SubTask 3.11）：
+ *   模型切换导致 dimension 变化时，通过 EventEmitter 触发
+ *   VECTOR_DIMENSION_CHANGE_EVENT 事件，所有 VecstoreBackend 实例监听
+ *   并 invalidate（重建实例以匹配新维度）。
+ *
+ * 使用现有的 eventemitter3 依赖（package.json 已声明）。
  */
 
+import { EventEmitter } from 'eventemitter3';
 import { getStorageService } from './storageService';
 import { VectorConfig, EmbeddingMode } from '../types/vectorConfig';
+import { VECTOR_DIMENSION_CHANGE_EVENT, DimensionChangeEvent } from './vector/IVectorBackend';
 
 // 合法配置字段白名单
 const ALLOWED_VECTOR_CONFIG_FIELDS: (keyof VectorConfig)[] = [
@@ -34,10 +43,43 @@ const FORBIDDEN_DATA_FIELDS = [
 // 配置大小阈值（10KB）
 const MAX_CONFIG_SIZE_BYTES = 10000;
 
+/**
+ * 维度变更事件 emitter（SubTask 3.11）
+ *
+ * 使用方式：
+ *   vectorConfigManager.onDimensionChange((event) => { ... })
+ *   vectorConfigManager.emitDimensionChange(oldDim, newDim)
+ */
+export const vectorDimensionEmitter = new EventEmitter();
+
 export class VectorConfigManager {
   private cachedConfig: Partial<VectorConfig> | null = null;
   private lastLoadTime: number = 0;
   private cacheTTL: number = 5000; // 5秒缓存
+
+  /**
+   * 监听 dimension 变更事件（SubTask 3.11）
+   * @param listener 回调函数，接收 { oldDimension, newDimension, source?, sourceId? }
+   * @returns 取消监听函数
+   */
+  onDimensionChange(listener: (event: DimensionChangeEvent) => void): () => void {
+    vectorDimensionEmitter.on(VECTOR_DIMENSION_CHANGE_EVENT, listener);
+    return () => {
+      vectorDimensionEmitter.off(VECTOR_DIMENSION_CHANGE_EVENT, listener);
+    };
+  }
+
+  /**
+   * 触发 dimension 变更事件（SubTask 3.11）
+   *
+   * 由 saveVectorConfig 在检测到 dimension 变化时调用，
+   * 由 VectorStoreService 在初始化时监听并转发给 Repository / Backend。
+   */
+  emitDimensionChange(oldDimension: number, newDimension: number, source?: string, sourceId?: string): void {
+    const event: DimensionChangeEvent = { oldDimension, newDimension, source, sourceId };
+    console.log(`[VectorConfigManager] Emitting ${VECTOR_DIMENSION_CHANGE_EVENT}: ${oldDimension} -> ${newDimension}`);
+    vectorDimensionEmitter.emit(VECTOR_DIMENSION_CHANGE_EVENT, event);
+  }
 
   /**
    * 加载向量配置（带缓存）
@@ -72,12 +114,15 @@ export class VectorConfigManager {
 
   /**
    * 保存向量配置
+   *
+   * SubTask 3.11：检测到 dimension 变化时触发 VECTOR_DIMENSION_CHANGE_EVENT 事件，
+   * 由 VectorStoreService 监听并转发给 Repository / Backend（重建实例以匹配新维度）。
    */
   saveVectorConfig(config: Partial<VectorConfig>): { success: boolean; error?: string } {
     try {
       // 验证并清理配置
       const cleanedConfig = this.sanitizeConfig(config);
-      
+
       // 验证配置大小
       const configSize = JSON.stringify(cleanedConfig).length;
       if (configSize > MAX_CONFIG_SIZE_BYTES) {
@@ -87,20 +132,27 @@ export class VectorConfigManager {
         };
       }
 
-      // 读取当前设置
+      // 读取当前设置，记录旧 dimension（SubTask 3.11）
       const storageService = getStorageService();
       const settings = storageService.getSettings() || {};
-      
+      const oldDimension = settings?.vector?.dimension;
+
       // 更新向量配置
       settings.vector = cleanedConfig;
-      
+
       // 保存设置
       storageService.setSettings(settings);
-      
+
       // 更新缓存
       this.cachedConfig = cleanedConfig;
       this.lastLoadTime = Date.now();
-      
+
+      // SubTask 3.11：dimension 变化时触发事件，通知所有 backend 重建
+      const newDimension = cleanedConfig.dimension;
+      if (typeof oldDimension === 'number' && typeof newDimension === 'number' && oldDimension !== newDimension) {
+        this.emitDimensionChange(oldDimension, newDimension);
+      }
+
       console.log(`[VectorConfigManager] 配置保存成功，大小: ${configSize} bytes`);
       return { success: true };
     } catch (error) {

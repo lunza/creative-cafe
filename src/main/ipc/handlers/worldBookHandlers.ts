@@ -1,21 +1,8 @@
 import { ipcMain } from 'electron';
 import { worldBookService } from '../../services/worldBookService';
-import { getUserDataPath } from '../../utils/appPath';
+import { resolveUserDataPlaceholder } from '../../utils/appPath';
 import fs from 'fs/promises';
 import path from 'path';
-
-function resolveUserDataPlaceholder(dir: string): string {
-  console.log('[resolveUserDataPlaceholder] 输入路径:', dir);
-  const userDataPath = getUserDataPath();
-  console.log('[resolveUserDataPlaceholder] 用户数据目录:', userDataPath);
-  if (dir.includes('__USER_DATA__')) {
-    const resolved = dir.replace(/__USER_DATA__/g, userDataPath);
-    console.log('[resolveUserDataPlaceholder] 解析后路径:', resolved);
-    return resolved;
-  }
-  console.log('[resolveUserDataPlaceholder] 路径不含占位符,直接返回');
-  return dir;
-}
 
 export function worldBookHandlers() {
   ipcMain.handle('worldBook:list', async () => {

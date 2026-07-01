@@ -1,5 +1,5 @@
 import { promptBuilder } from './PromptBuilder';
-import { getStorageService } from '../storageService';
+import { aiConfigProvider } from '../ai/AIConfigProvider';
 
 interface PolishDescriptionRequest {
   description: string;
@@ -20,9 +20,10 @@ export class DescriptionPolisher {
   ): Promise<string> {
     const { description, resourceContext, instruction, modelConfig } = request;
 
-    const baseUrl = await this.getBaseUrl();
-    const apiKey = await this.getApiKey();
-    const modelName = await this.getModelName(modelConfig.model);
+    const aiConfig = aiConfigProvider.getAIConfig();
+    const baseUrl = aiConfig.baseUrl;
+    const apiKey = aiConfig.apiKey;
+    const modelName = aiConfig.modelName || modelConfig.model;
 
     if (!baseUrl) {
       throw new Error('AI 服务地址未配置');
@@ -110,62 +111,6 @@ export class DescriptionPolisher {
         throw new Error('润色请求已取消');
       }
       throw error;
-    }
-  }
-
-  private async getBaseUrl(): Promise<string | undefined> {
-    try {
-      const storageService = getStorageService();
-      const settings = storageService.getSettings();
-
-      const engines = settings?.aiEngines || [];
-      if (engines.length > 0) {
-        const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
-        return activeEngine?.api_url;
-      }
-
-      return settings?.ai?.baseUrl || settings?.ai?.apiBaseUrl || settings?.baseUrl;
-    } catch (error) {
-      console.error('[DescriptionPolisher] getBaseUrl error:', error);
-      return undefined;
-    }
-  }
-
-  private async getApiKey(): Promise<string | undefined> {
-    try {
-      const storageService = getStorageService();
-      const settings = storageService.getSettings();
-
-      const engines = settings?.aiEngines || [];
-      if (engines.length > 0) {
-        const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
-        return activeEngine?.api_key;
-      }
-
-      return settings?.ai?.apiKey || settings?.ai?.apiToken || settings?.apiKey;
-    } catch (error) {
-      console.error('[DescriptionPolisher] getApiKey error:', error);
-      return undefined;
-    }
-  }
-
-  private async getModelName(fallbackModel: string): Promise<string> {
-    try {
-      const storageService = getStorageService();
-      const settings = storageService.getSettings();
-
-      const engines = settings?.aiEngines || [];
-      if (engines.length > 0) {
-        const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
-        if (activeEngine?.model_name) {
-          return activeEngine.model_name;
-        }
-      }
-
-      return fallbackModel;
-    } catch (error) {
-      console.error('[DescriptionPolisher] getModelName error:', error);
-      return fallbackModel;
     }
   }
 }

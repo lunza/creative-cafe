@@ -1,26 +1,11 @@
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { Layout, ConfigProvider, theme } from 'antd';
 import { useUIStore } from './stores/uiStore';
-import { useSettingStore } from './stores/settingStore';
 import Sidebar from './components/Layout/Sidebar';
 import Header from './components/Layout/Header';
-import FloatingLogButton from './components/Layout/FloatingLogButton';
-import GlobalLogPanel from './components/Layout/GlobalLogPanel';
 import PageTransition from './components/Layout/PageTransition';
 import Dashboard from './components/Dashboard/Dashboard';
-
-import PromptOptimizer from './components/PromptOptimizer/PromptOptimizer';
-import WorldBookManager from './components/WorldBook/WorldBookManager';
-import AvatarManager from './components/Avatar/AvatarManager';
-import CharacterManager from './components/Character/CharacterManager';
-import PluginManager from './components/Plugin/PluginManager';
-import Settings from './components/Settings/Settings';
-import MemoryChatManager from './components/MemoryChat/MemoryChatManager';
-import CreativeManager from './components/Creative/CreativeManager';
-import TestPage from './components/Test/TestPage';
-import DocumentVectorPage from './components/Test/DocumentVectorPage';
-import { KnowledgeBaseManager } from './components/KnowledgeBase/KnowledgeBaseManager';
-import { CreationCenter } from './components/Chat/CreationCenter';
+import { findRouteComponent } from './routeConfig';
 import './styles/ui-variables.css';
 import './styles/App.css';
 import './styles/animations.css';
@@ -30,7 +15,6 @@ const { Content } = Layout;
 
 function App() {
   const { activeTab, theme: appTheme, compactMode, animationEnabled } = useUIStore();
-  const { setting } = useSettingStore();
 
   useEffect(() => {
     if (appTheme === 'dark') {
@@ -57,37 +41,12 @@ function App() {
   }, [animationEnabled]);
 
   const renderContent = () => {
-    switch (activeTab) {
-      case 'dashboard':
-        return <Dashboard />;
-      case 'chat':
-        return <CreationCenter />;
-      case 'prompt-optimizer':
-        return <PromptOptimizer />;
-      case 'worldbook':
-        return <WorldBookManager />;
-      case 'avatar':
-        return <AvatarManager />;
-      case 'character':
-        return <CharacterManager />;
-      case 'plugin':
-        return <PluginManager />;
-      case 'memory':
-        return <MemoryChatManager />;
-      case 'knowledge':
-        return <KnowledgeBaseManager />;
-      case 'creative':
-        return <CreativeManager />;
-      case 'settings':
-        return <Settings />;
-      case 'test':
-      case 'test-markdown':
-        return <TestPage />;
-      case 'document-vector':
-        return <DocumentVectorPage />;
-      default:
-        return <Dashboard />;
+    const Component = findRouteComponent(activeTab);
+    if (Component) {
+      return <Component />;
     }
+    // 兼容原 default 行为：未配置 component 的 tab（如 test-vector）回退到 Dashboard
+    return <Dashboard />;
   };
 
   return (
@@ -106,12 +65,6 @@ function App() {
             </PageTransition>
           </Content>
         </Layout>
-        
-        {/* 全局日志浮动按钮 */}
-        <FloatingLogButton />
-        
-        {/* 全局日志面板 */}
-        <GlobalLogPanel />
       </Layout>
     </ConfigProvider>
   );

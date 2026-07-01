@@ -115,7 +115,7 @@ export interface VectorConfig {
   contextWindowTokens: number;
   autoVectorizeWorldBook: boolean;
   autoVectorizeKnowledge: boolean;
-  dimension?: number;
+  dimension?: 1024 | 4096;
   
   // 禁止字段说明（以下字段不应出现在此配置中）：
   // - vectors: number[][] - 向量数组，应存储在 vecstore.json

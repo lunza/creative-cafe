@@ -3,18 +3,15 @@ import { Card, Row, Col, Statistic, Button, Space, message, Modal, Typography, T
 import {
   BookOutlined,
   UserOutlined,
-  CheckCircleOutlined,
-  WarningOutlined,
   ReloadOutlined,
   LoadingOutlined,
-  ThunderboltOutlined,
   LeftOutlined,
   RightOutlined,
   BulbOutlined,
-  ThunderboltOutlined as AvatarIcon,
+  IdcardOutlined as AvatarIcon,
   DatabaseOutlined,
-  ThunderboltOutlined as EngineIcon,
-  ThunderboltOutlined as VectorIcon,
+  CloudServerOutlined as EngineIcon,
+  DeploymentUnitOutlined as VectorIcon,
   FolderOpenOutlined
 } from '@ant-design/icons';
 import { Carousel } from 'antd';

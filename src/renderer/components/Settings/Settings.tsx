@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
-import { Card, Form, Switch, Select, Button, Space, message, Divider, Input, Upload, Modal, Table, Popconfirm, Alert } from 'antd';
-import { SaveOutlined, ReloadOutlined, FolderOutlined, UndoOutlined, UploadOutlined, DeleteOutlined, PlusOutlined, EditOutlined, SettingOutlined, CheckCircleOutlined, CloseCircleOutlined, SyncOutlined, FileTextOutlined, CopyOutlined } from '@ant-design/icons';
+import React, { useEffect, useState, useCallback } from 'react';
+import { Card, Form, Switch, Select, Button, Space, message, Divider, Input, Upload, Modal, Table, Popconfirm, Alert, AutoComplete } from 'antd';
+import { SaveOutlined, ReloadOutlined, FolderOutlined, UndoOutlined, UploadOutlined, DeleteOutlined, PlusOutlined, EditOutlined, SettingOutlined, CheckCircleOutlined, CloseCircleOutlined, SyncOutlined, FileTextOutlined, CopyOutlined, SearchOutlined } from '@ant-design/icons';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingStore } from '../../stores/settingStore';
 import { useLogStore } from '../../stores/logStore';
@@ -8,6 +8,74 @@ import { AIEngineSetting } from '../../types/setting';
 import { VectorConfigPanel, VectorConfigPanelRef } from '../Vector/VectorConfigPanel';
 import { AppSetting } from '../../settings';
 import './Settings.css';
+
+/**
+ * 目录路径 → 显示名映射。用于 handleSave 中并发更新多个目录时的日志输出。
+ */
+const DIRECTORY_LABELS = {
+  characterPath: '角色卡',
+  worldBookPath: '世界书',
+  avatarPath: '用户设定',
+  pluginPath: '插件',
+} as const;
+
+type DirectoryKey = keyof typeof DIRECTORY_LABELS;
+
+type AddLogFn = (message: string, type?: 'error' | 'warn' | 'info' | 'debug', options?: {
+  details?: string;
+  error?: Error;
+  context?: any;
+  category?: 'system' | 'ai' | 'setting' | 'network' | 'user' | 'other';
+}) => void;
+
+/**
+ * 更新单个目录到对应 IPC（character/worldBook/avatar/plugin）。
+ *
+ * 行为对齐原 handleSave 中各目录的 try/catch 块：
+ * - 全部目录均记录 "更新X目录: <path>" + "X目录更新结果: <json>"
+ * - 仅 character/worldBook 在原代码中额外检查 success 并记录最终路径
+ *   （avatar/plugin 只记录 result JSON）
+ * - 原代码使用 'success' 日志级别，但 LogLevel 仅支持 'error'/'warn'/'info'/'debug'，
+ *   导致这些日志被 shouldLog 静默丢弃；此处改为 'info' 以让日志真正生效
+ *
+ * 该函数自身吞掉异常并写日志，不向外抛出，便于 Promise.allSettled 并发执行。
+ */
+const updateDirectoryFor = async (
+  key: DirectoryKey,
+  value: string,
+  addLog: AddLogFn
+): Promise<void> => {
+  if (!value) return;
+  const label = DIRECTORY_LABELS[key];
+  addLog(`更新${label}目录: ${value}`, 'info');
+  try {
+    let setDirectoryResult: any;
+    if (key === 'characterPath') {
+      setDirectoryResult = await window.electronAPI.character.setDirectory(value);
+    } else if (key === 'worldBookPath') {
+      setDirectoryResult = await window.electronAPI.worldBook.setDirectory(value);
+    } else if (key === 'avatarPath') {
+      setDirectoryResult = await window.electronAPI.avatar.setDirectory(value);
+    } else if (key === 'pluginPath') {
+      setDirectoryResult = await window.electronAPI.plugin.setDirectory(value);
+    }
+    addLog(`${label}目录更新结果: ${JSON.stringify(setDirectoryResult)}`, 'info');
+
+    // 仅 character / worldBook 在原代码中检查 success 并记录最终路径
+    if (key === 'characterPath' || key === 'worldBookPath') {
+      if (setDirectoryResult?.success) {
+        const finalPath = key === 'characterPath'
+          ? setDirectoryResult.characterDir
+          : setDirectoryResult.worldBookDir;
+        addLog(`${label}目录更新成功${finalPath ? `，最终路径: ${finalPath}` : ''}`, 'info');
+      } else {
+        addLog(`${label}目录更新失败`, 'error');
+      }
+    }
+  } catch (setDirectoryError) {
+    addLog(`更新${label}目录失败: ${setDirectoryError instanceof Error ? setDirectoryError.message : '未知错误'}`, 'error');
+  }
+};
 
 const Settings: React.FC = () => {
   const { theme, setTheme, animationEnabled, setAnimationEnabled, compactMode, setCompactMode } = useUIStore();
@@ -41,6 +109,34 @@ const Settings: React.FC = () => {
   const [newEngineName, setNewEngineName] = useState('');
   const [nameError, setNameError] = useState('');
   const [copiedEngineId, setCopiedEngineId] = useState<string | null>(null);
+  const [engineModelOptions, setEngineModelOptions] = useState<{ label: string; value: string }[]>([]);
+  const [engineModelLoading, setEngineModelLoading] = useState(false);
+
+  const handleFetchEngineModels = useCallback(async (formInstance: { getFieldsValue: () => any }) => {
+    const values = formInstance.getFieldsValue();
+    if (!values.api_url) {
+      message.warning('请先填写 API 地址');
+      return;
+    }
+    setEngineModelLoading(true);
+    try {
+      const result = await window.electronAPI.ai.listModels({
+        apiUrl: values.api_url,
+        apiKey: values.api_key,
+        apiKeyTransmission: values.api_key_transmission,
+      });
+      if (result.success && result.models.length > 0) {
+        setEngineModelOptions(result.models.map((m: string) => ({ label: m, value: m })));
+        message.success(`成功获取 ${result.models.length} 个模型`);
+      } else {
+        message.warning(result.error || '未获取到模型列表');
+      }
+    } catch {
+      message.error('获取模型列表失败');
+    } finally {
+      setEngineModelLoading(false);
+    }
+  }, []);
 
   // 加载设置
   useEffect(() => {
@@ -286,71 +382,26 @@ const Settings: React.FC = () => {
           addLog('开始保存设置', 'info');
           await saveSetting(updatedSetting);
           addLog('设置保存成功', 'info');
-          
-          // 更新角色卡目录
-          if (values.characterPath) {
-            addLog(`更新角色卡目录: ${values.characterPath}`, 'info');
-            try {
-              const setDirectoryResult = await window.electronAPI.character.setDirectory(values.characterPath);
-              addLog(`角色卡目录更新结果: ${JSON.stringify(setDirectoryResult)}`, 'info');
-              if (setDirectoryResult.success) {
-                addLog(`角色卡目录更新成功，最终路径: ${setDirectoryResult.characterDir}`, 'success');
-              } else {
-                addLog('角色卡目录更新失败', 'error');
-              }
-            } catch (setDirectoryError) {
-              addLog(`更新角色卡目录失败: ${setDirectoryError instanceof Error ? setDirectoryError.message : '未知错误'}`, 'error');
-            }
-          }
-          
-          // 更新世界书目录
-          if (values.worldBookPath) {
-            addLog(`更新世界书目录: ${values.worldBookPath}`, 'info');
-            try {
-              const setDirectoryResult = await window.electronAPI.worldBook.setDirectory(values.worldBookPath);
-              addLog(`世界书目录更新结果: ${JSON.stringify(setDirectoryResult)}`, 'info');
-              if (setDirectoryResult.success) {
-                addLog(`世界书目录更新成功，最终路径: ${setDirectoryResult.worldBookDir}`, 'success');
-              } else {
-                addLog('世界书目录更新失败', 'error');
-              }
-            } catch (setDirectoryError) {
-              addLog(`更新世界书目录失败: ${setDirectoryError instanceof Error ? setDirectoryError.message : '未知错误'}`, 'error');
-            }
-          }
-          
-          // 更新用户设定目录
-          if (values.avatarPath) {
-            addLog(`更新用户设定目录: ${values.avatarPath}`, 'info');
-            try {
-              const setDirectoryResult = await window.electronAPI.avatar.setDirectory(values.avatarPath);
-              addLog(`用户设定目录更新结果: ${JSON.stringify(setDirectoryResult)}`, 'info');
-            } catch (setDirectoryError) {
-              addLog(`更新用户设定目录失败: ${setDirectoryError instanceof Error ? setDirectoryError.message : '未知错误'}`, 'error');
-            }
-          }
-          
-          // 更新插件目录
-          if (values.pluginPath) {
-            addLog(`更新插件目录: ${values.pluginPath}`, 'info');
-            try {
-              const setDirectoryResult = await window.electronAPI.plugin.setDirectory(values.pluginPath);
-              addLog(`插件目录更新结果: ${JSON.stringify(setDirectoryResult)}`, 'info');
-            } catch (setDirectoryError) {
-              addLog(`更新插件目录失败: ${setDirectoryError instanceof Error ? setDirectoryError.message : '未知错误'}`, 'error');
-            }
-          }
-          
-          // 记忆目录路径已保存到设置中
+
+          // 并发更新 4 个目录（character / worldBook / avatar / plugin）
+          // 任意目录更新失败不影响其他目录；updateDirectoryFor 内部已吞掉异常并写日志。
+          await Promise.allSettled([
+            updateDirectoryFor('characterPath', values.characterPath, addLog),
+            updateDirectoryFor('worldBookPath', values.worldBookPath, addLog),
+            updateDirectoryFor('avatarPath', values.avatarPath, addLog),
+            updateDirectoryFor('pluginPath', values.pluginPath, addLog),
+          ]);
+
+          // 记忆目录路径已保存到设置中（无对应 setDirectory IPC）
           if (values.memoryPath) {
             addLog(`记忆目录路径已保存: ${values.memoryPath}`, 'info');
           }
-          
-          // 创意目录路径已保存到设置中
+
+          // 创意目录路径已保存到设置中（无对应 setDirectory IPC）
           if (values.creativePath) {
             addLog(`创意目录路径已保存: ${values.creativePath}`, 'info');
           }
-          
+
           message.success('设置保存成功');
         } catch (saveError) {
           addLog('保存设置异常', 'error', {
@@ -749,6 +800,32 @@ const Settings: React.FC = () => {
       if (result.success) {
         addLog('AI 引擎连通性测试成功', 'success');
         message.success(`连接测试成功：${result.details || '成功'}`);
+
+        // 将测试通过的配置同步到 store，确保生成流程能获取到最新配置
+        const syncedEngine: AIEngineSetting = {
+          id: 'test_engine',
+          name: '测试引擎',
+          api_url: values.api_url,
+          api_key: values.api_key,
+          model_name: values.model_name,
+          api_mode: values.api_mode,
+          api_key_transmission: values.api_key_transmission,
+          max_tokens: Number(values.max_tokens) || 10240,
+          temperature: Number(values.temperature) ?? 0.7,
+          top_p: Number(values.top_p) || undefined,
+          top_k: Number(values.top_k) || undefined,
+          min_p: Number(values.min_p) || undefined,
+          frequency_penalty: Number(values.frequency_penalty) || undefined,
+          presence_penalty: Number(values.presence_penalty) || undefined,
+          n: Number(values.n) || 1,
+          system_prompt: values.system_prompt || '',
+        };
+        useSettingStore.getState().setSetting({
+          ...setting,
+          aiEngines: [syncedEngine],
+          activeEngineId: 'test_engine'
+        });
+        addLog('测试通过的配置已同步到 store', 'info');
       } else {
         addLog('AI 引擎连通性测试失败', 'error');
         message.error('连接测试失败');
@@ -827,6 +904,32 @@ const Settings: React.FC = () => {
       if (result.success) {
         addLog('引擎连通性测试成功', 'success');
         message.success(`连接测试成功：${result.details || '成功'}`);
+
+        // 将测试通过的配置同步到 store，确保生成流程能获取到最新配置
+        const syncedEngine: AIEngineSetting = {
+          id: 'test_engine',
+          name: '测试引擎',
+          api_url: values.api_url,
+          api_key: values.api_key,
+          model_name: values.model_name,
+          api_mode: values.api_mode,
+          api_key_transmission: values.api_key_transmission,
+          max_tokens: Number(values.max_tokens) || 10240,
+          temperature: Number(values.temperature) ?? 0.7,
+          top_p: Number(values.top_p) || undefined,
+          top_k: Number(values.top_k) || undefined,
+          min_p: Number(values.min_p) || undefined,
+          frequency_penalty: Number(values.frequency_penalty) || undefined,
+          presence_penalty: Number(values.presence_penalty) || undefined,
+          n: Number(values.n) || 1,
+          system_prompt: values.system_prompt || '',
+        };
+        useSettingStore.getState().setSetting({
+          ...setting,
+          aiEngines: [syncedEngine],
+          activeEngineId: 'test_engine'
+        });
+        addLog('测试通过的配置已同步到 store', 'info');
       } else {
         addLog('引擎连通性测试失败', 'error');
         message.error('连接测试失败');
@@ -1011,11 +1114,15 @@ const Settings: React.FC = () => {
           </Form.Item>
 
           <Form.Item label="API密钥" name="api_key">
-            <Input.Password placeholder="请输入API密钥（可选）" />
+            <Input placeholder="请输入API密钥（可选）" />
           </Form.Item>
 
           <Form.Item label="模型名称" name="model_name">
-            <Input placeholder="例如: qwen3.5-27b-heretic-v3" />
+            <AutoComplete
+              options={engineModelOptions}
+              placeholder="例如: qwen3.5-27b-heretic-v3"
+              filterOption={false}
+            />
           </Form.Item>
 
           <Form.Item label="API模式" name="api_mode">
@@ -1034,6 +1141,17 @@ const Settings: React.FC = () => {
                 { label: '请求体', value: 'body' }
               ]}
             />
+          </Form.Item>
+
+          <Form.Item>
+            <Button
+              type="primary"
+              icon={<SearchOutlined />}
+              onClick={() => handleFetchEngineModels(form)}
+              loading={engineModelLoading}
+            >
+              获取模型列表
+            </Button>
           </Form.Item>
 
           <Form.Item label="最大令牌数 (max_tokens)" name="max_tokens">
@@ -1265,10 +1383,14 @@ const Settings: React.FC = () => {
               <Input placeholder="例如: http://127.0.0.1:5000" />
             </Form.Item>
             <Form.Item label="API密钥" name="api_key">
-              <Input.Password placeholder="请输入API密钥（可选）" />
+              <Input placeholder="请输入API密钥（可选）" />
             </Form.Item>
             <Form.Item label="模型名称" name="model_name" rules={[{ required: true, message: '请输入模型名称' }]}>
-              <Input placeholder="例如: qwen3.5-27b-heretic-v3" />
+              <AutoComplete
+                options={engineModelOptions}
+                placeholder="例如: qwen3.5-27b-heretic-v3"
+                filterOption={false}
+              />
             </Form.Item>
             <Form.Item label="API模式" name="api_mode" rules={[{ required: true, message: '请选择API模式' }]}>
               <Select
@@ -1285,6 +1407,16 @@ const Settings: React.FC = () => {
                   { label: '请求体', value: 'body' }
                 ]}
               />
+            </Form.Item>
+            <Form.Item>
+              <Button
+                type="primary"
+                icon={<SearchOutlined />}
+                onClick={() => handleFetchEngineModels(engineForm)}
+                loading={engineModelLoading}
+              >
+                获取模型列表
+              </Button>
             </Form.Item>
             <Form.Item label="最大令牌数 (max_tokens)" name="max_tokens">
               <Input type="number" min={1} max={1000000} placeholder="范围: 1-1000000，例如: 10240" />

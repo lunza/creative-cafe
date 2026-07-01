@@ -281,22 +281,6 @@ export class ContextManager {
     return compressed.trim();
   }
 
-  async generateSummary(text: string): Promise<string> {
-    try {
-      if (text.length < 100) {
-        return text;
-      }
-
-      const prompt = `请对以下文本生成简洁的摘要（不超过100字）：\n\n${text.substring(0, 2000)}\n\n摘要：`;
-
-      const embedResult = await embeddingService.generateEmbedding(prompt);
-      return text.substring(0, 200);
-    } catch (error) {
-      console.error('[ContextManager] 生成摘要失败:', error);
-      return text.substring(0, 200);
-    }
-  }
-
   registerIpcHandlers(): void {
     ipcMain.handle('context:retrieve', async (_event, { conversation, options }: { conversation: Message[]; options: RetrieveOptions }) => {
       try {

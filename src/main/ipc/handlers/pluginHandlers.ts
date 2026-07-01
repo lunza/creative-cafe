@@ -1,14 +1,7 @@
 import { ipcMain } from 'electron';
 import { pluginService } from '../../services/pluginService';
-import { getUserDataPath } from '../../utils/appPath';
+import { resolveUserDataPlaceholder } from '../../utils/appPath';
 import { getStorageService } from '../../services/storageService';
-
-function resolveUserDataPlaceholder(dir: string): string {
-  if (dir.startsWith('__USER_DATA__')) {
-    return dir.replace('__USER_DATA__', getUserDataPath());
-  }
-  return dir;
-}
 
 export function pluginHandlers() {
   // 初始化时从设置中加载插件路径

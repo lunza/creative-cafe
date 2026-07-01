@@ -3,8 +3,10 @@
  * 以列表视图展示角色卡聊天记录，支持编辑、向量化、关联模板、表格整理和删除操作
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { LRUCache } from 'lru-cache';
 import { useSettingStore } from '../../stores/settingStore';
+import { useAiConfig } from '../../hooks/useAiConfig';
 import {
   Button,
   Input,
@@ -44,9 +46,9 @@ import './MemoryChatManager.css';
 const { Title, Text } = Typography;
 const { TextArea } = Input;
 
-// 缩略图缓存
-const thumbnailCache: Map<string, string> = new Map();
-const thumbnailErrorCache: Map<string, boolean> = new Map();
+// 缩略图缓存（LRU 容器，max:100，防止长会话场景下无界增长）
+const thumbnailCache = new LRUCache<string, string>({ max: 100 });
+const thumbnailErrorCache = new LRUCache<string, boolean>({ max: 100 });
 
 interface ChatMessage {
   id: string;
@@ -246,31 +248,26 @@ const ChatManager: React.FC = () => {
   const [consistencyChecking, setConsistencyChecking] = useState(false);
 
   const { addLog } = useLogStore();
-  const { setting, fetchSetting } = useSettingStore();
+  const { fetchSetting } = useSettingStore();
+  // 统一 AI 引擎配置读取（替代原 handleOpenTableOrganize 中的 legacy setting?.api_*
+  // 与 startProgressiveProcessing 中的手动 aiEngines 查找）
+  const { activeEngine, getAiConfig } = useAiConfig();
 
   useEffect(() => {
     fetchSetting();
   }, [fetchSetting]);
 
-  useEffect(() => {
-    if (window.electronAPI && window.electronAPI.memory && window.electronAPI.memory.onLog) {
-      console.log('ChatManager: 开始监听日志信息');
-      window.electronAPI.memory.onLog((message: string, type: string) => {
-        addLog(message, type as 'error' | 'warn' | 'info' | 'debug');
-      });
-    }
-
-    if (window.electronAPI && window.electronAPI.on) {
-      console.log('ChatManager: 开始监听直接 IPC 日志事件');
-      const removeListener = window.electronAPI.on('memory:log', (message: string, type: string) => {
-        addLog(message, type as 'error' | 'warn' | 'info' | 'debug');
-      });
-
-      return () => {
-        removeListener();
-      };
-    }
-  }, [addLog]);
+  /**
+   * 向 processingDetails 追加一条日志，并限制总条数 ≤ 100。
+   * 旧实现 `setProcessingDetails(prev => [...prev, msg])` 在长会话（上千条消息）
+   * 整理时会无限增长导致渲染卡顿；此处统一从尾部保留最近 100 条。
+   */
+  const appendProcessingDetail = useCallback((msg: string) => {
+    setProcessingDetails(prev => {
+      const next = [...prev, msg];
+      return next.length > 100 ? next.slice(-100) : next;
+    });
+  }, []);
 
   useEffect(() => {
     if (window.electronAPI && window.electronAPI.on) {
@@ -280,14 +277,14 @@ const ChatManager: React.FC = () => {
         // 直接使用后端传递的百分比值，避免前端计算错误
         setProcessingProgress(data.percent ?? Math.round((data.current / data.total) * 100));
         setProcessingStatus(data.message || `处理消息 ${data.current}/${data.total}...`);
-        setProcessingDetails(prev => [...prev, `${data.message || `处理消息 ${data.current}/${data.total}`}`]);
+        appendProcessingDetail(`${data.message || `处理消息 ${data.current}/${data.total}`}`);
       });
 
       return () => {
         removeListener();
       };
     }
-  }, []);
+  }, [appendProcessingDetail]);
 
   const loadCharacterChatRecords = async () => {
     addLog('开始加载角色卡聊天记录...', 'info');
@@ -531,16 +528,8 @@ const ChatManager: React.FC = () => {
 
       addLog(`开始整理 ${messages.length} 条聊天记录`, 'info');
 
-      const aiConfig = {
-        apiKey: setting?.api_key || '',
-        apiUrl: setting?.api_url || 'http://127.0.0.1:5000',
-        modelName: setting?.model_name || (() => { throw new Error('未配置 AI 模型名称') })(),
-        apiMode: setting?.api_mode || 'text_completion'
-      };
-
-      if (!aiConfig.modelName) {
-        throw new Error('未配置 AI 模型名称');
-      }
+      // 统一走 useAiConfig：未配置 model_name 时由 hook 抛出 '未配置 AI 模型名称'
+      const aiConfig = getAiConfig();
 
       setProcessingConfig(aiConfig);
       console.log('使用 AI 配置:', aiConfig);
@@ -550,7 +539,7 @@ const ChatManager: React.FC = () => {
       for (let i = 0; i < messageIds.length; i++) {
         if (shouldStopProcessing) {
           setProcessingStatus('处理已停止');
-          setProcessingDetails(prev => [...prev, '处理已停止']);
+          appendProcessingDetail('处理已停止');
           addLog('表格整理已停止', 'info');
           break;
         }
@@ -561,10 +550,10 @@ const ChatManager: React.FC = () => {
 
         if (currentMessage) {
           setProcessingStatus(`处理消息 ${i + 1}/${messageIds.length}...`);
-          setProcessingDetails(prev => [...prev, `开始处理消息 ${i + 1}/${messageIds.length}`]);
+          appendProcessingDetail(`开始处理消息 ${i + 1}/${messageIds.length}`);
 
           setProcessingStatus('发送请求到AI服务器...');
-          setProcessingDetails(prev => [...prev, '正在发送请求到 AI 服务器...']);
+          appendProcessingDetail('正在发送请求到 AI 服务器...');
 
           await window.electronAPI.memory.processChat(record.characterCardName, selectedTemplate, [messageId], aiConfig);
 
@@ -572,14 +561,14 @@ const ChatManager: React.FC = () => {
           setProcessingProgress(newProgress);
 
           addLog(`成功整理聊天记录 ${currentMessage.id}`, 'info');
-          setProcessingDetails(prev => [...prev, `成功整理消息 ${i + 1}`]);
+          appendProcessingDetail(`成功整理消息 ${i + 1}`);
         }
       }
 
       if (!shouldStopProcessing) {
         setProcessingStatus('处理完成');
         setProcessingProgress(100);
-        setProcessingDetails(prev => [...prev, '表格整理完成！']);
+        appendProcessingDetail('表格整理完成！');
 
         setTimeout(() => {
           setProcessingModalVisible(false);
@@ -605,7 +594,7 @@ const ChatManager: React.FC = () => {
       }
       console.error('表格整理失败:', error);
       setProcessingStatus('处理失败');
-      setProcessingDetails(prev => [...prev, `错误: ${errorMessage}`]);
+      appendProcessingDetail(`错误: ${errorMessage}`);
 
       setTimeout(() => {
         setProcessingModalVisible(false);
@@ -711,7 +700,7 @@ const ChatManager: React.FC = () => {
       }
       console.error('逐条表格整理失败:', error);
       setProcessingStatus('处理失败');
-      setProcessingDetails(prev => [...prev, `错误: ${errorMessage}`]);
+      appendProcessingDetail(`错误: ${errorMessage}`);
 
       setTimeout(() => {
         setProcessingModalVisible(false);
@@ -727,24 +716,9 @@ const ChatManager: React.FC = () => {
     restart: boolean
   ) => {
     try {
-      // 从 aiEngines 中获取当前激活的引擎配置
-      let activeEngine = null;
-      if (setting?.aiEngines && setting.activeEngineId) {
-        activeEngine = setting.aiEngines.find(engine => engine.id === setting.activeEngineId);
-      } else if (setting?.aiEngines && setting.aiEngines.length > 0) {
-        activeEngine = setting.aiEngines[0];
-      }
-
-      const aiConfig = {
-        apiKey: activeEngine?.api_key || '',
-        apiUrl: activeEngine?.api_url || 'http://127.0.0.1:5000',
-        modelName: activeEngine?.model_name || (() => { throw new Error('未配置 AI 模型名称') })(),
-        apiMode: activeEngine?.api_mode || 'text_completion'
-      };
-
-      if (!aiConfig.modelName) {
-        throw new Error('未配置 AI 模型名称');
-      }
+      // 统一走 useAiConfig：与原逻辑等价（按 activeEngineId 查找 → 回退 aiEngines[0]），
+      // 未配置 model_name 时由 hook 抛出 '未配置 AI 模型名称'
+      const aiConfig = getAiConfig();
 
       setProcessingConfig(aiConfig);
       console.log('使用 AI 配置:', restart ? '(完全整理)' : '(实时整理)', aiConfig);
@@ -769,7 +743,7 @@ const ChatManager: React.FC = () => {
       if (result.success) {
         setProcessingStatus('处理完成');
         setProcessingProgress(100);
-        setProcessingDetails(prev => [...prev, `逐条整理完成！成功处理 ${result.processedCount} 条消息，${result.errorCount} 条错误`]);
+        appendProcessingDetail(`逐条整理完成！成功处理 ${result.processedCount} 条消息，${result.errorCount} 条错误`);
 
         if (result.resumed) {
           addLog('所有消息已处理完成，无需重复处理', 'info');
@@ -785,7 +759,7 @@ const ChatManager: React.FC = () => {
         }, 1000);
       } else {
         setProcessingStatus('处理失败');
-        setProcessingDetails(prev => [...prev, `错误: ${result.errors.join(', ')}`]);
+        appendProcessingDetail(`错误: ${result.errors.join(', ')}`);
 
         setTimeout(() => {
           setProcessingModalVisible(false);
@@ -806,7 +780,7 @@ const ChatManager: React.FC = () => {
       }
       console.error('逐条表格整理失败:', error);
       setProcessingStatus('处理失败');
-      setProcessingDetails(prev => [...prev, `错误: ${errorMessage}`]);
+      appendProcessingDetail(`错误: ${errorMessage}`);
 
       setTimeout(() => {
         setProcessingModalVisible(false);
@@ -1073,6 +1047,8 @@ const ChatManager: React.FC = () => {
           columns={columns}
           dataSource={records}
           rowKey="filePath"
+          virtual
+          scroll={{ y: 500 }}
           pagination={{ pageSize, showSizeChanger: true, showTotal: (total) => `共 ${total} 条记录`, onChange: (page, size) => { setPageSize(size); } }}
         />
       )}
@@ -1337,6 +1313,8 @@ const ChatManager: React.FC = () => {
                       }
                     }))}
                     rowKey={(_, index) => String(index)}
+                    virtual
+                    scroll={{ y: 500 }}
                     pagination={{ pageSize: 20 }}
                     locale={{ emptyText: '表格为空' }}
                   />
@@ -1349,6 +1327,8 @@ const ChatManager: React.FC = () => {
                       key: key
                     }))}
                     rowKey={(_, index) => String(index)}
+                    virtual
+                    scroll={{ y: 500 }}
                     pagination={{ pageSize: 20 }}
                   />
                 ) : (

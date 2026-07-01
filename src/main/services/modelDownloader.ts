@@ -2,10 +2,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as https from 'https';
 import * as http from 'http';
+import { spawn, execSync } from 'child_process';
 
 const HF_MIRROR = 'https://hf-mirror.com';
 const HF_OFFICIAL = 'https://huggingface.co';
-const MODELSCOPE = 'https://modelscope.cn/api/v1/models';
 
 const MODEL_FILES = [
   'tokenizer.json',
@@ -27,13 +27,21 @@ export async function downloadModelFromHF(
       fs.mkdirSync(localPath, { recursive: true });
     }
 
-    onProgress?.(0, 'trying model sources...');
+    onProgress?.(0, 'Trying ModelScope CLI...');
+
+    const msResult = await downloadFromModelScopeCLI(modelName, localPath, onProgress);
+    if (msResult.success) {
+      onProgress?.(100, 'ModelScope download complete');
+      return { success: true };
+    }
+    console.log(`[ModelDownloader] ModelScope CLI failed: ${msResult.error}, falling back to HuggingFace sources`);
+    onProgress?.(0, 'Falling back to HuggingFace sources...');
 
     let downloadedFiles = 0;
     const totalFiles = MODEL_FILES.length;
     const sources = [
       { name: 'HF Mirror', buildUrl: (m: string, f: string) => `${HF_MIRROR}/${m}/resolve/main/${f}`, timeout: 15000 },
-      { name: 'HuggingFace', buildUrl: (m: string, f: string) => `${HF_OFFICIAL}/${m}/resolve/main/${f}`, timeout: 15000 }
+      { name: 'HuggingFace', buildUrl: (m: string, f: string) => `${HF_OFFICIAL}/${m}/resolve/main/${f}`, timeout: 15000 },
     ];
 
     for (const file of MODEL_FILES) {
@@ -78,11 +86,119 @@ export async function downloadModelFromHF(
       return { success: false, error: `Only ${downloadedFiles}/${totalFiles} files downloaded. Try setting HTTPS_PROXY.` };
     }
   } catch (error) {
-    return { 
-      success: false, 
-      error: error instanceof Error ? error.message : 'Unknown error' 
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
     };
   }
+}
+
+function findModelScopeExecutable(): string | null {
+  try {
+    const checkCmd = process.platform === 'win32' ? 'where modelscope' : 'which modelscope';
+    execSync(checkCmd, { stdio: 'pipe', timeout: 5000 });
+    console.log('[ModelDownloader] Found modelscope in PATH');
+    return 'modelscope';
+  } catch {}
+
+  if (process.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA;
+    if (localAppData) {
+      const pythonDir = path.join(localAppData, 'Programs', 'Python');
+      if (fs.existsSync(pythonDir)) {
+        try {
+          const versions = fs.readdirSync(pythonDir).filter(d => d.startsWith('Python'));
+          for (const ver of versions) {
+            const exePath = path.join(pythonDir, ver, 'Scripts', 'modelscope.exe');
+            if (fs.existsSync(exePath)) {
+              console.log(`[ModelDownloader] Found modelscope at: ${exePath}`);
+              return exePath;
+            }
+          }
+        } catch {}
+      }
+    }
+  }
+
+  console.log('[ModelDownloader] modelscope CLI not found');
+  return null;
+}
+
+async function downloadFromModelScopeCLI(
+  modelName: string,
+  localPath: string,
+  onProgress?: (progress: number, status: string) => void
+): Promise<{ success: boolean; error?: string }> {
+  const exe = findModelScopeExecutable();
+  if (!exe) {
+    return { success: false, error: 'modelscope CLI not found' };
+  }
+
+  console.log(`[ModelDownloader] Trying ModelScope via: ${exe}`);
+  onProgress?.(5, `ModelScope: starting ${path.basename(exe)}...`);
+
+  return new Promise((resolve) => {
+    const args = ['download', '--model', modelName, '--local_dir', localPath];
+    const child = spawn(exe, args, { shell: true });
+
+    let stderr = '';
+    let resolved = false;
+    let lastProgressUpdate = 0;
+
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        try { child.kill(); } catch {}
+        resolved = true;
+        resolve({ success: false, error: 'ModelScope CLI timeout (5 min)' });
+      }
+    }, 300000);
+
+    child.stdout?.on('data', (data: Buffer) => {
+      const text = data.toString().trim();
+      if (text) {
+        console.log(`[ModelDownloader] ModelScope stdout: ${text.slice(0, 200)}`);
+        const now = Date.now();
+        if (now - lastProgressUpdate > 500) {
+          lastProgressUpdate = now;
+          onProgress?.(50, `ModelScope: ${text.slice(0, 80)}`);
+        }
+      }
+    });
+
+    child.stderr?.on('data', (data: Buffer) => {
+      const text = data.toString();
+      stderr += text;
+      const trimmed = text.trim();
+      if (trimmed) {
+        console.log(`[ModelDownloader] ModelScope stderr: ${trimmed.slice(0, 200)}`);
+        const now = Date.now();
+        if (now - lastProgressUpdate > 500) {
+          lastProgressUpdate = now;
+          const pctMatch = trimmed.match(/(\d+)%/);
+          const pct = pctMatch ? Math.min(parseInt(pctMatch[1]), 95) : 50;
+          onProgress?.(pct, `ModelScope: ${trimmed.slice(0, 80)}`);
+        }
+      }
+    });
+
+    child.on('close', (code: number | null) => {
+      if (resolved) return;
+      clearTimeout(timeout);
+      resolved = true;
+      if (code === 0) {
+        resolve({ success: true });
+      } else {
+        resolve({ success: false, error: `exit code ${code}: ${stderr.slice(0, 300)}` });
+      }
+    });
+
+    child.on('error', (err: Error) => {
+      if (resolved) return;
+      clearTimeout(timeout);
+      resolved = true;
+      resolve({ success: false, error: err.message });
+    });
+  });
 }
 
 function downloadFile(url: string, outputPath: string, timeout: number = 30000, maxRedirects: number = 5): Promise<void> {

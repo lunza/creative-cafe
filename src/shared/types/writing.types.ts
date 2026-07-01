@@ -1,5 +1,10 @@
 // 写作模式共享类型定义
 
+// 从 writing-table.types.ts 引入 WritingTableData（统一真源），同时 re-export 以保持向后兼容
+// 详见 src/shared/types/writing-table.types.ts
+import type { WritingTableData } from './writing-table.types';
+export type { WritingTableData, WritingTableContext, WritingTableConfig } from './writing-table.types';
+
 // 小说类型
 export enum NovelType {
   WEB_NOVEL = 'web_novel',
@@ -278,6 +283,13 @@ export interface ContentGenerationRequest {
   regenerationSuggestion?: RegenerationSuggestion;
   previousChapterContent?: string; // 上一次生成的完整内容（重新生成时引用）
   generationGuidance?: string; // 持久化的章节创作指导建议
+  // 分片生成相关字段
+  previousChunkContent?: string; // 前序分片内容（滑动窗口上下文）
+  chunkContext?: {
+    chunkIndex: number;
+    totalChunks: number;
+    isLastChunk: boolean;
+  };
 }
 
 // 章节生成用户建议（简洁模式）
@@ -370,6 +382,7 @@ export interface ChapterOutline {
     generationTime: number;
     generatedAt: number;
   };
+  chunks?: ChapterChunk[]; // 分片生成相关
 }
 
 // 角色关系
@@ -1045,12 +1058,9 @@ export interface BatchFixResult {
 }
 
 // 表格整理版本控制相关类型
-export interface WritingTableData {
-  sheets: string[];
-  headers: Record<string, string[]>;
-  data: Record<string, Record<string, any>[]>;
-  sheetDescriptions: Record<string, string>;
-}
+// 注：WritingTableData 已迁移至 ./writing-table.types.ts（统一真源），
+// 见文件顶部 import。下方 TableOrganizeVersionSnapshot.originalData / newData
+// 直接引用该类型。
 
 export interface TableCellChange {
   sheetName: string;
@@ -1083,5 +1093,150 @@ export interface TableOrganizeVersionSnapshot {
   changeRecord: TableOrganizeChangeRecord;
   createdAt: number;
   expiresAt: number;
+}
+
+// 分片生成相关类型
+export enum ChunkStatus {
+  PENDING = 'pending',
+  GENERATING = 'generating',
+  COMPLETED = 'completed',
+  FAILED = 'failed'
+}
+
+// 章节分片
+export interface ChapterChunk {
+  id: string;
+  index: number;
+  status: ChunkStatus;
+  targetWordCount: number;
+  actualWordCount: number;
+  content: string;
+  summary: string;
+  checkpoint: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+// 分片生成配置
+export interface ChunkGenerationConfig {
+  targetTotalWords: number;
+  chunkSize: number;
+  maxChunks: number;
+  contextWindowSize: number;
+  modelOutputLimit: number;
+}
+
+// 生成进度
+export interface GenerationProgress {
+  totalWords: number;
+  completedWords: number;
+  currentChunkIndex: number;
+  totalChunks: number;
+  completedChunks: number;
+  estimatedTimeRemaining: number;
+}
+
+// 用户可控分片生成相关类型
+// 区别于按字数阈值自动分片的 ChapterChunk 工作流（滑动窗口 + 自动合并），
+// 本工作流：用户指定分片数量 → 生成分片大纲 → 逐分片生成（携带本章节已生成的
+// 所有前置分片完整内容作为上下文，非滑动窗口）→ 分片可编辑 → 手动"确认分片内容"
+// 按唯一标记整合到章节内容面板，支持重新生成覆盖。
+
+// 分片大纲单项
+export interface ShardOutline {
+  index: number; // 分片序号（从 0 开始）
+  title: string;
+  summary: string; // 分片剧情简介
+  targetWordCount: number; // 目标字数（按章节目标字数均分）
+}
+
+// 分片生成状态
+export enum ShardStatus {
+  PENDING = 'pending',
+  GENERATING = 'generating',
+  COMPLETED = 'completed',
+  FAILED = 'failed'
+}
+
+// 分片详情（用于前端分片详情面板与编辑）
+export interface ShardDetail extends ShardOutline {
+  status: ShardStatus;
+  content: string; // 已生成的分片内容（可编辑）
+  actualWordCount: number;
+  confirmed: boolean; // 是否已点击"确认分片内容"
+  updatedAt: number;
+}
+
+// 章节内容面板中分片块的唯一标记
+// 设计为可序列化为稳定字符串标记，便于在章节内容面板中定位与替换对应分片块
+export interface ShardIntegrationMarker {
+  shardIndex: number;
+  summary: string;
+}
+
+// 分片大纲生成请求
+export interface ShardOutlineGenerationRequest {
+  projectId: string;
+  chapterIndex: number;
+  shardCount: number;
+  chapterInfo: ChapterInfo;
+  resources: WritingResourceConfig;
+  generationParams: {
+    targetWordCount: number;
+    style: string;
+    perspective: string;
+    novelType?: string;
+  };
+  modelConfig: ModelConfig;
+  userSuggestion?: string;
+  generationGuidance?: string;
+  writingTableData?: {
+    tableConfig?: {
+      associatedTemplateId: string;
+      associatedTemplateName: string;
+    };
+    sheets?: string[];
+    headers?: Record<string, string[]>;
+    data?: Record<string, Record<string, any>[]>;
+    sheetDescriptions?: Record<string, string>;
+  };
+}
+
+// 分片大纲生成结果
+export interface ShardOutlineGenerationResult {
+  shards: ShardOutline[];
+  success: boolean;
+  error?: string;
+}
+
+// 分片内容生成请求
+export interface ShardContentGenerationRequest {
+  projectId: string;
+  chapterIndex: number;
+  shardIndex: number;
+  totalShards: number;
+  shardOutline: ShardOutline; // 当前分片大纲，含剧情简介
+  previousShardContents: string; // 本章节已生成的所有前置分片完整内容拼接
+  chapterInfo: ChapterInfo;
+  resources: WritingResourceConfig;
+  generationParams: {
+    targetWordCount: number;
+    style: string;
+    perspective: string;
+    novelType?: string;
+  };
+  modelConfig: ModelConfig;
+  userSuggestion?: string;
+  generationGuidance?: string;
+  writingTableData?: {
+    tableConfig?: {
+      associatedTemplateId: string;
+      associatedTemplateName: string;
+    };
+    sheets?: string[];
+    headers?: Record<string, string[]>;
+    data?: Record<string, Record<string, any>[]>;
+    sheetDescriptions?: Record<string, string>;
+  };
 }
 

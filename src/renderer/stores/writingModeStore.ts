@@ -9,7 +9,14 @@ import {
   GenerationState,
   OutlineEditMode,
   OutlineEditSection,
-  ChainOfThought
+  ChainOfThought,
+  ChapterChunk,
+  GenerationProgress,
+  ChunkStatus,
+  ShardOutline,
+  ShardStatus,
+  ShardDetail,
+  ShardIntegrationMarker
 } from '../../shared/types/writing.types';
 
 interface WritingModeState {
@@ -40,6 +47,16 @@ interface WritingModeState {
   versions: OutlineVersion[];
   currentVersionId: string;
 
+  // Chunked generation state
+  chapterChunks: Map<number, ChapterChunk[]>;
+  generationProgress: Map<number, GenerationProgress>;
+  isChunking: Map<number, boolean>;
+
+  // Shard generation state（用户可控分片生成工作流）
+  shardOutlines: Map<number, ShardOutline[]>;
+  shardDetails: Map<number, ShardDetail[]>;
+  confirmedShardMarkers: Map<number, Record<number, ShardIntegrationMarker>>;
+
   setCurrentView: (view: WritingModeView) => void;
   setConfig: (config: WritingConfig) => void;
   setOutline: (outline: GeneratedOutline) => void;
@@ -67,6 +84,24 @@ interface WritingModeState {
   restoreVersion: (versionId: string) => void;
   setCurrentVersion: (versionId: string) => void;
   getVersions: () => OutlineVersion[];
+
+  // Chunked generation actions
+  initializeChunks: (chapterIndex: number, chunks: ChapterChunk[]) => void;
+  updateChunkStatus: (chapterIndex: number, chunkIndex: number, status: ChunkStatus) => void;
+  appendChunkContent: (chapterIndex: number, chunkIndex: number, content: string) => void;
+  setGenerationProgress: (chapterIndex: number, progress: GenerationProgress) => void;
+  saveChunkCheckpoint: (chapterIndex: number, chunkIndex: number, checkpoint: string) => void;
+  mergeChunksToChapter: (chapterIndex: number) => string;
+  setIsChunking: (chapterIndex: number, isChunking: boolean) => void;
+
+  // Shard generation actions（用户可控分片生成工作流）
+  setShardOutlines: (chapterIndex: number, outlines: ShardOutline[]) => void;
+  updateShardContent: (chapterIndex: number, shardIndex: number, content: string) => void;
+  appendShardContent: (chapterIndex: number, shardIndex: number, content: string) => void;
+  updateShardStatus: (chapterIndex: number, shardIndex: number, status: ShardStatus) => void;
+  confirmShardToIntegration: (chapterIndex: number, shardIndex: number, summary: string) => ShardIntegrationMarker;
+  getShardDetails: (chapterIndex: number) => ShardDetail[];
+  clearShards: (chapterIndex: number) => void;
 }
 
 export const useWritingModeStore = create<WritingModeState>((set, get) => ({
@@ -94,6 +129,16 @@ export const useWritingModeStore = create<WritingModeState>((set, get) => ({
   // Version management
   versions: [],
   currentVersionId: '',
+
+  // Chunked generation state
+  chapterChunks: new Map(),
+  generationProgress: new Map(),
+  isChunking: new Map(),
+
+  // Shard generation state
+  shardOutlines: new Map(),
+  shardDetails: new Map(),
+  confirmedShardMarkers: new Map(),
 
   setCurrentView: (view) => set({ currentView: view }),
 
@@ -224,5 +269,224 @@ export const useWritingModeStore = create<WritingModeState>((set, get) => ({
 
   setCurrentVersion: (versionId) => set({ currentVersionId: versionId }),
 
-  getVersions: () => get().versions
+  getVersions: () => get().versions,
+
+  // Chunked generation actions
+  initializeChunks: (chapterIndex, chunks) => set((state) => {
+    const newChapterChunks = new Map(state.chapterChunks);
+    newChapterChunks.set(chapterIndex, chunks);
+    return { chapterChunks: newChapterChunks };
+  }),
+
+  updateChunkStatus: (chapterIndex, chunkIndex, status) => set((state) => {
+    const chunks = state.chapterChunks.get(chapterIndex);
+    if (!chunks) return state;
+    
+    const updatedChunks = [...chunks];
+    updatedChunks[chunkIndex] = {
+      ...updatedChunks[chunkIndex],
+      status,
+      updatedAt: Date.now()
+    };
+    
+    const newChapterChunks = new Map(state.chapterChunks);
+    newChapterChunks.set(chapterIndex, updatedChunks);
+    return { chapterChunks: newChapterChunks };
+  }),
+
+  appendChunkContent: (chapterIndex, chunkIndex, content) => set((state) => {
+    const chunks = state.chapterChunks.get(chapterIndex);
+    if (!chunks) return state;
+    
+    const updatedChunks = [...chunks];
+    const chunk = updatedChunks[chunkIndex];
+    updatedChunks[chunkIndex] = {
+      ...chunk,
+      content: chunk.content + content,
+      actualWordCount: (chunk.actualWordCount || 0) + content.length,
+      updatedAt: Date.now()
+    };
+    
+    const newChapterChunks = new Map(state.chapterChunks);
+    newChapterChunks.set(chapterIndex, updatedChunks);
+    return { chapterChunks: newChapterChunks };
+  }),
+
+  setGenerationProgress: (chapterIndex, progress) => set((state) => {
+    const newProgress = new Map(state.generationProgress);
+    newProgress.set(chapterIndex, progress);
+    return { generationProgress: newProgress };
+  }),
+
+  saveChunkCheckpoint: (chapterIndex, chunkIndex, checkpoint) => set((state) => {
+    const chunks = state.chapterChunks.get(chapterIndex);
+    if (!chunks) return state;
+    
+    const updatedChunks = [...chunks];
+    updatedChunks[chunkIndex] = {
+      ...updatedChunks[chunkIndex],
+      checkpoint,
+      updatedAt: Date.now()
+    };
+    
+    const newChapterChunks = new Map(state.chapterChunks);
+    newChapterChunks.set(chapterIndex, updatedChunks);
+    return { chapterChunks: newChapterChunks };
+  }),
+
+  mergeChunksToChapter: (chapterIndex) => {
+    const chunks = get().chapterChunks.get(chapterIndex);
+    if (!chunks) return '';
+    
+    // 按顺序合并所有已完成分片的内容
+    const mergedContent = chunks
+      .sort((a, b) => a.index - b.index)
+      .map(chunk => chunk.content)
+      .join('\n\n');
+    
+    return mergedContent;
+  },
+
+  setIsChunking: (chapterIndex, isChunking) => set((state) => {
+    const newIsChunking = new Map(state.isChunking);
+    newIsChunking.set(chapterIndex, isChunking);
+    return { isChunking: newIsChunking };
+  }),
+
+  // Shard generation actions（用户可控分片生成工作流）
+  setShardOutlines: (chapterIndex, outlines) => set((state) => {
+    const now = Date.now();
+    const details: ShardDetail[] = outlines.map((outline) => ({
+      ...outline,
+      status: ShardStatus.PENDING,
+      content: '',
+      actualWordCount: 0,
+      confirmed: false,
+      updatedAt: now
+    }));
+
+    const newShardOutlines = new Map(state.shardOutlines);
+    newShardOutlines.set(chapterIndex, outlines);
+
+    const newShardDetails = new Map(state.shardDetails);
+    newShardDetails.set(chapterIndex, details);
+
+    return {
+      shardOutlines: newShardOutlines,
+      shardDetails: newShardDetails
+    };
+  }),
+
+  updateShardContent: (chapterIndex, shardIndex, content) => set((state) => {
+    const details = state.shardDetails.get(chapterIndex);
+    if (!details || !details[shardIndex]) return state;
+
+    const updatedDetails = [...details];
+    updatedDetails[shardIndex] = {
+      ...updatedDetails[shardIndex],
+      content,
+      actualWordCount: content.length,
+      updatedAt: Date.now()
+    };
+
+    const newShardDetails = new Map(state.shardDetails);
+    newShardDetails.set(chapterIndex, updatedDetails);
+    return { shardDetails: newShardDetails };
+  }),
+
+  appendShardContent: (chapterIndex, shardIndex, content) => set((state) => {
+    const details = state.shardDetails.get(chapterIndex);
+    if (!details || !details[shardIndex]) return state;
+
+    const shard = details[shardIndex];
+    const updatedDetails = [...details];
+    updatedDetails[shardIndex] = {
+      ...shard,
+      content: shard.content + content,
+      actualWordCount: (shard.actualWordCount || 0) + content.length,
+      updatedAt: Date.now()
+    };
+
+    const newShardDetails = new Map(state.shardDetails);
+    newShardDetails.set(chapterIndex, updatedDetails);
+    return { shardDetails: newShardDetails };
+  }),
+
+  updateShardStatus: (chapterIndex, shardIndex, status) => set((state) => {
+    const details = state.shardDetails.get(chapterIndex);
+    if (!details || !details[shardIndex]) return state;
+
+    const updatedDetails = [...details];
+    updatedDetails[shardIndex] = {
+      ...updatedDetails[shardIndex],
+      status,
+      updatedAt: Date.now()
+    };
+
+    const newShardDetails = new Map(state.shardDetails);
+    newShardDetails.set(chapterIndex, updatedDetails);
+    return { shardDetails: newShardDetails };
+  }),
+
+  confirmShardToIntegration: (chapterIndex, shardIndex, summary) => {
+    const state = get();
+    const existingMarkers = state.confirmedShardMarkers.get(chapterIndex);
+    const existing = existingMarkers?.[shardIndex];
+    // 幂等：若该 shardIndex 已有标记则复用，保证覆盖语义
+    if (existing) {
+      return existing;
+    }
+
+    const marker: ShardIntegrationMarker = { shardIndex, summary };
+
+    set((s) => {
+      const details = s.shardDetails.get(chapterIndex);
+      let newShardDetails = s.shardDetails;
+      if (details && details[shardIndex]) {
+        const updatedDetails = [...details];
+        updatedDetails[shardIndex] = {
+          ...updatedDetails[shardIndex],
+          confirmed: true,
+          updatedAt: Date.now()
+        };
+        newShardDetails = new Map(s.shardDetails);
+        newShardDetails.set(chapterIndex, updatedDetails);
+      }
+
+      const newConfirmedShardMarkers = new Map(s.confirmedShardMarkers);
+      const chapterMarkers: Record<number, ShardIntegrationMarker> = {
+        ...(s.confirmedShardMarkers.get(chapterIndex) || {})
+      };
+      chapterMarkers[shardIndex] = marker;
+      newConfirmedShardMarkers.set(chapterIndex, chapterMarkers);
+
+      return {
+        shardDetails: newShardDetails,
+        confirmedShardMarkers: newConfirmedShardMarkers
+      };
+    });
+
+    return marker;
+  },
+
+  getShardDetails: (chapterIndex) => {
+    return get().shardDetails.get(chapterIndex) ?? [];
+  },
+
+  clearShards: (chapterIndex) => set((state) => {
+    const newShardOutlines = new Map(state.shardOutlines);
+    newShardOutlines.delete(chapterIndex);
+
+    const newShardDetails = new Map(state.shardDetails);
+    newShardDetails.delete(chapterIndex);
+
+    const newConfirmedShardMarkers = new Map(state.confirmedShardMarkers);
+    newConfirmedShardMarkers.delete(chapterIndex);
+
+    return {
+      shardOutlines: newShardOutlines,
+      shardDetails: newShardDetails,
+      confirmedShardMarkers: newConfirmedShardMarkers
+    };
+  })
 }));

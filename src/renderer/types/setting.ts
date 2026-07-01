@@ -36,7 +36,6 @@ export interface AIEngineSetting {
   send_if_empty: string;
   impersonation_prompt: string;
   new_chat_prompt: string;
-  new_group_chat_prompt: string;
   new_example_chat_prompt: string;
   continue_nudge_prompt: string;
   bias_preset_selected: string;
@@ -44,7 +43,6 @@ export interface AIEngineSetting {
   wi_format: string;
   scenario_format: string;
   personality_format: string;
-  group_nudge_prompt: string;
   assistant_prefill: string;
   assistant_impersonation: string;
   use_sysprompt: boolean;

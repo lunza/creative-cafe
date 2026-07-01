@@ -12,6 +12,7 @@ import {
 import { AI_SPLIT_TIMEOUT, AI_MERGE_TIMEOUT } from '../../../shared/constants/writing.constants';
 import { outlineGenerator } from './OutlineGenerator';
 import { addLog } from '../memory/chatLogService';
+import { aiConfigProvider } from '../ai/AIConfigProvider';
 import { getStorageService } from '../storageService';
 
 interface ChatMessage {
@@ -48,22 +49,26 @@ export interface AIMergeRequest {
 }
 
 export class AIAssistedChapterService {
-  private async getConfig(): Promise<{ baseUrl: string; apiKey: string; apiKeyTransmission: string; model: string; systemPrompt: string }> {
-    const storageService = getStorageService();
-    const settings = storageService.getSettings();
-    const engines = settings?.aiEngines || [];
-    const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
-
-    if (!activeEngine?.model_name) {
+  /**
+   * 通过 aiConfigProvider 获取 AI 调用所需的全部 5 个字段。
+   *
+   * 与原 getConfig 行为对齐：
+   * - `apiKeyTransmission` 默认 'header'（区别于其他 writing 服务的 'body'）
+   * - `model` 缺失时抛错（与原 `if (!activeEngine?.model_name) throw` 一致）
+   * - `baseUrl` / `apiKey` / `systemPrompt` 缺失时退化为空字符串（与原 fallback 一致）
+   */
+  private getConfig(): { baseUrl: string; apiKey: string; apiKeyTransmission: string; model: string; systemPrompt: string } {
+    const aiConfig = aiConfigProvider.getAIConfig({ defaultTransmission: 'header' });
+    const model = aiConfig.modelName;
+    if (!model) {
       throw new Error('未配置 AI 模型名称，请在设置中配置 AI 引擎');
     }
-
     return {
-      baseUrl: activeEngine?.api_url || settings?.ai?.baseUrl || '',
-      apiKey: activeEngine?.api_key || settings?.ai?.apiKey || '',
-      apiKeyTransmission: activeEngine?.api_key_transmission || 'header',
-      model: activeEngine.model_name,
-      systemPrompt: activeEngine?.system_prompt || ''
+      baseUrl: aiConfig.baseUrl || '',
+      apiKey: aiConfig.apiKey || '',
+      apiKeyTransmission: aiConfig.apiKeyTransmission,
+      model,
+      systemPrompt: aiConfig.systemPrompt || ''
     };
   }
 

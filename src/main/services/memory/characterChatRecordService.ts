@@ -1,10 +1,12 @@
 import fs from 'fs';
 import path from 'path';
 import { getUserDataPath } from '../../utils/appPath';
-import { sendLogToRenderer } from '../../index';
+import { createLogger } from '../logger';
 import { chatVectorizationService } from '../../services/ChatVectorizationService';
 import { pathService } from '../../services/pathService';
 import { characterService } from '../../services/characterService';
+
+const logger = createLogger('writing');
 
 interface CharacterChatRecord {
   fileName: string;
@@ -60,7 +62,7 @@ class CharacterChatRecordService {
           });
         } catch (err) {
           console.warn(`[CharacterChatRecordService] Failed to read file: ${file}`, err);
-          sendLogToRenderer(`Failed to read chat record: ${file}`, 'warn');
+          logger.warn(`Failed to read chat record: ${file}`);
         }
       }
 
@@ -68,7 +70,7 @@ class CharacterChatRecordService {
       return records;
     } catch (error) {
       console.error('[CharacterChatRecordService] getCharacterChatRecords error:', error);
-      sendLogToRenderer('Failed to get character chat records', 'error');
+      logger.error('Failed to get character chat records');
       return [];
     }
   }
@@ -80,7 +82,7 @@ class CharacterChatRecordService {
 
       if (!fs.existsSync(filePath)) {
         console.warn(`[CharacterChatRecordService] File not found: ${fileName}`);
-        sendLogToRenderer(`Chat record not found: ${fileName}`, 'warn');
+        logger.warn(`Chat record not found: ${fileName}`);
         return null;
       }
 
@@ -88,7 +90,7 @@ class CharacterChatRecordService {
       return JSON.parse(data);
     } catch (error) {
       console.error(`[CharacterChatRecordService] getCharacterChatRecord error for ${fileName}:`, error);
-      sendLogToRenderer(`Failed to read chat record: ${fileName}`, 'error');
+      logger.error(`Failed to read chat record: ${fileName}`);
       return null;
     }
   }
@@ -106,7 +108,7 @@ class CharacterChatRecordService {
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
       console.error(`[CharacterChatRecordService] saveCharacterChatRecord error for ${fileName}:`, error);
-      sendLogToRenderer(`Failed to save chat record: ${fileName}`, 'error');
+      logger.error(`Failed to save chat record: ${fileName}`);
       return { success: false, error: errMsg };
     }
   }
@@ -118,7 +120,7 @@ class CharacterChatRecordService {
       console.log(`[CharacterChatRecordService] Deleting: ${filePath}`);
 
       if (!fs.existsSync(filePath)) {
-        sendLogToRenderer(`Chat record not found: ${fileName}`, 'warn');
+        logger.warn(`Chat record not found: ${fileName}`);
         return { success: false, error: 'File not found' };
       }
 
@@ -131,7 +133,7 @@ class CharacterChatRecordService {
           console.log(`[CharacterChatRecordService] Started vector deletion for: ${characterCardName}`);
         } catch (vecError) {
           console.warn(`[CharacterChatRecordService] Vector deletion failed for ${characterCardName}:`, vecError);
-          sendLogToRenderer(`Vector deletion warning for ${characterCardName}`, 'warn');
+          logger.warn(`Vector deletion warning for ${characterCardName}`);
         }
       }
 
@@ -139,7 +141,7 @@ class CharacterChatRecordService {
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
       console.error(`[CharacterChatRecordService] deleteCharacterChatRecord error for ${fileName}:`, error);
-      sendLogToRenderer(`Failed to delete chat record: ${fileName}`, 'error');
+      logger.error(`Failed to delete chat record: ${fileName}`);
       return { success: false, error: errMsg };
     }
   }
@@ -179,7 +181,7 @@ class CharacterChatRecordService {
       return null;
     } catch (error) {
       console.error(`[CharacterChatRecordService] getCharacterThumbnail error for ${characterCardName}:`, error);
-      sendLogToRenderer(`Failed to get thumbnail for ${characterCardName}`, 'error');
+      logger.error(`Failed to get thumbnail for ${characterCardName}`);
       return null;
     }
   }
