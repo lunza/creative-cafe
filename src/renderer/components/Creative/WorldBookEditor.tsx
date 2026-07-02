@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Tabs, Button, Space, Typography, Form, Select, Alert, message } from 'antd';
 import { RocketOutlined, HistoryOutlined, SaveOutlined, LoadingOutlined } from '@ant-design/icons';
-import MarkdownEditor from '../Common/MarkdownEditor';
+import TextEditor from '../Common/TextEditor';
 import { useCreativeStore } from '../../stores/creativeStore';
 import { useSettingStore } from '../../stores/settingStore';
 import { useLogStore } from '../../stores/logStore';
@@ -312,12 +312,13 @@ const WorldBookEditor: React.FC = () => {
               保存内容
             </Button>
           </div>
-          <MarkdownEditor
+          <TextEditor
             value={editingContent}
             onChange={setEditingContent}
             minHeight={600}
             theme={theme}
             enableAITools={true}
+            placeholder="在此编辑世界书内容..."
           />
         </div>
       ),
@@ -397,12 +398,13 @@ const WorldBookEditor: React.FC = () => {
                   </Button>
                 </div>
                 <div style={{ marginTop: 16 }}>
-                  <MarkdownEditor
+                  <TextEditor
                     value={markdownContent || streamingContent || editingContent}
                     onChange={setMarkdownContent}
                     minHeight={400}
                     theme={theme}
                     enableAITools={false}
+                    placeholder="AI生成结果将在此显示..."
                   />
                 </div>
               </div>

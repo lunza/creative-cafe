@@ -4,7 +4,8 @@ import { ArrowLeftOutlined, SaveOutlined, RobotOutlined, FileTextOutlined, Downl
 import { useCreativeStore } from '../../stores/creativeStore';
 import { useUIStore } from '../../stores/uiStore';
 import type { CreativeTabType } from '../../stores/uiStore';
-import MarkdownEditor from '../Common/MarkdownEditor';
+import TextEditor from '../Common/TextEditor';
+import type { TextEditorHandle } from '../Common/TextEditor';
 import { useCreativeAI } from './hooks/useCreativeAI';
 import type { WorldBookExport } from '../../types/worldBook';
 
@@ -15,7 +16,7 @@ const WorldBookEditPage: React.FC = () => {
   const { currentCreativeId, creatives, updateWorldBook, loadCreatives } = useCreativeStore();
   const { theme, setCreativeTab, setCreativeView } = useUIStore();
   const { generate } = useCreativeAI();
-  const editorRef = useRef<any>(null);
+  const editorRef = useRef<TextEditorHandle>(null);
 
   const [editingContent, setEditingContent] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -457,12 +458,14 @@ ${editingContent}`;
         </Space>
       </div>
 
-      <MarkdownEditor
+      <TextEditor
         ref={editorRef}
         value={editingContent}
         onChange={setEditingContent}
         theme={theme}
         enableSave={false}
+        minHeight={600}
+        placeholder="在此编辑世界书内容..."
       />
 
       <Modal

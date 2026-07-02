@@ -1,7 +1,7 @@
 import React from 'react';
 import { Modal, Button, Radio, Card } from 'antd';
 import { UpOutlined, DownOutlined } from '@ant-design/icons';
-import MarkdownEditor from '../Common/MarkdownEditor';
+import TextEditor from '../Common/TextEditor';
 
 /**
  * 世界书排序/整理 Modal 集合（Task 8 拆分产物）。
@@ -157,11 +157,13 @@ const WorldBookSortModal: React.FC<WorldBookSortModalProps> = ({
         className={appTheme === 'dark' ? 'dark' : ''}
       >
         <div style={{ color: 'var(--text-primary, #ffffff)' }}>
-          <MarkdownEditor
+          <TextEditor
             value={editingDescriptionTemp}
             onChange={(value) => setEditingDescriptionTemp(value || '')}
-            minHeight={300}
+            minHeight={500}
             enableAITools={false}
+            theme={appTheme}
+            placeholder="在此编辑世界书描述..."
           />
         </div>
       </Modal>

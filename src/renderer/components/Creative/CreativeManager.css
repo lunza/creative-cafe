@@ -44,3 +44,9 @@
   from { transform: translateY(20px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
 }
+
+/* 角色卡编辑页面 - V3字段卡片紧凑样式 */
+.character-card-edit-page .ant-card-head-title {
+  font-size: 13px;
+  font-weight: 600;
+}

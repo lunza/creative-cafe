@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { Modal, Button, Space, Checkbox, Input, message } from 'antd';
-import { PlusOutlined, StopOutlined } from '@ant-design/icons';
+import { Modal, Button, Space, Checkbox, Input, message, Tabs } from 'antd';
+import { PlusOutlined, StopOutlined, UserOutlined, MessageOutlined, SettingOutlined } from '@ant-design/icons';
 import { FieldEditor } from './FieldEditor';
 import { WorldBookRelationPanel } from './WorldBookRelationPanel';
 import { useCharacterAIOperations } from './hooks/useCharacterAIOperations';
@@ -368,234 +368,254 @@ const CharacterEditModal: React.FC<CharacterEditModalProps> = ({
         open={open}
         onCancel={onCancel}
         onOk={handleEditModalOk}
-        width={1200}
-        style={{
-          backgroundColor: 'var(--bg-color, #fff)',
-          color: 'var(--text-color, #000)'
-        }}
+        width="90vw"
+        style={{ maxWidth: 1400, top: 20 }}
+        styles={{ body: { maxHeight: 'calc(100vh - 160px)', overflowY: 'auto', paddingRight: 8 } }}
       >
-        <div style={{ maxHeight: 600, overflowY: 'auto' }}>
-          {/* 图片上传区域 */}
-          <div style={{ marginBottom: 20 }}>
-            <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1890ff' }}>角色图片（必需）</label>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              style={{ display: 'none' }}
-              onChange={handleFileInputChange}
-            />
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-              {uploadedImage ? (
-                <>
-                  <img
-                    src={uploadedImage}
-                    alt="角色图片"
-                    style={{ width: 80, height: 80, borderRadius: 8, objectFit: 'cover', border: '1px solid var(--border-base, #333)' }}
-                  />
-                  <div>
-                    <div style={{ color: 'var(--text-primary, #ffffff)', marginBottom: 4 }}>
-                      {uploadedImageName}
-                    </div>
-                    <Space>
-                      <Button
-                        size="small"
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={imageUploadLoading}
-                      >
-                        {imageUploadLoading ? '加载中...' : '更换图片'}
-                      </Button>
-                      <Button
-                        size="small"
-                        danger
-                        onClick={handleRemoveImage}
-                      >
-                        移除图片
-                      </Button>
-                    </Space>
-                  </div>
-                </>
-              ) : (
+        {/* 图片上传区域 */}
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1890ff' }}>角色图片（必需）</label>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            style={{ display: 'none' }}
+            onChange={handleFileInputChange}
+          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            {uploadedImage ? (
+              <>
+                <img
+                  src={uploadedImage}
+                  alt="角色图片"
+                  style={{ width: 80, height: 80, borderRadius: 8, objectFit: 'cover', border: '1px solid var(--border-base, #333)' }}
+                />
                 <div>
-                  <Button
-                    icon={<PlusOutlined />}
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={imageUploadLoading}
-                  >
-                    {imageUploadLoading ? '加载图片中...' : '上传角色图片'}
-                  </Button>
-                  <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-secondary, #8c8c8c)' }}>
-                    保存角色卡需要PNG格式的图片载体
+                  <div style={{ color: 'var(--text-primary, #ffffff)', marginBottom: 4 }}>
+                    {uploadedImageName}
                   </div>
+                  <Space>
+                    <Button
+                      size="small"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={imageUploadLoading}
+                    >
+                      {imageUploadLoading ? '加载中...' : '更换图片'}
+                    </Button>
+                    <Button
+                      size="small"
+                      danger
+                      onClick={handleRemoveImage}
+                    >
+                      移除图片
+                    </Button>
+                  </Space>
                 </div>
-              )}
-            </div>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
-            <div>
-              <FieldEditor
-                label="角色名称"
-                field="name"
-                value={formValues.name}
-                onChange={setField('name')}
-                {...fieldEditorCommonProps}
-              />
-              <FieldEditor
-                label="昵称"
-                field="nickname"
-                value={formValues.nickname}
-                onChange={setField('nickname')}
-                {...fieldEditorCommonProps}
-              />
-              <FieldEditor
-                label="来源"
-                field="source"
-                value={formValues.source}
-                onChange={setField('source')}
-                {...fieldEditorCommonProps}
-              />
-              <FieldEditor
-                label="创建者"
-                field="creator"
-                value={formValues.creator}
-                onChange={setField('creator')}
-                {...fieldEditorCommonProps}
-              />
-              <FieldEditor
-                label="版本信息"
-                field="character_version"
-                value={formValues.character_version}
-                onChange={setField('character_version')}
-                {...fieldEditorCommonProps}
-              />
-              <FieldEditor
-                label="标签（用逗号分隔）"
-                field="tags"
-                value={formValues.tags}
-                onChange={setField('tags')}
-                {...fieldEditorCommonProps}
-              />
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1890ff' }}>仅群组问候</label>
-                <Checkbox
-                  checked={formValues.group_only_greetings}
-                  onChange={(e) => setFormValues({ ...formValues, group_only_greetings: e.target.checked })}
+              </>
+            ) : (
+              <div>
+                <Button
+                  icon={<PlusOutlined />}
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={imageUploadLoading}
                 >
-                  仅群组问候
-                </Checkbox>
+                  {imageUploadLoading ? '加载图片中...' : '上传角色图片'}
+                </Button>
+                <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-secondary, #8c8c8c)' }}>
+                  保存角色卡需要PNG格式的图片载体
+                </div>
               </div>
-            </div>
-            <div>
-              <FieldEditor
-                label="个性"
-                field="personality"
-                value={formValues.personality}
-                onChange={setField('personality')}
-                inputType="textarea"
-                rows={4}
-                showGenerate
-                {...fieldEditorCommonProps}
-              />
-              <FieldEditor
-                label="场景"
-                field="scenario"
-                value={formValues.scenario}
-                onChange={setField('scenario')}
-                inputType="textarea"
-                rows={4}
-                showGenerate
-                {...fieldEditorCommonProps}
-              />
-            </div>
-          </div>
-
-          <FieldEditor
-            label="描述"
-            field="description"
-            value={formValues.description}
-            onChange={setField('description')}
-            inputType="textarea"
-            rows={6}
-            showGenerate
-            {...fieldEditorCommonProps}
-          />
-
-          <FieldEditor
-            label="初始消息"
-            field="first_mes"
-            value={formValues.first_mes}
-            onChange={setField('first_mes')}
-            inputType="textarea"
-            rows={4}
-            showGenerate
-            {...fieldEditorCommonProps}
-          />
-
-          <FieldEditor
-            label="示例消息（每条消息占一行）"
-            field="mes_example"
-            value={formValues.mes_example}
-            onChange={setField('mes_example')}
-            inputType="textarea"
-            rows={6}
-            showGenerate
-            {...fieldEditorCommonProps}
-          />
-
-          <FieldEditor
-            label="系统提示"
-            field="system_prompt"
-            value={formValues.system_prompt}
-            onChange={setField('system_prompt')}
-            inputType="textarea"
-            rows={4}
-            showGenerate
-            {...fieldEditorCommonProps}
-          />
-
-          <FieldEditor
-            label="历史记录后指令"
-            field="post_history_instructions"
-            value={formValues.post_history_instructions}
-            onChange={setField('post_history_instructions')}
-            inputType="textarea"
-            rows={4}
-            showGenerate
-            {...fieldEditorCommonProps}
-          />
-
-          <FieldEditor
-            label="替代问候（每条问候占一行）"
-            field="alternate_greetings"
-            value={formValues.alternate_greetings}
-            onChange={setField('alternate_greetings')}
-            inputType="textarea"
-            rows={4}
-            showGenerate
-            {...fieldEditorCommonProps}
-          />
-
-          <FieldEditor
-            label="创建者笔记"
-            field="creator_notes"
-            value={formValues.creator_notes}
-            onChange={setField('creator_notes')}
-            inputType="textarea"
-            rows={6}
-            showGenerate
-            {...fieldEditorCommonProps}
-          />
-
-          <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid var(--border-color, #e8e8e8)' }}>
-            <WorldBookRelationPanel
-              characterId={editingItem?.path || ''}
-              relations={worldBookRelations}
-              availableWorldBooks={worldBooks}
-              onChange={setWorldBookRelations}
-            />
+            )}
           </div>
         </div>
+
+        <Tabs
+          items={[
+            {
+              key: 'core',
+              label: <span><UserOutlined /> 角色信息</span>,
+              children: (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px 24px' }}>
+                  {/* 左列：基本信息 */}
+                  <div>
+                    <FieldEditor
+                      label="角色名称"
+                      field="name"
+                      value={formValues.name}
+                      onChange={setField('name')}
+                      {...fieldEditorCommonProps}
+                    />
+                    <FieldEditor
+                      label="昵称"
+                      field="nickname"
+                      value={formValues.nickname}
+                      onChange={setField('nickname')}
+                      {...fieldEditorCommonProps}
+                    />
+                    <FieldEditor
+                      label="来源"
+                      field="source"
+                      value={formValues.source}
+                      onChange={setField('source')}
+                      {...fieldEditorCommonProps}
+                    />
+                    <FieldEditor
+                      label="创建者"
+                      field="creator"
+                      value={formValues.creator}
+                      onChange={setField('creator')}
+                      {...fieldEditorCommonProps}
+                    />
+                    <FieldEditor
+                      label="版本信息"
+                      field="character_version"
+                      value={formValues.character_version}
+                      onChange={setField('character_version')}
+                      {...fieldEditorCommonProps}
+                    />
+                    <FieldEditor
+                      label="标签（用逗号分隔）"
+                      field="tags"
+                      value={formValues.tags}
+                      onChange={setField('tags')}
+                      {...fieldEditorCommonProps}
+                    />
+                    <div style={{ marginBottom: 16 }}>
+                      <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1890ff' }}>仅群组问候</label>
+                      <Checkbox
+                        checked={formValues.group_only_greetings}
+                        onChange={(e) => setFormValues({ ...formValues, group_only_greetings: e.target.checked })}
+                      >
+                        仅群组问候
+                      </Checkbox>
+                    </div>
+                  </div>
+
+                  {/* 右列：描述、个性、场景 */}
+                  <div>
+                    <FieldEditor
+                      label="描述"
+                      field="description"
+                      value={formValues.description}
+                      onChange={setField('description')}
+                      inputType="textarea"
+                      autoSize={{ minRows: 6, maxRows: 16 }}
+                      showGenerate
+                      {...fieldEditorCommonProps}
+                    />
+                    <FieldEditor
+                      label="个性"
+                      field="personality"
+                      value={formValues.personality}
+                      onChange={setField('personality')}
+                      inputType="textarea"
+                      autoSize={{ minRows: 4, maxRows: 12 }}
+                      showGenerate
+                      {...fieldEditorCommonProps}
+                    />
+                    <FieldEditor
+                      label="场景"
+                      field="scenario"
+                      value={formValues.scenario}
+                      onChange={setField('scenario')}
+                      inputType="textarea"
+                      autoSize={{ minRows: 4, maxRows: 10 }}
+                      showGenerate
+                      {...fieldEditorCommonProps}
+                    />
+                  </div>
+                </div>
+              ),
+            },
+            {
+              key: 'messages',
+              label: <span><MessageOutlined /> 对话与指令</span>,
+              children: (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px 24px' }}>
+                  {/* 左列：消息类字段 */}
+                  <div>
+                    <FieldEditor
+                      label="初始消息"
+                      field="first_mes"
+                      value={formValues.first_mes}
+                      onChange={setField('first_mes')}
+                      inputType="textarea"
+                      autoSize={{ minRows: 6, maxRows: 18 }}
+                      showGenerate
+                      {...fieldEditorCommonProps}
+                    />
+                    <FieldEditor
+                      label="示例消息（每条消息占一行）"
+                      field="mes_example"
+                      value={formValues.mes_example}
+                      onChange={setField('mes_example')}
+                      inputType="textarea"
+                      autoSize={{ minRows: 6, maxRows: 18 }}
+                      showGenerate
+                      {...fieldEditorCommonProps}
+                    />
+                    <FieldEditor
+                      label="替代问候（每条问候占一行）"
+                      field="alternate_greetings"
+                      value={formValues.alternate_greetings}
+                      onChange={setField('alternate_greetings')}
+                      inputType="textarea"
+                      autoSize={{ minRows: 4, maxRows: 12 }}
+                      showGenerate
+                      {...fieldEditorCommonProps}
+                    />
+                  </div>
+
+                  {/* 右列：指令类字段 */}
+                  <div>
+                    <FieldEditor
+                      label="系统提示"
+                      field="system_prompt"
+                      value={formValues.system_prompt}
+                      onChange={setField('system_prompt')}
+                      inputType="textarea"
+                      autoSize={{ minRows: 5, maxRows: 16 }}
+                      showGenerate
+                      {...fieldEditorCommonProps}
+                    />
+                    <FieldEditor
+                      label="历史记录后指令"
+                      field="post_history_instructions"
+                      value={formValues.post_history_instructions}
+                      onChange={setField('post_history_instructions')}
+                      inputType="textarea"
+                      autoSize={{ minRows: 4, maxRows: 12 }}
+                      showGenerate
+                      {...fieldEditorCommonProps}
+                    />
+                    <FieldEditor
+                      label="创建者笔记"
+                      field="creator_notes"
+                      value={formValues.creator_notes}
+                      onChange={setField('creator_notes')}
+                      inputType="textarea"
+                      autoSize={{ minRows: 4, maxRows: 12 }}
+                      showGenerate
+                      {...fieldEditorCommonProps}
+                    />
+                  </div>
+                </div>
+              ),
+            },
+            {
+              key: 'worldbook',
+              label: <span><SettingOutlined /> 世界书关联</span>,
+              children: (
+                <WorldBookRelationPanel
+                  characterId={editingItem?.path || ''}
+                  relations={worldBookRelations}
+                  availableWorldBooks={worldBooks}
+                  onChange={setWorldBookRelations}
+                />
+              ),
+            },
+          ]}
+        />
       </Modal>
 
       {/* AI润色要求模态框 */}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Breadcrumb, Button, Card, Space, Typography, message, Modal, Form, Select, Input, Divider, Descriptions, Spin } from 'antd';
+import { Breadcrumb, Button, Card, Space, Typography, message, Modal, Form, Select, Input, Divider, Tabs } from 'antd';
 import {
   HomeOutlined,
   UserOutlined,
@@ -11,7 +11,11 @@ import {
   LoadingOutlined,
   UploadOutlined,
   DeleteOutlined,
-  CheckCircleOutlined
+  CheckCircleOutlined,
+  FileTextOutlined,
+  ProfileOutlined,
+  PictureOutlined,
+  ThunderboltOutlined
 } from '@ant-design/icons';
 import MarkdownEditor from '../Common/MarkdownEditor';
 import { useCreativeStore } from '../../stores/creativeStore';
@@ -49,6 +53,7 @@ const CharacterCardEditPage: React.FC = () => {
 
   const [editingContent, setEditingContent] = useState(characterCard?.content || '');
   const [isSaving, setIsSaving] = useState(false);
+  const [activeTab, setActiveTab] = useState('markdown');
 
   const [aiModalVisible, setAiModalVisible] = useState(false);
   const [aiForm] = Form.useForm();
@@ -56,7 +61,6 @@ const CharacterCardEditPage: React.FC = () => {
   const [generatedPreview, setGeneratedPreview] = useState('');
   const [streamingContent, setStreamingContent] = useState('');
 
-  const [exportModalVisible, setExportModalVisible] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [cardImage, setCardImage] = useState<string>(characterCard?.image || '');
   const [formattedFields, setFormattedFields] = useState<FormattedFields | null>(null);
@@ -159,6 +163,16 @@ const CharacterCardEditPage: React.FC = () => {
     aiForm.resetFields();
     setGeneratedPreview('');
     setStreamingContent('');
+  };
+
+  const handleEditFormattedField = (field: keyof FormattedFields, value: string) => {
+    setFormattedFields(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        [field]: value
+      };
+    });
   };
 
   const handleFormatCard = async () => {
@@ -511,7 +525,7 @@ const CharacterCardEditPage: React.FC = () => {
         ]}
       />
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <div>
           <Title level={4} style={{ margin: 0 }}>{characterCard.name}</Title>
           <Text type="secondary">所属创意：{creative.title}</Text>
@@ -522,15 +536,6 @@ const CharacterCardEditPage: React.FC = () => {
             onClick={handleBack}
           >
             返回列表
-          </Button>
-          <Button
-            icon={<DownloadOutlined />}
-            onClick={() => {
-              setFormattedFields(null);
-              setExportModalVisible(true);
-            }}
-          >
-            格式 & 导出
           </Button>
           <Button
             type="default"
@@ -551,15 +556,267 @@ const CharacterCardEditPage: React.FC = () => {
         </Space>
       </div>
 
-      <MarkdownEditor
-        value={editingContent}
-        onChange={setEditingContent}
-        minHeight={600}
-        theme={theme}
-        enableAITools={true}
-        placeholder="在此编辑角色卡内容..."
+      <Tabs
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        items={[
+          {
+            key: 'markdown',
+            label: <span><FileTextOutlined /> Markdown 编辑</span>,
+            children: (
+              <MarkdownEditor
+                value={editingContent}
+                onChange={setEditingContent}
+                minHeight={600}
+                theme={theme}
+                enableAITools={true}
+                placeholder="在此编辑角色卡内容..."
+              />
+            ),
+          },
+          {
+            key: 'v3',
+            label: <span><ProfileOutlined /> V3 字段 {formattedFields && <CheckCircleOutlined style={{ color: '#52c41a', marginLeft: 4, fontSize: 12 }} />}</span>,
+            children: (
+              <div>
+                {/* V3 字段工具栏 */}
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
+                  <Button
+                    type="primary"
+                    ghost
+                    icon={isFormatting ? <LoadingOutlined spin /> : <ThunderboltOutlined />}
+                    onClick={handleFormatCard}
+                    loading={isFormatting}
+                    disabled={!isEngineConfigured}
+                  >
+                    {isFormatting ? 'AI 格式化中...' : 'AI 格式化提取字段'}
+                  </Button>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    从 Markdown 内容自动解析提取 V3 标准字段，下方所有字段均可直接编辑
+                  </Text>
+                </div>
+
+                {!formattedFields ? (
+                  <Card style={{ textAlign: 'center', padding: '40px 0' }}>
+                    <Text type="secondary" style={{ fontSize: 14 }}>
+                      尚未格式化。点击上方「AI 格式化提取字段」按钮，从 Markdown 内容中自动提取 V3 标准字段。
+                    </Text>
+                    <br /><br />
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      提取后可在此直接编辑各字段内容，导出时将使用编辑后的值。
+                    </Text>
+                  </Card>
+                ) : (
+                  <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+                    {/* 左栏：核心字段 */}
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
+                      <Card size="small" title="角色名称" styles={{ body: { padding: 8 } }}>
+                        <Input
+                          value={formattedFields.name}
+                          onChange={e => handleEditFormattedField('name', e.target.value)}
+                          placeholder="角色全名"
+                        />
+                      </Card>
+
+                      <Card size="small" title="描述 (Description)" styles={{ body: { padding: 8 } }}>
+                        <Input.TextArea
+                          value={formattedFields.description}
+                          onChange={e => handleEditFormattedField('description', e.target.value)}
+                          autoSize={{ minRows: 4, maxRows: 12 }}
+                          placeholder="角色外貌特征、身份背景、基本人物设定"
+                        />
+                      </Card>
+
+                      <Card size="small" title="性格 (Personality)" styles={{ body: { padding: 8 } }}>
+                        <Input.TextArea
+                          value={formattedFields.personality}
+                          onChange={e => handleEditFormattedField('personality', e.target.value)}
+                          autoSize={{ minRows: 4, maxRows: 10 }}
+                          placeholder="核心性格特征、行为习惯、价值观、弱点"
+                        />
+                      </Card>
+
+                      <Card size="small" title="第一条消息 (First Message)" styles={{ body: { padding: 8 } }}>
+                        <Input.TextArea
+                          value={formattedFields.first_mes}
+                          onChange={e => handleEditFormattedField('first_mes', e.target.value)}
+                          autoSize={{ minRows: 5, maxRows: 16 }}
+                          placeholder="角色的开场白，以角色口吻直接说出，包含动作描写（*号包裹）和对话"
+                        />
+                      </Card>
+                    </div>
+
+                    {/* 右栏：对话、指令、备注 */}
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
+                      <Card size="small" title="对话示例 (Message Example)" styles={{ body: { padding: 8 } }}>
+                        <Input.TextArea
+                          value={formattedFields.mes_example}
+                          onChange={e => handleEditFormattedField('mes_example', e.target.value)}
+                          autoSize={{ minRows: 6, maxRows: 20 }}
+                          placeholder="多轮对话示例，使用 <START> 分隔，包含 {{user}} 和 {{char}} 的互动"
+                          style={{ fontFamily: 'monospace', fontSize: 13 }}
+                        />
+                      </Card>
+
+                      <Card size="small" title="系统提示 (System Prompt)" styles={{ body: { padding: 8 } }}>
+                        <Input.TextArea
+                          value={formattedFields.system_prompt}
+                          onChange={e => handleEditFormattedField('system_prompt', e.target.value)}
+                          autoSize={{ minRows: 4, maxRows: 14 }}
+                          placeholder="AI扮演该角色的指令，规定回复风格、行为规则等"
+                        />
+                      </Card>
+
+                      <Card size="small" title="场景设定 (Scenario)" styles={{ body: { padding: 8 } }}>
+                        <Input.TextArea
+                          value={formattedFields.scenario}
+                          onChange={e => handleEditFormattedField('scenario', e.target.value)}
+                          autoSize={{ minRows: 2, maxRows: 6 }}
+                          placeholder="时代背景、环境、世界观设定"
+                        />
+                      </Card>
+
+                      <Card size="small" title="创作者备注 (Creator Notes)" styles={{ body: { padding: 8 } }}>
+                        <Input.TextArea
+                          value={formattedFields.creator_notes}
+                          onChange={e => handleEditFormattedField('creator_notes', e.target.value)}
+                          autoSize={{ minRows: 2, maxRows: 6 }}
+                          placeholder="角色设计说明、使用建议、创作理念"
+                        />
+                      </Card>
+
+                      <Card size="small" title="后处理指令 (Post History Instructions)" styles={{ body: { padding: 8 } }}>
+                        <Input.TextArea
+                          value={formattedFields.post_history_instructions}
+                          onChange={e => handleEditFormattedField('post_history_instructions', e.target.value)}
+                          autoSize={{ minRows: 2, maxRows: 6 }}
+                          placeholder="对话后处理指令，如角色一致性检查、记忆内容等"
+                        />
+                      </Card>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ),
+          },
+          {
+            key: 'export',
+            label: <span><PictureOutlined /> 图片与导出</span>,
+            children: (
+              <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+                {/* 左侧：图片管理 */}
+                <div style={{ flex: '1 1 300px', minWidth: 300 }}>
+                  <Card title="角色卡图片" size="small">
+                    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+                      {cardImage ? (
+                        <>
+                          <img
+                            src={cardImage}
+                            alt="角色卡"
+                            style={{ width: '100%', maxWidth: 300, height: 'auto', objectFit: 'contain', borderRadius: 8, border: '1px solid var(--border-base)' }}
+                          />
+                          <Space>
+                            <Button
+                              icon={<DeleteOutlined />}
+                              danger
+                              size="small"
+                              onClick={handleRemoveImage}
+                            >
+                              移除图片
+                            </Button>
+                            <Button
+                              icon={<UploadOutlined />}
+                              size="small"
+                              onClick={() => fileInputRef.current?.click()}
+                            >
+                              更换图片
+                            </Button>
+                          </Space>
+                        </>
+                      ) : (
+                        <Button
+                          icon={<UploadOutlined />}
+                          onClick={() => fileInputRef.current?.click()}
+                          style={{ width: '100%', height: 60 }}
+                        >
+                          上传角色卡图片
+                        </Button>
+                      )}
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*"
+                        style={{ display: 'none' }}
+                        onChange={handleImageUpload}
+                      />
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        支持 PNG、JPG、WEBP 格式，最大 10MB。上传的图片将作为角色卡封面嵌入PNG。
+                      </Text>
+                    </Space>
+                  </Card>
+                </div>
+
+                {/* 右侧：导出操作 */}
+                <div style={{ flex: '2 1 400px', minWidth: 400 }}>
+                  <Card title="导出操作" size="small">
+                    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+                      <div>
+                        <Text strong style={{ display: 'block', marginBottom: 8 }}>
+                          <CheckCircleOutlined style={{ marginRight: 4, color: '#52c41a' }} />
+                          V3 字段状态：{formattedFields ? '已格式化，将使用编辑后的字段值' : '未格式化，将使用原始 Markdown 内容'}
+                        </Text>
+                        {formattedFields && (
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            可在「V3 字段」页签中查看和编辑字段内容
+                          </Text>
+                        )}
+                      </div>
+
+                      <Divider style={{ margin: '4px 0' }} />
+
+                      <Space direction="vertical" style={{ width: '100%' }}>
+                        <Button
+                          type="primary"
+                          icon={<DownloadOutlined />}
+                          onClick={handleExport}
+                          loading={isExporting}
+                          block
+                          size="large"
+                        >
+                          导出 PNG（下载到本地）
+                        </Button>
+                        <Button
+                          type="default"
+                          icon={<UploadOutlined />}
+                          onClick={handleSaveToDirectory}
+                          loading={isSavingToDir}
+                          block
+                          size="large"
+                        >
+                          保存到角色卡目录
+                        </Button>
+                      </Space>
+
+                      <Divider style={{ margin: '4px 0' }} />
+
+                      <Card size="small" type="inner" title="导出说明">
+                        <Text type="secondary" style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>
+                          {`• 导出格式：PNG（SillyTavern V3 标准）
+• 嵌入数据：chara chunk（V2兼容）+ ccv3 chunk（V3标准）
+• 兼容性：可被 @lenml/char-card-reader 正确读取
+• 图片：上传的图片将作为角色卡封面嵌入PNG`}
+                        </Text>
+                      </Card>
+                    </Space>
+                  </Card>
+                </div>
+              </div>
+            ),
+          },
+        ]}
       />
 
+      {/* AI生成弹窗 */}
       <Modal
         title="AI生成角色卡内容"
         open={aiModalVisible}
@@ -592,7 +849,8 @@ const CharacterCardEditPage: React.FC = () => {
             </Button>
           ) : null
         ]}
-        width={800}
+        width="80vw"
+        style={{ maxWidth: 1000 }}
       >
         <Form form={aiForm} onFinish={handleAIGenerate} layout="vertical">
           <Form.Item
@@ -612,8 +870,8 @@ const CharacterCardEditPage: React.FC = () => {
             label="用户需求"
           >
             <TextArea
-              rows={3}
-              placeholder="输入额外的生成需求（可选）"
+              rows={5}
+              placeholder="输入额外的生成需求（可选）&#10;例如：角色是一个中世纪的骑士，性格沉稳但内心热血..."
             />
           </Form.Item>
 
@@ -635,7 +893,7 @@ const CharacterCardEditPage: React.FC = () => {
             <Text strong>生成预览：</Text>
             <Card
               size="small"
-              style={{ marginTop: 8, maxHeight: 300, overflowY: 'auto' }}
+              style={{ marginTop: 8, maxHeight: 400, overflowY: 'auto' }}
             >
               <Text style={{ whiteSpace: 'pre-wrap' }}>
                 {generatedPreview || streamingContent}
@@ -643,142 +901,6 @@ const CharacterCardEditPage: React.FC = () => {
             </Card>
           </div>
         )}
-      </Modal>
-
-      <Modal
-        title="格式 & 导出角色卡 (V3)"
-        open={exportModalVisible}
-        onCancel={() => {
-          setExportModalVisible(false);
-          setFormattedFields(null);
-        }}
-        footer={[
-          <Button
-            key="cancel"
-            onClick={() => {
-              setExportModalVisible(false);
-              setFormattedFields(null);
-            }}
-          >
-            关闭
-          </Button>,
-          <Button
-            key="saveToDir"
-            type="default"
-            icon={<UploadOutlined />}
-            onClick={handleSaveToDirectory}
-            loading={isSavingToDir}
-          >
-            保存到角色卡目录
-          </Button>,
-          <Button
-            key="export"
-            type="primary"
-            icon={<DownloadOutlined />}
-            onClick={handleExport}
-            loading={isExporting}
-          >
-            导出 PNG
-          </Button>
-        ]}
-        width={800}
-      >
-        <Space direction="vertical" style={{ width: '100%' }} size="middle">
-          <div>
-            <Text strong>角色卡：</Text>
-            <Text>{characterCard.name}</Text>
-          </div>
-
-          <Divider orientation="left" style={{ margin: '8px 0' }}>AI 格式化</Divider>
-
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <Button
-              type="default"
-              icon={isFormatting ? <LoadingOutlined spin /> : <CheckCircleOutlined />}
-              onClick={handleFormatCard}
-              loading={isFormatting}
-              disabled={!isEngineConfigured}
-            >
-              {isFormatting ? '格式化中...' : 'AI 格式化'}
-            </Button>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              使用 AI 自动解析内容，提取 V3 标准字段
-            </Text>
-          </div>
-
-          {formattedFields && (
-            <Card size="small" title={<Text strong><CheckCircleOutlined style={{ marginRight: 4 }} />格式化完成</Text>} type="inner">
-              <Descriptions size="small" column={1} bordered>
-                <Descriptions.Item label="角色名称">{formattedFields.name || '-'}</Descriptions.Item>
-                <Descriptions.Item label="描述">{formattedFields.description || '-'}</Descriptions.Item>
-                <Descriptions.Item label="性格">{formattedFields.personality || '-'}</Descriptions.Item>
-                <Descriptions.Item label="场景设定">{formattedFields.scenario || '-'}</Descriptions.Item>
-                <Descriptions.Item label="第一条消息">{formattedFields.first_mes ? `${formattedFields.first_mes.substring(0, 100)}...` : '-'}</Descriptions.Item>
-                <Descriptions.Item label="对话示例">{formattedFields.mes_example ? `${formattedFields.mes_example.substring(0, 100)}...` : '-'}</Descriptions.Item>
-                <Descriptions.Item label="创作者备注">{formattedFields.creator_notes || '-'}</Descriptions.Item>
-                <Descriptions.Item label="系统提示">{formattedFields.system_prompt ? `${formattedFields.system_prompt.substring(0, 100)}...` : '-'}</Descriptions.Item>
-                <Descriptions.Item label="后处理指令">{formattedFields.post_history_instructions || '-'}</Descriptions.Item>
-              </Descriptions>
-            </Card>
-          )}
-
-          <Divider orientation="left" style={{ margin: '8px 0' }}>角色卡图片</Divider>
-
-          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-            {cardImage ? (
-              <Space>
-                <img
-                  src={cardImage}
-                  alt="角色卡"
-                  style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 8 }}
-                />
-                <Button
-                  icon={<DeleteOutlined />}
-                  danger
-                  size="small"
-                  onClick={handleRemoveImage}
-                >
-                  移除图片
-                </Button>
-                <Button
-                  icon={<UploadOutlined />}
-                  size="small"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  更换图片
-                </Button>
-              </Space>
-            ) : (
-              <Button
-                icon={<UploadOutlined />}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                上传图片
-              </Button>
-            )}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              style={{ display: 'none' }}
-              onChange={handleImageUpload}
-            />
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              支持 PNG、JPG、WEBP 格式，最大 10MB
-            </Text>
-          </Space>
-
-          <Divider orientation="left" style={{ margin: '8px 0' }}>导出说明</Divider>
-
-          <Card size="small" type="inner">
-            <Text type="secondary" style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>
-{`• 导出格式：PNG（SillyTavern V3 标准）
-• 嵌入数据：chara chunk（V2兼容）+ ccv3 chunk（V3标准）
-• 兼容性：可被 @lenml/char-card-reader 正确读取
-• 图片：上传的图片将作为角色卡封面嵌入PNG`}
-            </Text>
-          </Card>
-        </Space>
       </Modal>
     </div>
   );

@@ -16,6 +16,7 @@ interface FieldEditorProps {
   onChange: (value: string) => void;
   inputType?: 'input' | 'textarea';
   rows?: number;
+  autoSize?: { minRows: number; maxRows: number };
   showGenerate?: boolean;
   onTranslate: (field: string) => void;
   onPolish: (field: string) => void;
@@ -34,6 +35,7 @@ export const FieldEditor: React.FC<FieldEditorProps> = ({
   onChange,
   inputType = 'input',
   rows = 1,
+  autoSize,
   showGenerate = false,
   onTranslate,
   onPolish,
@@ -60,6 +62,7 @@ export const FieldEditor: React.FC<FieldEditorProps> = ({
           onChange={(e: any) => onChange(e.target.value)}
           placeholder={`请输入${label}`}
           rows={inputType === 'textarea' ? rows : undefined}
+          autoSize={inputType === 'textarea' ? (autoSize || { minRows: rows, maxRows: Math.max(rows * 2, 8) }) : undefined}
         />
       </div>
       <Space>
