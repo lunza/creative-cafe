@@ -1,0 +1,134 @@
+/**
+ * 游戏面板通用样式（Task 13 / SubTask 13.5）
+ *
+ * 用于 ResourcePanel / FacilityPanel / StatisticsPanel / CollapsiblePanel
+ *
+ * 设计要点：
+ * - 统一 Card 间距，避免不同面板在同一页面内视觉错位
+ * - Statistic 网格响应式（窄屏单列、宽屏三列）
+ * - 建造按钮 hover 时给一个轻微的抬起效果，强化可点击感知
+ * - 折叠头使用 antd 默认风格，仅在标题色上略加深
+ */
+
+/* ==================== 统一 Card 间距 ==================== */
+
+.game-panel {
+  margin-bottom: 16px;
+  width: 100%;
+}
+
+.game-panel .ant-card-head-title {
+  font-weight: 600;
+}
+
+/* ==================== Statistic 网格响应式 ==================== */
+
+.game-panel__stats {
+  width: 100%;
+}
+
+.game-panel__stats .ant-col {
+  margin-bottom: 12px;
+}
+
+/* 响应式：窄屏单列，中屏两列，宽屏三列 */
+@media (max-width: 575px) {
+  .game-panel__stats .ant-col {
+    flex: 0 0 100%;
+    max-width: 100%;
+  }
+}
+
+/* ==================== 资源面板：变化值样式 ==================== */
+
+/**
+ * 资源变化字段（change_per_turn）颜色：
+ * - 正数（增产）绿色
+ * - 负数（消耗）红色
+ * - 0 / 缺省 灰色
+ */
+.game-panel__change--positive {
+  color: #52c41a;
+}
+
+.game-panel__change--negative {
+  color: #ff4d4f;
+}
+
+.game-panel__change--neutral {
+  color: #8c8c8c;
+}
+
+/* ==================== 设施面板：建造按钮 hover 效果 ==================== */
+
+.game-panel__build-button {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.game-panel__build-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(24, 144, 255, 0.25);
+}
+
+.game-panel__build-button:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+/**
+ * 设施列表项：名称 + 等级 + 成本行的紧凑布局
+ */
+.game-panel__facility-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.game-panel__facility-cost {
+  font-size: 12px;
+  color: #8c8c8c;
+  margin-left: 8px;
+}
+
+/* ==================== 折叠面板：标题色加深 ==================== */
+
+.game-panel__collapse .ant-collapse-header {
+  font-weight: 600;
+}
+
+/* ==================== 空状态内边距 ==================== */
+
+.game-panel__empty {
+  padding: 12px 0;
+}
+
+/* ==================== 暗色主题适配 ==================== */
+
+body.dark .game-panel__change--positive {
+  color: #73d13d;
+}
+
+body.dark .game-panel__change--negative {
+  color: #ff7875;
+}
+
+body.dark .game-panel__change--neutral {
+  color: #5c5c5c;
+}
+
+body.dark .game-panel__facility-cost {
+  color: #8c8c8c;
+}
+
+/* ==================== prefers-reduced-motion 适配 ==================== */
+
+@media (prefers-reduced-motion: reduce) {
+  .game-panel__build-button {
+    transition: none;
+  }
+
+  .game-panel__build-button:hover:not(:disabled) {
+    transform: none;
+  }
+}

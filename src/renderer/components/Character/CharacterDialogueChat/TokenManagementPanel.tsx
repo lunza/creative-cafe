@@ -137,7 +137,7 @@ const TokenManagementPanel: React.FC<TokenManagementPanelProps> = ({
               </Tooltip>
             </div>
             <Switch
-              checked={config.enabled ?? true}
+              checked={config.enabled ?? false}
               onChange={(checked) => onConfigChange({ enabled: checked })}
               className="memory-table-switch"
             />
@@ -147,7 +147,7 @@ const TokenManagementPanel: React.FC<TokenManagementPanelProps> = ({
             <div className="token-config-item">
               <div className="token-config-label">
                 <span>最大上下文Token数</span>
-                <Tooltip title="对话上下文（不含System Prompt）的最大Token数。默认32000，适合现代大模型">
+                <Tooltip title="对话上下文（不含System Prompt）的最大Token数。默认256000，适合百万Token量级长上下文模型">
                   <InfoCircleOutlined style={{ marginLeft: 4, color: '#999', fontSize: 12 }} />
                 </Tooltip>
               </div>
@@ -156,8 +156,8 @@ const TokenManagementPanel: React.FC<TokenManagementPanelProps> = ({
                 max={1000000}
                 step={1000}
                 disabled={config.enabled === false}
-                value={config.maxContextTokens ?? 32000}
-                onChange={(value) => onConfigChange({ maxContextTokens: value ?? 32000 })}
+                value={config.maxContextTokens ?? 256000}
+                onChange={(value) => onConfigChange({ maxContextTokens: value ?? 256000 })}
                 style={{ width: '100%' }}
                 addonAfter="tokens"
               />

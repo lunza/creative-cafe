@@ -7,6 +7,23 @@ import type {
   PromptPolishRequest,
   PromptPolishResult
 } from '../../shared/types/promptTemplate.types';
+import type {
+  GameIndexEntry,
+  GameMeta,
+  GameSaveMeta,
+  GameSaveData,
+  GameNarrativeMessage,
+  GameTableData,
+  GameTableSchema,
+  GameTableEditCommand,
+  GameNarrativeRequest,
+  GameNarrativeChunk,
+  GameNarrativeComplete,
+  GameNarrativeError,
+  GameTableUpdated,
+  GameLocalConfig,
+  GameType
+} from '../../shared/types/game.types';
 
 declare global {
   interface Window {
@@ -297,6 +314,22 @@ interface ElectronAPI {
     }[]>;
   };
 
+  // 对话历史 RAG API（Spec: optimize-chat-ai-intelligence / Task 7.4）
+  // retrieve: 检索本会话历史消息的向量相似片段，注入 system prompt"区域 2：本会话相关历史片段"
+  // vectorizeIncremental: 增量向量化最近消息（跳过已向量化的 messageId），fire-and-forget
+  chatHistory: {
+    retrieve: (
+      chatId: string,
+      queryText: string,
+      topK?: number,
+      minScore?: number
+    ) => Promise<Array<{ content: string; score: number; timestamp: number }>>;
+    vectorizeIncremental: (
+      chatId: string,
+      messages: Array<{ role: string; content: string; id?: string; name?: string; timestamp?: number; create_date?: number }>
+    ) => Promise<{ success: boolean }>;
+  };
+
   // 写作模式 API
   writing: {
     loadProjects: () => Promise<{ success: boolean; projects: any[] }>;
@@ -361,6 +394,69 @@ interface ElectronAPI {
     validate: (template: any) => Promise<{ success: boolean; data?: any; error?: string }>;
     reset: (moduleId: string) => Promise<{ success: boolean; data?: any; error?: string }>;
     optimize: (request: PromptPolishRequest) => Promise<{ success: boolean; data?: PromptPolishResult; error?: string }>;
+  };
+
+  // Token 计数 API（精确 cl100k_base，由主进程 TokenCountService 提供）
+  token: {
+    count: (text: string) => Promise<number>;
+    countBatch: (messages: Array<{ id: string; text: string }>) => Promise<Array<{ id: string; count: number }>>;
+  };
+
+  // 游戏模式 API（Spec: add-game-mode-framework / Task 5 preload 契约）
+  // 命名空间由 Task 5 在 preload.ts 中实现；此处类型声明由 Task 6 提前补全以解耦渲染进程开发
+  game: {
+    list: () => Promise<{ success: boolean; games?: GameIndexEntry[]; error?: string }>;
+    getMeta: (gameId: string) => Promise<{ success: boolean; meta?: GameMeta | null; error?: string }>;
+    createGame: (meta: GameMeta) => Promise<{ success: boolean }>;
+    updateGame: (gameId: string, updates: Partial<GameMeta>) => Promise<{ success: boolean }>;
+    deleteGame: (gameId: string) => Promise<{ success: boolean }>;
+    createSave: (params: {
+      gameId: string;
+      gameType: GameType;
+      name: string;
+      isAuto: boolean;
+      tableSchema: GameTableSchema;
+      initialState?: Record<string, any>;
+    }) => Promise<{ success: boolean; meta?: GameSaveMeta; error?: string }>;
+    loadSave: (saveId: string) => Promise<{ success: boolean; data?: GameSaveData | null; error?: string }>;
+    listSaves: (gameId: string) => Promise<{ success: boolean; saves?: GameSaveMeta[]; error?: string }>;
+    deleteSave: (saveId: string) => Promise<{ success: boolean }>;
+    save: (
+      saveId: string,
+      updates: {
+        narrativeLog?: GameSaveData['narrativeLog'];
+        stateSnapshot?: Record<string, any>;
+        currentTurn?: number | null;
+        currentNodeId?: string | null;
+        nodeTitle?: string | null;
+        turnCount?: number;
+      }
+    ) => Promise<{ success: boolean }>;
+    getTableData: (saveId: string) => Promise<{ success: boolean; data?: GameTableData | null; error?: string }>;
+    saveTableData: (saveId: string, tableData: GameTableData) => Promise<{ success: boolean }>;
+    applyTableEdits: (
+      saveId: string,
+      commands: GameTableEditCommand[]
+    ) => Promise<{
+      success: boolean;
+      changes: {
+        commandsExecuted: number;
+        affectedSheets: string[];
+        errors: string[];
+      };
+    }>;
+    getVersionSnapshot: (saveId: string) => Promise<{ success: boolean; snapshot?: any; error?: string }>;
+    confirmVersion: (saveId: string) => Promise<{ success: boolean }>;
+    rollbackVersion: (saveId: string) => Promise<{ success: boolean }>;
+    generateNarrative: (request: GameNarrativeRequest) => Promise<void>;
+    cancelGeneration: (saveId: string) => Promise<void>;
+    getConfig: (gameId: string) => Promise<{ success: boolean; config?: GameLocalConfig; error?: string }>;
+    saveConfig: (gameId: string, config: GameLocalConfig) => Promise<{ success: boolean }>;
+    // 事件监听器（每个返回 unsubscribe 函数）
+    onNarrativeChunk: (callback: (data: GameNarrativeChunk) => void) => () => void;
+    onNarrativeComplete: (callback: (data: GameNarrativeComplete) => void) => () => void;
+    onNarrativeError: (callback: (data: GameNarrativeError) => void) => () => void;
+    onTableUpdated: (callback: (data: GameTableUpdated) => void) => () => void;
   };
 }
 

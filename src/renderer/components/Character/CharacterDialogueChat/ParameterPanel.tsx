@@ -1,72 +1,36 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Tooltip, Button, Slider } from 'antd';
-import { QuestionCircleOutlined, ReloadOutlined, DownOutlined, RightOutlined, SlidersOutlined } from '@ant-design/icons';
+import { Tooltip, Button, Slider, Switch, Input } from 'antd';
+import { QuestionCircleOutlined, ReloadOutlined, DownOutlined, RightOutlined, SlidersOutlined, ExperimentOutlined } from '@ant-design/icons';
 import { AIParameterConfig, EffectiveAIParams } from './CharacterDialogueChat.types';
+import { EngineCapabilities } from '../../Common/ChatEngine/ChatEngine.types';
+import {
+  PARAMETER_CONFIGS,
+  DRY_PARAMETER_CONFIGS,
+  ParameterConfig,
+  ANTI_REPEAT_PRESETS,
+  AntiRepeatPreset,
+  MIN_RESPONSE_CHARS_CONFIG,
+} from './parameterConfigs';
 import './ConfigPanel.css';
 
-interface ParameterConfig {
-  key: keyof AIParameterConfig;
-  label: string;
-  min: number;
-  max: number;
-  step: number;
-  tooltip: string;
-  defaultValue: number;
-}
-
-const PARAMETER_CONFIGS: ParameterConfig[] = [
-  {
-    key: 'max_tokens',
-    label: 'Max Tokens',
-    min: 256,
-    max: 32768,
-    step: 256,
-    defaultValue: 8192,
-    tooltip: '模型生成的最大 token 数量。值越大，模型能输出的内容越长。默认值：8192',
-  },
-  {
-    key: 'temperature',
-    label: 'Temperature',
-    min: 0.1,
-    max: 2.0,
-    step: 0.05,
-    defaultValue: 0.7,
-    tooltip: '控制输出的随机性。较低值（0.1-0.5）使输出更确定和保守，较高值（0.8-2.0）使输出更创意和多样。推荐值：0.7-1.0',
-  },
-  {
-    key: 'top_p',
-    label: 'Top P',
-    min: 0.1,
-    max: 1.0,
-    step: 0.05,
-    defaultValue: 0.9,
-    tooltip: '核采样参数，控制输出的多样性。较低值使输出更集中，较高值使输出更多样。推荐值：0.9-1.0',
-  },
-  {
-    key: 'frequency_penalty',
-    label: 'Frequency Penalty',
-    min: -2.0,
-    max: 2.0,
-    step: 0.1,
-    defaultValue: 0.0,
-    tooltip: '降低重复token的权重。正值减少重复，负值增加重复。推荐值：0.0-0.5',
-  },
-  {
-    key: 'presence_penalty',
-    label: 'Presence Penalty',
-    min: -2.0,
-    max: 2.0,
-    step: 0.1,
-    defaultValue: 0.0,
-    tooltip: '鼓励模型谈论新话题。正值使模型更愿意引入新话题。推荐值：0.0-0.5',
-  },
-];
+const { TextArea } = Input;
 
 interface ParameterPanelProps {
   effectiveParams: EffectiveAIParams;
   customParameters: AIParameterConfig | undefined;
   onParameterChange: (params: Partial<AIParameterConfig>) => void;
   onResetParameters: () => void;
+  // 自定义停止序列（Spec: optimize-chat-ai-intelligence / Task 3.4）
+  customStopSequencesEnabled?: boolean;
+  customStopSequences?: string[];
+  onCustomStopSequencesToggle?: (enabled: boolean) => void;
+  onCustomStopSequencesChange?: (stops: string[]) => void;
+  /**
+   * 后端能力探测结果（Spec: optimize-chat-ai-intelligence / Task 6.1 / 6.4）。
+   * 决定 repetition_penalty 滑块与 DRY 采样折叠区的显隐。
+   * 缺省时按"保守"策略：不显示 capability-gated 滑块（避免给不支持的后端误配）。
+   */
+  engineCapabilities?: EngineCapabilities;
 }
 
 const ParameterPanel: React.FC<ParameterPanelProps> = ({
@@ -74,6 +38,11 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
   customParameters,
   onParameterChange,
   onResetParameters,
+  customStopSequencesEnabled = false,
+  customStopSequences = [],
+  onCustomStopSequencesToggle,
+  onCustomStopSequencesChange,
+  engineCapabilities,
 }) => {
   const [collapsed, setCollapsed] = useState(() => {
     const saved = localStorage.getItem('param-panel-collapsed');
@@ -82,20 +51,40 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
   const [localValues, setLocalValues] = useState<AIParameterConfig>(
     customParameters || {}
   );
+  // 自定义停止序列 TextArea 的本地文本（每行一个停止串），便于用户编辑
+  const [stopSequencesText, setStopSequencesText] = useState<string>(
+    Array.isArray(customStopSequences) ? customStopSequences.join('\n') : ''
+  );
+  // 高级采样参数折叠区状态（默认收起，避免 UI 过载）
+  // Spec: optimize-chat-ai-intelligence / Task 6.4
+  const [advancedCollapsed, setAdvancedCollapsed] = useState(() => {
+    const saved = localStorage.getItem('param-panel-advanced-collapsed');
+    // 默认收起（'true' 或 null 都视为收起；仅 'false' 时展开）
+    return saved !== 'false';
+  });
 
   useEffect(() => {
     localStorage.setItem('param-panel-collapsed', String(collapsed));
   }, [collapsed]);
+
+  useEffect(() => {
+    localStorage.setItem('param-panel-advanced-collapsed', String(advancedCollapsed));
+  }, [advancedCollapsed]);
+
+  // 当外部 customStopSequences 变化时（如切换角色卡），同步本地文本
+  useEffect(() => {
+    setStopSequencesText(Array.isArray(customStopSequences) ? customStopSequences.join('\n') : '');
+  }, [customStopSequences]);
 
   const handleSliderChange = useCallback((key: keyof AIParameterConfig, value: number) => {
     setLocalValues(prev => ({ ...prev, [key]: value }));
   }, []);
 
   const handleSliderAfterChange = useCallback((key: keyof AIParameterConfig, value: number) => {
-    const configDef = PARAMETER_CONFIGS.find(c => c.key === key);
+    const configDef = [...PARAMETER_CONFIGS, ...DRY_PARAMETER_CONFIGS].find(c => c.key === key);
     const effectiveValue = value;
     const defaultValue = configDef?.defaultValue;
-    
+
     if (defaultValue !== undefined && Math.abs(effectiveValue - defaultValue) < 0.001) {
       const newValues = { ...localValues };
       delete newValues[key];
@@ -117,7 +106,131 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
     onResetParameters();
   }, [onResetParameters]);
 
+  // 自定义停止序列：TextArea 失焦时解析行并持久化
+  const handleStopSequencesBlur = useCallback(() => {
+    if (!onCustomStopSequencesChange) return;
+    const stops = stopSequencesText
+      .split('\n')
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+    onCustomStopSequencesChange(stops);
+  }, [stopSequencesText, onCustomStopSequencesChange]);
+
+  // 防重复强度预设：点击时一次性写入 frequency_penalty / presence_penalty / dry_multiplier
+  // Spec: fix-ai-response-length-degradation / Task 5.2 / 5.4
+  // 当后端不支持 DRY 采样时，仅写入 freq + pres，跳过 dry_multiplier（但仍允许点击所有预设）。
+  const handlePresetClick = useCallback((preset: AntiRepeatPreset) => {
+    const supportsDry = engineCapabilities?.supportsDrySampler === true;
+    const newValues: Partial<AIParameterConfig> = {
+      frequency_penalty: preset.values.frequency_penalty,
+      presence_penalty: preset.values.presence_penalty,
+    };
+    if (supportsDry) {
+      newValues.dry_multiplier = preset.values.dry_multiplier;
+    }
+    // 同步 localValues，使下方滑块立即反映预设值
+    setLocalValues(prev => ({ ...prev, ...newValues }));
+    onParameterChange(newValues);
+  }, [engineCapabilities, onParameterChange]);
+
+  // min_response_chars Slider 的 onAfterChange 处理
+  // Spec: fix-ai-response-length-degradation / Task 7.3 / 7.4
+  // 与 handleSliderAfterChange 模式一致：值等于默认值时从 customParameters 中移除字段，
+  // 避免"已使用自定义参数"徽章误显示；值不等于默认值时持久化到 customParameters。
+  const handleMinResponseCharsAfterChange = useCallback((value: number) => {
+    if (Math.abs(value - MIN_RESPONSE_CHARS_CONFIG.defaultValue) < 0.001) {
+      // 等于默认值：从 customParameters 与 localValues 中移除该字段
+      const newLocalValues = { ...localValues };
+      delete newLocalValues.min_response_chars;
+      setLocalValues(newLocalValues);
+      const newCustomParams = { ...(customParameters || {}) };
+      delete newCustomParams.min_response_chars;
+      if (Object.keys(newCustomParams).length === 0) {
+        onParameterChange({});
+      } else {
+        onParameterChange(newCustomParams);
+      }
+    } else {
+      setLocalValues(prev => ({ ...prev, min_response_chars: value }));
+      onParameterChange({ min_response_chars: value });
+    }
+  }, [localValues, customParameters, onParameterChange]);
+
   const isCustomized = customParameters && Object.keys(customParameters).length > 0;
+
+  // 按 capabilities 过滤主参数配置（Spec: Task 6.1）
+  // 缺省 capabilities 时，capability-gated 项不显示（保守策略，避免给不支持的后端误配）
+  const visibleParameterConfigs = PARAMETER_CONFIGS.filter(config => {
+    if (!config.capability) return true;
+    return engineCapabilities?.[config.capability] === true;
+  });
+
+  // DRY 采样折叠区仅在 supportsDrySampler=true 时显示
+  const showDrySection = engineCapabilities?.supportsDrySampler === true;
+
+  // 防重复强度预设选中态：根据 customParameters 中三个参数的实际值反推
+  // Spec: fix-ai-response-length-degradation / Task 5.3
+  // 仅当 freq/pres/dry 三者（DRY 模式）或 freq/pres 两者（非 DRY 模式）均与某预设
+  // 完全匹配时高亮该预设；否则不高亮。Number() 强制转换后用 === 严格比较
+  // （undefined 经 Number() 变为 NaN，与任何数字 === 均为 false，自然不匹配）。
+  const activePresetKey: AntiRepeatPreset['key'] | null = (() => {
+    const cp = customParameters || {};
+    const supportsDry = engineCapabilities?.supportsDrySampler === true;
+    const freq = Number(cp.frequency_penalty);
+    const pres = Number(cp.presence_penalty);
+    const dry = Number(cp.dry_multiplier);
+    for (const preset of ANTI_REPEAT_PRESETS) {
+      const freqMatch = freq === preset.values.frequency_penalty;
+      const presMatch = pres === preset.values.presence_penalty;
+      if (supportsDry) {
+        const dryMatch = dry === preset.values.dry_multiplier;
+        if (freqMatch && presMatch && dryMatch) return preset.key;
+      } else {
+        // 非 DRY 后端：预设点击时不会写入 dry_multiplier，故仅凭 freq+pres 判定
+        if (freqMatch && presMatch) return preset.key;
+      }
+    }
+    return null;
+  })();
+
+  // 回复长度引导当前值与修改态
+  // Spec: fix-ai-response-length-degradation / Task 7.2
+  const currentMinResponseChars =
+    localValues.min_response_chars ?? customParameters?.min_response_chars ?? MIN_RESPONSE_CHARS_CONFIG.defaultValue;
+  const minResponseCharsModified = localValues.min_response_chars !== undefined;
+
+  // 渲染单个滑块项（主参数与 DRY 参数共用）
+  const renderSlider = (config: ParameterConfig) => {
+    const rawValue = localValues[config.key] ?? effectiveParams[config.key];
+    const currentValue = typeof rawValue === 'number' ? rawValue : config.defaultValue;
+    const isModified = localValues[config.key] !== undefined;
+    const isInteger = config.step >= 1;
+
+    return (
+      <div key={config.key} className="parameter-item">
+        <div className="parameter-header">
+          <div className="parameter-label-group">
+            <span className="parameter-label">{config.label}</span>
+            <Tooltip title={config.tooltip}>
+              <QuestionCircleOutlined className="parameter-tooltip-icon" />
+            </Tooltip>
+          </div>
+          <span className={`parameter-value ${isModified ? 'modified' : ''}`}>
+            {isInteger ? Math.round(currentValue).toString() : Number(currentValue).toFixed(2)}
+          </span>
+        </div>
+        <Slider
+          min={config.min}
+          max={config.max}
+          step={config.step}
+          value={currentValue}
+          onChange={(value) => handleSliderChange(config.key, value)}
+          onAfterChange={(value) => handleSliderAfterChange(config.key, value as number)}
+          className="parameter-slider"
+        />
+      </div>
+    );
+  };
 
   return (
     <div className="parameter-panel">
@@ -149,36 +262,7 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
       <div className={`parameter-panel-content ${collapsed ? 'collapsed' : ''}`}>
         <div className="parameter-panel-inner">
           <div className="parameter-list">
-            {PARAMETER_CONFIGS.map(config => {
-              const rawValue = localValues[config.key] ?? effectiveParams[config.key];
-              const currentValue = typeof rawValue === 'number' ? rawValue : config.defaultValue;
-              const isModified = localValues[config.key] !== undefined;
-
-              return (
-                <div key={config.key} className="parameter-item">
-                  <div className="parameter-header">
-                    <div className="parameter-label-group">
-                      <span className="parameter-label">{config.label}</span>
-                      <Tooltip title={config.tooltip}>
-                        <QuestionCircleOutlined className="parameter-tooltip-icon" />
-                      </Tooltip>
-                    </div>
-                    <span className={`parameter-value ${isModified ? 'modified' : ''}`}>
-                      {config.key === 'max_tokens' ? Math.round(currentValue).toString() : Number(currentValue).toFixed(2)}
-                    </span>
-                  </div>
-                  <Slider
-                    min={config.min}
-                    max={config.max}
-                    step={config.step}
-                    value={currentValue}
-                    onChange={(value) => handleSliderChange(config.key, value)}
-                    onAfterChange={(value) => handleSliderAfterChange(config.key, value as number)}
-                    className="parameter-slider"
-                  />
-                </div>
-              );
-            })}
+            {visibleParameterConfigs.map(renderSlider)}
           </div>
 
           <div className="parameter-actions">
@@ -192,6 +276,111 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
               重置为默认值
             </Button>
           </div>
+
+          {/* 防重复强度预设（Spec: fix-ai-response-length-degradation / Task 5） */}
+          {/* 三档预设避免用户不理解 freq/pres/dry 关系导致过度惩罚叠加，从而过度缩短回复。 */}
+          <div className="parameter-anti-repeat-preset-section" style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
+            <div className="parameter-label-group" style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+              <span className="parameter-label" style={{ fontSize: 13 }}>防重复强度预设</span>
+              <Tooltip title="防重复强度预设。宽松=关闭所有防重复；标准=轻微惩罚；严格=强惩罚（可能导致回复缩短）">
+                <QuestionCircleOutlined className="parameter-tooltip-icon" />
+              </Tooltip>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {ANTI_REPEAT_PRESETS.map(preset => (
+                <Button
+                  key={preset.key}
+                  size="small"
+                  type={activePresetKey === preset.key ? 'primary' : 'default'}
+                  onClick={() => handlePresetClick(preset)}
+                  style={{ flex: 1 }}
+                >
+                  {preset.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          {/* 回复长度引导（Spec: fix-ai-response-length-degradation / Task 7） */}
+          {/* Slider 写入 customParameters.min_response_chars，PromptBuilder 读取并注入系统提示末尾。 */}
+          <div className="parameter-min-response-chars-section" style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
+            <div className="parameter-header">
+              <div className="parameter-label-group">
+                <span className="parameter-label" style={{ fontSize: 13 }}>回复长度引导</span>
+                <Tooltip title={MIN_RESPONSE_CHARS_CONFIG.tooltip}>
+                  <QuestionCircleOutlined className="parameter-tooltip-icon" />
+                </Tooltip>
+              </div>
+              <span className={`parameter-value ${minResponseCharsModified ? 'modified' : ''}`}>
+                {currentMinResponseChars}
+              </span>
+            </div>
+            <Slider
+              min={MIN_RESPONSE_CHARS_CONFIG.min}
+              max={MIN_RESPONSE_CHARS_CONFIG.max}
+              step={MIN_RESPONSE_CHARS_CONFIG.step}
+              value={currentMinResponseChars}
+              onChange={(value) => handleSliderChange('min_response_chars', value)}
+              onAfterChange={(value) => handleMinResponseCharsAfterChange(value as number)}
+              className="parameter-slider"
+            />
+          </div>
+
+          {/* 自定义停止序列配置区（Spec: optimize-chat-ai-intelligence / Task 3.4） */}
+          {/* 借鉴 SillyTavern names_as_stop_strings 防抢话机制；默认用户名变体停止序列已内置，
+              此处供用户追加自定义停止串，与默认数组合并注入请求体 stop 字段。 */}
+          <div className="parameter-stop-sequences-section" style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
+            <div className="parameter-stop-sequences-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <div className="parameter-label-group" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span className="parameter-label" style={{ fontSize: 13 }}>自定义停止序列</span>
+                <Tooltip title="开启后，下方每行一个停止串将与默认用户名变体停止序列（如 \n用户:、\n张三: 等）合并写入请求体 stop 字段，用于阻断 AI 代替用户发言或重复角色名。默认已内置中英文用户名变体，此处仅需追加额外停止串。">
+                  <QuestionCircleOutlined className="parameter-tooltip-icon" />
+                </Tooltip>
+              </div>
+              <Switch
+                size="small"
+                checked={customStopSequencesEnabled}
+                onChange={onCustomStopSequencesToggle}
+              />
+            </div>
+            {customStopSequencesEnabled && (
+              <TextArea
+                value={stopSequencesText}
+                onChange={(e) => setStopSequencesText(e.target.value)}
+                onBlur={handleStopSequencesBlur}
+                placeholder="每行一个停止串，例如：&#10;\n助理:&#10;\nAssistant:&#10;<END>"
+                autoSize={{ minRows: 2, maxRows: 6 }}
+                style={{ fontSize: 12, fontFamily: 'monospace' }}
+              />
+            )}
+          </div>
+
+          {/* 高级采样参数折叠区（Spec: optimize-chat-ai-intelligence / Task 6.4） */}
+          {/* DRY 采样作为防重复采样层第二道防线，与应用层 n-gram Jaccard 去重形成双重防护。
+              仅当 engineCapabilities.supportsDrySampler=true 时显示。默认折叠避免 UI 过载。 */}
+          {showDrySection && (
+            <div className="parameter-advanced-section" style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
+              <div
+                className="parameter-advanced-header"
+                onClick={() => setAdvancedCollapsed(!advancedCollapsed)}
+                style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, marginBottom: advancedCollapsed ? 0 : 12 }}
+              >
+                <div className="parameter-collapse-icon">
+                  {advancedCollapsed ? <RightOutlined /> : <DownOutlined />}
+                </div>
+                <ExperimentOutlined className="parameter-icon" />
+                <span className="parameter-label" style={{ fontSize: 13 }}>高级采样参数（DRY 防重复）</span>
+                <Tooltip title="DRY 采样借鉴 SillyTavern textgen-settings.js，作为防重复的采样层第二道防线。与应用层 n-gram Jaccard 去重形成双重防护。仅 textgen-webui/koboldcpp 等后端支持。">
+                  <QuestionCircleOutlined className="parameter-tooltip-icon" />
+                </Tooltip>
+              </div>
+              {!advancedCollapsed && (
+                <div className="parameter-list">
+                  {DRY_PARAMETER_CONFIGS.map(renderSlider)}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -94,6 +94,39 @@ export interface AIParameterConfig {
   max_tokens?: number;
   frequency_penalty?: number;
   presence_penalty?: number;
+  /**
+   * Repetition penalty（仅对 supportsRepPen=true 后端生效）。
+   *
+   * Spec: optimize-chat-ai-intelligence / Task 6.1
+   * 借鉴 SillyTavern textgen/Default.json (rep_pen=1.1~1.2) 调整默认值为 1.1。
+   * 范围 0.8-1.5，步长 0.05；为不支持的后端（OpenAI/Anthropic 等）省略此字段。
+   */
+  repetition_penalty?: number;
+  /**
+   * DRY 采样参数组（仅对 supportsDrySampler=true 后端生效）。
+   *
+   * Spec: optimize-chat-ai-intelligence / Task 6.4
+   * 借鉴 SillyTavern textgen-settings.js:143 作为防重复采样层第二道防线
+   * （与应用层 n-gram Jaccard 去重形成双重防护）。
+   * - dry_multiplier：0-2，默认 0.8，步长 0.1
+   * - dry_base：1-3，默认 1.75，步长 0.05
+   * - dry_allowed_length：1-10，默认 2，步长 1
+   * - no_repeat_ngram_size：0-10，默认 0（关闭，避免影响中文流畅性），步长 1
+   */
+  dry_multiplier?: number;
+  dry_base?: number;
+  dry_allowed_length?: number;
+  no_repeat_ngram_size?: number;
+  /**
+   * 最小回复字数（中文字符数）下限。
+   *
+   * Spec: fix-ai-response-length-degradation / Task 3.1
+   * 用于在系统提示末尾注入字数下限约束，防止 AI 在持续对话中
+   * 通过上下文学习复制逐渐缩短的回复模式（LLM 固有特性）。
+   * 默认 300，范围 100-2000，由 ParameterPanel 暴露给用户配置。
+   * 当连续 3 轮回复均低于此阈值时，自动强化约束（Task 4）。
+   */
+  min_response_chars?: number;
 }
 
 // 知识库绑定信息
@@ -121,6 +154,25 @@ export interface CharacterSessionConfig {
   reservedForResponse?: number;
   minMessagesToKeep?: number;
   maxMessagesToKeep?: number;
+  /**
+   * 自定义停止序列开关（Spec: optimize-chat-ai-intelligence / Task 3.4）。
+   * 开启后 customStopSequences 数组与默认用户名变体停止序列合并注入请求体 stop 字段。
+   */
+  customStopSequencesEnabled?: boolean;
+  /**
+   * 自定义停止序列数组（每行一个停止串，持久化到 character-session-<cardId> localStorage）。
+   */
+  customStopSequences?: string[];
+  /**
+   * AI 回复人称属性（Spec: add-person-attribute-to-ai-reply）。
+   * 控制"AI回复"按钮生成用户回复时的叙事视角：
+   * - 'first'：第一人称（"我"），默认值
+   * - 'second'：第二人称（"你"），互动小说风格
+   * - 'third'：第三人称（"他/她"），小说叙事风格
+   * 持久化到 character-session-<cardId> localStorage。
+   * 默认 undefined 等同于 'first'（向后兼容）。
+   */
+  userReplyPerson?: 'first' | 'second' | 'third';
   lastUpdated: number;
 }
 

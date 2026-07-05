@@ -1,0 +1,61 @@
+/**
+ * 游戏模式入口容器样式（Task 8）
+ *
+ * 设计要点：
+ * - 全屏覆盖（position: fixed; inset: 0）由 CreationCenter 的 GameModeDialog
+ *   已经提供外层容器，本组件使用 fixed 以保证在内部容器中也能正确铺满
+ * - 使用 CSS 变量适配未来主题切换（--cc-bg-primary / --cc-text-primary）
+ * - 视图切换通过 key={baseView} 强制重新挂载，触发 game-mode-fade-in 动画
+ * - 暗色主题为默认（与 GameModeDialog 的 #1a1a2e 背景协调）
+ */
+
+.game-mode-entry {
+  position: fixed;
+  inset: 0;
+  background: var(--cc-bg-primary, #1f1f1f);
+  color: var(--cc-text-primary, rgba(255, 255, 255, 0.85));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 1000;
+}
+
+/* 子页面容器：占满剩余空间并支持内部滚动 */
+.game-mode-entry__view {
+  flex: 1;
+  overflow: auto;
+  animation: game-mode-fade-in 200ms ease-out;
+}
+
+/* Suspense 加载态：居中显示 Spin */
+.game-mode-entry__fallback {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+}
+
+/**
+ * 视图切换过渡动画
+ *
+ * 通过 key={baseView} 触发组件重新挂载，新挂载的 .game-mode-entry__view
+ * 会自动播放此动画（fade in + slide up 8px）。
+ */
+@keyframes game-mode-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* prefers-reduced-motion 适配：禁用过渡动画 */
+@media (prefers-reduced-motion: reduce) {
+  .game-mode-entry__view {
+    animation: none;
+  }
+}

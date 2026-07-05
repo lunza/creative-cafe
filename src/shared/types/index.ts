@@ -48,6 +48,12 @@ export * from './writing.types';
 // Prompt 模板类型
 export * from './promptTemplate.types';
 
+// 游戏模式类型（单一真源）
+// GameTableData 与 WritingTableData 同构（type alias），无命名冲突。
+// GameTableConfig 与 WritingTableConfig 字段名不同（organizeMode 类型不同），
+// 由各模块自行 import 自身的 Config 类型，避免联合类型。
+export * from './game.types';
+
 // === 冲突消解 ===
 // 显式 re-export 优先于 export *，解决 vector.types 与 writing.types 之间的同名冲突。
 // 优先暴露向量检索语义的版本（向量相关类型为本任务 14 的合并重点）。

@@ -158,17 +158,11 @@ ${!includeEnding ? '7. 不要生成结局章节，故事保持开放式发展' :
 ${chapterRangeInstruction ? `${!includeEnding ? '8' : '7'}. 仅生成指定范围的章节：第${rangeStart}章至第${rangeEnd}章` : ''}
 ${parameters.forbiddenContent && parameters.forbiddenContent.length > 0 ? `${(!includeEnding || chapterRangeInstruction) ? '8' : '7'}. 绝对不要包含以下内容: ${parameters.forbiddenContent.join('、')}` : ''}
 
-## 输出格式要求
-1. 只输出JSON格式的大纲，不要输出任何解释性文字、前言或后记
-2. JSON必须是合法的格式，所有字符串值中的换行符必须转义为\\n，不能使用真实的换行符
-3. 所有属性名必须使用双引号包裹
-4. 字符串值必须使用双引号包裹，不能使用单引号
-5. 不要在JSON末尾添加多余的逗号
-6. 整个输出必须被包裹在\`\`\`json和\`\`\`代码块中
-7. 确保所有字符串值都完整闭合，不要在字符串中间截断
-8. 不要在JSON字符串值中使用任何Markdown格式标记（如**加粗**、*斜体*、_下划线_、~~删除线~~等），如需标记重要内容请使用 importantSpans 字段
-
-请严格按照上述格式输出完整的JSON大纲。`;
+` + this.getJsonFormatRequirements({
+      rule1TypeName: '大纲',
+      rule8: '不要在JSON字符串值中使用任何Markdown格式标记（如**加粗**、*斜体*、_下划线_、~~删除线~~等），如需标记重要内容请使用 importantSpans 字段',
+      finalTypeName: '大纲'
+    });
   }
 
   buildContentPrompt(
@@ -211,34 +205,7 @@ ${chapterInfo.characters.join('、')}
 ## 场景
 ${chapterInfo.scenes.join('、')}`);
 
-    if (context.resourceContext) {
-      parts.push(`
-## 相关背景资料
-${context.resourceContext}`);
-    }
-
-    if (context.tableContext) {
-      parts.push(`
-${context.tableContext}`);
-    }
-
-    if (context.chapterSummaries) {
-      parts.push(`
-## 所有章节概要
-${context.chapterSummaries}`);
-    }
-
-    if (context.longTermContext) {
-      parts.push(`
-## 长期设定信息
-${context.longTermContext}`);
-    }
-
-    if (context.continuityConstraints) {
-      parts.push(`
-## 连贯性约束
-${context.continuityConstraints}`);
-    }
+    parts.push(...this.buildContextSections(context));
 
     parts.push(`
 ## 生成要求
@@ -250,11 +217,9 @@ ${context.continuityConstraints}`);
       parts.push(`- 特殊约束: ${parameters.constraints.join('、')}`);
     }
 
-    if (parameters.writingStyleContext) {
-      parts.push(`
-## 学习文风模仿
-请模仿以下文风特征进行创作:
-${parameters.writingStyleContext}`);
+    const writingStyleSection = this.buildWritingStyleContextSection(parameters.writingStyleContext);
+    if (writingStyleSection) {
+      parts.push(writingStyleSection);
     }
 
     parts.push(`
@@ -308,6 +273,90 @@ ${parameters.writingStyleContext}`);
   private formatStyleOverview(overview: Record<string, any>): string {
     if (typeof overview === 'string') return overview;
     return JSON.stringify(overview);
+  }
+
+  /**
+   * 统一构建 JSON 输出格式要求段落。
+   * 规则 2-7 在所有需要 JSON 输出的提示词中保持一致，规则 1 与规则 8 因场景而异，
+   * 由调用方通过 rule1TypeName / rule8 / finalTypeName 指定。
+   */
+  private getJsonFormatRequirements(options: {
+    rule1TypeName: string;
+    rule8: string;
+    finalTypeName: string;
+  }): string {
+    const { rule1TypeName, rule8, finalTypeName } = options;
+    const rules = [
+      `只输出JSON格式的${rule1TypeName}，不要输出任何解释性文字、前言或后记`,
+      'JSON必须是合法的格式，所有字符串值中的换行符必须转义为\\n，不能使用真实的换行符',
+      '所有属性名必须使用双引号包裹',
+      '字符串值必须使用双引号包裹，不能使用单引号',
+      '不要在JSON末尾添加多余的逗号',
+      '整个输出必须被包裹在```json和```代码块中',
+      '确保所有字符串值都完整闭合，不要在字符串中间截断',
+      rule8
+    ];
+    return `## 输出格式要求
+${rules.map((rule, index) => `${index + 1}. ${rule}`).join('\n')}
+
+请严格按照上述格式输出完整的JSON${finalTypeName}。`;
+  }
+
+  /**
+   * 统一构建内容生成提示词中重复出现的上下文段落
+   * （相关背景资料 / 表格上下文 / 所有章节概要 / 长期设定信息 / 连贯性约束）。
+   * 各段落的拼接顺序与原文保持一致，未提供的段落会被跳过。
+   */
+  private buildContextSections(context: {
+    resourceContext?: string;
+    tableContext?: string;
+    chapterSummaries?: string;
+    longTermContext?: string;
+    continuityConstraints?: string;
+  }): string[] {
+    const parts: string[] = [];
+
+    if (context.resourceContext) {
+      parts.push(`
+## 相关背景资料
+${context.resourceContext}`);
+    }
+
+    if (context.tableContext) {
+      parts.push(`
+${context.tableContext}`);
+    }
+
+    if (context.chapterSummaries) {
+      parts.push(`
+## 所有章节概要
+${context.chapterSummaries}`);
+    }
+
+    if (context.longTermContext) {
+      parts.push(`
+## 长期设定信息
+${context.longTermContext}`);
+    }
+
+    if (context.continuityConstraints) {
+      parts.push(`
+## 连贯性约束
+${context.continuityConstraints}`);
+    }
+
+    return parts;
+  }
+
+  /**
+   * 统一构建"学习文风模仿"段落，未提供文风上下文时返回 null 以便调用方跳过。
+   */
+  private buildWritingStyleContextSection(writingStyleContext?: string): string | null {
+    if (!writingStyleContext) return null;
+    return `
+## 学习文风模仿
+请模仿以下文风特征进行创作:
+${writingStyleContext}`;
   }
 
   buildContinuityConstraints(
@@ -481,18 +530,11 @@ ${generationGuidance}`);
 ${userSuggestion}`);
     }
 
-    parts.push(`
-## 输出格式要求
-1. 只输出JSON格式的分片大纲数组，不要输出任何解释性文字、前言或后记
-2. JSON必须是合法的格式，所有字符串值中的换行符必须转义为\\n，不能使用真实的换行符
-3. 所有属性名必须使用双引号包裹
-4. 字符串值必须使用双引号包裹，不能使用单引号
-5. 不要在JSON末尾添加多余的逗号
-6. 整个输出必须被包裹在\`\`\`json和\`\`\`代码块中
-7. 确保所有字符串值都完整闭合，不要在字符串中间截断
-8. 输出必须是JSON数组（以 [ 开始，以 ] 结束），不要包裹在对象中
-
-请严格按照上述格式输出完整的JSON分片大纲。`);
+    parts.push('\n' + this.getJsonFormatRequirements({
+      rule1TypeName: '分片大纲数组',
+      rule8: '输出必须是JSON数组（以 [ 开始，以 ] 结束），不要包裹在对象中',
+      finalTypeName: '分片大纲'
+    }));
 
     return parts.join('\n');
   }
@@ -536,33 +578,8 @@ ${chapterInfo.scenes.join('、')}
 ## 分片剧情简介
 ${shardOutline.summary}`);
 
-    if (context?.resourceContext) {
-      parts.push(`
-## 相关背景资料
-${context.resourceContext}`);
-    }
-
-    if (context?.tableContext) {
-      parts.push(`
-${context.tableContext}`);
-    }
-
-    if (context?.chapterSummaries) {
-      parts.push(`
-## 所有章节概要
-${context.chapterSummaries}`);
-    }
-
-    if (context?.longTermContext) {
-      parts.push(`
-## 长期设定信息
-${context.longTermContext}`);
-    }
-
-    if (context?.continuityConstraints) {
-      parts.push(`
-## 连贯性约束
-${context.continuityConstraints}`);
+    if (context) {
+      parts.push(...this.buildContextSections(context));
     }
 
     if (previousShardContents) {
@@ -590,11 +607,9 @@ ${previousShardContents}`);
 - 不要重复前文已写过的情节、对话或描写
 - 保持人物行为与性格一致，不得与前序分片产生矛盾${shardIndex === totalShards - 1 ? '\n- 这是本章最后一个分片，请确保本章剧情完整收尾' : ''}`);
 
-    if (parameters.writingStyleContext) {
-      parts.push(`
-## 学习文风模仿
-请模仿以下文风特征进行创作:
-${parameters.writingStyleContext}`);
+    const writingStyleSection = this.buildWritingStyleContextSection(parameters.writingStyleContext);
+    if (writingStyleSection) {
+      parts.push(writingStyleSection);
     }
 
     if (generationGuidance) {

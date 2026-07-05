@@ -67,11 +67,17 @@ export function usePromptBuilder(
     vectorContextItems: ContextVectorItem[],
     memoryTableData?: string,
     organizeMode?: 'sync' | 'async',
-    tableStructure?: { sheets: string[]; headers: Record<string, string[]>; descriptions: Record<string, string> }
+    tableStructure?: { sheets: string[]; headers: Record<string, string[]>; descriptions: Record<string, string> },
+    /**
+     * 本会话相关历史片段（Spec: optimize-chat-ai-intelligence / Task 7.5）
+     * 仅在对话历史 > 20 轮时由 hooks.ts 传入（短对话时为 undefined）
+     */
+    chatHistoryItems?: Array<{ content: string; score: number; timestamp: number }>
   ): Promise<string> => {
     console.log('[usePromptBuilder] buildCompleteSystemPrompt 调用:');
     console.log('  - promptType:', promptType);
     console.log('  - vectorContextItems 数量:', vectorContextItems?.length || 0);
+    console.log('  - chatHistoryItems 数量:', chatHistoryItems?.length || 0);
     console.log('  - memoryTableData 是否有值:', !!memoryTableData);
     console.log('  - memoryTableData 长度:', memoryTableData?.length || 0);
     if (memoryTableData) {
@@ -79,7 +85,7 @@ export function usePromptBuilder(
     }
     console.log('  - organizeMode:', organizeMode);
     console.log('  - tableStructure sheets:', tableStructure?.sheets);
-    const result = await buildSystemPromptPure(characterInfoRef, personaRef, promptType, vectorContextItems, memoryTableData, organizeMode, tableStructure);
+    const result = await buildSystemPromptPure(characterInfoRef, personaRef, promptType, vectorContextItems, memoryTableData, organizeMode, tableStructure, chatHistoryItems);
     console.log('  - 最终 system prompt 长度:', result.length);
     console.log('  - 最终 system prompt 末尾 300 字符:', result.substring(Math.max(0, result.length - 300)));
     return result;

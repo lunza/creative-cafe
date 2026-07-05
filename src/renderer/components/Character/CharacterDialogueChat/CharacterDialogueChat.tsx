@@ -11,6 +11,7 @@ import { useCharacterDialogueChat } from './CharacterDialogueChat.hooks';
 import { useFavoritesStore } from '../../../stores/favoritesStore';
 import { exportConversation } from './CharacterDialogueChat.utils';
 import { CharacterInfo, AIParameterConfig } from './CharacterDialogueChat.types';
+import { getDefaultEngineCapabilities } from '../../Common/ChatEngine/ChatEngine.types';
 
 interface CharacterSelectorItem {
   name: string;
@@ -41,15 +42,20 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
   characters,
   onCharacterSelect,
 }) => {
-  const { 
-    state, 
+  const {
+    state,
     stateWithVersionInfo,
-    sendMessage, 
-    continueConversation, 
-    retryMessage, 
+    sendMessage,
+    continueConversation,
+    generateUserReply,
+    isGeneratingUserReply,
+    polishInput,
+    isPolishingInput,
+    retryMessage,
     retryMessageFromVersion,
     editMessage,
-    clearChat, 
+    rollbackToMessage,
+    clearChat,
     cancelRequest,
     selectedPersona,
     personas,
@@ -74,6 +80,7 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
     tokenManagementConfig,
     handleTokenManagementConfigChange,
     handleStopOrganizing,
+    getActiveEngineConfig,
   } = useCharacterDialogueChat(characterInfo);
   
   const { toggleFavorite, isFavorite, getFavoritePaths } = useFavoritesStore();
@@ -83,6 +90,8 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [personasLoading, setPersonasLoading] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [generatedReplyText, setGeneratedReplyText] = useState('');
+  const [polishFlashKey, setPolishFlashKey] = useState(0);
   const favoritePaths = getFavoritePaths();
 
   useEffect(() => {
@@ -110,6 +119,15 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
   const effectiveParams = useMemo(() => {
     return getEffectiveParams();
   }, [getEffectiveParams]);
+
+  // 后端能力探测（Spec: optimize-chat-ai-intelligence / Task 6.1 / 6.4）
+  // 优先使用引擎显式 capabilities 配置，缺省时按 api_mode 推断默认值。
+  // 透传给 ParameterPanel 决定 repetition_penalty 滑块与 DRY 采样折叠区的显隐。
+  const engineCapabilities = useMemo(() => {
+    const activeEngine = getActiveEngineConfig();
+    if (!activeEngine) return undefined;
+    return activeEngine.capabilities || getDefaultEngineCapabilities(activeEngine.api_mode);
+  }, [getActiveEngineConfig]);
 
   const handleScroll = useCallback(() => {
     if (chatContainerRef.current) {
@@ -158,6 +176,16 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
     resetParameters();
   }, [resetParameters]);
 
+  // 自定义停止序列处理（Spec: optimize-chat-ai-intelligence / Task 3.4）
+  // 持久化到 character-session-<cardId> localStorage 的 customStopSequencesEnabled / customStopSequences 字段
+  const handleCustomStopSequencesToggle = useCallback((enabled: boolean) => {
+    updateConfig({ customStopSequencesEnabled: enabled });
+  }, [updateConfig]);
+
+  const handleCustomStopSequencesChange = useCallback((stops: string[]) => {
+    updateConfig({ customStopSequences: stops });
+  }, [updateConfig]);
+
   const handleToggleFullscreen = useCallback(() => {
     setIsFullscreen(prev => !prev);
   }, []);
@@ -169,6 +197,61 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
   const handleCharacterSelectWithFavorite = useCallback((character: CharacterSelectorItem) => {
     onCharacterSelect?.(character);
   }, [onCharacterSelect]);
+
+  // AI 用户回复生成回调（Spec: add-ai-user-reply-button / Task 4.3）
+  // 调用 hook 的 generateUserReply，成功后暂存文本到 generatedReplyText，由 ChatInputBar 通过 prop 消费
+  const handleGenerateUserReply = useCallback(async () => {
+    try {
+      const text = await generateUserReply();
+      if (text && text.length > 0) {
+        setGeneratedReplyText(text);
+      }
+    } catch (error) {
+      // 错误已在 hook 内通过 message.error 处理，此处无需重复
+      console.error('[CharacterDialogueChat] handleGenerateUserReply error:', error);
+    }
+  }, [generateUserReply]);
+
+  // ChatInputBar 消费完 generatedReplyText 后回调清空暂存（Spec: add-ai-user-reply-button / Task 4.4）
+  const handleGeneratedReplyTextConsumed = useCallback(() => {
+    setGeneratedReplyText('');
+  }, []);
+
+  // 润色输入回调（Spec: refine-user-input-text / Task 4.3）
+  // 调用 hook 的 polishInput 函数，成功时复用 generatedReplyText 机制填充输入框，
+  // 并触发 polishFlashKey 变化以播放 textarea 边框高亮动画
+  const handlePolishInput = useCallback(async (text: string) => {
+    try {
+      const polishedText = await polishInput(text);
+      if (polishedText) {
+        // 复用 generatedReplyText 机制填充输入框（与 AI回复 按钮共享）
+        setGeneratedReplyText(polishedText);
+        // 触发 textarea 边框青色高亮动画
+        setPolishFlashKey(k => k + 1);
+        message.success('已润色');
+      }
+    } catch {
+      // hook 内 message.error 已处理错误提示，此处无需重复
+    }
+  }, [polishInput]);
+
+  // 用户消息卷回回调（Spec: rollback-user-message / Task 3.2）
+  // 调用 hook 的 rollbackToMessage，成功后通过 generatedReplyText 机制填入输入框
+  const handleRollback = useCallback((messageId: string) => {
+    const content = rollbackToMessage(messageId);
+    if (content) {
+      setGeneratedReplyText(content);
+      message.success('已卷回到输入框');
+    } else {
+      message.warning('卷回失败：未找到目标消息');
+    }
+  }, [rollbackToMessage]);
+
+  // 人称选择器切换回调（Spec: add-person-attribute-to-ai-reply / Task 4.1）
+  // 持久化到 character-session-<cardId> localStorage 的 userReplyPerson 字段
+  const handleUserReplyPersonChange = useCallback((person: 'first' | 'second' | 'third') => {
+    updateConfig({ userReplyPerson: person });
+  }, [updateConfig]);
 
   if (!open && !isFullscreen) return null;
 
@@ -429,6 +512,7 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
               onRetryFromVersion={retryMessageFromVersion}
               onContinue={handleContinueConversation}
               onEdit={editMessage}
+              onRollback={handleRollback}
               isLastMessage={index === stateWithVersionInfo.messages.length - 1}
               isStreaming={stateWithVersionInfo.isStreaming && index === stateWithVersionInfo.messages.length - 1 && msg.role === 'assistant'}
               isGenerating={stateWithVersionInfo.isLoading && index === stateWithVersionInfo.messages.length - 1 && msg.role === 'assistant' && msg.status === 'sending'}
@@ -512,6 +596,15 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
           isStreaming={state.isStreaming}
           isOrganizing={isOrganizing}
           placeholder={isOrganizing ? '表格整理中，请稍后...' : `Message ${characterInfo.characterCardName}...`}
+          onGenerateUserReply={handleGenerateUserReply}
+          isGeneratingUserReply={isGeneratingUserReply}
+          generatedReplyText={generatedReplyText}
+          onGeneratedReplyTextConsumed={handleGeneratedReplyTextConsumed}
+          userReplyPerson={characterConfig?.userReplyPerson}
+          onUserReplyPersonChange={handleUserReplyPersonChange}
+          onPolishInput={handlePolishInput}
+          isPolishingInput={isPolishingInput}
+          polishFlashKey={polishFlashKey}
         />
       </div>
 
@@ -530,9 +623,14 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
         memoryTableTemplateId={memoryTableTemplateId}
         memoryTableTemplateName={memoryTableTemplateName}
         tokenManagementConfig={tokenManagementConfig}
+        customStopSequencesEnabled={characterConfig?.customStopSequencesEnabled ?? false}
+        customStopSequences={characterConfig?.customStopSequences}
+        engineCapabilities={engineCapabilities}
         onPersonaChange={handlePersonaChange}
         onParameterChange={handleParameterChange}
         onResetParameters={handleResetParameters}
+        onCustomStopSequencesToggle={handleCustomStopSequencesToggle}
+        onCustomStopSequencesChange={handleCustomStopSequencesChange}
         onBindKnowledgeBase={bindKnowledgeBase}
         onUnbindKnowledgeBase={unbindKnowledgeBase}
         onMemoryTableToggle={handleMemoryTableToggle}

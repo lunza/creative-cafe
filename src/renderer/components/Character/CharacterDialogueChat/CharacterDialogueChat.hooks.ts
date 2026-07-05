@@ -7,11 +7,87 @@ import { useCharacterChatStore } from '../../../stores/characterChatStore';
 import { useLogStore } from '../../../stores/logStore';
 import { ChatMessage, CharacterInfo, ChatState, UserPersona, EffectiveAIParams } from './CharacterDialogueChat.types';
 import { ChatEngineFactory } from '../../Common/ChatEngine/ChatEngine.factory';
-import { AIEngineConfig, AIResponse } from '../../Common/ChatEngine/ChatEngine.types';
+import { AIEngineConfig, AIResponse, getDefaultEngineCapabilities } from '../../Common/ChatEngine/ChatEngine.types';
 import { usePromptBuilder } from './usePromptBuilder';
-import { buildAsyncTableOrganizeInstructions } from './PromptBuilder';
-import { TokenCounter, ContextTruncator } from './TokenManagement';
+import { buildAsyncTableOrganizeInstructions, buildStopSequences, buildRoleAnchorMessage, buildContinueNudgePrompt, buildLengthGuidancePrompt, buildUserReplySystemPrompt, buildStopSequencesForUserReply, buildPolishInputSystemPrompt } from './PromptBuilder';
+import { TokenCounter, ContextTruncator, DEFAULT_MAX_TOKENS } from './TokenManagement';
 import type { TruncationConfig } from './TokenManagement/types';
+import { nGramJaccard, overlapRate } from './utils/similarityUtils';
+import {
+  shouldTriggerRagRetrieval,
+  shouldTriggerIncrementalVectorize,
+  extractRecentMessagesForVectorize,
+} from './utils/chatHistoryRagUtils';
+
+// ==================== 去重检测配置（Spec: optimize-chat-ai-intelligence / Task 5） ====================
+
+/**
+ * 去重检测配置。
+ *
+ * 重试 retryMessage 与续写 continueConversation 的去重增强参数，作为
+ * requestAIResponse 的可选第 5 参数注入，不改变主流程签名。
+ *
+ * - previousResponse：重试去重时与新生成回复比较的"上一条 assistant 回复"
+ *   （Spec: 与上一条 assistant 回复相似度 > 0.8 时自动重新生成）
+ * - retryCount：当前重试次数（0 = 首次生成，1/2 = 第 1/2 次重试）
+ * - maxRetries：最大重试次数（默认 2，spec 约定，避免无限循环）
+ * - injectContinueNudge：续写去重重试时是否注入 continue_nudge_prompt system 消息
+ *   （Task 8.2 已完善：buildContinuationPrompt 末尾已含 nudge 段落，重试时再追加
+ *    system 消息形成"system prompt 段落 + 消息数组末尾 system 消息"双重提示）
+ *
+ * 续写去重（overlapRate > 0.6）的触发不依赖 previousResponse，而是由
+ * promptType === 'continuation' && initialContent 非空 自动启用。
+ */
+interface DedupConfig {
+  previousResponse?: string;
+  retryCount?: number;
+  maxRetries?: number;
+  injectContinueNudge?: boolean;
+}
+
+/**
+ * 默认最大重试次数（spec 约定）。
+ *
+ * Spec: optimize-chat-ai-intelligence / Scenario: 重试去重
+ * "自动重新生成（最多 2 次）" → 总生成次数上限 = 1（首次）+ 2（重试）= 3 次。
+ */
+const DEFAULT_MAX_DEDUP_RETRIES = 2;
+
+/**
+ * 重试去重相似度阈值（spec 约定）。
+ *
+ * n-gram Jaccard > 0.8 视为"几乎相同的回复"，触发重新生成。
+ */
+const RETRY_SIMILARITY_THRESHOLD = 0.8;
+
+/**
+ * 续写去重重叠率阈值（spec 约定）。
+ *
+ * overlapRate > 0.6 视为"AI 原样重写已有内容"，触发 continue_nudge_prompt 重新生成。
+ */
+const CONTINUE_OVERLAP_THRESHOLD = 0.6;
+
+/**
+ * 判断是否需要强化回复长度约束。
+ *
+ * Spec: fix-ai-response-length-degradation / Task 4
+ * 当历史记录中最近 3 轮回复字符数均低于阈值时返回 true，
+ * 触发 buildLengthGuidancePrompt 的强化模式。
+ *
+ * 自动恢复机制（Task 4.4）：本函数基于历史动态判定，无需显式清除标志。
+ * 当下一轮回复字符数 >= threshold 时，最近 3 轮不再全部低于阈值，
+ * shouldStrengthenLength 自动返回 false，强化约束随之失效。
+ *
+ * @param history 最近 N 轮回复字符数数组（responseLengthHistoryRef.current）
+ * @param threshold 最小回复字数阈值（min_response_chars）
+ * @returns 是否需要强化约束
+ */
+export function shouldStrengthenLength(history: number[], threshold: number): boolean {
+  if (!Array.isArray(history) || history.length < 3) return false;
+  if (!threshold || threshold <= 0) return false;
+  const last3 = history.slice(-3);
+  return last3.every(len => typeof len === 'number' && len > 0 && len < threshold);
+}
 
 // ==================== 角色配置 Hook ====================
 
@@ -107,7 +183,7 @@ export function useCharacterConfig(characterCardId: string) {
 
     const effectiveParams: EffectiveAIParams = {
       temperature: customParams.temperature ?? globalEngine?.temperature ?? 0.7,
-      max_tokens: customParams.max_tokens !== undefined ? customParams.max_tokens : (globalEngine?.max_tokens !== undefined ? globalEngine.max_tokens : 8192),
+      max_tokens: customParams.max_tokens !== undefined ? customParams.max_tokens : (globalEngine?.max_tokens !== undefined ? globalEngine.max_tokens : DEFAULT_MAX_TOKENS),
       source,
     };
 
@@ -130,6 +206,40 @@ export function useCharacterConfig(characterCardId: string) {
       effectiveParams.presence_penalty = customParams.presence_penalty;
     } else if (globalEngine?.presence_penalty !== undefined) {
       effectiveParams.presence_penalty = globalEngine.presence_penalty;
+    }
+
+    // 可选参数：repetition_penalty（Spec: optimize-chat-ai-intelligence / Task 6.1 / 6.3）
+    // 借鉴 SillyTavern textgen/Default.json (rep_pen=1.1~1.2)，硬编码默认基线为 1.1。
+    // 仅当后端 supportsRepPen=true 时由 ChatEngine 注入请求体（UI 滑块也按 capabilities 显隐）。
+    if (customParams.repetition_penalty !== undefined) {
+      effectiveParams.repetition_penalty = customParams.repetition_penalty;
+    } else if (globalEngine?.rep_pen !== undefined) {
+      // 兼容 SillyTavern 风格的 aiEngines.rep_pen 字段
+      effectiveParams.repetition_penalty = globalEngine.rep_pen;
+    }
+
+    // 可选参数：DRY 采样组（Spec: optimize-chat-ai-intelligence / Task 6.4 / 6.5）
+    // 借鉴 SillyTavern textgen-settings.js:143；仅当 supportsDrySampler=true 时由 ChatEngine 注入。
+    // 自定义值优先，其次 aiEngines 上的同名字段，最后由 ChatEngine.buildSamplingExtras 兜底默认值。
+    if (customParams.dry_multiplier !== undefined) {
+      effectiveParams.dry_multiplier = customParams.dry_multiplier;
+    } else if (globalEngine?.dry_multiplier !== undefined) {
+      effectiveParams.dry_multiplier = globalEngine.dry_multiplier;
+    }
+    if (customParams.dry_base !== undefined) {
+      effectiveParams.dry_base = customParams.dry_base;
+    } else if (globalEngine?.dry_base !== undefined) {
+      effectiveParams.dry_base = globalEngine.dry_base;
+    }
+    if (customParams.dry_allowed_length !== undefined) {
+      effectiveParams.dry_allowed_length = customParams.dry_allowed_length;
+    } else if (globalEngine?.dry_allowed_length !== undefined) {
+      effectiveParams.dry_allowed_length = globalEngine.dry_allowed_length;
+    }
+    if (customParams.no_repeat_ngram_size !== undefined) {
+      effectiveParams.no_repeat_ngram_size = customParams.no_repeat_ngram_size;
+    } else if (globalEngine?.no_repeat_ngram_size !== undefined) {
+      effectiveParams.no_repeat_ngram_size = globalEngine.no_repeat_ngram_size;
     }
 
     console.log(`[CharacterDialogueChat] === Effective Parameters ===`);
@@ -245,8 +355,31 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
   const memoryTableDataRef = useRef<string>('');
   const isOrganizingRef = useRef(false);
   const [isOrganizing, setIsOrganizing] = useState(false);
+  // 用户回复生成状态与累积缓冲（Spec: add-ai-user-reply-button / Task 2.2 + 2.3）
+  // - isGeneratingUserReply：state，驱动 UI 按钮态切换与 Send/textarea 禁用
+  // - isGeneratingUserReplyRef：ref，cancelRequest 中同步读取避免闭包陈旧
+  // - isGeneratingUserReplyAbortRef：ref，cancelRequest 触发后用于 onStream 回调早返
+  // - generatedReplyAccumulatedRef：ref，流式累积 chunk，完成后供 Promise resolve 使用
+  const [isGeneratingUserReply, setIsGeneratingUserReply] = useState(false);
+  const generatedReplyAccumulatedRef = useRef<string>('');
+  const isGeneratingUserReplyRef = useRef<boolean>(false);
+  const isGeneratingUserReplyAbortRef = useRef<boolean>(false);
+  // 润色输入状态与累积缓冲（Spec: refine-user-input-text / Task 2）
+  // - isPolishingInput：state，驱动 UI 按钮态切换与输入框禁用
+  // - polishedAccumulatedRef：ref，流式累积 chunk，完成后供 Promise resolve 使用
+  // - isPolishingInputRef：ref，cancelRequest 中同步读取避免闭包陈旧
+  // - isPolishingInputAbortRef：ref，cancelRequest 触发后用于 onStream 回调早返
+  const [isPolishingInput, setIsPolishingInput] = useState(false);
+  const polishedAccumulatedRef = useRef<string>('');
+  const isPolishingInputRef = useRef<boolean>(false);
+  const isPolishingInputAbortRef = useRef<boolean>(false);
   const versionListRef = useRef<Array<{ fileName: string; filePath: string; sequenceNumber: number; timestamp: number; messageCount: number; versionLinkId?: string }>>([]);
   const versionIndexRef = useRef<any>(null);
+  // 回复长度诊断与强化约束（Spec: fix-ai-response-length-degradation / Task 1 & 4）
+  // requestStartTimeRef：记录每轮 requestAIResponse 起始时间戳，供 onComplete 计算生成耗时
+  // responseLengthHistoryRef：维护最近 20 轮回复字符数，供 shouldStrengthenLength 检测连续短回复
+  const requestStartTimeRef = useRef<number>(0);
+  const responseLengthHistoryRef = useRef<number[]>([]);
 
   const selectedPersonaId = characterConfig?.selectedPersonaId;
   const selectedPersona = useMemo(() => {
@@ -404,7 +537,8 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     contextMessages: ChatMessage[],
     targetMessageId: string,
     initialContent: string = '',
-    promptType: 'dialogue' | 'continuation' = 'dialogue'
+    promptType: 'dialogue' | 'continuation' = 'dialogue',
+    dedupConfig?: DedupConfig
   ) => {
     console.log('========================================');
     console.log('[DEBUG] requestAIResponse CALLED');
@@ -414,6 +548,9 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     console.log('[DEBUG-FLOW] === requestAIResponse START ===');
 
     try {
+    // Spec: fix-ai-response-length-degradation / Task 1.1
+    // 记录请求起始时间戳，供 engine.onComplete 计算生成耗时（durationSec）
+    requestStartTimeRef.current = Date.now();
     const activeEngine = getActiveEngineConfig();
     console.log('[DEBUG-FLOW] activeEngine check done, has engine:', !!activeEngine);
     if (!activeEngine) {
@@ -441,7 +578,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       }
     };
 
-    const streamTimeoutMs = activeEngine.max_tokens && Number(activeEngine.max_tokens) > 8192 ? 300000 : 120000;
+    const streamTimeoutMs = activeEngine.max_tokens && Number(activeEngine.max_tokens) > DEFAULT_MAX_TOKENS ? 300000 : 120000;
 
     streamTimeout = setTimeout(() => {
       addLog(`[CharacterDialogueChat] Stream timeout reached (${streamTimeoutMs / 1000}s)`, 'warn');
@@ -478,9 +615,21 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       max_tokens: effectiveParams.max_tokens,
       system_prompt: activeEngine.system_prompt,
       temperature: effectiveParams.temperature,
+      // Stop sequences 防抢话（Spec: optimize-chat-ai-intelligence / Task 3.2 + 3.4）
+      // 用户名来自 selectedPersona.name（缺省 'User'），与 PromptBuilder 保持一致；
+      // customStopSequences 来自角色会话配置（ParameterPanel 自定义停止序列区）。
+      stopSequences: buildStopSequences(
+        selectedPersona?.name || 'User',
+        characterConfig?.customStopSequencesEnabled
+          ? characterConfig.customStopSequences
+          : undefined
+      ),
+      // 后端能力探测（Spec: Task 3.3）：优先用引擎显式配置，缺省按 api_mode 推断默认值
+      capabilities: activeEngine.capabilities || getDefaultEngineCapabilities(activeEngine.api_mode),
     };
 
     console.log(`[CharacterDialogueChat] engineConfigWithParams.max_tokens:`, engineConfigWithParams.max_tokens);
+    console.log(`[CharacterDialogueChat] engineConfigWithParams.stopSequences:`, engineConfigWithParams.stopSequences);
     console.log(`[CharacterDialogueChat] engineConfigWithParams object:`, JSON.stringify(engineConfigWithParams, null, 2));
     console.log(`[CharacterDialogueChat] ===========================`);
 
@@ -492,6 +641,24 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     }
     if (effectiveParams.presence_penalty !== undefined) {
       engineConfigWithParams.presence_penalty = Number(effectiveParams.presence_penalty);
+    }
+    // Repetition penalty + DRY 采样参数注入（Spec: optimize-chat-ai-intelligence / Task 6.5）
+    // 这些字段在 ChatEngine.buildSamplingExtras 中按 capabilities 决定是否写入请求体；
+    // 此处仅透传 effectiveParams 解析后的值（缺省时 buildSamplingExtras 会使用默认值）。
+    if (effectiveParams.repetition_penalty !== undefined) {
+      engineConfigWithParams.repetition_penalty = Number(effectiveParams.repetition_penalty);
+    }
+    if (effectiveParams.dry_multiplier !== undefined) {
+      engineConfigWithParams.dry_multiplier = Number(effectiveParams.dry_multiplier);
+    }
+    if (effectiveParams.dry_base !== undefined) {
+      engineConfigWithParams.dry_base = Number(effectiveParams.dry_base);
+    }
+    if (effectiveParams.dry_allowed_length !== undefined) {
+      engineConfigWithParams.dry_allowed_length = Number(effectiveParams.dry_allowed_length);
+    }
+    if (effectiveParams.no_repeat_ngram_size !== undefined) {
+      engineConfigWithParams.no_repeat_ngram_size = Number(effectiveParams.no_repeat_ngram_size);
     }
 
     initialContentRef.current = initialContent;
@@ -547,6 +714,61 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     }
 
     console.log('[DEBUG-FLOW] Step A: Context retrieval done, items:', vectorContextItems.length);
+
+    // ========== 步骤 A2：对话历史 RAG 检索（Spec: optimize-chat-ai-intelligence / Task 7.5） ==========
+    // 长对话跨轮记忆增强：当对话历史 > 20 轮（即 contextMessages.length > 40，含 user+assistant 配对）时，
+    // 调用 ChatVectorizationService.retrieveChatHistory 检索本会话历史向量相似片段（topK=3, minScore=0.6），
+    // 结果格式化为"区域 2：本会话相关历史片段"段落，由 buildCompleteSystemPrompt 注入到 system prompt
+    //（在"区域 1：相关背景知识"之后）。短对话（≤ 20 轮）跳过此步骤——原始消息已在上下文中。
+    // 检索失败时跳过，不阻塞主流程（spec: "对话历史 RAG 检索失败不阻塞对话主流程"）。
+    let chatHistoryItems: Array<{ content: string; score: number; timestamp: number }> = [];
+    if (shouldTriggerRagRetrieval(contextMessages.length)) {
+      try {
+        const lastUserMessageForRag = [...contextMessages].reverse().find(m => m.role === 'user');
+        if (lastUserMessageForRag && lastUserMessageForRag.content) {
+          // chatId 与记忆表格使用的标识同源：characterCardName 优先，缺失时回退 characterCardId
+          // 与 ChatVectorizationService.vectorizeChat 的 characterId 一致，保证向量检索命中
+          const ragChatId = characterInfo.characterCardName || characterInfo.characterCardId;
+          if (ragChatId) {
+            addLog(
+              `[CharacterDialogueChat] Step A2: RAG retrieval triggered (messages=${contextMessages.length} > threshold), chatId=${ragChatId}`,
+              'info'
+            );
+            chatHistoryItems = await window.electronAPI.chatHistory.retrieve(
+              ragChatId,
+              lastUserMessageForRag.content,
+              3,    // topK
+              0.6   // minScore
+            );
+            addLog(
+              `[CharacterDialogueChat] Step A2: RAG retrieval returned ${chatHistoryItems.length} history items`,
+              'info'
+            );
+            if (chatHistoryItems.length > 0) {
+              const scoreSummary = chatHistoryItems.map(h => h.score.toFixed(2)).join(', ');
+              addLog(`[CharacterDialogueChat] Step A2: history scores=[${scoreSummary}]`, 'info');
+            }
+          } else {
+            addLog('[CharacterDialogueChat] Step A2: chatId is empty, skipping RAG retrieval', 'warn');
+          }
+        }
+      } catch (error) {
+        // spec: 检索失败降级——跳过该步骤，对话主流程不受影响
+        addLog(
+          `[CharacterDialogueChat] Step A2: RAG retrieval failed (degraded, skipping): ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'warn'
+        );
+        console.error('[CharacterDialogueChat] Step A2: RAG retrieval error:', error);
+        chatHistoryItems = [];
+      }
+    } else {
+      addLog(
+        `[CharacterDialogueChat] Step A2: skipping RAG retrieval (messages=${contextMessages.length} ≤ threshold, short conversation)`,
+        'info'
+      );
+    }
+
+    console.log('[DEBUG-FLOW] Step A2: Chat history RAG retrieval done, items:', chatHistoryItems.length);
 
     // ========== 记忆表格数据获取 ==========
     console.log('[DEBUG-FLOW] Step B: Starting memory table data fetch');
@@ -648,14 +870,33 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       vectorContextItems,
       memoryTableData,
       memoryTableOrganizeModeRef.current,
-      tableStructure
+      tableStructure,
+      // Task 7.5: 本会话相关历史片段（仅在长对话时由 Step A2 检索得到，短对话为空数组）
+      chatHistoryItems
     );
 
     // 拼接全局system_prompt到角色提示词
     const globalSystemPrompt = activeEngine.system_prompt?.trim();
-    const effectiveSystemPrompt = globalSystemPrompt 
+    let effectiveSystemPrompt = globalSystemPrompt
       ? globalSystemPrompt + '\n\n' + finalSystemPrompt
       : finalSystemPrompt;
+
+    // Spec: fix-ai-response-length-degradation / Task 3.4 + Task 4.2
+    // 注入回复长度引导约束：读取 customParameters.min_response_chars（默认 300），
+    // 并基于 responseLengthHistoryRef 判定是否启用强化模式（连续 3 轮短回复时 strengthenLength=true）。
+    // buildLengthGuidancePrompt 在 minResponseChars<=0 时返回空串，此处二次守护避免无意义拼接。
+    const minResponseChars = characterConfig?.customParameters?.min_response_chars ?? 300;
+    const strengthenLength = shouldStrengthenLength(responseLengthHistoryRef.current, minResponseChars);
+    if (minResponseChars > 0) {
+      const charName = characterInfo.characterCardName || 'Character';
+      effectiveSystemPrompt += buildLengthGuidancePrompt(minResponseChars, strengthenLength, charName);
+      if (strengthenLength) {
+        addLog(
+          `[CharacterDialogueChat] Length guidance STRENGTHENED (last 3 rounds < ${minResponseChars} chars threshold)`,
+          'warn'
+        );
+      }
+    }
 
     // Debug: 显示提示词末尾（背景知识注入位置）
     const promptTail = effectiveSystemPrompt.substring(Math.max(0, effectiveSystemPrompt.length - 500));
@@ -666,10 +907,10 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     console.log('[DEBUG-FLOW] Step D: Starting token management');
 
     // ========== Token管理与上下文截断 ==========
-    const tokenManagementEnabled = characterConfig?.tokenManagementEnabled ?? true;
+    const tokenManagementEnabled = characterConfig?.tokenManagementEnabled ?? false;
     const truncationConfig: TruncationConfig = {
       enabled: tokenManagementEnabled,
-      maxContextTokens: characterConfig?.maxContextTokens ?? 32000,
+      maxContextTokens: characterConfig?.maxContextTokens ?? 256000,
       reservedForResponse: characterConfig?.reservedForResponse ?? 4096,
       minMessagesToKeep: characterConfig?.minMessagesToKeep ?? 3,
       maxMessagesToKeep: characterConfig?.maxMessagesToKeep ?? 60,
@@ -678,12 +919,39 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     let messagesToUse = messagesToSend;
 
     if (tokenManagementEnabled) {
+      // 预热精确 Token 计数缓存（批量 IPC 一次拉取，避免 ContextTruncator 内部逐条 IPC）。
+      // 之后同步 countSystemPromptTokens / ContextTruncator.truncateMessages 全部命中缓存，
+      // 走 cl100k_base 精确路径；IPC 失败时缓存为空，自动回退字节估算。
+      try {
+        await Promise.all([
+          TokenCounter.precountMessages(messagesToSend),
+          TokenCounter.precountSystemPrompt(effectiveSystemPrompt),
+        ]);
+      } catch (err) {
+        console.warn('[TokenManagement] precount failed, falling back to byte estimation:', err);
+      }
+
       const systemPromptTokens = TokenCounter.countSystemPromptTokens(effectiveSystemPrompt);
-      
+
+      // 角色深度锚定（depth_prompt）消息构建（Spec: optimize-chat-ai-intelligence / Task 4.4）
+      // 借鉴 SillyTavern `data.extensions.depth_prompt` 机制：当裁剪后对话历史 token > 50% 阈值时，
+      // 在 depth=4 位置注入角色精简摘要 system 消息，防止长上下文截断后角色性格漂移。
+      // characterInfo 字段映射：characterCardName → name，personality → personality，characterCardContent → description
+      const roleAnchorMessage = buildRoleAnchorMessage(
+        {
+          name: characterInfo.characterCardName,
+          personality: characterInfo.personality,
+          description: characterInfo.characterCardContent,
+        },
+        selectedPersona?.name || 'User'
+      );
+
       const truncatedMessages = ContextTruncator.truncateMessages(
         messagesToSend,
         systemPromptTokens,
-        truncationConfig
+        truncationConfig,
+        undefined, // requiredItems：使用默认必填项（含 roleAnchor=0 占位，ContextTruncator 内部按需注入真实 token）
+        roleAnchorMessage
       );
 
       const truncationAnalysis = ContextTruncator.analyzeTruncation(
@@ -692,6 +960,18 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         systemPromptTokens,
         truncationConfig
       );
+
+      // 检测 roleAnchor 是否实际注入（depth=4 位置存在 system 消息即视为注入）
+      const hasRoleAnchor = truncatedMessages.some(
+        m => m.role === 'system' && typeof m.content === 'string' && m.content.startsWith('[角色锚定]')
+      );
+      if (hasRoleAnchor) {
+        addLog(
+          `[TokenManagement] Role anchor injected at depth=4 (long conversation detected): ` +
+          `${truncatedMessages.length} messages after truncation`,
+          'info'
+        );
+      }
 
       if (truncationAnalysis.wasTruncated) {
         addLog(
@@ -889,6 +1169,101 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         }
       }
 
+      // ===== 去重检测（Spec: optimize-chat-ai-intelligence / Task 5.2 + 5.3）=====
+      // 在最终 setState 前检查：
+      // - 重试去重：nGramJaccard(previousResponse, displayContent) > 0.8 → 重新生成
+      // - 续写去重：overlapRate(newPart, initialContent) > 0.6 → 重新生成（注入 continue_nudge_prompt）
+      // 最多重试 2 次（spec 约定），耗尽后保留最后一次结果并 toast 提示。
+      // 注意：不改变 retryMessage / continueConversation 现有签名，去重作为 onComplete 后的增强。
+      const dedupRetryCount = dedupConfig?.retryCount ?? 0;
+      const dedupMaxRetries = dedupConfig?.maxRetries ?? DEFAULT_MAX_DEDUP_RETRIES;
+      let shouldDedupRetry = false;
+      let dedupReason = '';
+      let nextDedupConfig: DedupConfig | undefined = undefined;
+
+      if (dedupConfig?.previousResponse && displayContent) {
+        // 重试去重：与上一条 assistant 回复比较 4-gram Jaccard 相似度
+        const similarity = nGramJaccard(dedupConfig.previousResponse, displayContent, 4);
+        addLog(
+          `[CharacterDialogueChat] Retry dedup check: similarity=${similarity.toFixed(3)} ` +
+          `(threshold=${RETRY_SIMILARITY_THRESHOLD}, attempt ${dedupRetryCount + 1}/${dedupMaxRetries + 1})`,
+          'info'
+        );
+        if (similarity > RETRY_SIMILARITY_THRESHOLD) {
+          if (dedupRetryCount < dedupMaxRetries) {
+            shouldDedupRetry = true;
+            dedupReason = `similarity=${similarity.toFixed(2)}`;
+            nextDedupConfig = { ...dedupConfig, retryCount: dedupRetryCount + 1 };
+          } else {
+            // 重试耗尽：保留最后一次结果，toast 提示
+            message.info(`已尝试 ${dedupMaxRetries + 1} 次，回复相似度较高`);
+            addLog(
+              `[CharacterDialogueChat] Retry dedup exhausted after ${dedupMaxRetries + 1} attempts ` +
+              `(similarity=${similarity.toFixed(2)}, keeping last result)`,
+              'warn'
+            );
+          }
+        }
+      } else if (promptType === 'continuation' && initialContentRef.current && displayContent) {
+        // 续写去重：检测 AI 是否原样重写 initialContent（而非添加新内容）
+        const initial = initialContentRef.current;
+        // 剥离 initialContent 前缀，得到 AI 实际生成的"新部分"
+        // 若 displayContent 不以 initial 开头（异常情况），整体作为 newPart 参与计算
+        const newPart = displayContent.startsWith(initial) ? displayContent.slice(initial.length) : displayContent;
+        const overlap = overlapRate(newPart, initial);
+        addLog(
+          `[CharacterDialogueChat] Continue dedup check: overlap=${overlap.toFixed(3)} ` +
+          `(threshold=${CONTINUE_OVERLAP_THRESHOLD}, attempt ${dedupRetryCount + 1}/${dedupMaxRetries + 1})`,
+          'info'
+        );
+        if (overlap > CONTINUE_OVERLAP_THRESHOLD) {
+          if (dedupRetryCount < dedupMaxRetries) {
+            shouldDedupRetry = true;
+            dedupReason = `overlap=${overlap.toFixed(2)}`;
+            // 续写重试注入 continue_nudge_prompt（Task 8.2 已完善：
+            // buildContinuationPrompt 末尾已含 nudge 段落，重试时再追加 system 消息）
+            nextDedupConfig = { retryCount: dedupRetryCount + 1, injectContinueNudge: true };
+          } else {
+            message.info(`已尝试 ${dedupMaxRetries + 1} 次，续写重叠率较高`);
+            addLog(
+              `[CharacterDialogueChat] Continue dedup exhausted after ${dedupMaxRetries + 1} attempts ` +
+              `(overlap=${overlap.toFixed(2)}, keeping last result)`,
+              'warn'
+            );
+          }
+        }
+      }
+
+      if (shouldDedupRetry) {
+        addLog(
+          `[CharacterDialogueChat] Dedup retry triggered: ${dedupReason} ` +
+          `(next attempt ${dedupRetryCount + 2}/${dedupMaxRetries + 1})`,
+          'info'
+        );
+        // 重置流式累积缓冲，使下一次生成从 initialContent 重新开始
+        streamContentRef.current = initialContentRef.current;
+        // 将目标消息重置为 sending 状态（保留 initialContent 作为内容前缀，避免内容闪烁）
+        setState(prev => ({
+          ...prev,
+          messages: prev.messages.map(msg =>
+            msg.id === targetMessageId
+              ? { ...msg, content: initialContentRef.current, status: 'sending' as const }
+              : msg
+          ),
+          isStreaming: true,
+          isLoading: true,
+        }));
+        // 触发重试（fire-and-forget，错误由 onError / catch 处理）
+        // 注：requestAIResponse 在 useCallback 闭包内可访问自身引用
+        requestAIResponse(contextMessages, targetMessageId, initialContentRef.current, promptType, nextDedupConfig).catch(err => {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          addLog(`[CharacterDialogueChat] Dedup retry failed: ${errMsg}`, 'error');
+          message.error(`重试失败: ${errMsg}`);
+        });
+        // 不进入最终 setState 流程，等待重试完成
+        return;
+      }
+
       setState(prev => {
         const targetMessage = prev.messages.find(msg => msg.id === targetMessageId);
         if (!targetMessage) {
@@ -965,8 +1340,88 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         }, 2000);
       }
 
+      // ========== 增量向量化触发（Spec: optimize-chat-ai-intelligence / Task 7.6） ==========
+      // 每 5 轮（即 10 条 user+assistant 消息）自动调用 ChatVectorizationService.vectorizeIncremental
+      // 增量向量化本会话最近消息，为后续轮次的 RAG 检索（Step A2）积累向量数据。
+      //
+      // 触发条件：shouldTriggerIncrementalVectorize(contextMessages.length)
+      //   = (contextMessages.length + 1) % 10 === 0
+      //   - contextMessages = 进入 requestAIResponse 时的消息数组（含本轮 user，不含 AI placeholder）
+      //   - +1 = 本轮 AI 响应（displayContent）—— onComplete 时已生成完毕
+      //   - 故 (contextMessages.length + 1) = 本轮结束后总消息数（含 user + AI 配对）
+      //   - 例：第 5 轮结束 → contextMessages.length=9 → 9+1=10 → 触发；第 10 轮 → 19+1=20 → 触发
+      //
+      // fire-and-forget（不 await），不阻塞 UI；失败仅记录日志。
+      // recentMessages = 最后 10 条消息（contextMessages 末尾 + 本轮 AI 响应）。
+      if (shouldTriggerIncrementalVectorize(contextMessages.length)) {
+        try {
+          const incrementalChatId = characterInfo.characterCardName || characterInfo.characterCardId;
+          if (incrementalChatId) {
+            // 构造最近 10 条消息：contextMessages 末尾 9 条 + 本轮 AI 响应
+            const recentMessagesForVectorize = extractRecentMessagesForVectorize(
+              contextMessages,
+              displayContent,
+              targetMessageId,
+              10
+            );
+
+            addLog(
+              `[CharacterDialogueChat] Step A2-incremental: triggering vectorizeIncremental ` +
+              `(total=${contextMessages.length + 1}, recent=${recentMessagesForVectorize.length}, chatId=${incrementalChatId})`,
+              'info'
+            );
+            // fire-and-forget：不 await，错误由 .catch 内部记录
+            window.electronAPI.chatHistory
+              .vectorizeIncremental(incrementalChatId, recentMessagesForVectorize)
+              .catch(err => {
+                addLog(
+                  `[CharacterDialogueChat] Step A2-incremental: vectorizeIncremental failed (fire-and-forget): ` +
+                  `${err instanceof Error ? err.message : String(err)}`,
+                  'warn'
+                );
+              });
+          }
+        } catch (error) {
+          addLog(
+            `[CharacterDialogueChat] Step A2-incremental: trigger setup failed: ` +
+            `${error instanceof Error ? error.message : 'Unknown error'}`,
+            'warn'
+          );
+        }
+      }
+
       initialContentRef.current = '';
       targetMessageIdRef.current = '';
+
+      // ========== 回复长度诊断与历史记录（Spec: fix-ai-response-length-degradation / Task 1 & 4） ==========
+      // Task 4.3：更新回复长度历史（在诊断日志之前 push，供 shouldStrengthenLength 下一轮判定）
+      // 维护最近 20 轮字符数，超过 20 轮时 shift 出队（FIFO）
+      if (finalContent && finalContent.length > 0) {
+        responseLengthHistoryRef.current.push(finalContent.length);
+        if (responseLengthHistoryRef.current.length > 20) {
+          responseLengthHistoryRef.current.shift();
+        }
+      }
+
+      // Task 1.2 + 1.3：回复长度诊断日志
+      // 记录每轮回复的字符数、token 估算、生成耗时、关键采样参数，便于定位长度递减拐点
+      // 自动恢复（Task 4.4）：shouldStrengthenLength 基于 responseLengthHistoryRef 动态判定，
+      // 当某轮回复 >= min_response_chars 时，最近 3 轮不再全部低于阈值，强化约束自动失效。
+      try {
+        const durationSec = requestStartTimeRef.current > 0
+          ? (Date.now() - requestStartTimeRef.current) / 1000
+          : 0;
+        const chars = finalContent.length;
+        // 粗略 token 估算（中文约 1.3 token/字）；精确计数为异步，诊断日志用估算即可
+        const tokensEstimate = Math.ceil(chars * 1.3);
+        const diagEffectiveParams = getEffectiveParams();
+        const roundNum = responseLengthHistoryRef.current.length;
+        const logMsg = `[ResponseLength] round=${roundNum}, chars=${chars}, tokens≈${tokensEstimate}, duration=${durationSec.toFixed(1)}s, max_tokens=${diagEffectiveParams.max_tokens}, freq_pen=${diagEffectiveParams.frequency_penalty ?? 'N/A'}, pres_pen=${diagEffectiveParams.presence_penalty ?? 'N/A'}, dry=${diagEffectiveParams.dry_multiplier ?? 'N/A'}`;
+        console.log(logMsg);
+        addLog(logMsg, 'info');
+      } catch (e) {
+        console.warn('[ResponseLength] diagnostic logging failed:', e);
+      }
     });
 
     engine.onError((error) => {
@@ -1014,9 +1469,31 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       }
     }
 
+    // 续写去重重试：注入 continue_nudge_prompt system 消息到对话末尾
+    // Spec: optimize-chat-ai-intelligence / Task 5.3 + Task 8.2 + Scenario: 续写去重
+    // Task 8.2 实现：buildContinuationPrompt 末尾已含 nudge 段落（Task 8.1），
+    //   重试时通过 injectContinueNudge=true 在消息数组末尾追加 system 消息，
+    //   形成"system prompt 段落 + 消息数组末尾 system 消息"双重提示，强化 AI 不重复已有内容。
+    // 注：buildContinuationPrompt 在 Step B 已构建 effectiveSystemPrompt 时调用，
+    //   重试时 requestAIResponse 重新进入会再次构建（始终含 nudge 段落）。
+    let messagesToSendFinal = messagesToUse;
+    if (dedupConfig?.injectContinueNudge) {
+      const nudgePrompt = buildContinueNudgePrompt();
+      messagesToSendFinal = [
+        ...messagesToUse,
+        {
+          id: `continue-nudge-${Date.now()}`,
+          role: 'system' as const,
+          content: nudgePrompt,
+          timestamp: Date.now(),
+        },
+      ];
+      addLog(`[CharacterDialogueChat] Continue dedup retry: injected continue_nudge_prompt as system message (${nudgePrompt.length} chars)`, 'info');
+    }
+
     try {
       console.log('[DEBUG-FLOW] Step E: Calling engine.sendMessage');
-      await engine.sendMessage(messagesToUse, effectiveSystemPrompt, engineConfigWithParams);
+      await engine.sendMessage(messagesToSendFinal, effectiveSystemPrompt, engineConfigWithParams);
       console.log('[DEBUG-FLOW] Step E: engine.sendMessage returned successfully');
       console.log('[DEBUG-FLOW] === requestAIResponse END ===');
     } catch (error) {
@@ -1052,7 +1529,446 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     }));
     message.error(`对话请求失败: ${error instanceof Error ? error.message : '未知错误'}`);
   }
-  }, [getActiveEngineConfig, getEffectiveParams, buildDialoguePrompt, buildContinuationPrompt, saveChatToStore, addLog, characterConfig]);
+  }, [getActiveEngineConfig, getEffectiveParams, buildDialoguePrompt, buildContinuationPrompt, saveChatToStore, addLog, characterConfig, selectedPersona]);
+
+  /**
+   * 生成用户回复（Spec: add-ai-user-reply-button / Task 2）
+   *
+   * 以当前用户人设为基准，调用 AI 模型生成下一句用户侧对话内容。
+   * 复用 requestAIResponse 的引擎调用与参数注入模式，但：
+   *   - 系统提示改用 buildUserReplySystemPrompt（指示 AI 仅生成用户回复）
+   *   - 停止序列改用 buildStopSequencesForUserReply（角色名变体，防止越权生成角色回复）
+   *   - 不向 state.messages 添加 placeholder 消息（生成内容仅填入输入框）
+   *   - 流式累积到 generatedReplyAccumulatedRef，完成后通过 Promise resolve 返回
+   *
+   * @returns 生成的用户回复文本；前置校验失败时返回空串
+   */
+  const generateUserReply = useCallback(async (): Promise<string> => {
+    // 前置校验：未选择用户人设
+    if (!selectedPersona) {
+      message.warning('请先在右侧面板选择用户人设');
+      return '';
+    }
+    // 避免并发：流式生成中 / 表格整理中 / 已在生成用户回复中
+    if (state.isStreaming || isOrganizing || isGeneratingUserReplyRef.current) {
+      return '';
+    }
+
+    const activeEngine = getActiveEngineConfig();
+    if (!activeEngine) {
+      message.warning('请先在设置中配置AI引擎');
+      return '';
+    }
+
+    // 设置生成中状态：state 用于 UI 重渲染，ref 用于 cancelRequest 同步读取
+    setIsGeneratingUserReply(true);
+    isGeneratingUserReplyRef.current = true;
+    generatedReplyAccumulatedRef.current = '';
+    isGeneratingUserReplyAbortRef.current = false;
+
+    const effectiveParams = getEffectiveParams();
+    const charName = characterInfo.characterCardName || 'Character';
+    const customStopSequencesEnabled = characterConfig?.customStopSequencesEnabled === true;
+    const customStopSequences = customStopSequencesEnabled
+      ? (characterConfig?.customStopSequences || [])
+      : undefined;
+
+    // 构建用户回复专用系统提示（Spec: add-ai-user-reply-button / Task 1.1）
+    // 与 requestAIResponse 不同：不拼接全局 system_prompt，避免淡化"仅生成用户回复"约束
+    const userReplySystemPrompt = buildUserReplySystemPrompt(
+      {
+        characterCardName: characterInfo.characterCardName,
+        personality: characterInfo.personality,
+        characterCardContent: characterInfo.characterCardContent,
+        scenario: characterInfo.scenario,
+        mes_example: characterInfo.mes_example,
+        system_prompt: characterInfo.system_prompt,
+        creator_notes: characterInfo.creator_notes,
+      },
+      selectedPersona,
+      characterConfig?.userReplyPerson  // 人称视角（Spec: add-person-attribute-to-ai-reply / Task 2）
+    );
+
+    // 构造 engineConfigWithParams（复用 requestAIResponse 的参数注入模式）
+    // 关键差异：stopSequences 改用 buildStopSequencesForUserReply（角色名变体），
+    // 防止 AI 越权代替角色发言；其余字段（含 DRY 采样组）与 requestAIResponse 完全一致。
+    const engineConfigWithParams: AIEngineConfig = {
+      id: activeEngine.id,
+      name: activeEngine.name,
+      api_url: activeEngine.api_url,
+      api_key: activeEngine.api_key,
+      model_name: activeEngine.model_name,
+      api_mode: activeEngine.api_mode,
+      api_key_transmission: activeEngine.api_key_transmission,
+      max_tokens: effectiveParams.max_tokens,
+      system_prompt: activeEngine.system_prompt,
+      temperature: effectiveParams.temperature,
+      // Stop sequences（Spec: add-ai-user-reply-button / Task 1.2）
+      // 角色名变体阻断 AI 越权生成角色回复；customStopSequences 来自角色会话配置
+      stopSequences: buildStopSequencesForUserReply(charName, customStopSequences),
+      // 后端能力探测：优先用引擎显式配置，缺省按 api_mode 推断默认值
+      capabilities: activeEngine.capabilities || getDefaultEngineCapabilities(activeEngine.api_mode),
+    };
+
+    if (effectiveParams.top_p !== undefined) {
+      engineConfigWithParams.top_p = Number(effectiveParams.top_p);
+    }
+    if (effectiveParams.frequency_penalty !== undefined) {
+      engineConfigWithParams.frequency_penalty = Number(effectiveParams.frequency_penalty);
+    }
+    if (effectiveParams.presence_penalty !== undefined) {
+      engineConfigWithParams.presence_penalty = Number(effectiveParams.presence_penalty);
+    }
+    // Repetition penalty + DRY 采样参数注入（与 requestAIResponse 一致）
+    if (effectiveParams.repetition_penalty !== undefined) {
+      engineConfigWithParams.repetition_penalty = Number(effectiveParams.repetition_penalty);
+    }
+    if (effectiveParams.dry_multiplier !== undefined) {
+      engineConfigWithParams.dry_multiplier = Number(effectiveParams.dry_multiplier);
+    }
+    if (effectiveParams.dry_base !== undefined) {
+      engineConfigWithParams.dry_base = Number(effectiveParams.dry_base);
+    }
+    if (effectiveParams.dry_allowed_length !== undefined) {
+      engineConfigWithParams.dry_allowed_length = Number(effectiveParams.dry_allowed_length);
+    }
+    if (effectiveParams.no_repeat_ngram_size !== undefined) {
+      engineConfigWithParams.no_repeat_ngram_size = Number(effectiveParams.no_repeat_ngram_size);
+    }
+
+    // 取最近对话历史作为 contextMessages（排除 system 消息，避免与 userReplySystemPrompt 冲突）
+    let contextMessages = messagesRef.current.filter(msg => msg.role !== 'system');
+
+    // 上下文裁剪（如启用 token 管理）——参考 requestAIResponse 的裁剪调用，
+    // 但不注入 roleAnchorMessage（角色锚定仅适用于角色回复生成场景）
+    const tokenManagementEnabled = characterConfig?.tokenManagementEnabled ?? false;
+    if (tokenManagementEnabled) {
+      const truncationConfig: TruncationConfig = {
+        enabled: true,
+        maxContextTokens: characterConfig?.maxContextTokens ?? 256000,
+        reservedForResponse: characterConfig?.reservedForResponse ?? 4096,
+        minMessagesToKeep: characterConfig?.minMessagesToKeep ?? 3,
+        maxMessagesToKeep: characterConfig?.maxMessagesToKeep ?? 60,
+      };
+      try {
+        // 预热精确 Token 计数缓存（与 requestAIResponse 一致）
+        await Promise.all([
+          TokenCounter.precountMessages(contextMessages),
+          TokenCounter.precountSystemPrompt(userReplySystemPrompt),
+        ]);
+      } catch (err) {
+        console.warn('[TokenManagement] generateUserReply precount failed, falling back to byte estimation:', err);
+      }
+      const systemPromptTokens = TokenCounter.countSystemPromptTokens(userReplySystemPrompt);
+      const truncatedMessages = ContextTruncator.truncateMessages(
+        contextMessages,
+        systemPromptTokens,
+        truncationConfig,
+        undefined,
+        undefined  // 不注入 roleAnchorMessage（角色锚定不适用于用户回复生成）
+      );
+      const truncationAnalysis = ContextTruncator.analyzeTruncation(
+        contextMessages,
+        truncatedMessages,
+        systemPromptTokens,
+        truncationConfig
+      );
+      if (truncationAnalysis.wasTruncated) {
+        addLog(
+          `[CharacterDialogueChat] generateUserReply context truncated: ${truncationAnalysis.originalCount} -> ${truncationAnalysis.truncatedCount} messages`,
+          'warn'
+        );
+      }
+      contextMessages = truncatedMessages;
+    }
+
+    // 获取引擎实例
+    const engine = ChatEngineFactory.getInstance().getOrCreateDefaultEngine(engineConfigWithParams);
+
+    addLog(
+      `[CharacterDialogueChat] generateUserReply started (charName=${charName}, persona=${selectedPersona.name}, context=${contextMessages.length} msgs)`,
+      'info'
+    );
+
+    // 返回 Promise，在 onComplete 中 resolve，onError 中 reject
+    return new Promise<string>((resolve, reject) => {
+      engine.onStream((chunk: string) => {
+        // 取消后忽略后续 chunk，避免污染 generatedReplyAccumulatedRef
+        if (isGeneratingUserReplyAbortRef.current) return;
+        if (chunk) {
+          generatedReplyAccumulatedRef.current += chunk;
+        }
+      });
+
+      engine.onComplete((response: AIResponse) => {
+        // 优先使用 server 返回的 content，回退到本地流式累积（与 requestAIResponse 一致）
+        const finalContent = response?.content || generatedReplyAccumulatedRef.current;
+        addLog(`[CharacterDialogueChat] generateUserReply completed: ${finalContent.length} chars`, 'info');
+        resolve(finalContent);
+      });
+
+      engine.onError((error) => {
+        console.error('[CharacterDialogueChat] generateUserReply error:', error);
+        message.error(`生成用户回复失败: ${error.message}`);
+        addLog(`[CharacterDialogueChat] generateUserReply error: ${error.message}`, 'error');
+        reject(new Error(error.message));
+      });
+
+      // 调用引擎发送消息
+      engine.sendMessage(contextMessages, userReplySystemPrompt, engineConfigWithParams).catch((err: any) => {
+        console.error('[CharacterDialogueChat] generateUserReply sendMessage threw:', err);
+        message.error(`生成用户回复失败: ${err?.message || '未知错误'}`);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      });
+    }).finally(() => {
+      // 无论成功/失败/取消，都重置生成中状态
+      setIsGeneratingUserReply(false);
+      isGeneratingUserReplyRef.current = false;
+      generatedReplyAccumulatedRef.current = '';
+    });
+  }, [selectedPersona, state.isStreaming, isOrganizing, characterInfo, characterConfig, getActiveEngineConfig, getEffectiveParams, addLog]);
+
+  /**
+   * 润色用户输入文本（Spec: refine-user-input-text / Task 2）
+   *
+   * 以当前用户人设为基准，调用 AI 模型对用户输入的原始文本进行润色。
+   * 复用 generateUserReply 的引擎调用与参数注入模式，但：
+   *   - 系统提示改用 buildPolishInputSystemPrompt（指示 AI 仅润色给定文本，
+   *     保持原意与视角，不改写为对话回复）
+   *   - 停止序列仍使用 buildStopSequencesForUserReply（角色名变体，防止越权生成角色回复）
+   *   - 不向 state.messages 添加 placeholder 消息（生成内容仅填入输入框）
+   *   - 流式累积到 polishedAccumulatedRef，完成后通过 Promise resolve 返回
+   *
+   * @param originalText 待润色的原始用户输入文本
+   * @returns 润色后的文本；前置校验失败时返回空串
+   */
+  const polishInput = useCallback(async (originalText: string): Promise<string> => {
+    // 前置校验：原始文本为空或仅空白
+    if (!originalText || !originalText.trim()) {
+      message.warning('请先输入需要润色的文本');
+      return '';
+    }
+    // 前置校验：未选择用户人设
+    if (!selectedPersona) {
+      message.warning('请先在右侧面板选择用户人设');
+      return '';
+    }
+    // 避免并发：流式生成中 / 表格整理中 / 已在生成用户回复中 / 已在润色输入中
+    if (state.isStreaming || isOrganizing || isGeneratingUserReply || isPolishingInputRef.current) {
+      return '';
+    }
+
+    const activeEngine = getActiveEngineConfig();
+    if (!activeEngine) {
+      message.warning('请先在设置中配置AI引擎');
+      return '';
+    }
+
+    // 设置润色中状态：state 用于 UI 重渲染，ref 用于 cancelRequest 同步读取
+    setIsPolishingInput(true);
+    isPolishingInputRef.current = true;
+    polishedAccumulatedRef.current = '';
+    isPolishingInputAbortRef.current = false;
+
+    const effectiveParams = getEffectiveParams();
+    const charName = characterInfo.characterCardName || 'Character';
+    const customStopSequencesEnabled = characterConfig?.customStopSequencesEnabled === true;
+    const customStopSequences = customStopSequencesEnabled
+      ? (characterConfig?.customStopSequences || [])
+      : undefined;
+
+    // 取最近对话历史作为 contextMessages（排除 system 消息，避免与 polishSystemPrompt 冲突）
+    // Spec: fix-polish-context-isolation - 对话历史将嵌入系统提示的"## 对话历史参考"段落，
+    // 而非作为 messages 数组传给 engine，避免以 assistant 结尾的对话历史触发 AI 续写本能
+    let contextMessages = messagesRef.current.filter(msg => msg.role !== 'system');
+
+    // 构建 preliminary 润色系统提示（不含对话历史），仅用于 token 计数与裁剪预算估算
+    // Spec: fix-polish-context-isolation - 实际系统提示需在裁剪后构建（含裁剪后的对话历史），
+    // 此处先构建不含历史的版本供 TokenCounter 估算 base 系统提示 token 占用
+    const polishSystemPromptForCounting = buildPolishInputSystemPrompt(
+      {
+        characterCardName: characterInfo.characterCardName,
+        personality: characterInfo.personality,
+        characterCardContent: characterInfo.characterCardContent,
+        scenario: characterInfo.scenario,
+        mes_example: characterInfo.mes_example,
+        system_prompt: characterInfo.system_prompt,
+        creator_notes: characterInfo.creator_notes,
+      },
+      selectedPersona,
+      originalText,
+      characterConfig?.userReplyPerson  // 人称视角（与 generateUserReply 一致）
+      // 故意不传 conversationHistory，用于估算 base 系统提示 token
+    );
+
+    // 构造 engineConfigWithParams（复用 generateUserReply 的参数注入模式）
+    // 关键差异：stopSequences 仍使用 buildStopSequencesForUserReply（角色名变体），
+    // 防止 AI 越权代替角色发言；其余字段（含 DRY 采样组）与 generateUserReply 完全一致。
+    const engineConfigWithParams: AIEngineConfig = {
+      id: activeEngine.id,
+      name: activeEngine.name,
+      api_url: activeEngine.api_url,
+      api_key: activeEngine.api_key,
+      model_name: activeEngine.model_name,
+      api_mode: activeEngine.api_mode,
+      api_key_transmission: activeEngine.api_key_transmission,
+      max_tokens: effectiveParams.max_tokens,
+      system_prompt: activeEngine.system_prompt,
+      temperature: effectiveParams.temperature,
+      // Stop sequences：角色名变体阻断 AI 越权生成角色回复
+      stopSequences: buildStopSequencesForUserReply(charName, customStopSequences),
+      // 后端能力探测：优先用引擎显式配置，缺省按 api_mode 推断默认值
+      capabilities: activeEngine.capabilities || getDefaultEngineCapabilities(activeEngine.api_mode),
+    };
+
+    if (effectiveParams.top_p !== undefined) {
+      engineConfigWithParams.top_p = Number(effectiveParams.top_p);
+    }
+    if (effectiveParams.frequency_penalty !== undefined) {
+      engineConfigWithParams.frequency_penalty = Number(effectiveParams.frequency_penalty);
+    }
+    if (effectiveParams.presence_penalty !== undefined) {
+      engineConfigWithParams.presence_penalty = Number(effectiveParams.presence_penalty);
+    }
+    // Repetition penalty + DRY 采样参数注入（与 generateUserReply 一致）
+    if (effectiveParams.repetition_penalty !== undefined) {
+      engineConfigWithParams.repetition_penalty = Number(effectiveParams.repetition_penalty);
+    }
+    if (effectiveParams.dry_multiplier !== undefined) {
+      engineConfigWithParams.dry_multiplier = Number(effectiveParams.dry_multiplier);
+    }
+    if (effectiveParams.dry_base !== undefined) {
+      engineConfigWithParams.dry_base = Number(effectiveParams.dry_base);
+    }
+    if (effectiveParams.dry_allowed_length !== undefined) {
+      engineConfigWithParams.dry_allowed_length = Number(effectiveParams.dry_allowed_length);
+    }
+    if (effectiveParams.no_repeat_ngram_size !== undefined) {
+      engineConfigWithParams.no_repeat_ngram_size = Number(effectiveParams.no_repeat_ngram_size);
+    }
+
+    // 上下文裁剪（如启用 token 管理）——参考 generateUserReply 的裁剪调用，
+    // 但不注入 roleAnchorMessage（角色锚定仅适用于角色回复生成场景）
+    // Spec: fix-polish-context-isolation - 裁剪仍针对真实对话历史操作；
+    // 使用 polishSystemPromptForCounting 估算 base 系统提示 token 占用，
+    // 裁剪后的 contextMessages 将嵌入实际系统提示的"## 对话历史参考"段落
+    const tokenManagementEnabled = characterConfig?.tokenManagementEnabled ?? false;
+    if (tokenManagementEnabled) {
+      const truncationConfig: TruncationConfig = {
+        enabled: true,
+        maxContextTokens: characterConfig?.maxContextTokens ?? 256000,
+        reservedForResponse: characterConfig?.reservedForResponse ?? 4096,
+        minMessagesToKeep: characterConfig?.minMessagesToKeep ?? 3,
+        maxMessagesToKeep: characterConfig?.maxMessagesToKeep ?? 60,
+      };
+      try {
+        // 预热精确 Token 计数缓存（与 generateUserReply 一致）
+        await Promise.all([
+          TokenCounter.precountMessages(contextMessages),
+          TokenCounter.precountSystemPrompt(polishSystemPromptForCounting),
+        ]);
+      } catch (err) {
+        console.warn('[TokenManagement] polishInput precount failed, falling back to byte estimation:', err);
+      }
+      const systemPromptTokens = TokenCounter.countSystemPromptTokens(polishSystemPromptForCounting);
+      const truncatedMessages = ContextTruncator.truncateMessages(
+        contextMessages,
+        systemPromptTokens,
+        truncationConfig,
+        undefined,
+        undefined  // 不注入 roleAnchorMessage（角色锚定不适用于用户输入润色）
+      );
+      const truncationAnalysis = ContextTruncator.analyzeTruncation(
+        contextMessages,
+        truncatedMessages,
+        systemPromptTokens,
+        truncationConfig
+      );
+      if (truncationAnalysis.wasTruncated) {
+        addLog(
+          `[CharacterDialogueChat] polishInput context truncated: ${truncationAnalysis.originalCount} -> ${truncationAnalysis.truncatedCount} messages`,
+          'warn'
+        );
+      }
+      contextMessages = truncatedMessages;
+    }
+
+    // 构建实际润色系统提示（含裁剪后的对话历史）
+    // Spec: refine-user-input-text / Task 1 - 不拼接全局 system_prompt，避免淡化"仅润色文本"约束
+    // Spec: fix-polish-context-isolation - 将裁剪后的对话历史作为 conversationHistory 参数传入，
+    // 嵌入"## 对话历史参考"段落，避免以 assistant 结尾的对话历史触发 AI 续写本能
+    const polishSystemPrompt = buildPolishInputSystemPrompt(
+      {
+        characterCardName: characterInfo.characterCardName,
+        personality: characterInfo.personality,
+        characterCardContent: characterInfo.characterCardContent,
+        scenario: characterInfo.scenario,
+        mes_example: characterInfo.mes_example,
+        system_prompt: characterInfo.system_prompt,
+        creator_notes: characterInfo.creator_notes,
+      },
+      selectedPersona,
+      originalText,
+      characterConfig?.userReplyPerson,  // 人称视角（与 generateUserReply 一致）
+      contextMessages  // 裁剪后的对话历史作为系统提示参考（Spec: fix-polish-context-isolation）
+    );
+
+    // 获取引擎实例
+    const engine = ChatEngineFactory.getInstance().getOrCreateDefaultEngine(engineConfigWithParams);
+
+    addLog(
+      `[CharacterDialogueChat] polishInput started (charName=${charName}, persona=${selectedPersona.name}, context=${contextMessages.length} msgs, original=${originalText.length} chars)`,
+      'info'
+    );
+
+    // 返回 Promise，在 onComplete 中 resolve，onError 中 reject
+    return new Promise<string>((resolve, reject) => {
+      engine.onStream((chunk: string) => {
+        // 取消后忽略后续 chunk，避免污染 polishedAccumulatedRef
+        if (isPolishingInputAbortRef.current) return;
+        if (chunk) {
+          polishedAccumulatedRef.current += chunk;
+        }
+      });
+
+      engine.onComplete((response: AIResponse) => {
+        // 优先使用 server 返回的 content，回退到本地流式累积（与 generateUserReply 一致）
+        const finalContent = response?.content || polishedAccumulatedRef.current;
+        addLog(`[CharacterDialogueChat] polishInput completed: ${finalContent.length} chars`, 'info');
+        resolve(finalContent);
+      });
+
+      engine.onError((error) => {
+        console.error('[CharacterDialogueChat] polishInput error:', error);
+        message.error(`润色输入失败: ${error.message}`);
+        addLog(`[CharacterDialogueChat] polishInput error: ${error.message}`, 'error');
+        reject(new Error(error.message));
+      });
+
+      // 润色请求 user 消息：明确指示 AI 执行润色任务，避免对话历史触发"回复"本能
+      // （Spec: fix-polish-context-isolation）
+      // 真实对话历史已嵌入 polishSystemPrompt 的"## 对话历史参考"段落，
+      // engine.sendMessage 的 messages 数组仅含此单条 user 消息，
+      // 使 AI 收到的消息结构为 [system(含历史参考+待润色文本+约束), user(润色请求)]
+      const polishRequestMessages: ChatMessage[] = [{
+        id: `polish-request-${Date.now()}`,
+        role: 'user',
+        content: '请润色上述 <polish_target> 标签内的文本，直接输出润色后的文本本身。',
+        timestamp: Date.now(),
+        status: 'sent',
+      }];
+      engine.sendMessage(polishRequestMessages, polishSystemPrompt, engineConfigWithParams).catch((err: any) => {
+        console.error('[CharacterDialogueChat] polishInput sendMessage threw:', err);
+        message.error(`润色输入失败: ${err?.message || '未知错误'}`);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      });
+    }).finally(() => {
+      // 无论成功/失败/取消，都重置润色中状态
+      setIsPolishingInput(false);
+      isPolishingInputRef.current = false;
+      polishedAccumulatedRef.current = '';
+    });
+  }, [selectedPersona, state.isStreaming, isOrganizing, isGeneratingUserReply, characterInfo, characterConfig, getActiveEngineConfig, getEffectiveParams, addLog]);
 
   const sendMessage = useCallback(async (content: string) => {
     if (!content.trim() || state.isStreaming) return;
@@ -1163,7 +2079,14 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       isStreaming: true,
     }));
 
-    await requestAIResponse(messagesBeforeRetry, messageId, '', 'dialogue');
+    // 去重检测配置（Spec: optimize-chat-ai-intelligence / Task 5.2）
+    // 捕获原回复内容作为去重比较基准；requestAIResponse 在 onComplete 中
+    // 计算 nGramJaccard(原回复, 新回复, 4) > 0.8 时自动重新生成（最多 2 次）。
+    const dedupConfig: DedupConfig = {
+      previousResponse: existingMessage.content || '',
+    };
+
+    await requestAIResponse(messagesBeforeRetry, messageId, '', 'dialogue', dedupConfig);
   }, [state.isStreaming, requestAIResponse]);
 
   const clearChat = useCallback(async () => {
@@ -1187,6 +2110,23 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
   }, [state.isStreaming, getActiveEngineConfig, saveChatToStore, addLog]);
 
   const cancelRequest = useCallback(() => {
+    // 中断用户回复生成（Spec: add-ai-user-reply-button / Task 2.6）
+    // 先于 engine.cancelRequest() 设置 abort 标志，确保 onStream 回调立即早返，
+    // 不再向 generatedReplyAccumulatedRef 累积半截内容；engine.cancelRequest()
+    // 会触发 onError 或 onComplete，由 generateUserReply 的 finally 块重置 state。
+    if (isGeneratingUserReplyRef.current) {
+      isGeneratingUserReplyAbortRef.current = true;
+      isGeneratingUserReplyRef.current = false;
+      setIsGeneratingUserReply(false);
+      addLog('[CharacterDialogueChat] User reply generation cancelled', 'info');
+    }
+    // 润色中断（Spec: refine-user-input-text / Task 2.6）
+    // 仅设置 abort 标志，engine.cancelRequest() 已在下方统一调用，
+    // 由 polishInput 的 finally 块重置 isPolishingInput / isPolishingInputRef
+    if (isPolishingInputRef.current) {
+      isPolishingInputAbortRef.current = true;
+      addLog('[CharacterDialogueChat] Polish input cancelled', 'info');
+    }
     const engine = ChatEngineFactory.getInstance().getOrCreateDefaultEngine(
       getActiveEngineConfig() || {} as AIEngineConfig
     );
@@ -1210,6 +2150,46 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       return { ...prev, messages: updatedMessages };
     });
   }, [saveChatToStore, addLog]);
+
+  const rollbackToMessage = useCallback((messageId: string): string => {
+    const currentMessages = messagesRef.current;
+    const messageIndex = currentMessages.findIndex(msg => msg.id === messageId);
+    if (messageIndex === -1) {
+      addLog(`[CharacterDialogueChat] Rollback failed: message ${messageId} not found`, 'warn');
+      return '';
+    }
+
+    const targetMessage = currentMessages[messageIndex];
+    if (targetMessage.role !== 'user') {
+      addLog(`[CharacterDialogueChat] Rollback failed: message ${messageId} is not a user message`, 'warn');
+      return '';
+    }
+
+    const rolledBackContent = targetMessage.content;
+    const updatedMessages = currentMessages.slice(0, messageIndex);
+    const removedCount = currentMessages.length - messageIndex;
+
+    // 若正在流式生成，先取消
+    if (state.isStreaming) {
+      cancelRequest();
+    }
+
+    // 同步更新 messagesRef（避免闭包陈旧）
+    messagesRef.current = updatedMessages;
+
+    setState(prev => ({
+      ...prev,
+      messages: updatedMessages,
+      isStreaming: false,
+      isLoading: false,
+      error: null,
+    }));
+
+    saveChatToStore(updatedMessages);
+    addLog(`[CharacterDialogueChat] Rolled back to message ${messageId}, removed ${removedCount} messages`, 'info');
+
+    return rolledBackContent;
+  }, [state.isStreaming, cancelRequest, saveChatToStore, addLog]);
 
   const memoryTableEnabled = characterConfig?.memoryTableEnabled ?? false;
   const memoryTableAutoOrganize = characterConfig?.memoryTableAutoOrganize ?? false;
@@ -1280,8 +2260,8 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
   }, [updateConfig, addLog]);
 
   const tokenManagementConfig = useMemo(() => ({
-    enabled: characterConfig?.tokenManagementEnabled ?? true,
-    maxContextTokens: characterConfig?.maxContextTokens ?? 32000,
+    enabled: characterConfig?.tokenManagementEnabled ?? false,
+    maxContextTokens: characterConfig?.maxContextTokens ?? 256000,
     reservedForResponse: characterConfig?.reservedForResponse ?? 4096,
     minMessagesToKeep: characterConfig?.minMessagesToKeep ?? 3,
     maxMessagesToKeep: characterConfig?.maxMessagesToKeep ?? 60,
@@ -1474,6 +2454,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     retryMessage,
     retryMessageFromVersion,
     editMessage,
+    rollbackToMessage,
     clearChat,
     cancelRequest,
     selectedPersona,
@@ -1492,6 +2473,12 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     memoryTableTemplateId: characterConfig?.memoryTableTemplateId ?? null,
     memoryTableTemplateName: characterConfig?.memoryTableTemplateName ?? '',
     isOrganizing,
+    // 用户回复生成（Spec: add-ai-user-reply-button / Task 2.5）
+    generateUserReply,
+    isGeneratingUserReply,
+    // 用户输入润色（Spec: refine-user-input-text / Task 2）
+    polishInput,
+    isPolishingInput,
     fetchMemoryTableData,
     handleMemoryTableToggle,
     handleMemoryTableAutoOrganizeToggle,

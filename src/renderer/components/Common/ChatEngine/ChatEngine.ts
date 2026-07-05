@@ -7,13 +7,16 @@
 // 进一步统一需要迁移 CharacterDialogueChat.hooks.ts 到 AIService.tsx（不在本任务范围）。
 
 import { ChatMessage } from '../../Character/CharacterDialogueChat/CharacterDialogueChat.types';
+import { DEFAULT_MAX_TOKENS } from '../../Character/CharacterDialogueChat/TokenManagement';
 import {
   IChatEngine,
   AIEngineConfig,
   StreamCallback,
   CompleteCallback,
   ErrorCallback,
-  AIResponse
+  AIResponse,
+  resolveStopForRequestBody,
+  buildSamplingExtras
 } from './ChatEngine.types';
 
 export class ChatEngine implements IChatEngine {
@@ -72,7 +75,7 @@ export class ChatEngine implements IChatEngine {
       }
       const maxTokens = (typeof config.max_tokens === 'number' && config.max_tokens > 0)
         ? config.max_tokens
-        : 10240;
+        : DEFAULT_MAX_TOKENS;
       const temperature = Number(config.temperature) ?? 0.8;
       const apiMode = config.api_mode || 'chat_completion';
 
@@ -109,6 +112,36 @@ export class ChatEngine implements IChatEngine {
       if (config.presence_penalty !== undefined) {
         const parsedPresence = Number(config.presence_penalty);
         if (!isNaN(parsedPresence)) requestBody.presence_penalty = parsedPresence;
+      }
+
+      // DRY 采样 + repetition_penalty 注入（Spec: optimize-chat-ai-intelligence / Task 6.5）
+      // 借鉴 SillyTavern textgen-settings.js:143 作为防重复采样层第二道防线。
+      // buildSamplingExtras 根据 capabilities.supportsRepPen / supportsDrySampler 决定是否注入：
+      //   - supportsRepPen=true → 注入 repetition_penalty（缺省 1.1）
+      //   - supportsDrySampler=true → 注入 dry_multiplier/dry_base/dry_allowed_length/no_repeat_ngram_size
+      //   - 为 false 时省略对应字段，避免向后端发送不支持参数导致 4xx 错误
+      const samplingExtras = buildSamplingExtras(config, config.capabilities);
+      for (const [key, value] of Object.entries(samplingExtras)) {
+        requestBody[key] = value;
+      }
+
+      // Stop sequences 防抢话（Spec: optimize-chat-ai-intelligence / Task 3.2 + 3.3）
+      // 借鉴 SillyTavern names_as_stop_strings 机制，注入用户名变体停止序列，
+      // 防止 AI 代替用户发言（生成 "\n用户: ..." 等下一条用户消息）。
+      // resolveStopForRequestBody 根据 supportsStopArray 决定传数组或字符串。
+      const stopFieldValue = resolveStopForRequestBody(config.stopSequences, config.capabilities);
+      if (stopFieldValue !== undefined) {
+        requestBody.stop = stopFieldValue;
+        // 后端仅支持字符串时记录日志（取首元素，其余丢弃）
+        if (
+          Array.isArray(config.stopSequences) &&
+          config.stopSequences.length > 1 &&
+          config.capabilities?.supportsStopArray === false
+        ) {
+          console.warn(
+            `[ChatEngine] Backend does not support stop array; using first stop string only: ${JSON.stringify(config.stopSequences[0])}`
+          );
+        }
       }
 
       // API 密钥注入（header 或 body 两种方式）

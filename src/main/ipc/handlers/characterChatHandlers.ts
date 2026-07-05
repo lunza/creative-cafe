@@ -92,13 +92,40 @@ export function registerCharacterChatHandlers(): void {
   ipcMain.handle('chatVector:vectorize', async (_event, characterId: string, messages: ChatMessage[]) => {
     return await chatVectorizationService.vectorizeChat(characterId, messages);
   });
-  
+
   ipcMain.handle('chatVector:delete', async (_event, characterId: string) => {
     return await chatVectorizationService.deleteVectorization(characterId);
   });
-  
+
   ipcMain.handle('chatVector:search', async (_event, characterId: string, query: string, topK?: number) => {
     return await chatVectorizationService.searchChatMessages(characterId, query, topK);
+  });
+
+  // 对话历史 RAG 检索（Spec: optimize-chat-ai-intelligence / Task 7.3）
+  // chatHistory:retrieve - 检索本会话历史消息的向量相似片段，注入 system prompt"区域 2"
+  // chatHistory:vectorizeIncremental - 增量向量化最近消息（fire-and-forget，失败仅日志）
+  ipcMain.handle('chatHistory:retrieve', async (
+    _event,
+    chatId: string,
+    queryText: string,
+    topK?: number,
+    minScore?: number
+  ) => {
+    return await chatVectorizationService.retrieveChatHistory(
+      chatId,
+      queryText,
+      topK ?? 3,
+      minScore ?? 0.6
+    );
+  });
+
+  ipcMain.handle('chatHistory:vectorizeIncremental', async (
+    _event,
+    chatId: string,
+    messages: ChatMessage[]
+  ) => {
+    await chatVectorizationService.vectorizeIncremental(chatId, messages);
+    return { success: true };
   });
 
   ipcMain.handle('chatVersion:getVersions', async (_event, characterCardName: string) => {

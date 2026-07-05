@@ -18,6 +18,11 @@ const WritingModeEntry = lazy(
   () => import('../Creative/WritingMode').then(m => ({ default: m.WritingModeEntry }))
 );
 
+// Lazy mount GameModeEntry：仅当用户打开游戏模式对话框时才加载其模块
+const GameModeEntry = lazy(
+  () => import('../Game').then(m => ({ default: m.GameModeEntry }))
+);
+
 type ChatPanelType = 'chat' | 'creative' | 'game';
 
 interface PanelConfig {
@@ -52,7 +57,6 @@ const panelConfig: Record<ChatPanelType, PanelConfig> = {
     icon: <TrophyOutlined />,
     color: '#10b981',
     activeColor: '#34d399',
-    comingSoon: true,
   },
 };
 
@@ -81,6 +85,7 @@ export const CreationCenter: React.FC = () => {
   const [activePanel, setActivePanel] = useState<ChatPanelType>('chat');
   const [showChatDialog, setShowChatDialog] = useState(false);
   const [showWritingDialog, setShowWritingDialog] = useState(false);
+  const [showGameDialog, setShowGameDialog] = useState(false);
   const [flashingPanel, setFlashingPanel] = useState<ChatPanelType | null>(null);
   const [ripples, setRipples] = useState<Record<ChatPanelType, Ripple[]>>({
     chat: [],
@@ -249,6 +254,8 @@ export const CreationCenter: React.FC = () => {
       setShowChatDialog(true);
     } else if (panel === 'creative') {
       setShowWritingDialog(true);
+    } else if (panel === 'game') {
+      setShowGameDialog(true);
     }
   }, []);
 
@@ -258,6 +265,10 @@ export const CreationCenter: React.FC = () => {
 
   const handleCloseWriting = useCallback(() => {
     setShowWritingDialog(false);
+  }, []);
+
+  const handleCloseGame = useCallback(() => {
+    setShowGameDialog(false);
   }, []);
 
   return (
@@ -378,6 +389,11 @@ export const CreationCenter: React.FC = () => {
         visible={showWritingDialog}
         onClose={handleCloseWriting}
       />
+
+      <GameModeDialog
+        visible={showGameDialog}
+        onClose={handleCloseGame}
+      />
     </div>
   );
 };
@@ -457,6 +473,88 @@ const WritingModeDialog: React.FC<WritingModeDialogProps> = ({ visible, onClose 
             }
           >
             <WritingModeEntry />
+          </Suspense>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+interface GameModeDialogProps {
+  visible: boolean;
+  onClose: () => void;
+}
+
+const GameModeDialog: React.FC<GameModeDialogProps> = ({ visible, onClose }) => {
+  if (!visible) return null;
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 1000,
+        background: '#1a1a2e'
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          height: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden'
+        }}
+      >
+        <div style={{
+          padding: '12px 20px',
+          background: 'linear-gradient(135deg, #1e1e2e 0%, #2d2b42 100%)',
+          borderBottom: '1px solid rgba(255,255,255,0.08)',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexShrink: 0
+        }}>
+          <h3 style={{ margin: 0, color: '#fff', fontSize: 16, fontWeight: 600 }}>游戏模式</h3>
+          <button
+            onClick={onClose}
+            onMouseEnter={(e) => {
+              const btn = e.currentTarget as HTMLButtonElement;
+              btn.style.background = '#ff7875';
+              btn.style.transform = 'rotate(90deg) scale(1.1)';
+            }}
+            onMouseLeave={(e) => {
+              const btn = e.currentTarget as HTMLButtonElement;
+              btn.style.background = '#ff4d4f';
+              btn.style.transform = 'rotate(0deg) scale(1)';
+            }}
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: '50%',
+              background: '#ff4d4f',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 0,
+              transition: 'all 0.3s ease',
+              boxShadow: '0 2px 8px rgba(255, 77, 79, 0.3)'
+            }}
+          >
+            <CloseOutlined style={{ fontSize: 16, color: '#fff' }} />
+          </button>
+        </div>
+        <div style={{ flex: 1, overflow: 'auto' }}>
+          <Suspense
+            fallback={
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888' }}>
+                加载游戏模式...
+              </div>
+            }
+          >
+            <GameModeEntry />
           </Suspense>
         </div>
       </div>

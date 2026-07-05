@@ -41,6 +41,7 @@
     "electron-store": "^11.0.2",
     "eventemitter3": "^5.0.4",
     "fuse.js": "^7.3.0",
+    "gpt-tokenizer": "^3.4.0",
     "hast-util-from-html": "^2.0.3",
     "json5": "^2.2.3",
     "lru-cache": "^11.3.5",

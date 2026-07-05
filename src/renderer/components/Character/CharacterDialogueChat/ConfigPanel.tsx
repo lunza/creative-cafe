@@ -7,6 +7,7 @@ import VectorizationPanel from './VectorizationPanel';
 import MemoryTablePanel from './MemoryTablePanel';
 import TokenManagementPanel from './TokenManagementPanel';
 import { UserPersona, AIParameterConfig, EffectiveAIParams } from './CharacterDialogueChat.types';
+import { EngineCapabilities } from '../../Common/ChatEngine/ChatEngine.types';
 import './ConfigPanel.css';
 
 interface TokenManagementConfig {
@@ -31,9 +32,19 @@ interface ConfigPanelProps {
   memoryTableTemplateId: string | null;
   memoryTableTemplateName: string;
   tokenManagementConfig: TokenManagementConfig;
+  // 自定义停止序列（Spec: optimize-chat-ai-intelligence / Task 3.4）
+  customStopSequencesEnabled?: boolean;
+  customStopSequences?: string[];
+  /**
+   * 后端能力探测结果（Spec: optimize-chat-ai-intelligence / Task 6.1 / 6.4）。
+   * 透传给 ParameterPanel，决定 repetition_penalty 滑块与 DRY 采样折叠区的显隐。
+   */
+  engineCapabilities?: EngineCapabilities;
   onPersonaChange: (personaId: string) => void;
   onParameterChange: (params: Partial<AIParameterConfig>) => void;
   onResetParameters: () => void;
+  onCustomStopSequencesToggle?: (enabled: boolean) => void;
+  onCustomStopSequencesChange?: (stops: string[]) => void;
   onBindKnowledgeBase: (documentId: string) => void;
   onUnbindKnowledgeBase: (documentId: string) => void;
   onMemoryTableToggle: (enabled: boolean) => void;
@@ -59,9 +70,14 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
   memoryTableTemplateId,
   memoryTableTemplateName,
   tokenManagementConfig,
+  customStopSequencesEnabled,
+  customStopSequences,
+  engineCapabilities,
   onPersonaChange,
   onParameterChange,
   onResetParameters,
+  onCustomStopSequencesToggle,
+  onCustomStopSequencesChange,
   onBindKnowledgeBase,
   onUnbindKnowledgeBase,
   onMemoryTableToggle,
@@ -85,6 +101,11 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
         customParameters={customParameters}
         onParameterChange={onParameterChange}
         onResetParameters={onResetParameters}
+        customStopSequencesEnabled={customStopSequencesEnabled}
+        customStopSequences={customStopSequences}
+        onCustomStopSequencesToggle={onCustomStopSequencesToggle}
+        onCustomStopSequencesChange={onCustomStopSequencesChange}
+        engineCapabilities={engineCapabilities}
       />
       <div className="config-panel-divider" />
       <VectorizationPanel

@@ -12,7 +12,9 @@ import { registerMemoryHandlers } from './handlers/memoryHandlers';
 import { registerCreativeHandlers } from './handlers/creativeHandlers';
 import { registerCharacterChatHandlers } from './handlers/characterChatHandlers';
 import { registerWritingHandlers } from './handlers/writingHandlers';
+import { registerGameHandlers } from './handlers/gameHandlers';
 import { registerPromptHandlers } from './handlers/promptHandlers';
+import { registerTokenHandlers } from './handlers/tokenHandlers';
 import './handlers/aiHandlers';
 import { getStorageService } from '../services/storageService';
 import { embeddingService } from '../services/EmbeddingService';
@@ -42,7 +44,9 @@ export function setupIpcHandlers() {
   registerCreativeHandlers();
   registerCharacterChatHandlers();
   registerWritingHandlers();
+  registerGameHandlers();
   registerPromptHandlers();
+  registerTokenHandlers();
 
   embeddingService.initialize();
   embeddingService.registerIpcHandlers();

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Tooltip } from 'antd';
-import { CopyOutlined, CheckOutlined, ReloadOutlined, DoubleRightOutlined, RetweetOutlined, LoadingOutlined, EditOutlined, TableOutlined, WarningOutlined } from '@ant-design/icons';
+import { CopyOutlined, CheckOutlined, ReloadOutlined, DoubleRightOutlined, RetweetOutlined, LoadingOutlined, EditOutlined, TableOutlined, WarningOutlined, RollbackOutlined } from '@ant-design/icons';
 import { MessageRenderer } from './MessageRenderer';
 import { ChatMessage, ChatMessageVersionInfo } from './CharacterDialogueChat.types';
 
@@ -12,6 +12,7 @@ interface ChatMessageBubbleProps {
   onContinue?: () => void;
   onEdit?: (messageId: string, newContent: string) => void;
   onRetryFromVersion?: (versionFilePath: string) => void;
+  onRollback?: (messageId: string) => void;
   isLastMessage?: boolean;
   isStreaming?: boolean;
   isGenerating?: boolean;
@@ -24,6 +25,7 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
   onRetry,
   onContinue,
   onEdit,
+  onRollback,
   onRetryFromVersion,
   isLastMessage = false,
   isStreaming = false,
@@ -301,20 +303,15 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
       transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
       justifyContent: 'flex-end',
     }}>
-      <Tooltip title={isEditing ? '保存编辑' : '编辑内容'}>
+      <Tooltip title="卷回到输入框">
         <button
-          onClick={() => {
-            if (isEditing) {
-              handleEditSave();
-            } else {
-              handleEditStart();
-            }
-          }}
+          onClick={() => onRollback?.(message.id)}
+          disabled={isStreaming && !isLastMessage}
           style={{
             background: 'none',
             border: 'none',
-            color: isEditing ? 'var(--primary-color, #6366f1)' : 'var(--chat-action-text, #9ca3af)',
-            cursor: 'pointer',
+            color: 'var(--chat-action-text, #9ca3af)',
+            cursor: isStreaming && !isLastMessage ? 'not-allowed' : 'pointer',
             padding: '6px 8px',
             fontSize: '12px',
             display: 'flex',
@@ -322,17 +319,20 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
             gap: '4px',
             borderRadius: '6px',
             transition: 'all 0.2s ease',
+            opacity: isStreaming && !isLastMessage ? 0.5 : 1,
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.background = 'var(--chat-action-hover, rgba(255, 255, 255, 0.1))';
-            e.currentTarget.style.color = 'var(--primary-color, #6366f1)';
+            if (!(isStreaming && !isLastMessage)) {
+              e.currentTarget.style.background = 'var(--chat-action-hover, rgba(255, 255, 255, 0.1))';
+              e.currentTarget.style.color = 'var(--primary-color, #6366f1)';
+            }
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.background = 'none';
-            e.currentTarget.style.color = isEditing ? 'var(--primary-color, #6366f1)' : 'var(--chat-action-text, #9ca3af)';
+            e.currentTarget.style.color = 'var(--chat-action-text, #9ca3af)';
           }}
         >
-          <EditOutlined />
+          <RollbackOutlined />
         </button>
       </Tooltip>
     </div>

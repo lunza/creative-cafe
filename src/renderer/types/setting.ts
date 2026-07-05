@@ -1,4 +1,14 @@
 /**
+ * AI 后端能力探测字段。
+ * Spec: optimize-chat-ai-intelligence / Task 3.3 / Task 6.2
+ */
+export interface AIEngineCapabilities {
+  supportsStopArray?: boolean;
+  supportsRepPen?: boolean;
+  supportsDrySampler?: boolean;
+}
+
+/**
  * AI 引擎设置组
  */
 export interface AIEngineSetting {
@@ -9,6 +19,12 @@ export interface AIEngineSetting {
   api_key: string;
   model_name: string;
   api_mode: string;
+  /**
+   * 后端能力探测（Spec: optimize-chat-ai-intelligence / Task 3.3）。
+   * 缺省时由调用方通过 getDefaultEngineCapabilities(api_mode) 推断默认值。
+   * Task 6 将在设置 UI 中允许用户按 engine type 显式配置。
+   */
+  capabilities?: AIEngineCapabilities;
   
   // 文本补全模式配置
   prompt_template: string;

@@ -1,4 +1,4 @@
-import { UserPersona } from './CharacterDialogueChat.types';
+import { UserPersona, ChatMessage } from './CharacterDialogueChat.types';
 
 const DEFAULT_USER_NAME = 'User';
 
@@ -38,6 +38,456 @@ export interface ContextVectorItem {
 }
 
 // ==================== 底层工具函数 ====================
+
+/**
+ * 构建 stop sequences 防抢话停止序列数组。
+ *
+ * Spec: optimize-chat-ai-intelligence / Task 3
+ * Spec: fix-ai-response-length-degradation / Task 6（停止序列优化）
+ * 借鉴 SillyTavern `names_as_stop_strings` 机制（public/script.js:2946 getStoppingStrings）。
+ *
+ * 默认返回 12 个用户名变体（含中英文冒号），阻断 AI 代替用户发言。
+ * 顺序为「先双换行前缀、后单换行前缀」：
+ *   - 双换行前缀（优先匹配，减少 AI 在回复中引用用户话语时的误触发）：
+ *     - `\n\n{{user}}:` / `\n\n{{user}}：`  （用户名 + 中英文冒号）
+ *     - `\n\n用户:` / `\n\n用户：`          （中文通用前缀）
+ *     - `\n\nUser:` / `\n\nUser：`          （英文通用前缀）
+ *   - 单换行前缀（兜底，防止后端按子串匹配时漏判）：
+ *     - `\n{{user}}:` / `\n{{user}}：`
+ *     - `\n用户:` / `\n用户：`
+ *     - `\nUser:` / `\nUser：`
+ *
+ * 双换行前缀优先匹配段落分隔（用户名通常出现在新段落开头），可减少 AI 在
+ * 回复中间引用用户话语（如"用户说..."）时被后端 stop 截断的情况；单换行变体
+ * 作为兜底保留，防止后端按子串匹配时因换行符差异漏判。
+ *
+ * 当传入 customStops（用户在 ParameterPanel 自定义）时，合并到数组末尾并去重。
+ * 去重保留首次出现顺序，确保默认用户名变体优先。
+ *
+ * @param userName 当前用户名（来自 selectedPersona.name，缺省 'User'）
+ * @param customStops 用户自定义停止串数组（可选，每行一个）
+ * @returns 去重后的 stop sequences 数组
+ */
+export function buildStopSequences(userName: string, customStops?: string[]): string[] {
+  const safeUserName = (userName && userName.trim()) || DEFAULT_USER_NAME;
+  // 双换行前缀（优先匹配，减少 AI 在回复中引用用户话语时的误触发）
+  // 单换行前缀（兜底，防止后端按子串匹配时漏判）
+  const defaultStops = [
+    `\n\n${safeUserName}:`,
+    `\n\n${safeUserName}：`,
+    '\n\n用户:',
+    '\n\n用户：',
+    '\n\nUser:',
+    '\n\nUser：',
+    `\n${safeUserName}:`,
+    `\n${safeUserName}：`,
+    '\n用户:',
+    '\n用户：',
+    '\nUser:',
+    '\nUser：',
+  ];
+
+  // 合并并去重（保留首次出现顺序）；同时过滤空串与纯空白串。
+  // 注：默认数组内部在 userName 恰为 "User"/"用户" 时也会产生重复，需统一去重。
+  const merged: string[] = [];
+  const pushIfValid = (s: string) => {
+    if (typeof s === 'string' && s.trim().length > 0 && !merged.includes(s)) {
+      merged.push(s);
+    }
+  };
+  defaultStops.forEach(pushIfValid);
+  if (Array.isArray(customStops)) {
+    customStops.forEach(pushIfValid);
+  }
+  return merged;
+}
+
+/**
+ * 用户回复生成专用停止序列——以角色名变体防止 AI 越权生成角色回复。
+ *
+ * Spec: add-ai-user-reply-button / Task 1.2
+ * 与 `buildStopSequences`（用户名变体）对称：`buildStopSequences` 阻断 AI
+ * 代替用户发言，本函数阻断 AI 在用户回复生成场景下越权代替角色发言。
+ *
+ * 默认返回 8 项数组（顺序：先双换行前缀、后单换行前缀）：
+ *   - 双换行前缀（优先匹配段落分隔，减少 AI 在回复中引用角色话语时的误触发）：
+ *     - `\n\n${charName}:` / `\n\n${charName}：`  （角色名 + 中英文冒号）
+ *     - `\n\n{{char}}:` / `\n\n{{char}}：`          （模板变量 + 中英文冒号）
+ *   - 单换行前缀（兜底，防止后端按子串匹配时漏判）：
+ *     - `\n${charName}:` / `\n${charName}：`
+ *     - `\n{{char}}:` / `\n{{char}}：`
+ *
+ * 双换行前缀优先匹配段落分隔（角色名通常出现在新段落开头），可减少误触发；
+ * 单换行变体作为兜底保留，防止后端按子串匹配时因换行符差异漏判。
+ *
+ * 当传入 customStops（用户在 ParameterPanel 自定义）时，合并到数组末尾并去重。
+ * 去重保留首次出现顺序，确保默认角色名变体优先。
+ *
+ * @param charName 当前角色名（来自 characterInfo.characterCardName，缺省 'Character'）
+ * @param customStops 用户自定义停止串数组（可选，每行一个）
+ * @returns 去重后的 stop sequences 数组
+ */
+export function buildStopSequencesForUserReply(charName: string, customStops?: string[]): string[] {
+  const safeCharName = (charName && charName.trim()) || 'Character';
+  // 双换行前缀（优先匹配段落分隔，减少 AI 在回复中引用角色话语时的误触发）
+  // 单换行前缀（兜底，防止后端按子串匹配时漏判）
+  const defaultStops = [
+    `\n\n${safeCharName}:`,
+    `\n\n${safeCharName}：`,
+    '\n\n{{char}}:',
+    '\n\n{{char}}：',
+    `\n${safeCharName}:`,
+    `\n${safeCharName}：`,
+    '\n{{char}}:',
+    '\n{{char}}：',
+  ];
+
+  // 合并并去重（保留首次出现顺序）；同时过滤空串与纯空白串。
+  // 注：默认数组内部在 charName 恰为 '{{char}}' 时会产生重复，需统一去重。
+  const merged: string[] = [];
+  const pushIfValid = (s: string) => {
+    if (typeof s === 'string' && s.trim().length > 0 && !merged.includes(s)) {
+      merged.push(s);
+    }
+  };
+  defaultStops.forEach(pushIfValid);
+  if (Array.isArray(customStops)) {
+    customStops.forEach(pushIfValid);
+  }
+  return merged;
+}
+
+/**
+ * 角色卡字段接口（buildRoleAnchorMessage 输入）。
+ *
+ * 仅声明所需字段，兼容 CharacterInfo 与角色卡原始数据：
+ * - `name`：角色名（缺省 'Character'）
+ * - `personality`：角色个性（首选锚定来源）
+ * - `description`：角色描述（personality 为空时的 fallback）
+ */
+export interface RoleAnchorCharacterCard {
+  name?: string;
+  personality?: string;
+  description?: string;
+}
+
+/**
+ * 角色深度锚定消息内容上限（按字符计）。
+ *
+ * Spec: optimize-chat-ai-intelligence / Task 4.1
+ * `personality` 前 200 字符作为锚定摘要；`personality` 为空时 fallback 到 `description`。
+ * 200 中文字 ≈ 260-280 tokens（cl100k_base 实测），加上固定文案约 350 tokens。
+ */
+const ROLE_ANCHOR_SUMMARY_MAX_CHARS = 200;
+
+/**
+ * 构建角色深度锚定（depth_prompt）的 system 消息。
+ *
+ * Spec: optimize-chat-ai-intelligence / Task 4.1
+ * 借鉴 SillyTavern `data.extensions.depth_prompt`（默认 depth=4，public/script.js:549, 4400-4402），
+ * 在裁剪后消息列表深处周期性注入角色精简摘要，防止长上下文截断后早期角色设定被"稀释"。
+ *
+ * 摘要提取规则（spec Scenario: 长对话角色一致性）：
+ *   1. 提取 `characterCard.personality` 前 200 字符
+ *   2. 若 `personality` 为空（undefined / null / 空白），fallback 到 `description` 前 200 字符
+ *   3. 若两者都为空，summary 为空字符串（仍输出锚定文案，但缺核心设定）
+ *
+ * 格式（spec 原文）：
+ *   `[角色锚定] {{char}} 的核心设定：{{summary}}。始终以 {{char}} 视角回复，禁止替 {{user}} 发言。`
+ *
+ * {{char}} 替换为 characterCard.name（缺省 'Character'），{{user}} 替换为 userName（缺省 'User'）。
+ *
+ * @param characterCard 角色卡（name / personality / description）
+ * @param userName 当前用户名（缺省 'User'）
+ * @returns 角色锚定 system 消息（role: 'system'）
+ */
+export function buildRoleAnchorMessage(
+  characterCard: RoleAnchorCharacterCard,
+  userName: string = DEFAULT_USER_NAME
+): { role: 'system'; content: string } {
+  const charName = (characterCard.name && characterCard.name.trim()) || 'Character';
+  const safeUserName = (userName && userName.trim()) || DEFAULT_USER_NAME;
+
+  // 摘要提取：personality 优先，空则 fallback 到 description，取前 200 字符
+  const personality = (characterCard.personality ?? '').trim();
+  const description = (characterCard.description ?? '').trim();
+  const rawSummary = personality || description;
+  const summary = rawSummary.slice(0, ROLE_ANCHOR_SUMMARY_MAX_CHARS);
+
+  // 格式化锚定文案（{{char}} / {{user}} 替换）
+  const content = `[角色锚定] ${charName} 的核心设定：${summary}。始终以 ${charName} 视角回复，禁止替 ${safeUserName} 发言。`;
+
+  return { role: 'system', content };
+}
+
+/**
+ * 构建续写去重提示词（continue_nudge_prompt）。
+ *
+ * Spec: optimize-chat-ai-intelligence / Task 5.4 + Task 8.1 + Scenario: 续写去重
+ * 借鉴 SillyTavern `continue_nudge_prompt` 机制（public/scripts/openai.js:109，
+ * 提示词 `[Continue your last message without repeating its original content.]`），
+ * 当续写检测到新内容与 initialContent 重叠率 > 60%（Task 5.3）时，
+ * 注入该提示词约束 AI "继续而非重写"。
+ *
+ * Task 5.4：本函数返回 spec 原文提示词，作为 nudge 文本来源。
+ * Task 8.1（已完成）：在 buildContinuationPrompt 末尾追加本提示词段落，
+ *   让所有续写请求首次即含 nudge 约束（提示层防线）。
+ * Task 8.2（已完成）：continueConversation 在 overlapRate > 0.6 触发重试时，
+ *   通过 dedupConfig.injectContinueNudge=true 在消息数组末尾追加本提示词作为
+ *   system 消息（hooks.ts::requestAIResponse，检测层防线 + 重试时强提示）。
+ *
+ * 返回内容（spec 原文）：
+ *   `[Continue your last message without repeating its original content.]`
+ *
+ * @returns continue_nudge_prompt 字符串
+ */
+export function buildContinueNudgePrompt(): string {
+  return '[Continue your last message without repeating its original content.]';
+}
+
+/**
+ * 构建回复长度引导约束提示词。
+ *
+ * Spec: fix-ai-response-length-degradation / Task 3.2
+ * 通过在系统提示末尾注入字数下限约束，防止 AI 在持续对话中因上下文学习
+ * 复制逐渐缩短的回复模式（LLM 固有特性）。
+ *
+ * 默认约束段：`【回复要求】{{char}} 的每次回复应不少于 X 字，包含详细的
+ * 动作描写、语言对话和内心活动，避免简短敷衍的回复。`
+ *
+ * 当 `strengthen=true` 时（由 Task 4 检测到连续 3 轮短回复触发），追加
+ * 强化约束段：`【重要提醒】你最近的回复过短。请务必每次回复至少 X 字，
+ * 展开细节描写，包括动作、神态、语言和内心活动。`
+ *
+ * 注：`charName` 参数与 `buildCharacterContext` 中 `charName = name || 'Character'`
+ * 保持一致（直接使用实际角色名而非 `{{char}}` 模板变量，避免下游未替换时残留）。
+ *
+ * @param minResponseChars 最小回复字数（中文字符数）
+ * @param strengthen 是否启用强化模式（连续 3 轮短回复时触发）
+ * @param charName 角色名（缺省 'Character'，与 buildCharacterContext 一致）
+ * @returns 长度引导约束字符串（minResponseChars<=0 时返回空串）
+ */
+export function buildLengthGuidancePrompt(
+  minResponseChars: number,
+  strengthen: boolean = false,
+  charName: string = 'Character'
+): string {
+  if (!minResponseChars || minResponseChars <= 0) return '';
+  const name = charName || 'Character';
+  let prompt = `\n【回复要求】${name} 的每次回复应不少于 ${minResponseChars} 字，包含详细的动作描写、语言对话和内心活动，避免简短敷衍的回复。`;
+  if (strengthen) {
+    prompt += `\n【重要提醒】你最近的回复过短。请务必每次回复至少 ${minResponseChars} 字，展开细节描写，包括动作、神态、语言和内心活动。`;
+  }
+  return prompt;
+}
+
+/**
+ * 构建用户回复生成专用系统提示。
+ *
+ * Spec: add-ai-user-reply-button / Task 1.1
+ * 用于"AI回复"按钮：让 AI 扮演用户人设，仅生成用户侧的下一句回复，
+ * 填入输入框供用户编辑后发送（不自动发送）。
+ *
+ * 与 `buildDialoguePrompt`（角色扮演对话）对称——后者让 AI 扮演 {{char}}，
+ * 本函数让 AI 扮演 {{user}}，并结合对方角色上下文（characterCardName /
+ * personality / characterCardContent）确保回复自然衔接。
+ *
+ * 防御性返回：当 `persona` 为空或 `persona.name` 为空时返回空串，
+ * 由调用方（hooks.ts::generateUserReply）做前置校验后调用。
+ *
+ * 长度约束：50-200 字（用户回复通常较短，避免长篇大论），与
+ * `buildLengthGuidancePrompt` 的下限约束不同——此处为上限引导。
+ *
+ * @param characterInfo 对方角色信息（characterCardName / personality / characterCardContent）
+ * @param persona 当前用户人设（name / description）
+ * @param person 人称视角（'first' 第一人称默认 / 'second' 第二人称 / 'third' 第三人称），缺省 'first'
+ * @returns 系统提示字符串；persona 缺失或 name 为空时返回空串
+ */
+export function buildUserReplySystemPrompt(
+  characterInfo: CharacterInfoForPrompt,
+  persona: UserPersona,
+  person?: 'first' | 'second' | 'third'
+): string {
+  // 防御性校验：persona 缺失或 name 为空时返回空串
+  if (!persona || !persona.name || !persona.name.trim()) return '';
+
+  const userName = persona.name.trim();
+  // 人称视角归一化（Spec: add-person-attribute-to-ai-reply）
+  // 默认 'first'（向后兼容，不传时行为不变）
+  const personValue = person || 'first';
+  const charName = (characterInfo.characterCardName && characterInfo.characterCardName.trim()) || 'Character';
+  const personaDescription = persona.description && persona.description.trim()
+    ? persona.description.trim()
+    : '（未提供用户描述）';
+
+  // 角色个性（如存在）
+  const personality = characterInfo.personality && characterInfo.personality.trim()
+    ? characterInfo.personality.trim()
+    : '';
+
+  // 角色描述（如存在，截断到前 300 字）
+  let characterCardContent = '';
+  if (characterInfo.characterCardContent && characterInfo.characterCardContent.trim()) {
+    const raw = characterInfo.characterCardContent.trim();
+    characterCardContent = raw.length > 300 ? raw.slice(0, 300) + '...' : raw;
+  }
+
+  // 构建对方角色上下文段落（按字段存在性追加，避免空行）
+  let charContextLines = `- 角色名：${charName}`;
+  if (personality) {
+    charContextLines += `\n- 角色个性：${personality}`;
+  }
+  if (characterCardContent) {
+    charContextLines += `\n- 角色描述：${characterCardContent}`;
+  }
+
+  // 人称视角约束（Spec: add-person-attribute-to-ai-reply / Task 1.2）
+  let personConstraint: string;
+  if (personValue === 'second') {
+    personConstraint = `以第二人称（"你"）视角生成回复，使用"你"来指代 ${userName} 自身（互动小说风格）`;
+  } else if (personValue === 'third') {
+    personConstraint = `以第三人称叙事视角生成回复，使用"${userName}"作为主语（小说叙事风格）`;
+  } else {
+    // 'first' 或默认值
+    personConstraint = `以第一人称（"我"）视角生成回复，使用"我"作为自称`;
+  }
+
+  return `你是对话模拟器，需要扮演用户 **${userName}** 生成下一句回复。
+
+## 用户人设
+- 用户名：${userName}
+- 用户描述：${personaDescription}
+
+## 对方角色上下文
+${charContextLines}
+
+## 任务要求
+1. 仅输出 ${userName} 的下一句回复内容
+2. 不要输出 ${charName} 的回复
+3. 不要解释、不要引号包裹、不要前缀（如"${userName}:"）
+4. 回复内容应符合 ${userName} 的人设特征与说话方式
+5. 结合对话历史与 ${charName} 的最新发言自然衔接
+6. 回复长度建议 50-200 字（用户回复通常较短，避免长篇大论）
+7. ${personConstraint}
+
+直接输出回复内容本身。`;
+}
+
+/**
+ * 构建润色输入专用系统提示。
+ *
+ * Spec: refine-user-input-text / Task 1
+ * 用于"润色"按钮：让 AI 作为文本润色器，基于对话上下文优化用户草稿文本，
+ * 替换输入框内容供用户编辑后发送（不自动发送）。
+ *
+ * 与 `buildUserReplySystemPrompt` 的区别：后者从零生成全新回复，
+ * 本函数在用户已有草稿基础上进行润色优化，保持原始意图。
+ *
+ * 防御性返回：当 `persona` 为空 / `persona.name` 为空 / `originalText` 为空时返回空串，
+ * 由调用方（hooks.ts::polishInput）做前置校验后调用。
+ *
+ * @param characterInfo 对方角色信息（characterCardName / personality / characterCardContent）
+ * @param persona 当前用户人设（name / description）
+ * @param originalText 待润色的原始文本
+ * @param person 人称视角（'first' 第一人称默认 / 'second' 第二人称 / 'third' 第三人称），缺省 'first'
+ * @param conversationHistory 对话历史数组（可选，Spec: fix-polish-context-isolation）；传入时会被格式化为
+ *   "## 对话历史参考"段落嵌入系统提示文本，而非作为 messages 数组传给 engine，避免 AI 把历史末尾的 assistant
+ *   消息当作"待续写"对象触发回复本能
+ * @returns 系统提示字符串；persona/originalText 缺失时返回空串
+ *
+ * **润色对象锚定**（Spec: fix-polish-target-misinterpretation）：使用 `<polish_target>` 标签包裹 originalText，
+ * 配合"关键约束"段落防止 AI 将问句误判为需要回答的问题。
+ *
+ * **润色上下文隔离**（Spec: fix-polish-context-isolation）：对话历史不再通过 engine.sendMessage 的 messages
+ * 数组传递（避免以 assistant 结尾触发 AI 续写本能），而是格式化为文本嵌入系统提示的"## 对话历史参考"段落，
+ * engine.sendMessage 仅发送单条 user 消息明确请求润色。
+ *
+ * **任务框架重构**（Spec: fix-polish-task-framing）：针对 AI 仍把待润色文本当作"需要回答的问题"处理的问题，
+ * 去除残留的对话生成语义信号——
+ * 1) personConstraint 措辞由"生成回复"改为"润色后的文本...输出"（原措辞与孪生函数 buildUserReplySystemPrompt 完全相同）；
+ * 2) 删除任务要求第 6 条"结合对话历史参考与 ${charName} 的最新发言确保上下文连贯"（属对话生成指令），
+ *    改为"润色结果需与对话历史不矛盾即可，无需衔接角色发言，无需推进对话"；
+ * 3) 删除"## 对方角色上下文"段落中的 personality 与 characterCardContent 字段（角色扮演触发器），
+ *    仅保留角色名并显式标注"仅作润色参考，不要扮演这个角色"；
+ * 4) 段落顺序调整：将"## 关键约束"段落提前到"## 待润色文本"之前，避免关键约束位于待润色文本之后被稀释；
+ * 5) 开头任务定义追加"禁止生成对话回复，禁止回答 <polish_target> 内的任何问题"声明；
+ * 6) "## 关键约束"措辞强化为"绝对禁止"级别。
+ */
+export function buildPolishInputSystemPrompt(
+  characterInfo: CharacterInfoForPrompt,
+  persona: UserPersona,
+  originalText: string,
+  person?: 'first' | 'second' | 'third',
+  conversationHistory?: ChatMessage[]
+): string {
+  // 防御性校验：persona 缺失 / persona.name 为空 / originalText 为空或仅空白时返回空串
+  if (!persona || !persona.name || !persona.name.trim()) return '';
+  if (!originalText || !originalText.trim()) return '';
+
+  const userName = persona.name.trim();
+  // 人称视角归一化（Spec: add-person-attribute-to-ai-reply）
+  // 默认 'first'（向后兼容，不传时行为不变）
+  const personValue = person || 'first';
+  const charName = (characterInfo.characterCardName && characterInfo.characterCardName.trim()) || 'Character';
+  const personaDescription = persona.description && persona.description.trim()
+    ? persona.description.trim()
+    : '（未提供用户描述）';
+
+  // 人称视角约束（Spec: add-person-attribute-to-ai-reply / Task 1.2 / fix-polish-task-framing）
+  // 注意：与 buildUserReplySystemPrompt 不同，本函数使用"润色后的文本...输出"措辞，
+  // 而非"生成回复"，避免触发对话生成语义（Spec: fix-polish-task-framing）
+  let personConstraint: string;
+  if (personValue === 'second') {
+    personConstraint = `润色后的文本以第二人称（"你"）视角输出，使用"你"来指代 ${userName} 自身（互动小说风格）`;
+  } else if (personValue === 'third') {
+    personConstraint = `润色后的文本以第三人称叙事视角输出，使用"${userName}"作为主语（小说叙事风格）`;
+  } else {
+    // 'first' 或默认值
+    personConstraint = `润色后的文本以第一人称（"我"）视角输出，使用"我"作为自称`;
+  }
+
+  // 格式化对话历史为文本（Spec: fix-polish-context-isolation）
+  // 将对话历史嵌入系统提示而非作为 messages 数组传给 engine，避免以 assistant 结尾触发 AI 续写本能
+  const historyText = (!conversationHistory || conversationHistory.length === 0)
+    ? '（无历史对话）'
+    : conversationHistory
+        .map(msg => msg.role === 'user' ? `[用户]: ${msg.content}` : `[AI]: ${msg.content}`)
+        .join('\n');
+
+  return `你是文本润色器，需要优化用户 **${userName}** 的草稿文本。**禁止生成对话回复，禁止回答 <polish_target> 内的任何问题**，仅对原文进行润色扩展后输出。
+
+## 用户人设
+- 用户名：${userName}
+- 用户描述：${personaDescription}
+
+## 角色名（仅作润色参考，不要扮演这个角色）
+${charName}
+
+## 对话历史参考（仅作上下文参考，不是润色对象，不要回答其中任何内容）
+${historyText}
+
+## 关键约束
+- **绝对禁止**回答 <polish_target> 标签内的任何问题，必须对其进行润色扩展
+- **绝对禁止**生成对话回复（包括 AI 角色回复、用户回复、续写对话）
+- 对话历史与角色名仅作润色参考，**不要扮演角色，不要续写对话**
+- 你的唯一输出是润色后的 <polish_target> 文本本身
+
+## 待润色文本
+<polish_target>
+${originalText}
+</polish_target>
+
+## 任务要求
+1. 保持用户原始意图与核心信息不变
+2. 提升表达精准度与场景适配度
+3. 符合 ${userName} 的人设特征与说话方式
+4. 仅输出润色后的文本，不要解释、不要引号包裹、不要前缀（如"${userName}:"）
+5. 润色后长度不应大幅偏离原文（建议 ±50% 以内）
+6. 润色结果需与对话历史不矛盾即可，**无需衔接角色发言，无需推进对话**
+7. ${personConstraint}
+
+直接输出润色后的文本本身。`;
+}
 
 export function replaceTemplates(text: string, charName: string, userName: string = 'User'): string {
   if (!text) return '';
@@ -114,7 +564,17 @@ export function buildCharacterContext(
     system_prompt?: string;
     creator_notes?: string;
   },
-  userName: string = 'User'
+  userName: string = 'User',
+  /**
+   * 长度引导约束选项（Spec: fix-ai-response-length-degradation / Task 3.3）。
+   * 可选；未传入时不追加任何长度引导约束，保持向后兼容。
+   * - `minResponseChars`：最小回复字数（中文字符数），>0 时追加约束
+   * - `strengthenLength`：是否启用强化模式（连续 3 轮短回复时为 true）
+   */
+  options?: {
+    minResponseChars?: number;
+    strengthenLength?: boolean;
+  }
 ): string {
   const { name, personality, description, scenario, mes_example, system_prompt, creator_notes } = characterInfo;
   const charName = name || 'Character';
@@ -152,6 +612,23 @@ export function buildCharacterContext(
         if (ex.char) context += `${charName}: ${ex.char}\n`;
       });
     }
+  }
+
+  // 角色卡为绝对权威约束（Spec: optimize-chat-ai-intelligence / Task 4.3）
+  // 与深度锚定（Task 4.1/4.2）形成"系统提示 + 深度锚定"双重角色一致性保障：
+  // 头部 system prompt 显式声明角色卡权威性，深处 depth=4 注入精简摘要防止长对话漂移。
+  // 注：{{char}} 在此处已替换为实际 charName，避免模板变量残留。
+  context += `\n【重要】角色卡设定为绝对权威，必须严格遵循 ${charName} 的性格、背景与说话方式，不得偏离。`;
+
+  // 回复长度引导约束（Spec: fix-ai-response-length-degradation / Task 3.3）
+  // 在角色卡权威约束之后追加字数下限引导，防止 AI 在持续对话中复制逐渐缩短的回复模式。
+  // strengthenLength=true 时（连续 3 轮短回复）追加强化约束段落。
+  if (options?.minResponseChars && options.minResponseChars > 0) {
+    context += buildLengthGuidancePrompt(
+      options.minResponseChars,
+      options.strengthenLength === true,
+      charName
+    );
   }
 
   return context.trim();
@@ -285,6 +762,16 @@ export async function buildContinuationPrompt(
     ? `并在续写完成后通过tableEdit完成数据整理。系统将在提示词末尾提供详细的表格整理指令，请严格按照指令要求在回复末尾生成详细的tableEdit标签，认真解析对话内容（时空、角色、社交、物品、事件等），不要忽略任何细节。`
     : '';
 
+  // Task 8.1（Spec: optimize-chat-ai-intelligence / Task 8.1 + Scenario: 续写去重）：
+  // 在续写 prompt 末尾追加 continue_nudge_prompt 段落，让所有续写请求始终含
+  // "继续上一条消息，不要重复已有内容"约束。借鉴 SillyTavern `continue_nudge_prompt`
+  // 机制（public/scripts/openai.js:109），与 Task 5.3 的 overlapRate 检测形成
+  // "提示层 + 检测层"双重防线：首次续写即带 nudge 约束降低重复概率；
+  // 检测到 overlapRate > 0.6 时仍会触发重试（Task 5.3），重试时通过
+  // dedupConfig.injectContinueNudge=true 在消息数组末尾再次注入 system 消息（hooks.ts），
+  // 形成 system prompt 段落 + 消息数组末尾 system 消息的双重提示。
+  const nudgeSection = `\n\n【续写去重约束】\n${buildContinueNudgePrompt()}`;
+
   // 从模板系统获取提示词
   try {
     const promptResult = await window.electronAPI.prompt.build('creative-chat.continuation', {
@@ -295,13 +782,13 @@ export async function buildContinuationPrompt(
       persona_section: personaSection
     });
     if (promptResult.success && promptResult.data) {
-      return promptResult.data.systemPrompt;
+      return promptResult.data.systemPrompt + nudgeSection;
     }
   } catch (e) {
     console.error('[PromptBuilder] 获取续写模式模板失败，使用硬编码回退:', e);
   }
 
-  // 回退：使用硬编码内容（保留原始逻辑）
+  // 回退：使用硬编码内容（保留原始逻辑）+ Task 8.1 追加 continue_nudge_prompt 段落
   return `【任务类型：内容续写】
 
 【续写任务说明】
@@ -338,7 +825,7 @@ export async function buildContinuationPrompt(
 
 【角色信息】
 ${characterContext}
-${personaSection}`;
+${personaSection}${nudgeSection}`;
 }
 
 // ==================== 第五步：格式化向量检索结果 ====================
@@ -380,11 +867,19 @@ export async function buildFinalSystemPrompt(
   vectorContextItems: ContextVectorItem[],
   memoryTableData?: string,
   organizeMode?: 'sync' | 'async',
-  tableStructure?: { sheets: string[]; headers: Record<string, string[]>; descriptions: Record<string, string> }
+  tableStructure?: { sheets: string[]; headers: Record<string, string[]>; descriptions: Record<string, string> },
+  /**
+   * 本会话相关历史片段（Spec: optimize-chat-ai-intelligence / Task 7.5）
+   * 来源：ChatVectorizationService.retrieveChatHistory 返回的 {content, score, timestamp}[]
+   * 注入位置：在"区域 1：相关背景知识"之后，"区域 3：记忆表格数据"之前
+   * 注：区域编号变更：原"区域 2 记忆表格"→"区域 3"，原"区域 3 异步整理指令"→"区域 4"
+   */
+  chatHistoryItems?: Array<{ content: string; score: number; timestamp: number }>
 ): Promise<string> {
   console.log('[PromptBuilder] buildFinalSystemPrompt 开始:');
   console.log('  - systemPrompt 长度:', systemPrompt.length);
   console.log('  - vectorContextItems 数量:', vectorContextItems?.length || 0);
+  console.log('  - chatHistoryItems 数量:', chatHistoryItems?.length || 0);
   console.log('  - memoryTableData 参数是否有值:', !!memoryTableData);
   console.log('  - memoryTableData 参数长度:', memoryTableData?.length || 0);
   if (memoryTableData) {
@@ -393,7 +888,7 @@ export async function buildFinalSystemPrompt(
   console.log('  - organizeMode:', organizeMode);
   console.log('  - tableStructure 是否有值:', !!tableStructure);
   console.log('  - tableStructure sheets:', tableStructure?.sheets);
-  
+
   let result = systemPrompt;
 
   // 追加向量检索结果
@@ -409,15 +904,31 @@ export async function buildFinalSystemPrompt(
     console.log('  - 向量上下文已追加, 追加后长度:', result.length);
   }
 
-  // 追加记忆表格数据
+  // 追加本会话相关历史片段（Spec: Task 7.5 - 区域 2）
+  // 仅在长对话（> 20 轮）时由 hooks.ts 触发检索并传入，短对话时 chatHistoryItems 为空/undefined
+  if (chatHistoryItems && chatHistoryItems.length > 0) {
+    const chatHistorySection = chatHistoryItems
+      .map((item, idx) => `[历史片段 ${idx + 1}] (相关度: ${(item.score * 100).toFixed(1)}%)\n${item.content}`)
+      .join('\n\n');
+    result += `\n\n═══════════════════════════════════════════════════════`;
+    result += `\n【区域 2：本会话相关历史片段】（以下为从本对话历史向量检索的相关片段，仅供补充上下文参考，不是当前对话的一部分）`;
+    result += `\n═══════════════════════════════════════════════════════\n\n`;
+    result += chatHistorySection;
+    result += `\n\n═══════════════════════════════════════════════════════`;
+    result += `\n【区域 2 结束 - 以上历史片段仅供参考】`;
+    result += `\n═══════════════════════════════════════════════════════`;
+    console.log('  - 本会话历史片段已追加, 追加后长度:', result.length);
+  }
+
+  // 追加记忆表格数据（区域编号：原 2 → 3，因 Task 7.5 在 1 与 2 之间插入了"本会话相关历史片段"）
   if (memoryTableData && memoryTableData.trim()) {
     console.log('  - memoryTableData 非空, 开始追加...');
     result += `\n\n═══════════════════════════════════════════════════════`;
-    result += `\n【区域 2：记忆表格数据】（以下为已记录的记忆表格，仅供参考，不是对话的一部分）`;
+    result += `\n【区域 3：记忆表格数据】（以下为已记录的记忆表格，仅供参考，不是对话的一部分）`;
     result += `\n═══════════════════════════════════════════════════════\n\n`;
     result += memoryTableData;
     result += `\n\n═══════════════════════════════════════════════════════`;
-    result += `\n【区域 2 结束 - 以上记忆表格数据仅供参考】`;
+    result += `\n【区域 3 结束 - 以上记忆表格数据仅供参考】`;
     result += `\n═══════════════════════════════════════════════════════`;
     console.log('  - 记忆表格数据已追加, 最终长度:', result.length);
     console.log('  - 最终末尾 300 字符:', result.substring(Math.max(0, result.length - 300)));
@@ -428,17 +939,17 @@ export async function buildFinalSystemPrompt(
     console.log('    - memoryTableData?.trim():', memoryTableData?.trim());
   }
 
-  // 异步整理模式：将完整指令拼接到 system prompt 末尾
+  // 异步整理模式：将完整指令拼接到 system prompt 末尾（区域编号：原 3 → 4）
   if (organizeMode === 'async') {
     result += `\n\n═══════════════════════════════════════════════════════`;
-    result += `\n【区域 3：记忆表格异步整理指令】（以下为系统指令，不是对话内容，请严格按照要求执行）`;
+    result += `\n【区域 4：记忆表格异步整理指令】（以下为系统指令，不是对话内容，请严格按照要求执行）`;
     result += `\n═══════════════════════════════════════════════════════`;
-    
+
     const asyncInstructions = await buildAsyncTableOrganizeInstructions(memoryTableData, tableStructure);
     result += asyncInstructions;
-    
+
     result += `\n═══════════════════════════════════════════════════════`;
-    result += `\n【区域 3 结束 - 以上为系统指令】`;
+    result += `\n【区域 4 结束 - 以上为系统指令】`;
     result += `\n═══════════════════════════════════════════════════════`;
     console.log('  - 异步整理指令已追加到 system prompt, 最终长度:', result.length);
   }
@@ -708,7 +1219,13 @@ export async function buildSystemPrompt(
   vectorContextItems: ContextVectorItem[],
   memoryTableData?: string,
   organizeMode?: 'sync' | 'async',
-  tableStructure?: { sheets: string[]; headers: Record<string, string[]>; descriptions: Record<string, string> }
+  tableStructure?: { sheets: string[]; headers: Record<string, string[]>; descriptions: Record<string, string> },
+  /**
+   * 本会话相关历史片段（Spec: optimize-chat-ai-intelligence / Task 7.5）
+   * 由 hooks.ts::requestAIResponse 步骤 A2 调用 chatHistory.retrieve 获取，
+   * 仅在对话历史 > 20 轮时传入（短对话跳过 RAG 检索）。
+   */
+  chatHistoryItems?: Array<{ content: string; score: number; timestamp: number }>
 ): Promise<string> {
   // 第四步：根据任务类型构建基础提示词
   const systemPrompt = promptType === 'continuation'
@@ -716,5 +1233,5 @@ export async function buildSystemPrompt(
     : await buildDialoguePrompt(characterInfo, selectedPersona, organizeMode);
 
   // 第六步：将向量上下文和记忆表格数据追加到提示词末尾
-  return await buildFinalSystemPrompt(systemPrompt, vectorContextItems, memoryTableData, organizeMode, tableStructure);
+  return await buildFinalSystemPrompt(systemPrompt, vectorContextItems, memoryTableData, organizeMode, tableStructure, chatHistoryItems);
 }

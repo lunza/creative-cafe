@@ -1,5 +1,17 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { BatchFixRequest } from '../shared/types/writing.types';
+import type {
+  GameMeta,
+  GameSaveData,
+  GameTableData,
+  GameTableEditCommand,
+  GameNarrativeRequest,
+  GameNarrativeChunk,
+  GameNarrativeComplete,
+  GameNarrativeError,
+  GameTableUpdated,
+  GameLocalConfig
+} from '../shared/types/game.types';
 
 // 存储 subscription 映射，以便 off 方法可以正确移除监听器
 const subscriptionMap = new Map<string, Map<Function, Function>>();
@@ -327,6 +339,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     delete: (characterId: string) => ipcRenderer.invoke('chatVector:delete', characterId),
     search: (characterId: string, query: string, topK?: number) => ipcRenderer.invoke('chatVector:search', characterId, query, topK)
   },
+  // 对话历史 RAG API（Spec: optimize-chat-ai-intelligence / Task 7.4）
+  // retrieve - 检索本会话历史消息的向量相似片段（topK=3, minScore=0.6 默认），返回 {content, score, timestamp}[]
+  // vectorizeIncremental - 增量向量化最近消息（跳过已向量化的 messageId），fire-and-forget
+  chatHistory: {
+    retrieve: (chatId: string, queryText: string, topK?: number, minScore?: number) =>
+      ipcRenderer.invoke('chatHistory:retrieve', chatId, queryText, topK, minScore),
+    vectorizeIncremental: (chatId: string, messages: any[]) =>
+      ipcRenderer.invoke('chatHistory:vectorizeIncremental', chatId, messages)
+  },
   writing: {
     loadProjects: () => ipcRenderer.invoke('writing:loadProjects'),
     createProject: (config: any) => ipcRenderer.invoke('writing:createProject', config),
@@ -471,6 +492,116 @@ contextBridge.exposeInMainWorld('electronAPI', {
       rollbackVersion: (projectId: string) => ipcRenderer.invoke('writing:table:rollbackVersion', projectId)
     }
   },
+  // ============================================================================
+  // 游戏模式 API（Spec: add-game-mode-framework / Task 5）
+  // ============================================================================
+  // 与 writing 命名空间结构对齐：invoke 方法 + 流式事件监听器
+  // 流式事件监听器模式参考 writing.onPolishChunk / onPolishComplete / onPolishError
+  //
+  // 流式事件通道：
+  //   - game:narrative:chunk      流式文本片段
+  //   - game:narrative:complete   生成完成
+  //   - game:narrative:error       生成错误
+  //   - game:table:updated         表格被 tableEdit 更新后推送
+  //
+  // 每个监听器返回 unsubscribe 函数（与 writing 模式一致）
+  game: {
+    // ========== 游戏元数据 CRUD ==========
+    list: () => ipcRenderer.invoke('game:list'),
+    getMeta: (gameId: string) => ipcRenderer.invoke('game:getMeta', gameId),
+    createGame: (meta: GameMeta) => ipcRenderer.invoke('game:createGame', meta),
+    updateGame: (gameId: string, updates: Partial<GameMeta>) =>
+      ipcRenderer.invoke('game:updateGame', gameId, updates),
+    deleteGame: (gameId: string) => ipcRenderer.invoke('game:deleteGame', gameId),
+
+    // ========== 存档 CRUD ==========
+    createSave: (params: {
+      gameId: string;
+      gameType: import('../shared/types/game.types').GameType;
+      name: string;
+      isAuto: boolean;
+      tableSchema: import('../shared/types/game.types').GameTableSchema;
+      initialState?: Record<string, any>;
+    }) => ipcRenderer.invoke('game:createSave', params),
+    loadSave: (saveId: string) => ipcRenderer.invoke('game:loadSave', saveId),
+    listSaves: (gameId: string) => ipcRenderer.invoke('game:listSaves', gameId),
+    deleteSave: (saveId: string) => ipcRenderer.invoke('game:deleteSave', saveId),
+    save: (
+      saveId: string,
+      updates: {
+        narrativeLog?: GameSaveData['narrativeLog'];
+        stateSnapshot?: Record<string, any>;
+        currentTurn?: number | null;
+        currentNodeId?: string | null;
+        nodeTitle?: string | null;
+        turnCount?: number;
+      }
+    ) => ipcRenderer.invoke('game:save', saveId, updates),
+
+    // ========== 表格数据 CRUD + 版本快照 ==========
+    getTableData: (saveId: string) => ipcRenderer.invoke('game:getTableData', saveId),
+    saveTableData: (saveId: string, tableData: GameTableData) =>
+      ipcRenderer.invoke('game:saveTableData', saveId, tableData),
+    applyTableEdits: (saveId: string, commands: GameTableEditCommand[]) =>
+      ipcRenderer.invoke('game:applyTableEdits', saveId, commands),
+    getVersionSnapshot: (saveId: string) =>
+      ipcRenderer.invoke('game:getVersionSnapshot', saveId),
+    confirmVersion: (saveId: string) => ipcRenderer.invoke('game:confirmVersion', saveId),
+    rollbackVersion: (saveId: string) => ipcRenderer.invoke('game:rollbackVersion', saveId),
+
+    // ========== AI 叙事生成 ==========
+    generateNarrative: (request: GameNarrativeRequest) =>
+      ipcRenderer.invoke('game:generateNarrative', request),
+    cancelGeneration: (saveId: string) =>
+      ipcRenderer.invoke('game:cancelGeneration', saveId),
+
+    // ========== 游戏本地配置 ==========
+    getConfig: (gameId: string) => ipcRenderer.invoke('game:getConfig', gameId),
+    saveConfig: (gameId: string, config: GameLocalConfig) =>
+      ipcRenderer.invoke('game:saveConfig', gameId, config),
+
+    // ========== 流式事件监听器 ==========
+    /**
+     * 监听流式 chunk 事件
+     * @param callback 接收 { saveId, chunk, index }
+     * @returns unsubscribe 函数
+     */
+    onNarrativeChunk: (callback: (data: GameNarrativeChunk) => void) => {
+      const handler = (_event: any, data: GameNarrativeChunk) => callback(data);
+      ipcRenderer.on('game:narrative:chunk', handler);
+      return () => ipcRenderer.removeListener('game:narrative:chunk', handler);
+    },
+    /**
+     * 监听生成完成事件
+     * @param callback 接收 GameNarrativeComplete
+     * @returns unsubscribe 函数
+     */
+    onNarrativeComplete: (callback: (data: GameNarrativeComplete) => void) => {
+      const handler = (_event: any, data: GameNarrativeComplete) => callback(data);
+      ipcRenderer.on('game:narrative:complete', handler);
+      return () => ipcRenderer.removeListener('game:narrative:complete', handler);
+    },
+    /**
+     * 监听生成错误事件
+     * @param callback 接收 { saveId, error, code }
+     * @returns unsubscribe 函数
+     */
+    onNarrativeError: (callback: (data: GameNarrativeError) => void) => {
+      const handler = (_event: any, data: GameNarrativeError) => callback(data);
+      ipcRenderer.on('game:narrative:error', handler);
+      return () => ipcRenderer.removeListener('game:narrative:error', handler);
+    },
+    /**
+     * 监听表格更新事件（在 tableEdit 命令应用成功后推送）
+     * @param callback 接收 { saveId, changes }
+     * @returns unsubscribe 函数
+     */
+    onTableUpdated: (callback: (data: GameTableUpdated) => void) => {
+      const handler = (_event: any, data: GameTableUpdated) => callback(data);
+      ipcRenderer.on('game:table:updated', handler);
+      return () => ipcRenderer.removeListener('game:table:updated', handler);
+    }
+  },
   prompt: {
     getAll: () => ipcRenderer.invoke('prompt:getAll'),
     get: (moduleId: string) => ipcRenderer.invoke('prompt:get', moduleId),
@@ -485,5 +616,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     validate: (template: any) => ipcRenderer.invoke('prompt:validate', template),
     reset: (moduleId: string) => ipcRenderer.invoke('prompt:reset', moduleId),
     optimize: (request: any) => ipcRenderer.invoke('prompt:optimize', request)
+  },
+  // Token 计数 API（精确 cl100k_base，主进程加载）
+  token: {
+    count: (text: string): Promise<number> => ipcRenderer.invoke('token:count', text),
+    countBatch: (messages: Array<{ id: string; text: string }>): Promise<Array<{ id: string; count: number }>> =>
+      ipcRenderer.invoke('token:countBatch', messages)
   }
 });
