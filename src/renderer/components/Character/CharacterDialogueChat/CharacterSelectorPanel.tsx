@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { UserOutlined, HeartFilled } from '@ant-design/icons';
+import { Input } from 'antd';
+import { UserOutlined, HeartFilled, SearchOutlined } from '@ant-design/icons';
 import './CharacterSelectorPanel.css';
 
 interface Character {
@@ -35,16 +36,26 @@ const CharacterSelectorPanel: React.FC<CharacterSelectorPanelProps> = ({
   const [avatarCache, setAvatarCache] = useState<Record<string, string>>({});
   const [avatarLoading, setAvatarLoading] = useState<Record<string, boolean>>({});
   const [avatarError, setAvatarError] = useState<Record<string, boolean>>({});
+  const [searchKeyword, setSearchKeyword] = useState('');
+
+  const filteredCharacters = React.useMemo(() => {
+    const keyword = searchKeyword.trim().toLowerCase();
+    if (!keyword) return characters;
+    return characters.filter((c) => {
+      const name = (c.characterName || c.name || '').toLowerCase();
+      return name.includes(keyword);
+    });
+  }, [characters, searchKeyword]);
 
   const sortedCharacters = React.useMemo(() => {
     if (favoritePaths.length === 0) {
-      return characters;
+      return filteredCharacters;
     }
     const favoriteSet = new Set(favoritePaths);
-    const favorites = characters.filter((c) => favoriteSet.has(c.path));
-    const nonFavorites = characters.filter((c) => !favoriteSet.has(c.path));
+    const favorites = filteredCharacters.filter((c) => favoriteSet.has(c.path));
+    const nonFavorites = filteredCharacters.filter((c) => !favoriteSet.has(c.path));
     return [...favorites, ...nonFavorites];
-  }, [characters, favoritePaths]);
+  }, [filteredCharacters, favoritePaths]);
 
   const loadAvatar = useCallback(async (character: Character) => {
     if (avatarCache[character.path] || avatarError[character.path] || avatarLoading[character.path]) {
@@ -89,14 +100,14 @@ const CharacterSelectorPanel: React.FC<CharacterSelectorPanelProps> = ({
 
   useEffect(() => {
     if (selectedCharacterPath && listRef.current) {
-      const selectedIndex = characters.findIndex(c => c.path === selectedCharacterPath);
+      const selectedIndex = sortedCharacters.findIndex(c => c.path === selectedCharacterPath);
       if (selectedIndex >= 0) {
         const container = listRef.current;
         const targetScroll = selectedIndex * ITEM_HEIGHT;
         container.scrollTo({ top: targetScroll, behavior: 'smooth' });
       }
     }
-  }, [selectedCharacterPath, characters]);
+  }, [selectedCharacterPath, sortedCharacters]);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -104,8 +115,8 @@ const CharacterSelectorPanel: React.FC<CharacterSelectorPanelProps> = ({
         entries.forEach(entry => {
           if (entry.isIntersecting) {
             const index = Number((entry.target as HTMLElement).dataset.index);
-            if (!isNaN(index) && characters[index]) {
-              loadAvatar(characters[index]);
+            if (!isNaN(index) && sortedCharacters[index]) {
+              loadAvatar(sortedCharacters[index]);
             }
           }
         });
@@ -117,7 +128,7 @@ const CharacterSelectorPanel: React.FC<CharacterSelectorPanelProps> = ({
     items?.forEach(item => observer.observe(item));
 
     return () => observer.disconnect();
-  }, [characters, loadAvatar]);
+  }, [sortedCharacters, loadAvatar]);
 
   if (characters.length === 0) {
     return (
@@ -136,11 +147,29 @@ const CharacterSelectorPanel: React.FC<CharacterSelectorPanelProps> = ({
   return (
     <div className="character-selector-panel">
       <div className="character-selector-title">角色卡</div>
+      <div className="character-selector-search">
+        <Input
+          prefix={<SearchOutlined style={{ color: 'var(--char-selector-name-color, #8c8c8c)', fontSize: '12px' }} />}
+          placeholder="搜索角色..."
+          value={searchKeyword}
+          onChange={(e) => setSearchKeyword(e.target.value)}
+          allowClear
+          size="small"
+        />
+      </div>
       <div
         ref={listRef}
         className="character-selector-list"
         onWheel={handleWheel}
       >
+        {sortedCharacters.length === 0 && searchKeyword.trim() && (
+          <div className="character-selector-empty">
+            <div className="character-selector-empty-icon">
+              <SearchOutlined />
+            </div>
+            <div>未找到匹配角色</div>
+          </div>
+        )}
         {sortedCharacters.map((character, index) => {
           const isSelected = character.path === selectedCharacterPath;
           const displayName = character.characterName || character.name;

@@ -12,6 +12,7 @@ import { useFavoritesStore } from '../../../stores/favoritesStore';
 import { exportConversation } from './CharacterDialogueChat.utils';
 import { CharacterInfo, AIParameterConfig } from './CharacterDialogueChat.types';
 import { getDefaultEngineCapabilities } from '../../Common/ChatEngine/ChatEngine.types';
+import './CharacterDialogueChat.css';
 
 interface CharacterSelectorItem {
   name: string;
@@ -33,6 +34,11 @@ interface CharacterDialogueChatProps {
   characters?: CharacterSelectorItem[];
   onCharacterSelect?: (character: CharacterSelectorItem) => void;
 }
+
+const EXPORT_MENU_ITEMS = [
+  { key: 'copy', label: '复制到剪贴板' },
+  { key: 'save', label: '保存为文件' },
+];
 
 const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
   characterInfo,
@@ -59,6 +65,7 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
     cancelRequest,
     selectedPersona,
     personas,
+    personasLoading,
     characterConfig,
     updateConfig,
     saveConfig,
@@ -88,7 +95,6 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const [showScrollButton, setShowScrollButton] = useState(false);
-  const [personasLoading, setPersonasLoading] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [generatedReplyText, setGeneratedReplyText] = useState('');
   const [polishFlashKey, setPolishFlashKey] = useState(0);
@@ -99,11 +105,6 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [stateWithVersionInfo.messages, stateWithVersionInfo.isStreaming]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => setPersonasLoading(false), 2000);
-    return () => clearTimeout(timer);
-  }, []);
 
   useEffect(() => {
     if (isFullscreen) {
@@ -141,17 +142,42 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
-  const handleExport = useCallback(() => {
+  const handleSaveExport = useCallback(async (content: string) => {
+    try {
+      const dir = await window.electronAPI.file.selectDirectory();
+      if (!dir) return;
+      const now = new Date();
+      const pad = (n: number) => n.toString().padStart(2, '0');
+      const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+      const fileName = `${characterInfo.characterCardName}_对话_${stamp}.md`;
+      const sep = dir.endsWith('/') || dir.endsWith('\\') ? '' : (dir.includes('\\') ? '\\' : '/');
+      const fullPath = `${dir}${sep}${fileName}`;
+      const result = await window.electronAPI.file.write(fullPath, content);
+      if (result.success) {
+        message.success('对话已保存');
+      } else {
+        message.error(result.error || '保存失败');
+      }
+    } catch {
+      message.error('保存失败');
+    }
+  }, [characterInfo.characterCardName]);
+
+  const handleExportMenuClick = useCallback((key: string) => {
     if (stateWithVersionInfo.messages.length === 0) {
-      message.warning('No messages to export');
+      message.warning('暂无消息可导出');
       return;
     }
     const content = exportConversation(stateWithVersionInfo.messages, characterInfo.characterCardName);
-    navigator.clipboard.writeText(content).then(
-      () => message.success('Conversation exported to clipboard'),
-      () => message.error('Failed to export conversation')
-    );
-  }, [stateWithVersionInfo.messages, characterInfo.characterCardName]);
+    if (key === 'copy') {
+      navigator.clipboard.writeText(content).then(
+        () => message.success('已复制到剪贴板'),
+        () => message.error('复制失败')
+      );
+    } else if (key === 'save') {
+      handleSaveExport(content);
+    }
+  }, [stateWithVersionInfo.messages, characterInfo.characterCardName, handleSaveExport]);
 
   const handleClearChat = useCallback(() => {
     clearChat();
@@ -197,6 +223,13 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
   const handleCharacterSelectWithFavorite = useCallback((character: CharacterSelectorItem) => {
     onCharacterSelect?.(character);
   }, [onCharacterSelect]);
+
+  const handleQuickSwitchCharacter = useCallback((path: string) => {
+    const target = characters?.find(c => c.path === path);
+    if (target) {
+      onCharacterSelect?.(target);
+    }
+  }, [characters, onCharacterSelect]);
 
   // AI 用户回复生成回调（Spec: add-ai-user-reply-button / Task 4.3）
   // 调用 hook 的 generateUserReply，成功后暂存文本到 generatedReplyText，由 ChatInputBar 通过 prop 消费
@@ -301,115 +334,6 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
         wrapper: isFullscreen ? { padding: 0, maxWidth: '100%' } : {},
       }}
     >
-      <style>{`
-        @keyframes fadeInUp {
-          from {
-            opacity: 0;
-            transform: translateY(10px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-        @keyframes blink {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0; }
-        }
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-        .chat-area-bg {
-          position: absolute;
-          inset: 0;
-          overflow: hidden;
-          pointer-events: none;
-          z-index: 0;
-          transition: background 0.3s ease;
-        }
-        .chat-area-bg::before {
-          content: '';
-          position: absolute;
-          inset: 0;
-          background:
-            radial-gradient(ellipse at 20% 20%, var(--chat-area-radial-1) 0%, transparent 50%),
-            radial-gradient(ellipse at 80% 60%, var(--chat-area-radial-2) 0%, transparent 50%),
-            radial-gradient(ellipse at 50% 90%, var(--chat-area-radial-3) 0%, transparent 40%),
-            var(--chat-area-bg-gradient);
-        }
-        .chat-area-bg::after {
-          content: '';
-          position: absolute;
-          inset: 0;
-          background:
-            radial-gradient(ellipse at 70% 30%, var(--chat-area-radial-4) 0%, transparent 45%),
-            radial-gradient(ellipse at 30% 70%, var(--chat-area-radial-5) 0%, transparent 50%);
-        }
-        .chat-bg-orb {
-          position: absolute;
-          border-radius: 50%;
-          filter: blur(80px);
-          opacity: 0.4;
-        }
-        .chat-bg-orb:nth-child(1) {
-          width: 300px;
-          height: 300px;
-          top: -100px;
-          right: -50px;
-          background: radial-gradient(circle, var(--chat-area-radial-1) 0%, transparent 70%);
-        }
-        .chat-bg-orb:nth-child(2) {
-          width: 250px;
-          height: 250px;
-          bottom: 10%;
-          left: -80px;
-          background: radial-gradient(circle, var(--chat-area-radial-5) 0%, transparent 70%);
-        }
-        .chat-bg-orb:nth-child(3) {
-          width: 200px;
-          height: 200px;
-          top: 40%;
-          right: 20%;
-          background: radial-gradient(circle, var(--chat-area-radial-6) 0%, transparent 70%);
-        }
-        .chat-bg-grid {
-          position: absolute;
-          inset: 0;
-          background-image:
-            radial-gradient(circle at 1px 1px, var(--chat-bg-grid-color) 1px, transparent 0);
-          background-size: 32px 32px;
-          pointer-events: none;
-          z-index: 0;
-          transition: background-image 0.3s ease;
-        }
-        .chat-messages::-webkit-scrollbar {
-          width: 6px;
-        }
-        .chat-messages::-webkit-scrollbar-track {
-          background: transparent;
-        }
-        .chat-messages::-webkit-scrollbar-thumb {
-          background: var(--chat-scrollbar-thumb);
-          border-radius: 3px;
-          transition: background 0.3s ease;
-        }
-        .chat-messages::-webkit-scrollbar-thumb:hover {
-          background: var(--chat-scrollbar-thumb-hover);
-        }
-        .chat-messages {
-          scrollbar-width: thin;
-          scrollbar-color: var(--chat-scrollbar-thumb) transparent;
-        }
-        .chat-textarea::-webkit-scrollbar {
-          width: 0;
-          height: 0;
-        }
-        .chat-textarea {
-          scrollbar-width: none;
-          -ms-overflow-style: none;
-        }
-      `}</style>
 
       {showSelectorPanel && (
         <CharacterSelectorPanel
@@ -442,7 +366,10 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
           messageCount={stateWithVersionInfo.messages.length}
           onClear={handleClearChat}
           onClose={isFullscreen ? handleToggleFullscreen : onClose}
-          onExport={handleExport}
+          exportMenu={EXPORT_MENU_ITEMS}
+          onExportMenuClick={handleExportMenuClick}
+          characters={characters}
+          onQuickSwitchCharacter={handleQuickSwitchCharacter}
           avatarPath={avatarPath}
           isFullscreen={isFullscreen}
           onToggleFullscreen={handleToggleFullscreen}
@@ -491,13 +418,13 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
                 margin: '0 0 12px 0',
                 fontSize: isFullscreen ? '24px' : '20px',
                 fontWeight: 600,
-                color: 'var(--chat-empty-text-primary, #e2e8f0)',
+                color: 'var(--chat-empty-text-primary, #1a1a2e)',
               }}>
-                Start chatting with {characterInfo.characterCardName}
+                开始与 {characterInfo.characterCardName} 对话
               </h3>
               <p style={{ margin: 0, fontSize: '15px', lineHeight: 1.6 }}>
-                Send a message to begin the conversation.<br />
-                The AI will respond based on the character's role settings.
+                发送消息开始对话，<br />
+                AI 将根据角色设定进行回复。
               </p>
             </div>
           )}
@@ -544,7 +471,7 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
           <div ref={messagesEndRef} />
 
           {showScrollButton && (
-            <Tooltip title="Scroll to bottom">
+            <Tooltip title="滚动到底部">
               <Button
                 type="primary"
                 size="small"

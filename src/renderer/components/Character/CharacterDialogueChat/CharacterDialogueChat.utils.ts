@@ -37,13 +37,13 @@ export function formatTimestamp(timestamp: number): string {
 }
 
 export function exportConversation(messages: ChatMessage[], characterName: string): string {
-  let output = `# Conversation with ${characterName}\n\n`;
-  output += `Exported at: ${new Date().toLocaleString()}\n\n`;
+  let output = `# 与 ${characterName} 的对话\n\n`;
+  output += `导出时间：${new Date().toLocaleString()}\n\n`;
   output += `---\n\n`;
 
   messages.forEach(msg => {
-    const role = msg.role === 'user' ? 'You' : characterName;
-    output += `### ${role} (${formatTimestamp(msg.timestamp)})\n\n`;
+    const role = msg.role === 'user' ? '我' : characterName;
+    output += `### ${role}（${formatTimestamp(msg.timestamp)}）\n\n`;
     output += `${msg.content}\n\n`;
     output += `---\n\n`;
   });

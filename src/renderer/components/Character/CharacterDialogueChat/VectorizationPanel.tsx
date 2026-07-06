@@ -38,8 +38,8 @@ const VectorizationPanel: React.FC<VectorizationPanelProps> = ({
             {collapsed ? <RightOutlined /> : <DownOutlined />}
           </div>
           <AppstoreOutlined className="vectorization-icon" />
-          <span>向量化设置</span>
-          <Tooltip title="绑定知识库文档，用于对话时的向量检索和上下文增强">
+          <span>知识库检索</span>
+          <Tooltip title="绑定知识库文档，对话时自动检索相关内容注入上下文。向量化模型请在系统设置中配置。">
             <QuestionCircleOutlined className="vectorization-tooltip-icon" />
           </Tooltip>
         </div>

@@ -26,6 +26,28 @@
   flex-shrink: 0;
 }
 
+.character-selector-search {
+  padding: 8px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--config-panel-divider, rgba(255, 255, 255, 0.08));
+}
+
+.character-selector-search .ant-input-affix-wrapper {
+  background: var(--char-selector-list-item-bg, rgba(0, 0, 0, 0.2));
+  border-color: var(--config-panel-divider, rgba(255, 255, 255, 0.08));
+  border-radius: 8px;
+}
+
+.character-selector-search .ant-input-affix-wrapper input {
+  color: var(--char-selector-name-color, #e2e8f0);
+  font-size: 12px;
+}
+
+.character-selector-search .ant-input-affix-wrapper input::placeholder {
+  color: var(--char-selector-name-color, #8c8c8c);
+  opacity: 0.7;
+}
+
 .character-selector-list {
   flex: 1;
   overflow-y: auto;

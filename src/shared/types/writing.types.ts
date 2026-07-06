@@ -171,6 +171,8 @@ export interface WritingParameters {
   includeEnding?: boolean;
   chapterRangeStart?: number;
   chapterRangeEnd?: number;
+  customNovelTypeId?: string;     // 自定义小说类型ID（设置后覆盖 novelType 的模板）
+  customWritingStyleId?: string;  // 自定义写作风格ID（设置后覆盖 writingStyle 的模板）
 }
 
 // 模型配置
@@ -290,6 +292,9 @@ export interface ContentGenerationRequest {
     totalChunks: number;
     isLastChunk: boolean;
   };
+  // 自定义模板 ID（用于加载自定义小说类型/写作风格模板）
+  customNovelTypeId?: string;
+  customWritingStyleId?: string;
 }
 
 // 章节生成用户建议（简洁模式）
@@ -1200,6 +1205,33 @@ export interface ShardOutlineGenerationRequest {
     data?: Record<string, Record<string, any>[]>;
     sheetDescriptions?: Record<string, string>;
   };
+}
+
+// ==================== 自定义模板类型 ====================
+
+// 自定义小说类型模板
+export interface CustomNovelTypeTemplate {
+  id: string;                    // 唯一ID，预置模板使用枚举值，自定义模板使用 'custom_' 前缀
+  name: string;                  // 类型名称
+  systemPrompt: string;          // 系统提示词
+  outlineStructure: string[];    // 大纲结构要求
+  writingStyle: string;          // 写作风格描述
+  typicalChapterLength: number;  // 典型章节字数
+  isPreset: boolean;             // 是否为预置模板
+  baseType?: NovelType;          // 基于哪个预置类型创建（复制时记录）
+  createdAt: number;
+  updatedAt: number;
+}
+
+// 自定义写作风格模板
+export interface CustomWritingStyleTemplate {
+  id: string;          // 唯一ID，预置模板使用枚举值，自定义模板使用 'custom_' 前缀
+  name: string;        // 风格名称
+  description: string; // 风格详细描述（对应 StyleGuidance 的内容）
+  isPreset: boolean;   // 是否为预置模板
+  baseStyle?: WritingStyle; // 基于哪个预置风格创建（复制时记录）
+  createdAt: number;
+  updatedAt: number;
 }
 
 // 分片大纲生成结果

@@ -108,12 +108,18 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
         engineCapabilities={engineCapabilities}
       />
       <div className="config-panel-divider" />
+      <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--config-panel-sub-title-color)', marginBottom: 8 }}>
+        记忆与上下文增强
+      </div>
       <VectorizationPanel
         characterCardId={characterCardId}
         boundKnowledgeBaseIds={boundKnowledgeBaseIds}
         onBindKnowledgeBase={onBindKnowledgeBase}
         onUnbindKnowledgeBase={onUnbindKnowledgeBase}
       />
+      <div style={{ fontSize: '12px', color: 'var(--config-panel-sub-text-color, #94a3b8)', marginTop: 4 }}>
+        从文档中检索相关知识注入上下文
+      </div>
       <div className="config-panel-divider" />
       <MemoryTablePanel
         enabled={memoryTableEnabled}
@@ -127,6 +133,9 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
         onOrganizeModeChange={onMemoryTableOrganizeModeChange}
         onTemplateAssociate={onMemoryTableTemplateAssociate}
       />
+      <div style={{ fontSize: '12px', color: 'var(--config-panel-sub-text-color, #94a3b8)', marginTop: 4 }}>
+        AI 自动整理对话中的关键信息到表格
+      </div>
       <div className="config-panel-divider" />
       <TokenManagementPanel
         config={tokenManagementConfig}

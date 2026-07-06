@@ -130,6 +130,7 @@ const ChatInputBar: React.FC<ChatInputBarProps> = ({
           background: rgba(99, 102, 241, 0.3) !important;
         }
       `}</style>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
       <textarea
         ref={textareaRef}
         value={input}
@@ -139,7 +140,7 @@ const ChatInputBar: React.FC<ChatInputBarProps> = ({
         disabled={(disabled && !isStreaming) || isGeneratingUserReply || isPolishingInput}
         rows={1}
         style={{
-          flex: 1,
+          width: '100%',
           background: 'var(--chat-input-bg, rgba(15, 15, 26, 0.8))',
           border: '1px solid var(--chat-input-border, rgba(255, 255, 255, 0.1))',
           borderRadius: '24px',
@@ -171,9 +172,15 @@ const ChatInputBar: React.FC<ChatInputBarProps> = ({
         }}
         className="chat-textarea"
       />
+      {!isStreaming && !isOrganizing && (
+        <div style={{ textAlign: 'right', fontSize: '11px', color: 'var(--chat-input-placeholder, #8c8c8c)', paddingTop: '4px', paddingRight: '4px' }}>
+          Enter 发送 · Shift+Enter 换行
+        </div>
+      )}
+      </div>
 
       {isStreaming ? (
-        <Tooltip title="Stop generating">
+        <Tooltip title="停止生成">
           <Button
             type="primary"
             danger
@@ -304,7 +311,7 @@ const ChatInputBar: React.FC<ChatInputBarProps> = ({
               }}
             />
           </Tooltip>
-          <Tooltip title="Send message">
+          <Tooltip title="发送消息">
             <Button
               type="primary"
               icon={<SendOutlined />}

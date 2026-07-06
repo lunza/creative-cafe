@@ -1,6 +1,7 @@
-import React from 'react';
-import { Button, Space, Tooltip } from 'antd';
-import { ClearOutlined, ExportOutlined, CloseOutlined, RobotOutlined, FullscreenOutlined, FullscreenExitOutlined, UserOutlined, HeartOutlined, HeartFilled } from '@ant-design/icons';
+import React, { useMemo } from 'react';
+import { Button, Space, Tooltip, Dropdown } from 'antd';
+import type { MenuProps } from 'antd';
+import { ClearOutlined, ExportOutlined, CloseOutlined, RobotOutlined, FullscreenOutlined, FullscreenExitOutlined, UserOutlined, HeartOutlined, HeartFilled, QuestionCircleOutlined, DownOutlined } from '@ant-design/icons';
 
 interface ChatHeaderProps {
   characterName: string;
@@ -8,7 +9,10 @@ interface ChatHeaderProps {
   messageCount: number;
   onClear: () => void;
   onClose: () => void;
-  onExport?: () => void;
+  exportMenu?: MenuProps['items'];
+  onExportMenuClick?: (key: string) => void;
+  characters?: Array<{ name: string; path: string; characterName?: string }>;
+  onQuickSwitchCharacter?: (path: string) => void;
   avatarPath?: string;
   isFullscreen?: boolean;
   onToggleFullscreen?: () => void;
@@ -23,7 +27,10 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
   messageCount,
   onClear,
   onClose,
-  onExport,
+  exportMenu,
+  onExportMenuClick,
+  characters,
+  onQuickSwitchCharacter,
   avatarPath,
   isFullscreen = false,
   onToggleFullscreen,
@@ -31,6 +38,26 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
   isFavorite = false,
   onToggleFavorite,
 }) => {
+  const hasCharacterList = !!characters && characters.length > 0;
+
+  const characterMenuItems = useMemo<MenuProps['items']>(() => {
+    if (!hasCharacterList) return [];
+    const items: { key: string; label: string; disabled?: boolean }[] = characters!.slice(0, 50).map((c) => ({
+      key: c.path,
+      label: c.characterName || c.name,
+    }));
+    if (characters!.length > 50) {
+      items.push({ key: '__more__', label: '更多角色请在侧栏切换', disabled: true });
+    }
+    return items;
+  }, [characters, hasCharacterList]);
+
+  const handleCharacterMenuClick = ({ key }: { key: string }) => {
+    if (key !== '__more__') {
+      onQuickSwitchCharacter?.(key);
+    }
+  };
+
   return (
     <div style={{
       display: 'flex',
@@ -83,23 +110,35 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
               />
             </Tooltip>
           )}
-          <div>
-          <h3 style={{
-            margin: 0,
-            fontSize: isFullscreen ? '18px' : '16px',
-            fontWeight: 600,
-            color: 'var(--chat-header-text-primary, #e2e8f0)',
-          }}>
-            {characterName || 'Test Character'}
-          </h3>
-          <p style={{
-            margin: 0,
-            fontSize: '12px',
-            color: 'var(--chat-header-text-secondary, #6b7280)',
-          }}>
-            {messageCount} messages {characterCardContent ? '• Roleplay mode' : ''}
-          </p>
-        </div>
+          <Dropdown
+            menu={{ items: characterMenuItems, onClick: handleCharacterMenuClick }}
+            trigger={['click']}
+            disabled={!hasCharacterList}
+          >
+            <div style={{ cursor: hasCharacterList ? 'pointer' : 'default' }}>
+              <h3 style={{
+                margin: 0,
+                fontSize: isFullscreen ? '18px' : '16px',
+                fontWeight: 600,
+                color: 'var(--chat-header-text-primary, #e2e8f0)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+              }}>
+                {characterName || 'Test Character'}
+                {hasCharacterList && (
+                  <DownOutlined style={{ fontSize: '12px', color: 'var(--chat-header-text-secondary, #8c8c8c)' }} />
+                )}
+              </h3>
+              <p style={{
+                margin: 0,
+                fontSize: '12px',
+                color: 'var(--chat-header-text-secondary, #8c8c8c)',
+              }}>
+                {messageCount} 条消息{characterCardContent ? ' • 角色扮演模式' : ''}
+              </p>
+            </div>
+          </Dropdown>
       </div>
 
       <Space size="small">
@@ -134,19 +173,28 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
             </span>
           </div>
         )}
-        {onExport && (
-          <Tooltip title="Export conversation">
-            <Button
-              type="text"
-              icon={<ExportOutlined />}
-              onClick={onExport}
-              size="small"
-              style={{ color: 'var(--chat-header-btn-color, #9ca3af)' }}
-            />
-          </Tooltip>
+        {exportMenu && (
+          <Dropdown menu={{ items: exportMenu, onClick: (e) => onExportMenuClick?.(e.key) }} trigger={['click']}>
+            <Tooltip title="导出对话">
+              <Button
+                type="text"
+                icon={<ExportOutlined />}
+                size="small"
+                style={{ color: 'var(--chat-header-btn-color, #8c8c8c)' }}
+              />
+            </Tooltip>
+          </Dropdown>
         )}
+        <Tooltip title="Enter 发送 · Shift+Enter 换行 · Esc 取消生成">
+          <Button
+            type="text"
+            icon={<QuestionCircleOutlined />}
+            size="small"
+            style={{ color: 'var(--chat-header-btn-color, #8c8c8c)' }}
+          />
+        </Tooltip>
         {messageCount > 0 && (
-          <Tooltip title="Clear conversation">
+          <Tooltip title="清空对话">
             <Button
               type="text"
               danger
@@ -157,23 +205,23 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
           </Tooltip>
         )}
         {onToggleFullscreen && (
-          <Tooltip title={isFullscreen ? 'Restore window' : 'Fullscreen'}>
+          <Tooltip title={isFullscreen ? '退出全屏' : '全屏'}>
             <Button
               type="text"
               icon={isFullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
               onClick={onToggleFullscreen}
               size="small"
-              style={{ color: isFullscreen ? 'var(--primary-color, #6366f1)' : 'var(--text-secondary, #9ca3af)' }}
+              style={{ color: isFullscreen ? 'var(--primary-color, #6366f1)' : 'var(--text-secondary, #8c8c8c)' }}
             />
           </Tooltip>
         )}
-        <Tooltip title={isFullscreen ? 'Exit fullscreen' : 'Close'}>
+        <Tooltip title={isFullscreen ? '退出全屏' : '关闭'}>
           <Button
             type="text"
             icon={isFullscreen ? <FullscreenExitOutlined /> : <CloseOutlined />}
             onClick={onClose}
             size="small"
-            style={{ color: 'var(--text-secondary, #9ca3af)' }}
+            style={{ color: 'var(--text-secondary, #8c8c8c)' }}
           />
         </Tooltip>
       </Space>

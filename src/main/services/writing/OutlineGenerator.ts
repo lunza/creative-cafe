@@ -5,7 +5,9 @@ import {
   ChapterOutline,
   WritingError,
   WritingErrorCode,
-  ChainOfThought
+  ChainOfThought,
+  CustomNovelTypeTemplate,
+  CustomWritingStyleTemplate
 } from '../../../shared/types/writing.types';
 import { promptBuilder } from './PromptBuilder';
 import { writingResourceManager } from '../WritingResourceManager';
@@ -34,13 +36,20 @@ export class OutlineGenerator {
     this.streamChunkCallback = callback;
   }
 
-  buildPrompt(request: OutlineGenerationRequest & { _resourceContext?: string; _writingStyleContext?: string }): ChatMessage[] {
+  buildPrompt(request: OutlineGenerationRequest & { 
+    _resourceContext?: string; 
+    _writingStyleContext?: string;
+    _customNovelTypeTemplate?: CustomNovelTypeTemplate;
+    _customWritingStyleTemplate?: CustomWritingStyleTemplate;
+  }): ChatMessage[] {
     const writingStyleContext = request._writingStyleContext || '';
     const systemPrompt = promptBuilder.buildSystemPrompt(
       request.parameters.novelType,
       request.parameters.writingStyle || this.getDefaultStyle(request.parameters.novelType),
       request.parameters.narrativePerspective,
-      writingStyleContext
+      writingStyleContext,
+      request._customNovelTypeTemplate,
+      request._customWritingStyleTemplate
     );
 
     const resourceContext = request._resourceContext || '';
@@ -49,7 +58,9 @@ export class OutlineGenerator {
       request.resources,
       request.parameters,
       resourceContext,
-      writingStyleContext
+      writingStyleContext,
+      request._customNovelTypeTemplate,
+      request._customWritingStyleTemplate
     );
 
     return [

@@ -14,7 +14,9 @@ import {
   ShardOutlineGenerationRequest,
   ShardOutlineGenerationResult,
   ShardContentGenerationRequest,
-  WritingResourceConfig
+  WritingResourceConfig,
+  CustomNovelTypeTemplate,
+  CustomWritingStyleTemplate
 } from '../../../shared/types/writing.types';
 import { promptBuilder } from './PromptBuilder';
 import { writingResourceManager } from '../WritingResourceManager';
@@ -22,6 +24,7 @@ import { aiConfigProvider } from '../ai/AIConfigProvider';
 import { addLog, generateNewRequestId } from '../memory/chatLogService';
 import { chapterChunkService } from './ChapterChunkService';
 import { SSEStreamParser } from '../ai/SSEStreamParser';
+import { writingTemplateRepository } from './WritingTemplateRepository';
 
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -40,12 +43,14 @@ export class ContentGenerator {
    */
   private readonly streamParser: SSEStreamParser = new SSEStreamParser();
 
-  buildPrompt(request: ContentGenerationRequest): ChatMessage[] {
+  buildPrompt(request: ContentGenerationRequest, customNovelTypeTemplate?: CustomNovelTypeTemplate, customWritingStyleTemplate?: CustomWritingStyleTemplate): ChatMessage[] {
     const systemPrompt = promptBuilder.buildSystemPrompt(
       this.getNovelTypeFromRequest(request),
       this.getStyleFromRequest(request),
       this.getPerspectiveFromRequest(request),
-      request.generationParams?.writingStyleContext
+      request.generationParams?.writingStyleContext,
+      customNovelTypeTemplate,
+      customWritingStyleTemplate
     );
 
     const resourceContext = this.buildResourceContext(request);
@@ -170,7 +175,17 @@ export class ContentGenerator {
       throw this.createError(WritingErrorCode.AI_SERVICE_UNAVAILABLE, '未配置 AI 服务地址');
     }
 
-    const messages = this.enrichSystemPrompt(this.buildPrompt(request), engineSystemPrompt);
+    // 加载自定义模板（如有）
+    let customNovelTypeTemplate: CustomNovelTypeTemplate | undefined;
+    let customWritingStyleTemplate: CustomWritingStyleTemplate | undefined;
+    if (request.customNovelTypeId) {
+      customNovelTypeTemplate = await writingTemplateRepository.getCustomNovelTypeTemplate(request.customNovelTypeId) || undefined;
+    }
+    if (request.customWritingStyleId) {
+      customWritingStyleTemplate = await writingTemplateRepository.getCustomWritingStyleTemplate(request.customWritingStyleId) || undefined;
+    }
+
+    const messages = this.enrichSystemPrompt(this.buildPrompt(request, customNovelTypeTemplate, customWritingStyleTemplate), engineSystemPrompt);
     const promptString = messages.map(m => `[${m.role}]\n${m.content}`).join('\n\n---\n\n');
 
     addLog(`[Stage 3/6] 提示词生成`, 'debug');

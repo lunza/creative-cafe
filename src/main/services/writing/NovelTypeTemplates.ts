@@ -1,4 +1,5 @@
-import { NovelType, WritingStyle, NarrativePerspective } from '../../../shared/types/writing.types';
+import { NovelType, WritingStyle, NarrativePerspective, CustomNovelTypeTemplate, CustomWritingStyleTemplate } from '../../../shared/types/writing.types';
+import { WRITING_STYLE_LABELS } from '../../../shared/constants/writing.constants';
 
 export const NovelTypeTemplates: Record<NovelType, NovelTypeTemplate> = {
   [NovelType.WEB_NOVEL]: {
@@ -110,3 +111,32 @@ export const StyleGuidance: Record<WritingStyle, string> = {
   [WritingStyle.EPIC]: '格局宏大壮阔，语言气势磅礴，注重历史厚重感和英雄气概的描写。情节跨越广阔的时间跨度和地理空间，涉及众多人物和复杂的势力格局，展现波澜壮阔的历史画卷。节奏控制大开大合，在宏大的战争场面或历史转折处放慢节奏详细铺陈，在人物命运的关键抉择处加重笔墨，形成史诗般的阅读体验。情感渲染以家国情怀、英雄壮志、悲壮牺牲等宏大情感为主，个人的情感命运与时代的洪流紧密相连。场景描写注重宏大场面的呈现，善用壮丽的自然景观和惨烈的战争场面来烘托史诗氛围。对话风格庄重有力，人物之间的交流充满使命感和责任感，即使是日常对话也蕴含着深刻的历史意义和命运感。',
   [WritingStyle.DETAILED]: '描写极其精细入微，注重每一个场景、动作、心理活动的详细呈现，让读者如同身临其境般感受故事的每一个细节。情节推进不急不躁，在关键场景和重要情节上放慢节奏，用大量的细节描写来构建真实感和沉浸感。节奏控制细腻绵长，善于在看似平淡的日常中挖掘丰富的细节层次，让读者在细微之处感受人物的情感和故事的温度。情感渲染通过细节的累积来达成，不依赖强烈的情感爆发，而是通过一个眼神、一个动作、一件物品的反复出现来传递深层情感。场景描写注重多感官的全方位呈现，视觉、听觉、嗅觉、触觉、味觉的综合运用让场景立体生动。对话风格注重潜台词和微表情的刻画，人物说话时的语气变化、停顿节奏、伴随的小动作都被详细记录，让读者透过文字感受到人物的内心波澜。'
 };
+
+// ==================== 预置模板转换函数 ====================
+
+// 获取所有预置小说类型模板（统一格式）
+export function getPresetNovelTypeTemplates(): CustomNovelTypeTemplate[] {
+  return Object.entries(NovelTypeTemplates).map(([type, template]) => ({
+    id: type,
+    name: template.name,
+    systemPrompt: template.systemPrompt,
+    outlineStructure: template.outlineStructure,
+    writingStyle: template.writingStyle,
+    typicalChapterLength: template.typicalChapterLength,
+    isPreset: true,
+    createdAt: 0,
+    updatedAt: 0
+  }));
+}
+
+// 获取所有预置写作风格模板（统一格式）
+export function getPresetWritingStyleTemplates(): CustomWritingStyleTemplate[] {
+  return Object.entries(StyleGuidance).map(([style, description]) => ({
+    id: style,
+    name: WRITING_STYLE_LABELS[style as WritingStyle] || style,
+    description,
+    isPreset: true,
+    createdAt: 0,
+    updatedAt: 0
+  }));
+}

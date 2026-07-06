@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { Spin, message } from 'antd';
+import { Spin, message, Modal } from 'antd';
 import { LoadingOutlined } from '@ant-design/icons';
 import { CharacterDialogueChat } from '../Character/CharacterDialogueChat';
 import { CharacterSelectorPanel } from '../Character/CharacterDialogueChat';
@@ -111,23 +111,21 @@ export const UnifiedChatDialog: React.FC<UnifiedChatDialogProps> = ({
     onClose();
   }, [onClose]);
 
-  // 首次加载时显示全屏 loading
+  // 首次加载时显示 Modal 内 loading（避免全屏阻塞）
   if (isLoading && !characterInfo) {
     return (
-      <div style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 10000,
-        background: 'rgba(0, 0, 0, 0.6)',
-      }}>
+      <Modal
+        open={open}
+        onCancel={onClose}
+        footer={null}
+        centered
+        width={400}
+        closable={false}
+        maskClosable={false}
+        styles={{ body: { textAlign: 'center', padding: '40px 20px' } }}
+      >
         <Spin size="large" tip="加载角色卡中..." />
-      </div>
+      </Modal>
     );
   }
 

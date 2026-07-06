@@ -208,6 +208,10 @@
   --config-panel-button-active-text: #ffffff;
   --config-panel-button-active-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
 
+  --fullscreen-dialog-header-bg: linear-gradient(135deg, #f0f2f5 0%, #e8eaf0 100%);
+  --fullscreen-dialog-header-border: rgba(0,0,0,0.08);
+  --fullscreen-dialog-title-color: #1a1a2e;
+
   /* 滚动条 - Scrollbar */
   --scrollbar-size: 8px;
   --scrollbar-track-bg: var(--bg-base);
@@ -653,6 +657,10 @@
   --config-panel-button-active-bg: var(--primary-color, #6366f1);
   --config-panel-button-active-text: #ffffff;
   --config-panel-button-active-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
+
+  --fullscreen-dialog-header-bg: linear-gradient(135deg, #1e1e2e 0%, #2d2b42 100%);
+  --fullscreen-dialog-header-border: rgba(255,255,255,0.08);
+  --fullscreen-dialog-title-color: #fff;
 
   /* 滚动条 - Scrollbar */
   --scrollbar-track-bg: var(--bg-base);

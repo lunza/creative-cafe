@@ -5,7 +5,9 @@ import {
   WritingParameters,
   WritingResourceConfig,
   ChapterOutline,
-  ShardOutline
+  ShardOutline,
+  CustomNovelTypeTemplate,
+  CustomWritingStyleTemplate
 } from '../../../shared/types/writing.types';
 import { WritingStyleResource, WritingStyleAnalysis } from '../../../shared/types/writing.types';
 import { NovelTypeTemplates, PerspectiveGuidance, StyleGuidance } from './NovelTypeTemplates';
@@ -15,10 +17,17 @@ export class PromptBuilder {
     type: NovelType,
     style: WritingStyle,
     perspective: NarrativePerspective,
-    writingStyleContext?: string
+    writingStyleContext?: string,
+    customNovelTypeTemplate?: CustomNovelTypeTemplate,
+    customWritingStyleTemplate?: CustomWritingStyleTemplate
   ): string {
-    const template = NovelTypeTemplates[type];
-    const styleGuide = StyleGuidance[style];
+    // 优先使用自定义模板，回退到预置模板
+    const template = customNovelTypeTemplate
+      ? { systemPrompt: customNovelTypeTemplate.systemPrompt, writingStyle: customNovelTypeTemplate.writingStyle }
+      : NovelTypeTemplates[type];
+    const styleGuide = customWritingStyleTemplate
+      ? customWritingStyleTemplate.description
+      : StyleGuidance[style];
     const perspectiveGuide = PerspectiveGuidance[perspective];
 
     return `${template.systemPrompt}
@@ -44,10 +53,17 @@ ${perspectiveGuide}
     resources: WritingResourceConfig,
     parameters: WritingParameters,
     resourceContext?: string,
-    writingStyleContext?: string
+    writingStyleContext?: string,
+    customNovelTypeTemplate?: CustomNovelTypeTemplate,
+    customWritingStyleTemplate?: CustomWritingStyleTemplate
   ): string {
-    const template = NovelTypeTemplates[parameters.novelType];
-    const styleGuide = StyleGuidance[parameters.writingStyle || WritingStyle.SERIOUS];
+    // 优先使用自定义模板，回退到预置模板
+    const template = customNovelTypeTemplate
+      ? { name: customNovelTypeTemplate.name, systemPrompt: customNovelTypeTemplate.systemPrompt, outlineStructure: customNovelTypeTemplate.outlineStructure, writingStyle: customNovelTypeTemplate.writingStyle, typicalChapterLength: customNovelTypeTemplate.typicalChapterLength }
+      : NovelTypeTemplates[parameters.novelType];
+    const styleGuide = customWritingStyleTemplate
+      ? customWritingStyleTemplate.description
+      : StyleGuidance[parameters.writingStyle || WritingStyle.SERIOUS];
     const perspectiveGuide = PerspectiveGuidance[parameters.narrativePerspective];
 
     const includeEnding = parameters.includeEnding !== false;

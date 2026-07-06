@@ -490,6 +490,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
       getVersionSnapshot: (projectId: string) => ipcRenderer.invoke('writing:table:getVersionSnapshot', projectId),
       confirmVersion: (projectId: string) => ipcRenderer.invoke('writing:table:confirmVersion', projectId),
       rollbackVersion: (projectId: string) => ipcRenderer.invoke('writing:table:rollbackVersion', projectId)
+    },
+    template: {
+      novelType: {
+        list: () => ipcRenderer.invoke('writing:template:novelType:list'),
+        get: (id: string) => ipcRenderer.invoke('writing:template:novelType:get', id),
+        save: (template: any) => ipcRenderer.invoke('writing:template:novelType:save', template),
+        delete: (id: string) => ipcRenderer.invoke('writing:template:novelType:delete', id),
+      },
+      writingStyle: {
+        list: () => ipcRenderer.invoke('writing:template:writingStyle:list'),
+        get: (id: string) => ipcRenderer.invoke('writing:template:writingStyle:get', id),
+        save: (template: any) => ipcRenderer.invoke('writing:template:writingStyle:save', template),
+        delete: (id: string) => ipcRenderer.invoke('writing:template:writingStyle:delete', id),
+      }
     }
   },
   // ============================================================================

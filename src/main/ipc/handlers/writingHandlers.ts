@@ -25,6 +25,7 @@ import { registerWritingChapterHandlers, abortAllActiveRequests } from './writin
 import { registerWritingTableHandlers } from './writing/writingTableHandlers';
 import { registerWritingStyleHandlers } from './writing/writingStyleHandlers';
 import { registerWritingPlotCheckHandlers } from './writing/writingPlotCheckHandlers';
+import { registerWritingTemplateHandlers } from './writing/writingTemplateHandlers';
 
 // 重新导出 abortAllActiveRequests，保持 main/index.ts 调用方式不变
 // （main/index.ts: import { registerWritingHandlers, abortAllActiveRequests } from './ipc/handlers/writingHandlers'）
@@ -37,4 +38,5 @@ export function registerWritingHandlers(): void {
   registerWritingTableHandlers();
   registerWritingStyleHandlers();
   registerWritingPlotCheckHandlers();
+  registerWritingTemplateHandlers();
 }

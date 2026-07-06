@@ -1,7 +1,9 @@
 import {
   WritingStyleResource,
   WritingStyleLearningRequest,
-  WritingStyleProgress
+  WritingStyleProgress,
+  CustomNovelTypeTemplate,
+  CustomWritingStyleTemplate
 } from '../../shared/types/writing.types';
 import type {
   PromptPolishRequest,
@@ -380,6 +382,21 @@ interface ElectronAPI {
       getAllTemplates: () => Promise<{ success: boolean; templates: any[]; error?: string }>;
       organizeTable: (projectId: string, modelConfig: any, chapterIndex?: number) => Promise<{ success: boolean; message: string; processedCount?: number; errorCount?: number; errors?: string[] }>;
       getOrganizeProgress: (projectId: string) => Promise<{ progress: number; status: string } | null>;
+    };
+    // 自定义模板管理 API
+    template: {
+      novelType: {
+        list: () => Promise<{ success: boolean; templates: CustomNovelTypeTemplate[]; error?: string }>;
+        get: (id: string) => Promise<{ success: boolean; template: CustomNovelTypeTemplate | null; error?: string }>;
+        save: (template: CustomNovelTypeTemplate) => Promise<{ success: boolean; id?: string; error?: string }>;
+        delete: (id: string) => Promise<{ success: boolean; error?: string }>;
+      };
+      writingStyle: {
+        list: () => Promise<{ success: boolean; templates: CustomWritingStyleTemplate[]; error?: string }>;
+        get: (id: string) => Promise<{ success: boolean; template: CustomWritingStyleTemplate | null; error?: string }>;
+        save: (template: CustomWritingStyleTemplate) => Promise<{ success: boolean; id?: string; error?: string }>;
+        delete: (id: string) => Promise<{ success: boolean; error?: string }>;
+      };
     };
   };
 

@@ -30,6 +30,7 @@ const KnowledgeBaseBindingPanel: React.FC<KnowledgeBaseBindingPanelProps> = ({
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [ragFeedback, setRagFeedback] = useState<{ hitCount: number; tokenCount: number; timestamp: number } | null>(null);
 
   const fetchKnowledgeBases = useCallback(async () => {
     try {
@@ -37,20 +38,17 @@ const KnowledgeBaseBindingPanel: React.FC<KnowledgeBaseBindingPanelProps> = ({
       setError(null);
 
       const result = await window.electronAPI.vector.getAvailableScopes();
-      console.log('Fetched scopes result:', result);
-      
+
       const scopes = result?.scopes || result || [];
       if (!Array.isArray(scopes)) {
         throw new Error('获取到的知识库数据格式不正确');
       }
-      
+
       const bindableTypes = ['knowledge', 'manual_knowledge', 'worldbook', 'character_chat'];
-      const knowledgeBaseScopes = scopes.filter(scope => 
+      const knowledgeBaseScopes = scopes.filter(scope =>
         bindableTypes.includes(scope.sourceType)
       );
-      
-      console.log('Filtered knowledge base scopes:', knowledgeBaseScopes);
-      
+
       const items: KnowledgeBaseItem[] = knowledgeBaseScopes.map(scope => ({
         id: scope.id,
         documentId: scope.sourceId,
@@ -72,6 +70,28 @@ const KnowledgeBaseBindingPanel: React.FC<KnowledgeBaseBindingPanelProps> = ({
   useEffect(() => {
     fetchKnowledgeBases();
   }, [fetchKnowledgeBases]);
+
+  useEffect(() => {
+    if (!characterCardId) {
+      setRagFeedback(null);
+      return;
+    }
+    try {
+      const raw = sessionStorage.getItem(`chat-rag-feedback-${characterCardId}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        setRagFeedback({
+          hitCount: parsed.hitCount,
+          tokenCount: parsed.tokenCount,
+          timestamp: parsed.timestamp,
+        });
+      } else {
+        setRagFeedback(null);
+      }
+    } catch {
+      setRagFeedback(null);
+    }
+  }, [characterCardId]);
 
   useEffect(() => {
     if (!characterCardId) return;
@@ -139,6 +159,18 @@ const KnowledgeBaseBindingPanel: React.FC<KnowledgeBaseBindingPanelProps> = ({
     return colors[type] || '#94a3b8';
   };
 
+  const getRelativeTime = (timestamp: number): string => {
+    const diff = Date.now() - timestamp;
+    const seconds = Math.floor(diff / 1000);
+    if (seconds < 60) return '刚刚';
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes} 分钟前`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours} 小时前`;
+    const days = Math.floor(hours / 24);
+    return `${days} 天前`;
+  };
+
   const renderOptionLabel = (item: KnowledgeBaseItem) => (
     <Space className="kb-select-option">
       <span className="kb-option-name">{item.documentName}</span>
@@ -146,6 +178,11 @@ const KnowledgeBaseBindingPanel: React.FC<KnowledgeBaseBindingPanelProps> = ({
       <Tag color={getSourceTypeColor(item.sourceType)} style={{ fontSize: '10px', padding: '0 4px' }}>
         {getSourceTypeLabel(item.sourceType)}
       </Tag>
+      {item.vectorCount > 0 ? (
+        <Tag color="success" style={{ fontSize: '10px', padding: '0 4px' }}>可检索</Tag>
+      ) : (
+        <Tag color="warning" style={{ fontSize: '10px', padding: '0 4px' }}>未向量化</Tag>
+      )}
     </Space>
   );
 
@@ -199,6 +236,14 @@ const KnowledgeBaseBindingPanel: React.FC<KnowledgeBaseBindingPanelProps> = ({
         <div className="knowledge-base-error">
           <InfoCircleOutlined className="error-icon" />
           <span>{error}</span>
+          <Button
+            size="small"
+            icon={<ReloadOutlined />}
+            onClick={fetchKnowledgeBases}
+            loading={loading}
+          >
+            重试
+          </Button>
         </div>
       ) : knowledgeBases.length === 0 ? (
         <div className="knowledge-base-empty">
@@ -240,6 +285,19 @@ const KnowledgeBaseBindingPanel: React.FC<KnowledgeBaseBindingPanelProps> = ({
                 <Tag key={name} color="blue" className="bound-tag">{name}</Tag>
               ))}
             </div>
+          )}
+        </div>
+      )}
+
+      {boundKnowledgeBaseIds.length > 0 && (
+        <div style={{ fontSize: '12px', color: 'var(--config-panel-sub-text-color, #94a3b8)', marginTop: 8 }}>
+          {ragFeedback ? (
+            <span>
+              上次检索：命中 {ragFeedback.hitCount} 条，注入约 {ragFeedback.tokenCount} Token
+              {ragFeedback.timestamp ? `（${getRelativeTime(ragFeedback.timestamp)}）` : ''}
+            </span>
+          ) : (
+            <span>尚无检索记录</span>
           )}
         </div>
       )}

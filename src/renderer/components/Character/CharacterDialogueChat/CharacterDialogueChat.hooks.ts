@@ -341,7 +341,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
   });
 
   const { config: characterConfig, updateConfig, resetParameters, getEffectiveParams } = useCharacterConfig(characterInfo.characterCardId);
-  const { personas } = usePersonas();
+  const { personas, loading: personasLoading } = usePersonas();
 
   const messagesRef = useRef<ChatMessage[]>([]);
   const firstMessageSentRef = useRef(false);
@@ -2459,6 +2459,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     cancelRequest,
     selectedPersona,
     personas,
+    personasLoading,
     characterConfig,
     updateConfig,
     saveConfig,

@@ -1,13 +1,13 @@
-import React, { useState, useCallback, useRef, useEffect, lazy, Suspense } from 'react';
+import React, { useState, useCallback, useRef, useEffect, lazy } from 'react';
 import {
   MessageOutlined,
   EditOutlined,
   TrophyOutlined,
-  HeartFilled,
-  CloseOutlined
+  HeartFilled
 } from '@ant-design/icons';
 import { Tooltip, message } from 'antd';
 import { SingleChatDialog } from './SingleChatDialog';
+import FullscreenDialog from './FullscreenDialog';
 import { useDataStore } from '../../stores/dataStore';
 import { useFavoritesStore } from '../../stores/favoritesStore';
 import './CreationCenter.css';
@@ -86,6 +86,7 @@ export const CreationCenter: React.FC = () => {
   const [showChatDialog, setShowChatDialog] = useState(false);
   const [showWritingDialog, setShowWritingDialog] = useState(false);
   const [showGameDialog, setShowGameDialog] = useState(false);
+  const [selectedCharacterPath, setSelectedCharacterPath] = useState<string | undefined>(undefined);
   const [flashingPanel, setFlashingPanel] = useState<ChatPanelType | null>(null);
   const [ripples, setRipples] = useState<Record<ChatPanelType, Ripple[]>>({
     chat: [],
@@ -135,6 +136,9 @@ export const CreationCenter: React.FC = () => {
     });
   }, [characters, favoritePaths]);
 
+  const loadedAvatarPathsRef = useRef<Set<string>>(new Set());
+  const loadingAvatarPathsRef = useRef<Set<string>>(new Set());
+
   const loadAvatar = useCallback(async (path: string) => {
     try {
       const isImageFile =
@@ -158,16 +162,13 @@ export const CreationCenter: React.FC = () => {
         const content = await window.electronAPI.character.read(path);
         if (content?.avatar) {
           let avatarUrl = content.avatar;
-          // 处理 avatar 可能是文件路径的情况
           if (avatarUrl && !avatarUrl.startsWith('data:')) {
-            // 如果 avatar 是文件路径（以 / 开头或包含 /）
             if (avatarUrl.startsWith('/') || avatarUrl.includes('/')) {
               const result = await window.electronAPI.file.readAsBase64(avatarUrl);
               if (result?.success && result.data) {
                 avatarUrl = result.data;
               }
             }
-            // 如果是纯 base64 字符串（没有 data: 前缀）
             else if (avatarUrl.length > 100) {
               let imgType = 'png';
               if (avatarUrl.includes('R0lG')) imgType = 'gif';
@@ -192,9 +193,6 @@ export const CreationCenter: React.FC = () => {
     }
   }, []);
 
-  const loadedAvatarPathsRef = useRef<Set<string>>(new Set());
-  const loadingAvatarPathsRef = useRef<Set<string>>(new Set());
-
   useEffect(() => {
     favoriteData.forEach((item) => {
       if (!item.avatarUrl && 
@@ -213,6 +211,7 @@ export const CreationCenter: React.FC = () => {
     (character: FavoriteCharacterData) => {
       const charData = characters.find((c) => c.path === character.path);
       if (charData) {
+        setSelectedCharacterPath(character.path);
         setShowChatDialog(true);
       }
     },
@@ -251,6 +250,7 @@ export const CreationCenter: React.FC = () => {
     setTimeout(() => setFlashingPanel(null), 300);
 
     if (panel === 'chat') {
+      setSelectedCharacterPath(undefined);
       setShowChatDialog(true);
     } else if (panel === 'creative') {
       setShowWritingDialog(true);
@@ -261,6 +261,7 @@ export const CreationCenter: React.FC = () => {
 
   const handleCloseChat = useCallback(() => {
     setShowChatDialog(false);
+    setSelectedCharacterPath(undefined);
   }, []);
 
   const handleCloseWriting = useCallback(() => {
@@ -383,181 +384,24 @@ export const CreationCenter: React.FC = () => {
       <SingleChatDialog
         isDialogMode={showChatDialog}
         onCloseDialog={handleCloseChat}
+        initialCharacterPath={selectedCharacterPath}
       />
 
-      <WritingModeDialog
+      <FullscreenDialog
         visible={showWritingDialog}
+        title="写作模式"
         onClose={handleCloseWriting}
-      />
+      >
+        <WritingModeEntry />
+      </FullscreenDialog>
 
-      <GameModeDialog
+      <FullscreenDialog
         visible={showGameDialog}
+        title="游戏模式"
         onClose={handleCloseGame}
-      />
-    </div>
-  );
-};
-
-interface WritingModeDialogProps {
-  visible: boolean;
-  onClose: () => void;
-}
-
-const WritingModeDialog: React.FC<WritingModeDialogProps> = ({ visible, onClose }) => {
-  if (!visible) return null;
-
-  return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 1000,
-        background: '#1a1a2e'
-      }}
-    >
-      <div
-        style={{
-          width: '100%',
-          height: '100%',
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden'
-        }}
       >
-        <div style={{
-          padding: '12px 20px',
-          background: 'linear-gradient(135deg, #1e1e2e 0%, #2d2b42 100%)',
-          borderBottom: '1px solid rgba(255,255,255,0.08)',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexShrink: 0
-        }}>
-          <h3 style={{ margin: 0, color: '#fff', fontSize: 16, fontWeight: 600 }}>写作模式</h3>
-          <button
-            onClick={onClose}
-            onMouseEnter={(e) => {
-              const btn = e.currentTarget as HTMLButtonElement;
-              btn.style.background = '#ff7875';
-              btn.style.transform = 'rotate(90deg) scale(1.1)';
-            }}
-            onMouseLeave={(e) => {
-              const btn = e.currentTarget as HTMLButtonElement;
-              btn.style.background = '#ff4d4f';
-              btn.style.transform = 'rotate(0deg) scale(1)';
-            }}
-            style={{
-              width: 36,
-              height: 36,
-              borderRadius: '50%',
-              background: '#ff4d4f',
-              border: 'none',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: 0,
-              transition: 'all 0.3s ease',
-              boxShadow: '0 2px 8px rgba(255, 77, 79, 0.3)'
-            }}
-          >
-            <CloseOutlined style={{ fontSize: 16, color: '#fff' }} />
-          </button>
-        </div>
-        <div style={{ flex: 1, overflow: 'auto' }}>
-          <Suspense
-            fallback={
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888' }}>
-                加载写作模式...
-              </div>
-            }
-          >
-            <WritingModeEntry />
-          </Suspense>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-interface GameModeDialogProps {
-  visible: boolean;
-  onClose: () => void;
-}
-
-const GameModeDialog: React.FC<GameModeDialogProps> = ({ visible, onClose }) => {
-  if (!visible) return null;
-
-  return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 1000,
-        background: '#1a1a2e'
-      }}
-    >
-      <div
-        style={{
-          width: '100%',
-          height: '100%',
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden'
-        }}
-      >
-        <div style={{
-          padding: '12px 20px',
-          background: 'linear-gradient(135deg, #1e1e2e 0%, #2d2b42 100%)',
-          borderBottom: '1px solid rgba(255,255,255,0.08)',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexShrink: 0
-        }}>
-          <h3 style={{ margin: 0, color: '#fff', fontSize: 16, fontWeight: 600 }}>游戏模式</h3>
-          <button
-            onClick={onClose}
-            onMouseEnter={(e) => {
-              const btn = e.currentTarget as HTMLButtonElement;
-              btn.style.background = '#ff7875';
-              btn.style.transform = 'rotate(90deg) scale(1.1)';
-            }}
-            onMouseLeave={(e) => {
-              const btn = e.currentTarget as HTMLButtonElement;
-              btn.style.background = '#ff4d4f';
-              btn.style.transform = 'rotate(0deg) scale(1)';
-            }}
-            style={{
-              width: 36,
-              height: 36,
-              borderRadius: '50%',
-              background: '#ff4d4f',
-              border: 'none',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: 0,
-              transition: 'all 0.3s ease',
-              boxShadow: '0 2px 8px rgba(255, 77, 79, 0.3)'
-            }}
-          >
-            <CloseOutlined style={{ fontSize: 16, color: '#fff' }} />
-          </button>
-        </div>
-        <div style={{ flex: 1, overflow: 'auto' }}>
-          <Suspense
-            fallback={
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888' }}>
-                加载游戏模式...
-              </div>
-            }
-          >
-            <GameModeEntry />
-          </Suspense>
-        </div>
-      </div>
+        <GameModeEntry />
+      </FullscreenDialog>
     </div>
   );
 };

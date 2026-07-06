@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Form, Input, Select, InputNumber, Button, Row, Col, message, Checkbox, Collapse, Tag, Spin, Modal, List } from 'antd';
-import { BookOutlined, EditOutlined, SaveOutlined, FolderOpenOutlined, DeleteOutlined } from '@ant-design/icons';
+import { BookOutlined, EditOutlined, SaveOutlined, FolderOpenOutlined, DeleteOutlined, SettingOutlined } from '@ant-design/icons';
 import {
   WritingConfig,
-  WritingStyle
+  WritingStyle,
+  CustomNovelTypeTemplate,
+  CustomWritingStyleTemplate
 } from '../../../../shared/types/writing.types';
 import {
   NOVEL_TYPE_OPTIONS,
@@ -18,6 +20,7 @@ import {
   MAX_DESCRIPTION_LENGTH
 } from '../../../../shared/constants/writing.constants';
 import { useWritingModeStore } from '../../../stores/writingModeStore';
+import WritingTemplateManager from './WritingTemplateManager';
 
 const { TextArea } = Input;
 
@@ -49,6 +52,10 @@ const WritingConfigPanel: React.FC<WritingConfigPanelProps> = ({ onConfirm, onCa
   const [error, setError] = useState<string | null>(null);
   const lastConfigRef = useRef<{ values: any; config: WritingConfig } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [novelTypeTemplates, setNovelTypeTemplates] = useState<CustomNovelTypeTemplate[]>([]);
+  const [writingStyleTemplates, setWritingStyleTemplates] = useState<CustomWritingStyleTemplate[]>([]);
+  const [templateManagerOpen, setTemplateManagerOpen] = useState(false);
+  const [templateManagerTab, setTemplateManagerTab] = useState<'novelType' | 'writingStyle'>('novelType');
 
   const CONFIG_STORAGE_KEY = 'writing-config-saved';
 
@@ -79,6 +86,7 @@ const WritingConfigPanel: React.FC<WritingConfigPanelProps> = ({ onConfirm, onCa
   useEffect(() => {
     loadAiConfig();
     loadResources();
+    loadTemplates();
   }, []);
 
   const loadSavedConfigs = () => {
@@ -241,6 +249,41 @@ const WritingConfigPanel: React.FC<WritingConfigPanelProps> = ({ onConfirm, onCa
     }
   };
 
+  const loadTemplates = async () => {
+    try {
+      const [novelTypeResult, writingStyleResult] = await Promise.all([
+        window.electronAPI?.writing?.template?.novelType?.list?.(),
+        window.electronAPI?.writing?.template?.writingStyle?.list?.()
+      ]);
+      if (novelTypeResult?.success) {
+        setNovelTypeTemplates(novelTypeResult.templates || []);
+      }
+      if (writingStyleResult?.success) {
+        setWritingStyleTemplates(writingStyleResult.templates || []);
+      }
+    } catch (error) {
+      console.error('Failed to load templates:', error);
+    }
+  };
+
+  // 生成小说类型选项（预置 + 自定义）
+  const novelTypeOptions = [
+    ...NOVEL_TYPE_OPTIONS,
+    ...novelTypeTemplates.filter(t => !t.isPreset).map(t => ({
+      value: t.id,
+      label: `${t.name} (自定义)`
+    }))
+  ];
+
+  // 生成写作风格选项（预置 + 自定义）
+  const writingStyleOptions = [
+    ...WRITING_STYLE_OPTIONS,
+    ...writingStyleTemplates.filter(t => !t.isPreset).map(t => ({
+      value: t.id,
+      label: `${t.name} (自定义)`
+    }))
+  ];
+
   const handleGenerateOutline = async (values: any) => {
     if (values.creativeDescription.length < MIN_DESCRIPTION_LENGTH) {
       message.error(`创意描述至少需要 ${MIN_DESCRIPTION_LENGTH} 个字符`);
@@ -282,11 +325,13 @@ const WritingConfigPanel: React.FC<WritingConfigPanelProps> = ({ onConfirm, onCa
       },
       parameters: {
         creativeDescription: values.creativeDescription,
-        novelType: values.novelType,
+        novelType: values.novelType?.startsWith('custom_') ? 'other' : values.novelType,
+        customNovelTypeId: values.novelType?.startsWith('custom_') ? values.novelType : undefined,
         targetWordCount: values.targetWordCount,
         chapterCount: values.chapterCount,
         narrativePerspective: values.narrativePerspective,
-        writingStyle: values.writingStyle,
+        writingStyle: values.writingStyle?.startsWith('custom_') ? undefined : values.writingStyle,
+        customWritingStyleId: values.writingStyle?.startsWith('custom_') ? values.writingStyle : undefined,
         additionalRequirements: values.additionalRequirements,
         forbiddenContent: values.forbiddenContent?.split('\n').filter(Boolean) || [],
         includeEnding: values.includeEnding !== false,
@@ -560,8 +605,12 @@ const WritingConfigPanel: React.FC<WritingConfigPanelProps> = ({ onConfirm, onCa
 
               <Row gutter={16}>
                 <Col span={12}>
-                  <Form.Item label="小说类型" name="novelType" rules={[{ required: true }]}>
-                    <Select options={NOVEL_TYPE_OPTIONS} />
+                  <Form.Item
+                    label={<span>小说类型 <Button type="link" size="small" icon={<SettingOutlined />} onClick={() => { setTemplateManagerTab('novelType'); setTemplateManagerOpen(true); }} style={{ padding: '0 0 0 4px' }}>管理</Button></span>}
+                    name="novelType"
+                    rules={[{ required: true }]}
+                  >
+                    <Select options={novelTypeOptions} />
                   </Form.Item>
                 </Col>
                 <Col span={12}>
@@ -573,8 +622,11 @@ const WritingConfigPanel: React.FC<WritingConfigPanelProps> = ({ onConfirm, onCa
 
               <Row gutter={16}>
                 <Col span={12}>
-                  <Form.Item label="写作风格" name="writingStyle">
-                    <Select options={WRITING_STYLE_OPTIONS} allowClear />
+                  <Form.Item
+                    label={<span>写作风格 <Button type="link" size="small" icon={<SettingOutlined />} onClick={() => { setTemplateManagerTab('writingStyle'); setTemplateManagerOpen(true); }} style={{ padding: '0 0 0 4px' }}>管理</Button></span>}
+                    name="writingStyle"
+                  >
+                    <Select options={writingStyleOptions} allowClear />
                   </Form.Item>
                 </Col>
                 <Col span={6}>
@@ -773,6 +825,13 @@ const WritingConfigPanel: React.FC<WritingConfigPanelProps> = ({ onConfirm, onCa
               locale={{ emptyText: '暂无已保存的配置' }}
             />
           </Modal>
+
+          <WritingTemplateManager
+            open={templateManagerOpen}
+            onClose={() => setTemplateManagerOpen(false)}
+            initialTab={templateManagerTab}
+            onTemplatesChanged={loadTemplates}
+          />
         </Form>
       </div>
     </Spin>

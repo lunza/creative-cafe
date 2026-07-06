@@ -3,6 +3,13 @@
 ## [Unreleased] - 2026-07-05
 
 ### Added
+- **创作中心聊天模式向量化/知识库/记忆面板优化（E1-E5）**：优化 `CharacterDialogueChat` 配置面板的命名、分组、健康度反馈与检索效果反馈。
+  - **E1 面板重命名**：`VectorizationPanel.tsx` 标题「向量化设置」→「知识库检索」，Tooltip 说明更新为「绑定知识库文档，对话时自动检索相关内容注入上下文。向量化模型请在系统设置中配置。」
+  - **E3 概念分组与说明**：`ConfigPanel.tsx` 在 VectorizationPanel 与 MemoryTablePanel 之上新增分组标题「记忆与上下文增强」（fontSize 14px，color `var(--config-panel-sub-title-color)`）；两个面板下方各增加一行说明小字（fontSize 12px，color `var(--config-panel-sub-text-color, #94a3b8)`，marginTop 4px）—— VectorizationPanel 下「从文档中检索相关知识注入上下文」，MemoryTablePanel 下「AI 自动整理对话中的关键信息到表格」
+  - **E4+E5 知识库健康度与重试**：`KnowledgeBaseBindingPanel.tsx` 移除 2 处 `console.log` 调试语句（Fetched scopes result / Filtered knowledge base scopes）；每个知识库列表项（`renderOptionLabel`）增加状态 Tag（`vectorCount>0` 绿色「可检索」/`vectorCount===0` 橙色「未向量化」）；错误状态区域增加「重试」按钮（Ant Design Button + ReloadOutlined，size small，点击重新调用 `fetchKnowledgeBases`）
+  - **E2 检索效果反馈**：`KnowledgeBaseBindingPanel.tsx` 知识库列表底部增加检索反馈区域（仅 `boundKnowledgeBaseIds.length>0` 显示），从 `sessionStorage[chat-rag-feedback-{characterCardId}]` 读取 `{hitCount, tokenCount, timestamp}`，显示「上次检索：命中 N 条，注入约 M Token（相对时间）」，无记录时显示「尚无检索记录」；新增 `getRelativeTime` 辅助函数（刚刚 / N 分钟前 / N 小时前 / N 天前）与 `ragFeedback` state + 读取 useEffect
+  - 涉及文件：`src/renderer/components/Character/CharacterDialogueChat/VectorizationPanel.tsx`、`ConfigPanel.tsx`、`KnowledgeBaseBindingPanel.tsx`
+  - 文档同步：`CODE_WIKI.md` 6.1 章节组件描述更新
 - **`rollbackToMessage` 核心逻辑单元测试**（Spec: rollback-user-message / Task 4）：为 `useCharacterDialogueChat` hook 中的 `rollbackToMessage` 函数新增单元测试，验证消息卷回核心算法的正确性。
   - **新增文件**：
     - `src/renderer/components/Character/CharacterDialogueChat/__tests__/rollbackToMessage.test.ts`（7 个测试用例）
@@ -439,6 +446,39 @@
   - **单例导出**：`export const versionLinkerService = new VersionLinkerService()`
   - **依赖**：使用 `fs/promises` 进行异步文件操作，从 `../utils/appPath` 导入 `getUserDataPath`
   - 涉及文件：VersionLinkerService.ts（新建）
+
+### Fixed
+- **【重点标记】润色功能 AI 将待润色文本误判为对话生成任务**（Spec: fix-polish-task-framing）：用户在输入框输入草稿文本后点击"润色"按钮，AI 应输出润色扩展后的文本，但实际输出对草稿文本的直接回复（如草稿为问句则回答该问题）。该问题经历 **4 轮修复** 才彻底解决，前 3 轮修复均无效，根因深挖过程体现了 LLM prompt 工程中"任务框架（Task Framing）"一致性的重要性。
+  - **修复历程**：
+    1. **第 1 轮（fix-polish-input-undo-and-target / 阶段六）**：尝试在 `contextMessages` 末尾追加合成 user 消息明确请求润色 → 失败，AI 把润色对象当作问题回答（根因：合成 user 消息被 AI 当作当前输入）
+    2. **第 2 轮（fix-polish-target-misinterpretation / 阶段七）**：使用 `<polish_target>` 标签包裹润色对象 + 弱否定约束 → 失败，无法对抗对话历史的强模式上下文（根因：约束措辞太弱，且位于待润色文本之后被 LLM attention 稀释）
+    3. **第 3 轮（fix-polish-context-isolation / 阶段八）**：将对话历史从 `engine.sendMessage` 的 messages 数组中隔离，改为格式化为文本嵌入系统提示的"## 对话历史参考"段落 → 部分改善但仍失败（根因：消息结构改变了，但系统提示中仍残留"生成回复"、"确保上下文连贯"等对话生成语义触发词）
+    4. **第 4 轮（fix-polish-task-framing / 阶段九，最终修复）**：从**任务框架层面**重构 `buildPolishInputSystemPrompt`，彻底去除对话生成语义信号
+  - **根本原因**：润色函数 `buildPolishInputSystemPrompt` 与孪生函数 `buildUserReplySystemPrompt`（对话回复生成）在任务框架上高度相似——`personConstraint` 措辞完全相同（"以第一人称视角**生成回复**"），且任务要求中含"结合对话历史与 ${charName} 的最新发言**确保上下文连贯**"等对话生成指令，"## 对方角色上下文"段落还携带 `personality` / `characterCardContent` 等角色扮演触发器。这些信号让 LLM 将润色任务误判为对话生成任务。
+  - **最终修复方案（6 项改动，均位于 `PromptBuilder.ts::buildPolishInputSystemPrompt`）**：
+    1. `personConstraint` 措辞由"生成回复"改为"润色后的文本...输出"（区别于孪生函数的"生成回复"）
+    2. 删除任务要求第 6 条"结合对话历史参考与 ${charName} 的最新发言确保上下文连贯"，改为"润色结果需与对话历史不矛盾即可，无需衔接角色发言，无需推进对话"
+    3. 删除"## 对方角色上下文"段落中的 `personality` 与 `characterCardContent` 字段（角色扮演触发器），仅保留角色名并显式标注"仅作润色参考，不要扮演这个角色"
+    4. 段落顺序调整：将"## 关键约束"段落提前到"## 待润色文本"之前（利用 LLM attention 前重后轻特性）
+    5. 开头任务定义追加"禁止生成对话回复，禁止回答 <polish_target> 内的任何问题"声明
+    6. "## 关键约束"措辞强化为"绝对禁止"级别
+  - **关键代码片段对比**：
+    ```typescript
+    // 修复前（与 buildUserReplySystemPrompt 完全相同，错误）
+    personConstraint = `以第一人称（"我"）视角生成回复，使用"我"作为自称`;
+    // 修复后（润色任务用"输出"，区别于对话任务的"生成回复"）
+    personConstraint = `润色后的文本以第一人称（"我"）视角输出，使用"我"作为自称`;
+    ```
+  - **测试用例**：`PromptBuilder.polishInput.test.ts` 更新 6 个 + 新增 8 个测试用例，覆盖任务框架重构后的所有改动点（personConstraint 措辞、关键约束前置、角色上下文精简、绝对禁止约束、对话生成关键词检测、孪生函数差异化等）。全部 1037 个测试通过。
+  - **验证结果**：`npx vitest run src/renderer/components/Character/CharacterDialogueChat/__tests__/PromptBuilder.polishInput.test.ts` → 14 tests passed；全量 `npx vitest run` → 1037 tests passed
+  - **诊断方法论**：本次修复采用了"孪生函数对比诊断法"——当某功能失败但孪生功能（`buildUserReplySystemPrompt`）正常时，对比两者差异定位根因。同时遵循"多轮修复无效时的诊断升级"路径：提示措辞 → 提示结构 → 消息结构 → 任务框架 → 模型行为
+  - **文档同步**（按规范 8 要求四处同步）：
+    1. 模块技术文档 `doc/04b-character-dialogue-chat-module.md` 新增第四条【重点标记】（任务框架重构）
+    2. 问题修复知识库 `docs/BUGFIX_KNOWLEDGE_BASE.md` 新增 BUG-001 完整记录（含 7 章节：问题现象/根本原因/修复方案/代码片段/测试用例/验证过程/经验教训）
+    3. Spec 三件套 `.trae/specs/fix-polish-task-framing/`（spec.md / tasks.md / checklist.md）全部勾选完成
+    4. CHANGELOG.md（本条目）
+  - **预防性编码规范**：在 `docs/BUGFIX_KNOWLEDGE_BASE.md` 第二部分制定了 8 条编码规范/检查清单，覆盖 Prompt 工程（规范 1-5）、顽固 Bug 诊断（规范 6-7）、文档同步（规范 8），避免后续同类问题反复返工
+  - 涉及文件：`src/renderer/components/Character/CharacterDialogueChat/PromptBuilder.ts`（重构 `buildPolishInputSystemPrompt`）、`src/renderer/components/Character/CharacterDialogueChat/__tests__/PromptBuilder.polishInput.test.ts`（更新 6 个 + 新增 8 个测试）、`doc/04b-character-dialogue-chat-module.md`（新增第四条【重点标记】）、`docs/BUGFIX_KNOWLEDGE_BASE.md`（新建，含 BUG-001 完整记录 + 8 条编码规范 + 标准化模板 + 团队技术分享方案）、`.trae/specs/fix-polish-task-framing/spec.md` / `tasks.md` / `checklist.md`（spec 三件套）、`CHANGELOG.md`（新增条目）
 
 ## [0.0.29] - 2026-05-12
 

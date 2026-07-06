@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Modal, Form, Input, Select, InputNumber, Button, Row, Col, message, Checkbox, Collapse, Tag, Spin, Tooltip, List } from 'antd';
-import { BookOutlined, EditOutlined, SaveOutlined, FolderOpenOutlined, DeleteOutlined, ThunderboltOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons';
+import { BookOutlined, EditOutlined, SaveOutlined, FolderOpenOutlined, DeleteOutlined, ThunderboltOutlined, CheckOutlined, CloseOutlined, SettingOutlined } from '@ant-design/icons';
 import {
   WritingStyle,
-  WritingConfig
+  WritingConfig,
+  CustomNovelTypeTemplate,
+  CustomWritingStyleTemplate
 } from '../../../../shared/types/writing.types';
 import {
   NOVEL_TYPE_OPTIONS,
@@ -18,6 +20,7 @@ import {
   MAX_DESCRIPTION_LENGTH
 } from '../../../../shared/constants/writing.constants';
 import { useWritingModeStore } from '../../../stores/writingModeStore';
+import WritingTemplateManager from './WritingTemplateManager';
 
 const { TextArea } = Input;
 
@@ -60,6 +63,12 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
   const [showPolishDialog, setShowPolishDialog] = useState(false);
   const [polishInstruction, setPolishInstruction] = useState('');
 
+  // 自定义模板相关状态
+  const [novelTypeTemplates, setNovelTypeTemplates] = useState<CustomNovelTypeTemplate[]>([]);
+  const [writingStyleTemplates, setWritingStyleTemplates] = useState<CustomWritingStyleTemplate[]>([]);
+  const [templateManagerOpen, setTemplateManagerOpen] = useState(false);
+  const [templateManagerTab, setTemplateManagerTab] = useState<'novelType' | 'writingStyle'>('novelType');
+
   const CONFIG_STORAGE_KEY = 'writing-config-saved';
 
   useEffect(() => {
@@ -67,6 +76,7 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
       loadSavedConfigs();
       loadAiConfig();
       loadResources();
+      loadTemplates();
     }
   }, [open]);
 
@@ -258,6 +268,41 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
     }
   };
 
+  const loadTemplates = async () => {
+    try {
+      const [novelTypeResult, writingStyleResult] = await Promise.all([
+        window.electronAPI?.writing?.template?.novelType?.list?.(),
+        window.electronAPI?.writing?.template?.writingStyle?.list?.()
+      ]);
+      if (novelTypeResult?.success) {
+        setNovelTypeTemplates(novelTypeResult.templates || []);
+      }
+      if (writingStyleResult?.success) {
+        setWritingStyleTemplates(writingStyleResult.templates || []);
+      }
+    } catch (error) {
+      console.error('Failed to load templates:', error);
+    }
+  };
+
+  // 生成小说类型选项（预置 + 自定义）
+  const novelTypeOptions = [
+    ...NOVEL_TYPE_OPTIONS,
+    ...novelTypeTemplates.filter(t => !t.isPreset).map(t => ({
+      value: t.id,
+      label: `${t.name} (自定义)`
+    }))
+  ];
+
+  // 生成写作风格选项（预置 + 自定义）
+  const writingStyleOptions = [
+    ...WRITING_STYLE_OPTIONS,
+    ...writingStyleTemplates.filter(t => !t.isPreset).map(t => ({
+      value: t.id,
+      label: `${t.name} (自定义)`
+    }))
+  ];
+
   const handleGenerateOutline = async (values: any) => {
     if (values.creativeDescription.length < MIN_DESCRIPTION_LENGTH) {
       message.error(`创意描述至少需要 ${MIN_DESCRIPTION_LENGTH} 个字符`);
@@ -299,11 +344,13 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
       },
       parameters: {
         creativeDescription: values.creativeDescription,
-        novelType: values.novelType,
+        novelType: values.novelType?.startsWith('custom_') ? 'other' : values.novelType,
+        customNovelTypeId: values.novelType?.startsWith('custom_') ? values.novelType : undefined,
         targetWordCount: values.targetWordCount,
         chapterCount: values.chapterCount,
         narrativePerspective: values.narrativePerspective,
-        writingStyle: values.writingStyle,
+        writingStyle: values.writingStyle?.startsWith('custom_') ? undefined : values.writingStyle,
+        customWritingStyleId: values.writingStyle?.startsWith('custom_') ? values.writingStyle : undefined,
         additionalRequirements: values.additionalRequirements,
         forbiddenContent: Array.isArray(values.forbiddenContent)
           ? values.forbiddenContent.filter((s: string) => s && s.trim())
@@ -850,8 +897,12 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
 
                 <Row gutter={16}>
                   <Col span={12}>
-                    <Form.Item label="小说类型" name="novelType" rules={[{ required: true }]}>
-                      <Select options={NOVEL_TYPE_OPTIONS} />
+                    <Form.Item
+                      label={<span>小说类型 <Button type="link" size="small" icon={<SettingOutlined />} onClick={() => { setTemplateManagerTab('novelType'); setTemplateManagerOpen(true); }} style={{ padding: '0 0 0 4px' }}>管理</Button></span>}
+                      name="novelType"
+                      rules={[{ required: true }]}
+                    >
+                      <Select options={novelTypeOptions} />
                     </Form.Item>
                   </Col>
                   <Col span={12}>
@@ -863,8 +914,11 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
 
                 <Row gutter={16}>
                   <Col span={12}>
-                    <Form.Item label="写作风格" name="writingStyle">
-                      <Select options={WRITING_STYLE_OPTIONS} allowClear />
+                    <Form.Item
+                      label={<span>写作风格 <Button type="link" size="small" icon={<SettingOutlined />} onClick={() => { setTemplateManagerTab('writingStyle'); setTemplateManagerOpen(true); }} style={{ padding: '0 0 0 4px' }}>管理</Button></span>}
+                      name="writingStyle"
+                    >
+                      <Select options={writingStyleOptions} allowClear />
                     </Form.Item>
                   </Col>
                   <Col span={6}>
@@ -1123,6 +1177,14 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
                 showCount
               />
             </Modal>
+
+            {/* 自定义模板管理弹窗 */}
+            <WritingTemplateManager
+              open={templateManagerOpen}
+              onClose={() => setTemplateManagerOpen(false)}
+              initialTab={templateManagerTab}
+              onTemplatesChanged={loadTemplates}
+            />
           </Form>
         </div>
       </Spin>

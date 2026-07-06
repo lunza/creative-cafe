@@ -11,6 +11,7 @@ import { writingStorageService } from '../../../services/WritingStorageService';
 import { writingResourceManager } from '../../../services/WritingResourceManager';
 import { outlineGenerator } from '../../../services/writing/OutlineGenerator';
 import { promptBuilder } from '../../../services/writing/PromptBuilder';
+import { writingTemplateRepository } from '../../../services/writing/WritingTemplateRepository';
 import { getStorageService } from '../../../services/storageService';
 import { addLog } from '../../../services/memory/chatLogService';
 import {
@@ -72,8 +73,18 @@ export function registerWritingOutlineHandlers(): void {
           event.sender.send('writing:stream:chunk', { chunk });
         });
 
+        // 加载自定义模板（如有）
+        let customNovelTypeTemplate = null;
+        let customWritingStyleTemplate = null;
+        if (request.parameters.customNovelTypeId) {
+          customNovelTypeTemplate = await writingTemplateRepository.getCustomNovelTypeTemplate(request.parameters.customNovelTypeId);
+        }
+        if (request.parameters.customWritingStyleId) {
+          customWritingStyleTemplate = await writingTemplateRepository.getCustomWritingStyleTemplate(request.parameters.customWritingStyleId);
+        }
+
         const result = await outlineGenerator.generate(
-          outlineGenerator.buildPrompt({ ...request, resources, _resourceContext: resourceContext, _writingStyleContext: writingStyleContext }),
+          outlineGenerator.buildPrompt({ ...request, resources, _resourceContext: resourceContext, _writingStyleContext: writingStyleContext, _customNovelTypeTemplate: customNovelTypeTemplate || undefined, _customWritingStyleTemplate: customWritingStyleTemplate || undefined }),
           request.modelConfig,
           abortController.signal
         );

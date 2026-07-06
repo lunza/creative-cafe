@@ -6,11 +6,13 @@ import { UnifiedChatDialog } from './UnifiedChatDialog';
 interface SingleChatDialogProps {
   isDialogMode?: boolean;
   onCloseDialog?: () => void;
+  initialCharacterPath?: string;
 }
 
 export const SingleChatDialog: React.FC<SingleChatDialogProps> = ({
   isDialogMode,
   onCloseDialog,
+  initialCharacterPath,
 }) => {
   const { characters, fetchCharacters, loading } = useDataStore();
   const [isFetching, setIsFetching] = useState(false);
@@ -67,11 +69,15 @@ export const SingleChatDialog: React.FC<SingleChatDialogProps> = ({
     );
   }
 
+  const initialCharacter = initialCharacterPath
+    ? characters.find((c) => c.path === initialCharacterPath) || characters[0]
+    : characters[0];
+
   return (
     <UnifiedChatDialog
       open={isDialogMode}
       onClose={onCloseDialog || (() => {})}
-      initialCharacter={characters[0]}
+      initialCharacter={initialCharacter}
       showCharacterSelector={true}
       characters={characters}
     />

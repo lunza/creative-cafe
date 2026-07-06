@@ -3,6 +3,8 @@ import { Tooltip } from 'antd';
 import { CopyOutlined, CheckOutlined, ReloadOutlined, DoubleRightOutlined, RetweetOutlined, LoadingOutlined, EditOutlined, TableOutlined, WarningOutlined, RollbackOutlined } from '@ant-design/icons';
 import { MessageRenderer } from './MessageRenderer';
 import { ChatMessage, ChatMessageVersionInfo } from './CharacterDialogueChat.types';
+import './ChatMessageBubble.css';
+import { formatTimestamp } from './CharacterDialogueChat.utils';
 
 interface ChatMessageBubbleProps {
   message: ChatMessage;
@@ -147,19 +149,8 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
       <Tooltip title="复制">
         <button
           onClick={handleCopy}
-          style={{
-            background: 'none',
-            border: 'none',
-            color: copied ? 'var(--success-color, #22c55e)' : 'var(--chat-action-text, #9ca3af)',
-            cursor: 'pointer',
-            padding: '6px 8px',
-            fontSize: '12px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '4px',
-            borderRadius: '6px',
-            transition: 'all 0.2s ease',
-          }}
+          className="chat-action-btn"
+          style={copied ? { color: 'var(--success-color, #22c55e)' } : undefined}
           onMouseEnter={(e) => {
             e.currentTarget.style.background = 'var(--chat-action-hover, rgba(255, 255, 255, 0.1))';
             e.currentTarget.style.color = 'var(--text-primary, #e2e8f0)';
@@ -184,19 +175,8 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
                   handleEditStart();
                 }
               }}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: isEditing ? 'var(--primary-color, #6366f1)' : 'var(--chat-action-text, #9ca3af)',
-                cursor: 'pointer',
-                padding: '6px 8px',
-                fontSize: '12px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                borderRadius: '6px',
-                transition: 'all 0.2s ease',
-              }}
+              className="chat-action-btn"
+              style={isEditing ? { color: 'var(--primary-color, #6366f1)' } : undefined}
               onMouseEnter={(e) => {
                 e.currentTarget.style.background = 'var(--chat-action-hover, rgba(255, 255, 255, 0.1))';
                 e.currentTarget.style.color = 'var(--primary-color, #6366f1)';
@@ -216,19 +196,11 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
         <button
           onClick={showRegenerateOnly ? handleRetryFromVersion : handleRetry}
           disabled={isGenerating || isStreaming || message.status === 'error'}
+          className="chat-action-btn"
           style={{
-            background: 'none',
-            border: 'none',
-            color: message.status === 'error' ? 'var(--error-color, #ef4444)' : 'var(--chat-action-text, #9ca3af)',
-            cursor: isGenerating || isStreaming ? 'not-allowed' : 'pointer',
-            padding: '6px 8px',
-            fontSize: '12px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '4px',
-            borderRadius: '6px',
-            transition: 'all 0.2s ease',
-            opacity: isGenerating || isStreaming ? 0.5 : 1,
+            color: message.status === 'error' ? 'var(--error-color, #ef4444)' : undefined,
+            cursor: isGenerating || isStreaming ? 'not-allowed' : undefined,
+            opacity: isGenerating || isStreaming ? 0.5 : undefined,
           }}
           onMouseEnter={(e) => {
             if (!isGenerating && !isStreaming) {
@@ -256,19 +228,10 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
           <button
             onClick={handleContinue}
             disabled={isGenerating || isStreaming || message.status !== 'sent'}
+            className="chat-action-btn"
             style={{
-              background: 'none',
-              border: 'none',
-              color: 'var(--chat-action-text, #9ca3af)',
-              cursor: isGenerating || isStreaming || message.status !== 'sent' ? 'not-allowed' : 'pointer',
-              padding: '6px 8px',
-              fontSize: '12px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              borderRadius: '6px',
-              transition: 'all 0.2s ease',
-              opacity: isGenerating || isStreaming || message.status !== 'sent' ? 0.5 : 1,
+              cursor: isGenerating || isStreaming || message.status !== 'sent' ? 'not-allowed' : undefined,
+              opacity: isGenerating || isStreaming || message.status !== 'sent' ? 0.5 : undefined,
             }}
             onMouseEnter={(e) => {
               if (!isGenerating && !isStreaming && message.status === 'sent') {
@@ -307,19 +270,10 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
         <button
           onClick={() => onRollback?.(message.id)}
           disabled={isStreaming && !isLastMessage}
+          className="chat-action-btn"
           style={{
-            background: 'none',
-            border: 'none',
-            color: 'var(--chat-action-text, #9ca3af)',
-            cursor: isStreaming && !isLastMessage ? 'not-allowed' : 'pointer',
-            padding: '6px 8px',
-            fontSize: '12px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '4px',
-            borderRadius: '6px',
-            transition: 'all 0.2s ease',
-            opacity: isStreaming && !isLastMessage ? 0.5 : 1,
+            cursor: isStreaming && !isLastMessage ? 'not-allowed' : undefined,
+            opacity: isStreaming && !isLastMessage ? 0.5 : undefined,
           }}
           onMouseEnter={(e) => {
             if (!(isStreaming && !isLastMessage)) {
@@ -497,6 +451,21 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
                   }} />
                 )}
               </>
+            )}
+            {!isEditing && (
+              <span style={{
+                position: 'absolute',
+                bottom: '4px',
+                right: '10px',
+                fontSize: '11px',
+                color: 'var(--chat-action-text, #8c8c8c)',
+                opacity: isHovered ? 1 : 0,
+                transition: 'opacity 0.2s ease',
+                pointerEvents: 'none',
+                userSelect: 'none',
+              }}>
+                {formatTimestamp(message.timestamp)}
+              </span>
             )}
           </div>
 
