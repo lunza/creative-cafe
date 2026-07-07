@@ -17,6 +17,7 @@ export type PromptModuleId =
   | 'world-book.generate-from-template'
   | 'world-book.expand-keywords'
   | 'world-book.generate-description'
+  | 'world-book.generate-world-description'
   | 'world-book.generate-new-entries'
   | 'world-book.generate-from-characters'
   | 'creative-chat.dialogue'

@@ -66,8 +66,19 @@ const PersonaPanel: React.FC<PersonaPanelProps> = ({
     <div className="persona-panel">
       <div className="persona-panel-title">用户人设</div>
       <div className="persona-list">
-        {personas.map(persona => (
-          <Tooltip key={persona.id} title={persona.name} placement="top">
+        {[...personas]
+          .sort((a, b) => {
+            // 通用人设排在第一位
+            if (a.isGeneric && !b.isGeneric) return -1;
+            if (!a.isGeneric && b.isGeneric) return 1;
+            return 0;
+          })
+          .map(persona => (
+          <Tooltip
+            key={persona.id}
+            title={persona.isGeneric ? '通用人设：根据角色卡中 {{user}} 的设定动态确定身份' : persona.name}
+            placement="top"
+          >
             <div
               className={`persona-card ${selectedPersonaId === persona.id ? 'selected' : ''}`}
               onClick={() => onPersonaChange(persona.id)}
@@ -80,6 +91,19 @@ const PersonaPanel: React.FC<PersonaPanelProps> = ({
                 )}
               </div>
               <div className="persona-name">{persona.name}</div>
+              {persona.isGeneric && (
+                <span style={{
+                  position: 'absolute',
+                  top: 2,
+                  right: 2,
+                  fontSize: 9,
+                  padding: '0 4px',
+                  borderRadius: 8,
+                  background: 'var(--primary-color, #1890ff)',
+                  color: '#fff',
+                  lineHeight: '16px'
+                }}>通用</span>
+              )}
             </div>
           </Tooltip>
         ))}

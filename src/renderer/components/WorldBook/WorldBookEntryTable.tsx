@@ -10,7 +10,6 @@ import {
   SortAscendingOutlined,
   StopOutlined
 } from '@ant-design/icons';
-import { WorldBookVectorPanel } from './WorldBookVectorPanel';
 import type { UseWorldBookFormStateReturn } from './hooks/useWorldBookFormState';
 
 /**
@@ -18,7 +17,6 @@ import type { UseWorldBookFormStateReturn } from './hooks/useWorldBookFormState'
  *
  * 从原 WorldBookManager.tsx 中迁出的"世界书详情"查看 Modal：
  *  - 顶部名称 / 主题编辑区
- *  - WorldBookVectorPanel 向量化状态
  *  - 全选 checkbox + 分组渲染的条目卡片（关键词 / 内容 / 标签 / 更多属性）
  *  - 分页 Pagination
  *  - 底部 modalFooter：保存 / 添加条目 / 批量删除 / AI 生成关键词 /
@@ -29,7 +27,7 @@ import type { UseWorldBookFormStateReturn } from './hooks/useWorldBookFormState'
  */
 export interface WorldBookEntryTableProps {
   formState: UseWorldBookFormStateReturn;
-  /** 当前查看的世界书（{ name, path, ... }），用于 WorldBookVectorPanel */
+  /** 当前查看的世界书（{ name, path, ... }） */
   viewingItem: any;
   /** 当前主题（dark/light），用于 className 切换 */
   appTheme: string;
@@ -380,7 +378,6 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
     'depth': '深度',
     'useProbability': '使用概率',
     'role': '角色',
-    'vectorized': '向量化',
     'excludeRecursion': '不可递归',
     'preventRecursion': '防止递归',
     'delayUntilRecursion': '延迟到递归',
@@ -450,9 +447,6 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
         </div>
       </div>
 
-      {/* 向量化状态面板 */}
-      <WorldBookVectorPanel worldBook={actualViewingItem ? { ...actualViewingItem, entries: Object.values(worldBookContent?.entries || {}) } : null} />
-
       {worldBookContent && worldBookContent.entries && (
         <div style={{ backgroundColor: 'var(--bg-container, #1f1f1f)', color: 'var(--text-primary, #ffffff)' }}>
           <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-start', alignItems: 'center', gap: 8 }}>
@@ -489,7 +483,7 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
                   const isExpanded = expandedEntries.has(uid);
 
                   // 定义已显示的属性，排除这些属性后显示剩余的属性
-                  const displayedProps = ['uid', 'key', 'keysecondary', 'comment', 'content', 'constant', 'selective', 'order', 'position', 'disable', 'displayIndex', 'addMemo', 'group', 'groupOverride', 'groupWeight', 'sticky', 'cooldown', 'delay', 'probability', 'depth', 'useProbability', 'role', 'vectorized', 'excludeRecursion', 'preventRecursion', 'delayUntilRecursion', 'scanDepth', 'caseSensitive', 'matchWholeWords', 'useGroupScoring', 'automationId'];
+                  const displayedProps = ['uid', 'key', 'keysecondary', 'comment', 'content', 'constant', 'selective', 'order', 'position', 'disable', 'displayIndex', 'addMemo', 'group', 'groupOverride', 'groupWeight', 'sticky', 'cooldown', 'delay', 'probability', 'depth', 'useProbability', 'role', 'excludeRecursion', 'preventRecursion', 'delayUntilRecursion', 'scanDepth', 'caseSensitive', 'matchWholeWords', 'useGroupScoring', 'automationId'];
 
                   // 计算未显示的属性
                   const additionalProps = Object.entries(entry).filter(([key]) => !displayedProps.includes(key));

@@ -770,6 +770,7 @@ ${frameworkList}
       'world-book.generate-from-template': '世界书',
       'world-book.expand-keywords': '关键词',
       'world-book.generate-description': '生成',
+      'world-book.generate-world-description': '世界书主题',
       'world-book.generate-new-entries': '世界书',
       'world-book.generate-from-characters': '世界书',
       'creative-chat.dialogue': '角色扮演',
@@ -1910,6 +1911,81 @@ ${frameworkList}
       metadata: { ...metadata }
     };
     map.set('world-book.generate-description', wbGenDescriptionTemplate);
+
+    // ===== 世界书主题描述生成模板 (world-book.generate-world-description) =====
+    // 逆向功能：根据现有条目还原/生成世界书的主题描述
+    const wbGenWorldDescSystemContent = `你是一个专业的世界书（Lorebook）主题描述创作助手。你的任务是根据世界书中已有的条目内容，逆向还原或生成一段概括性的主题描述。
+
+【输出要求】
+1. 描述应涵盖世界观的背景、核心设定、风格基调、主要角色/势力等要素
+2. 长度 200-500 字
+3. 语言流畅、概括性强，能让读者快速理解这个世界观的全貌
+4. 只返回描述文本，不要其他解释性文字、不要使用代码块`;
+
+    const wbGenWorldDescUserContent = `世界书名称：{{world_book_name}}
+
+【现有条目概要】
+{{existing_entries_summary}}
+
+【用户生成要求】
+{{user_requirements}}`;
+
+    const wbGenWorldDescVariables: PromptVariable[] = [
+      {
+        name: 'world_book_name',
+        description: '世界书名称',
+        source: 'worldBookName',
+        required: true
+      },
+      {
+        name: 'existing_entries_summary',
+        description: '现有条目概要',
+        source: 'existingEntriesSummary',
+        required: true
+      },
+      {
+        name: 'user_requirements',
+        description: '用户生成要求',
+        source: 'userRequirements',
+        required: false
+      }
+    ];
+
+    const wbGenWorldDescParts: PromptPart[] = [
+      {
+        id: 'wb-gen-world-desc-system',
+        type: 'editable',
+        label: '系统提示词',
+        content: wbGenWorldDescSystemContent,
+        source: '用户可编辑',
+        order: 0,
+        role: 'system',
+        variables: []
+      },
+      {
+        id: 'wb-gen-world-desc-user',
+        type: 'fixed',
+        label: '用户提示词',
+        content: wbGenWorldDescUserContent,
+        source: '系统固定结构',
+        order: 1,
+        role: 'user',
+        variables: ['world_book_name', 'existing_entries_summary', 'user_requirements']
+      }
+    ];
+
+    const wbGenWorldDescTemplate: PromptTemplate = {
+      id: 'world-book.generate-world-description',
+      moduleId: 'world-book.generate-world-description',
+      name: '世界书主题生成',
+      description: '根据现有条目逆向生成世界书主题描述',
+      framework: 'CHAT',
+      parts: wbGenWorldDescParts,
+      assemblyOrder: [0, 1],
+      variables: wbGenWorldDescVariables,
+      metadata: { ...metadata }
+    };
+    map.set('world-book.generate-world-description', wbGenWorldDescTemplate);
 
     // ===== 世界书新条目生成模板 (world-book.generate-new-entries) =====
     const wbGenNewEntriesSystemContent = `【系统指令】你是一个世界书（Lorebook）数据生成引擎。你只输出符合指定Schema的JSON数据。

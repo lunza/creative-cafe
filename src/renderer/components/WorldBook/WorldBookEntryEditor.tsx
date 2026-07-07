@@ -12,7 +12,7 @@ import type { UseWorldBookFormStateReturn } from './hooks/useWorldBookFormState'
  *
  * 从原 WorldBookManager.tsx 中迁出的"编辑条目"弹窗：包含 SillyTavern 核心字段
  * （注释 / 主关键词 / 次关键词 / 内容）+ 标准配置（顺序 / 概率 / 深度 / 位置 /
- * 分组 / 常量 / 选择性 / 禁用 / 正则 / 向量化 / 大小写）+ Creative-Cafe 高级配置
+ * 分组 / 常量 / 选择性 / 禁用 / 正则 / 大小写）+ Creative-Cafe 高级配置
  * （自动化ID / 扫描深度 / 显示索引 / 完整单词 / 组评分 / 递归控制）。
  *
  * 本组件仅承担 Modal 内部表单的渲染与提交，包含两个内部 handler：
@@ -288,10 +288,6 @@ const WorldBookEntryEditor: React.FC<WorldBookEntryEditorProps> = ({
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <Switch checked={formValues.useRegex} onChange={(checked) => setFormValues(prev => ({ ...prev, useRegex: checked }))} />
             <span>正则匹配 (use_regex)</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Switch checked={formValues.vectorized} onChange={(checked) => setFormValues(prev => ({ ...prev, vectorized: checked }))} />
-            <span>向量化 (Vectorized)</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <Switch checked={formValues.caseSensitive} onChange={(checked) => setFormValues(prev => ({ ...prev, caseSensitive: checked }))} />

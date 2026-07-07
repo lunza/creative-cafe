@@ -552,6 +552,8 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
         tokenManagementConfig={tokenManagementConfig}
         customStopSequencesEnabled={characterConfig?.customStopSequencesEnabled ?? false}
         customStopSequences={characterConfig?.customStopSequences}
+        emojiEnhanced={characterConfig?.customParameters?.emoji_enhanced !== false}
+        onEmojiEnhancedToggle={(enabled) => handleParameterChange({ emoji_enhanced: enabled })}
         engineCapabilities={engineCapabilities}
         onPersonaChange={handlePersonaChange}
         onParameterChange={handleParameterChange}

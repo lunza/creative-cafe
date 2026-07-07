@@ -9,7 +9,7 @@ import { ChatMessage, CharacterInfo, ChatState, UserPersona, EffectiveAIParams }
 import { ChatEngineFactory } from '../../Common/ChatEngine/ChatEngine.factory';
 import { AIEngineConfig, AIResponse, getDefaultEngineCapabilities } from '../../Common/ChatEngine/ChatEngine.types';
 import { usePromptBuilder } from './usePromptBuilder';
-import { buildAsyncTableOrganizeInstructions, buildStopSequences, buildRoleAnchorMessage, buildContinueNudgePrompt, buildLengthGuidancePrompt, buildUserReplySystemPrompt, buildStopSequencesForUserReply, buildPolishInputSystemPrompt } from './PromptBuilder';
+import { buildAsyncTableOrganizeInstructions, buildStopSequences, buildRoleAnchorMessage, buildContinueNudgePrompt, buildLengthGuidancePrompt, buildEmojiEnhancedPrompt, buildUserReplySystemPrompt, buildStopSequencesForUserReply, buildPolishInputSystemPrompt } from './PromptBuilder';
 import { TokenCounter, ContextTruncator, DEFAULT_MAX_TOKENS } from './TokenManagement';
 import type { TruncationConfig } from './TokenManagement/types';
 import { nGramJaccard, overlapRate } from './utils/similarityUtils';
@@ -291,6 +291,8 @@ export function usePersonas() {
                     name: content.name || '未命名',
                     description: content.description || '',
                     avatarPath: content.avatarPath || '',
+                    isGeneric: content.isGeneric || false,
+                    isSystem: content.isSystem || false,
                   });
                 }
               } catch (error) {
@@ -383,8 +385,13 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
 
   const selectedPersonaId = characterConfig?.selectedPersonaId;
   const selectedPersona = useMemo(() => {
-    if (!selectedPersonaId || personas.length === 0) return null;
-    return personas.find(p => p.id === selectedPersonaId) || null;
+    if (personas.length === 0) return null;
+    // 已选择人设时优先使用
+    if (selectedPersonaId) {
+      return personas.find(p => p.id === selectedPersonaId) || null;
+    }
+    // 未选择人设时回退到通用人设
+    return personas.find(p => p.isGeneric) || null;
   }, [selectedPersonaId, personas]);
 
   const saveChatToStore = useCallback(async (messages: ChatMessage[]) => {
@@ -578,7 +585,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       }
     };
 
-    const streamTimeoutMs = activeEngine.max_tokens && Number(activeEngine.max_tokens) > DEFAULT_MAX_TOKENS ? 300000 : 120000;
+    const streamTimeoutMs = 300000; // 统一 300 秒超时（AI 生成通常较长）
 
     streamTimeout = setTimeout(() => {
       addLog(`[CharacterDialogueChat] Stream timeout reached (${streamTimeoutMs / 1000}s)`, 'warn');
@@ -896,6 +903,13 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
           'warn'
         );
       }
+    }
+
+    // Emoji 增强模式：默认开启（undefined 视为开启），显式设为 false 时关闭
+    const emojiEnhanced = characterConfig?.customParameters?.emoji_enhanced !== false;
+    if (emojiEnhanced) {
+      const charName = characterInfo.characterCardName || 'Character';
+      effectiveSystemPrompt += buildEmojiEnhancedPrompt(charName);
     }
 
     // Debug: 显示提示词末尾（背景知识注入位置）

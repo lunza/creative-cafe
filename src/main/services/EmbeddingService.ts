@@ -79,12 +79,12 @@ export class EmbeddingService {
       const data = await response.json();
 
       if (data.data && data.data[0] && data.data[0].embedding) {
-        const vector = data.data[0].embedding;
-        
-        // 注意：旧数据（vecstore.json 中已有向量）未归一化（magnitude ≈ 15）
-        // 为保持兼容性，查询向量也不做归一化
-        // WASM 的余弦相似度计算会自动处理向量幅度差异
-        console.log(`[EmbeddingService] Vector magnitude (not normalized): ${Math.sqrt(vector.reduce((sum: number, v: number) => sum + v * v, 0)).toFixed(6)}`);
+        const rawVector = data.data[0].embedding;
+        // 修复：统一 L2 归一化，与本地模式（normalize: true）保持一致
+        // 归一化后余弦相似度计算更稳定，避免幅度差异影响排序精度
+        const vector = this.normalizeVector(rawVector);
+        const magnitude = Math.sqrt(vector.reduce((sum: number, v: number) => sum + v * v, 0));
+        console.log(`[EmbeddingService] Remote vector normalized, magnitude: ${magnitude.toFixed(6)}, dim: ${vector.length}`);
 
         return this.validateDimension({
           success: true,
@@ -140,6 +140,18 @@ export class EmbeddingService {
   }
 
   /**
+   * L2 归一化：将向量缩放为单位长度（magnitude = 1）
+   * 统一 remote/local 两种模式的向量幅度，保证余弦相似度计算一致性
+   */
+  private normalizeVector(vector: number[]): number[] {
+    const magnitude = Math.sqrt(vector.reduce((sum: number, v: number) => sum + v * v, 0));
+    if (magnitude === 0 || !isFinite(magnitude)) {
+      return vector;
+    }
+    return vector.map(v => v / magnitude);
+  }
+
+  /**
    * 维度校验：若配置中存在 expected dimension（vectorConfig.dimension > 0），
    * 与返回的 embedding 数组长度对比，不匹配则降级为失败。
    * 仅使用已加载的 this.vectorConfig.dimension 字段，不引入新依赖。
@@ -166,13 +178,40 @@ export class EmbeddingService {
     try {
       await this.ensureConfigLoaded();
 
-      if (!this.vectorConfig?.remoteApiUrl) {
-        return { success: false, error: '未配置远程 Embedding API 地址' };
-      }
+      const mode = this.vectorConfig?.embeddingMode || 'remote';
 
       const validTexts = texts.filter(t => t && t.trim().length > 0);
       if (validTexts.length === 0) {
         return { success: false, error: '所有文本为空' };
+      }
+
+      // 本地模式：循环复用已加载的 pipeline 逐条生成（pipeline 内部有推理优化，复用模型实例）
+      if (mode === 'local') {
+        const initResult = await embeddingWorkerService.initializeLocalModel();
+        if (!initResult.success) {
+          return { success: false, error: `本地模型加载失败: ${initResult.error || '未知错误'}` };
+        }
+        const vectors: number[][] = [];
+        for (const text of validTexts) {
+          const localResult = await embeddingWorkerService.generateLocalEmbedding(text);
+          if (localResult.success && localResult.vector) {
+            vectors.push(localResult.vector);
+          } else {
+            console.warn(`[EmbeddingService] Batch local embedding failed for text: "${text.substring(0, 50)}..."`);
+            vectors.push([]);
+          }
+        }
+        const nonEmpty = vectors.filter(v => v.length > 0);
+        if (nonEmpty.length === 0) {
+          return { success: false, error: '所有文本本地向量化失败' };
+        }
+        console.log(`[EmbeddingService] Batch local embeddings: ${nonEmpty.length}/${validTexts.length} succeeded`);
+        return { success: true, vectors: nonEmpty };
+      }
+
+      // 远程模式：一次性发送所有文本给 API
+      if (!this.vectorConfig?.remoteApiUrl) {
+        return { success: false, error: '未配置远程 Embedding API 地址' };
       }
 
       const apiUrl = this.buildEmbeddingUrl(this.vectorConfig.remoteApiUrl);
@@ -210,18 +249,20 @@ export class EmbeddingService {
       const data = await response.json();
 
       if (data.data && Array.isArray(data.data)) {
-        // 注意：旧数据（vecstore.json 中已有向量）未归一化（magnitude ≈ 15）
-        // 为保持兼容性，查询向量也不做归一化
+        // 修复：统一 L2 归一化，与本地模式保持一致
         const vectors = data.data.map((item: any) => {
-          const vector = item.embedding;
-          if (vector && Array.isArray(vector)) {
-            // 诊断：记录向量幅度
-            const magnitude = Math.sqrt(vector.reduce((sum: number, v: number) => sum + v * v, 0));
-            console.log(`[EmbeddingService] Batch vector magnitude: ${magnitude.toFixed(6)} (not normalized)`);
+          const rawVector = item.embedding;
+          if (rawVector && Array.isArray(rawVector)) {
+            const vector = this.normalizeVector(rawVector);
             return vector;
           }
           return null;
         }).filter((v: number[] | null) => v !== null);
+        
+        if (vectors.length > 0) {
+          const magnitude = Math.sqrt(vectors[0].reduce((sum: number, v: number) => sum + v * v, 0));
+          console.log(`[EmbeddingService] Batch vectors normalized: ${vectors.length} vectors, first magnitude: ${magnitude.toFixed(6)}`);
+        }
         
         return { success: true, vectors };
       }

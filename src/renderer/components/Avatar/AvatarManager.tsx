@@ -59,6 +59,8 @@ interface UserAvatarProfile {
   avatarPath: string;
   createdAt: number;
   updatedAt: number;
+  isGeneric?: boolean;
+  isSystem?: boolean;
 }
 
 const AvatarManager: React.FC = () => {
@@ -134,7 +136,9 @@ const AvatarManager: React.FC = () => {
                 description: content.description || '',
                 avatarPath: content.avatarPath || '',
                 createdAt: content.createdAt || Date.now(),
-                updatedAt: content.updatedAt || Date.now()
+                updatedAt: content.updatedAt || Date.now(),
+                isGeneric: content.isGeneric || false,
+                isSystem: content.isSystem || false
               });
             }
           } catch (error) {
@@ -206,6 +210,11 @@ const AvatarManager: React.FC = () => {
   }, [addLog]);
 
   const handleDeleteProfile = useCallback(async (profile: UserAvatarProfile) => {
+    // 系统内置预设不可删除
+    if (profile.isSystem) {
+      message.warning('系统内置预设不可删除');
+      return;
+    }
     try {
       if (profile.avatarPath) {
         try {

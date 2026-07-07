@@ -167,7 +167,7 @@ export async function callAIAPI(
       }
     }
 
-    const timeoutSignal = AbortSignal.timeout(60000);
+    const timeoutSignal = AbortSignal.timeout(300000);
 
     const response = await fetch(apiUrl, {
       method: 'POST',

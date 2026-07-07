@@ -470,7 +470,7 @@ export class KnowledgeBaseService {
     // 关键修复：如果向量搜索结果为空或太少，使用关键词搜索作为 fallback
     if (filteredResults.length === 0 && vectorResults.length > 0) {
       console.log(`[KnowledgeBaseService] search(): vector search returned 0 results above threshold, trying keyword fallback...`);
-      const keywordResults = await this.keywordSearch(query, topK * 3);
+      const keywordResults = await this.textSearch(query, topK * 3);
       
       // 合并去重
       const mergedIds = new Set(filteredResults.map(r => r.id));
@@ -484,7 +484,7 @@ export class KnowledgeBaseService {
     } else if (filteredResults.length === 0) {
       // 向量搜索完全没有结果，直接使用关键词搜索
       console.log(`[KnowledgeBaseService] search(): no vector results at all, falling back to keyword search`);
-      filteredResults = await this.keywordSearch(query, topK);
+      filteredResults = await this.textSearch(query, topK);
     }
 
     return filteredResults;

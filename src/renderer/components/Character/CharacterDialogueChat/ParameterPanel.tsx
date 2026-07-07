@@ -25,6 +25,9 @@ interface ParameterPanelProps {
   customStopSequences?: string[];
   onCustomStopSequencesToggle?: (enabled: boolean) => void;
   onCustomStopSequencesChange?: (stops: string[]) => void;
+  // Emoji 增强模式开关
+  emojiEnhanced?: boolean;
+  onEmojiEnhancedToggle?: (enabled: boolean) => void;
   /**
    * 后端能力探测结果（Spec: optimize-chat-ai-intelligence / Task 6.1 / 6.4）。
    * 决定 repetition_penalty 滑块与 DRY 采样折叠区的显隐。
@@ -42,6 +45,8 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
   customStopSequences = [],
   onCustomStopSequencesToggle,
   onCustomStopSequencesChange,
+  emojiEnhanced = true,
+  onEmojiEnhancedToggle,
   engineCapabilities,
 }) => {
   const [collapsed, setCollapsed] = useState(() => {
@@ -324,6 +329,23 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
               onAfterChange={(value) => handleMinResponseCharsAfterChange(value as number)}
               className="parameter-slider"
             />
+          </div>
+
+          {/* Emoji 增强模式 */}
+          <div className="parameter-emoji-enhanced-section" style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
+            <div className="parameter-emoji-enhanced-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <div className="parameter-label-group" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span className="parameter-label" style={{ fontSize: 13 }}>Emoji 增强模式</span>
+                <Tooltip title="开启后，引导 AI 在回复中适度使用 emoji 和颜文字表达情感与语气（如喜悦😊、思考🤔、害羞😳等），每条回复 1-3 个为宜，增强对话表现力。默认开启。">
+                  <QuestionCircleOutlined className="parameter-tooltip-icon" />
+                </Tooltip>
+              </div>
+              <Switch
+                size="small"
+                checked={emojiEnhanced}
+                onChange={onEmojiEnhancedToggle}
+              />
+            </div>
           </div>
 
           {/* 自定义停止序列配置区（Spec: optimize-chat-ai-intelligence / Task 3.4） */}

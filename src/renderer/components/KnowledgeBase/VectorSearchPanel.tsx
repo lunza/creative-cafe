@@ -12,6 +12,7 @@ import {
 } from 'antd';
 import { SearchOutlined, ExperimentOutlined } from '@ant-design/icons';
 import { useVectorStore } from '../../stores/vectorStore';
+import { VectorScopeSelector } from '../Vector/VectorScopeSelector';
 import type { VectorSearchResult, VectorTestResult } from './shared';
 
 const { TextArea } = Input;
@@ -127,7 +128,7 @@ const VectorSearchPanel: React.FC = () => {
         message="使用说明"
         description={
           <div>
-            <p style={{ margin: '0 0 8px' }}><strong>1. 相似性查询：</strong>输入查询文本，系统将其向量化后与所有存储的向量进行余弦相似度匹配，返回最相似的文本分块。</p>
+            <p style={{ margin: '0 0 8px' }}><strong>1. 相似性查询：</strong>输入查询文本，系统将其向量化后与存储的向量进行余弦相似度匹配，返回最相似的文本分块。可在上方"查询范围"中选择特定的已向量化文件进行针对性查询，不选则查询全部。</p>
             <p style={{ margin: '0 0 8px' }}><strong>2. 向量化测试：</strong>输入任意文本，查看其生成的向量数据和维度信息。</p>
           </div>
         }
@@ -138,6 +139,7 @@ const VectorSearchPanel: React.FC = () => {
 
       <Card title="测试 1: 相似性语义查询" style={{ marginBottom: 16 }}>
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <VectorScopeSelector placeholder="不选则查询所有已向量化的文件" />
           <div style={{ display: 'flex', gap: 16 }}>
             <div style={{ flex: 1 }}>
               <label style={{ display: 'block', marginBottom: 8, fontWeight: 500 }}>查询文本</label>

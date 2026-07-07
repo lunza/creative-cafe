@@ -2303,6 +2303,192 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
     }
   };
 
+  // AI 生成世界书主题描述（逆向功能：根据现有条目还原/生成主题）
+  const handleGenerateWorldBookDescription = async (userRequirements: string = ''): Promise<string> => {
+    addLog('[WorldBook] 开始AI生成世界书主题描述');
+    try {
+      if (!setting) {
+        message.error('请先在配置管理中设置API连接');
+        return '';
+      }
+
+      const activeEngine = getActiveEngineConfig();
+      if (!activeEngine) {
+        message.error('请先在配置管理中设置AI引擎');
+        return '';
+      }
+
+      const apiUrl = activeEngine.api_url;
+      const apiKey = activeEngine.api_key;
+      const apiMode = activeEngine.api_mode;
+      const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
+      const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
+      const maxTokens = (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240;
+      const temperature = (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : 0.7;
+      const topP = Number(activeEngine.top_p) ?? (() => { throw new Error('未配置 top_p 参数') })();
+
+      if (!apiUrl) {
+        message.error('API地址不能为空');
+        return '';
+      }
+
+      // 构建现有条目摘要：每个条目取 comment/key + content 前 100 字
+      const entries = worldBookContent?.entries || {};
+      const entryList = Object.values(entries).filter((e: any) => !e.disable && e.content);
+      if (entryList.length === 0) {
+        message.warning('世界书中没有可用条目，无法生成主题描述');
+        return '';
+      }
+      const existingEntriesSummary = entryList.slice(0, 50).map((e: any, i: number) => {
+        const name = e.comment || e.name || `条目${i + 1}`;
+        const keys = Array.isArray(e.key) ? e.key.join('/') : (e.key || '');
+        const contentPreview = (e.content || '').slice(0, 100);
+        return `${i + 1}. [${name}] 关键词:${keys} 内容:${contentPreview}`;
+      }).join('\n');
+
+      const worldBookName = worldBookContent?.name || '';
+
+      // 通过提示词模板构建
+      const promptResult = await window.electronAPI.prompt.build('world-book.generate-world-description', {
+        world_book_name: worldBookName,
+        existing_entries_summary: existingEntriesSummary,
+        user_requirements: userRequirements || '请根据现有条目内容，生成一段概括性的主题描述'
+      });
+      if (!promptResult.success || !promptResult.data) {
+        throw new Error('获取提示词模板失败: ' + (promptResult.error || '未知错误'));
+      }
+      const systemPrompt = promptResult.data.systemPrompt;
+      const userPrompt = promptResult.data.userPrompt;
+
+      // 拼接全局 system_prompt
+      let finalSystemPrompt = systemPrompt;
+      if (activeEngine.system_prompt && activeEngine.system_prompt.trim()) {
+        finalSystemPrompt = activeEngine.system_prompt.trim() + '\n\n' + systemPrompt;
+      }
+
+      // 构建请求
+      let requestUrl;
+      let requestBody;
+      let requestHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+
+      if (apiMode === 'chat_completion') {
+        if (apiUrl.endsWith('/v1/chat/completions')) {
+          requestUrl = apiUrl;
+        } else {
+          const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
+          requestUrl = baseUrl + 'v1/chat/completions';
+        }
+        requestBody = {
+          model: modelName,
+          messages: [
+            { role: 'system', content: finalSystemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          max_tokens: maxTokens,
+          temperature,
+          top_p: topP,
+          n: 1,
+          stream: false,
+          extra_body: { chat_template_kwargs: { enable_thinking: false } }
+        };
+      } else {
+        if (apiUrl.endsWith('/v1/completions')) {
+          requestUrl = apiUrl;
+        } else {
+          const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
+          requestUrl = baseUrl + 'v1/completions';
+        }
+        requestBody = {
+          model: modelName,
+          prompt: `${finalSystemPrompt}\n\n${userPrompt}`,
+          max_tokens: maxTokens,
+          temperature,
+          top_p: topP,
+          n: 1,
+          stream: false
+        };
+      }
+
+      if (apiKey) {
+        if (apiKeyTransmission === 'header') {
+          const trimmedApiKey = apiKey.trim();
+          requestHeaders['Authorization'] = trimmedApiKey.startsWith('Bearer ') ? trimmedApiKey : `Bearer ${trimmedApiKey}`;
+        } else {
+          requestBody.api_key = apiKey;
+        }
+      }
+
+      addLog(`[WorldBook] 生成主题描述: 发送请求到 ${requestUrl}，条目数:${entryList.length}`);
+
+      const result = await window.electronAPI.ai.request({
+        url: requestUrl,
+        method: 'POST',
+        headers: requestHeaders,
+        body: requestBody
+      });
+
+      if (!result.success) {
+        throw new Error(`API请求失败: ${result.error}`);
+      }
+
+      const data = result.data;
+      let description = data.choices?.[0]?.message?.content || data.choices?.[0]?.text || '';
+      // 清理可能的代码块标记和思考过程
+      description = description.replace(/```[\s\S]*?\n/g, '').replace(/```/g, '').trim();
+
+      addLog(`[WorldBook] 主题描述生成成功: ${description.length} 字符`, 'info');
+      return description;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : '未知错误';
+      addLog(`[WorldBook] 主题描述生成失败: ${msg}`, 'error');
+      message.error(`主题描述生成失败: ${msg}`);
+      return '';
+    }
+  };
+
+  // AI 润色世界书主题描述（复用 polishText，textType='content'）
+  const handlePolishWorldBookDescription = async (currentText: string, requirements: string = ''): Promise<string> => {
+    addLog('[WorldBook] 开始AI润色世界书主题描述');
+    try {
+      if (!setting) {
+        message.error('请先在配置管理中设置API连接');
+        return currentText;
+      }
+
+      const activeEngine = getActiveEngineConfig();
+      if (!activeEngine) {
+        message.error('请先在配置管理中设置AI引擎');
+        return currentText;
+      }
+
+      const apiUrl = activeEngine.api_url;
+      const apiKey = activeEngine.api_key;
+      const apiMode = activeEngine.api_mode;
+      const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
+      const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
+      const maxTokens = (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240;
+      const temperature = (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : 0.7;
+      const topP = Number(activeEngine.top_p) ?? (() => { throw new Error('未配置 top_p 参数') })();
+
+      const worldBookDescription = worldBookContent?.description || '';
+
+      const polished = await polishText(
+        currentText, apiUrl, apiKey, apiMode, modelName,
+        apiKeyTransmission, requirements, worldBookDescription,
+        'content', maxTokens, temperature, topP,
+        activeEngine.system_prompt || ''
+      );
+
+      addLog(`[WorldBook] 主题描述润色成功: ${polished.length} 字符`, 'info');
+      return polished;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : '未知错误';
+      addLog(`[WorldBook] 主题描述润色失败: ${msg}`, 'error');
+      message.error(`主题描述润色失败: ${msg}`);
+      return currentText;
+    }
+  };
+
   // 保存新建的世界书
   const handleCreateWorldBook = async () => {
     try {
@@ -2959,7 +3145,6 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
         if (typeof item.probability === 'number') entry.probability = item.probability;
         if (typeof item.depth === 'number') entry.depth = item.depth;
         if (item.useProbability !== undefined) entry.useProbability = Boolean(item.useProbability);
-        if (typeof item.vectorized === 'boolean') entry.vectorized = item.vectorized;
         if (item.excludeRecursion !== undefined) entry.excludeRecursion = Boolean(item.excludeRecursion);
         if (item.preventRecursion !== undefined) entry.preventRecursion = Boolean(item.preventRecursion);
         if (item.delayUntilRecursion !== undefined) entry.delayUntilRecursion = Boolean(item.delayUntilRecursion);
@@ -3165,6 +3350,8 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
     handleTemplateGenerateEntries,
     handleExpandKeywords,
     handleGenerateDescription,
+    handleGenerateWorldBookDescription,
+    handlePolishWorldBookDescription,
     handleCreateWorldBook,
     handleGenerateFromCharacters,
     handleCreateFromAI,

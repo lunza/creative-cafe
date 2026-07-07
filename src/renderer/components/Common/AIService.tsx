@@ -260,7 +260,7 @@ export class AIService {
         method: 'POST',
         headers: this.buildHeaders(formattedOptions),
         body: this.buildRequestBody(formattedOptions, false),
-        timeout: (this.config as any).timeout || 0, // 无超时限制
+        timeout: (this.config as any).timeout || 300000, // 默认 300 秒超时
         streaming: false
       });
 
@@ -532,7 +532,7 @@ export class AIService {
         method: 'POST',
         headers: this.buildHeaders(formattedOptions),
         body: this.buildRequestBody(formattedOptions, true),
-        timeout: (this.config as any).timeout || 0, // 无超时限制
+        timeout: (this.config as any).timeout || 300000, // 默认 300 秒超时
         streaming: true
       });
 

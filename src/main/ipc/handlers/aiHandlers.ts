@@ -36,16 +36,17 @@ const QUEUE_LOW_WATERMARK = 40;
  * 流式请求的连接超时（毫秒）。
  *
  * 流式 AI 请求的 TTFB（time to first byte）可能较长（冷启动、长 prompt），
- * 此处设为 60 秒。仅用于等待响应头到达，响应头到达后立即清除。
+ * 此处设为 120 秒。仅用于等待响应头到达，响应头到达后立即清除。
+ * 提高到 120 秒以兼容深度思考模型（首字延迟可能较长）。
  */
-const STREAMING_CONNECTION_TIMEOUT = 60000;
+const STREAMING_CONNECTION_TIMEOUT = 120000;
 
 /**
  * 非流式请求的连接超时（毫秒）。
  *
- * 普通请求 30 秒应足够建立连接并接收响应头。
+ * 非流式请求需等待完整响应，连接超时设为 120 秒以兼容深度思考模型。
  */
-const NON_STREAMING_CONNECTION_TIMEOUT = 30000;
+const NON_STREAMING_CONNECTION_TIMEOUT = 120000;
 
 // 存储活跃请求的 AbortController 和 timeoutId
 interface ActiveRequest {
@@ -180,9 +181,9 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
       // 存储 AbortController 以便外部取消
       const senderId = event.sender.id;
 
-      // 超时策略：恢复合理的连接超时（60s 流式 TTFB 兜底）
+      // 超时策略：连接超时（120s TTFB 兜底）+ 请求超时（默认 300s，调用方可覆盖）
       const CONNECTION_TIMEOUT = STREAMING_CONNECTION_TIMEOUT;
-      const effectiveTimeout = timeout === 0 ? 0 : (timeout || 0); // timeout为0或undefined时无超时限制
+      const effectiveTimeout = timeout === 0 ? 0 : (timeout || 300000); // 默认 300 秒请求超时
 
       activeRequests.set(senderId, { controller, timeoutId: undefined, connectionTimeoutId: undefined });
       
@@ -652,9 +653,9 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
       const controller = new AbortController();
       let timeoutId: NodeJS.Timeout | undefined;
       
-      // 超时策略：恢复合理的连接超时（30s 兜底等待响应头）
+      // 超时策略：连接超时（120s 兜底）+ 请求超时（默认 300s，调用方可覆盖）
       const CONNECTION_TIMEOUT = NON_STREAMING_CONNECTION_TIMEOUT;
-      const effectiveTimeout = timeout === 0 ? 0 : (timeout || 0); // timeout为0或undefined时无超时限制
+      const effectiveTimeout = timeout === 0 ? 0 : (timeout || 300000); // 默认 300 秒请求超时
 
       // 设置连接超时检测
       let connectionTimeoutId: NodeJS.Timeout | undefined;

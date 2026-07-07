@@ -374,7 +374,9 @@ const CharacterEditModal: React.FC<CharacterEditModalProps> = ({
       >
         {/* 图片上传区域 */}
         <div style={{ marginBottom: 16 }}>
-          <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1890ff' }}>角色图片（必需）</label>
+          <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1890ff' }}>
+            角色图片{editingItem?.path ? '' : '（必需）'}
+          </label>
           <input
             ref={fileInputRef}
             type="file"
@@ -422,7 +424,7 @@ const CharacterEditModal: React.FC<CharacterEditModalProps> = ({
                   {imageUploadLoading ? '加载图片中...' : '上传角色图片'}
                 </Button>
                 <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-secondary, #8c8c8c)' }}>
-                  保存角色卡需要PNG格式的图片载体
+                  {editingItem?.path ? '更换图片将覆盖当前角色卡载体' : '保存角色卡需要PNG格式的图片载体'}
                 </div>
               </div>
             )}

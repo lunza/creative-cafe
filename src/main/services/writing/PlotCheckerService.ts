@@ -57,8 +57,6 @@ export interface PlotCheckRequestData {
   };
 }
 
-const AI_CHECK_TIMEOUT = 0; // 0 = 无超时限制
-
 export class PlotCheckerService {
   private buildCheckPrompt(request: PlotCheckRequestData): string {
     const chapterOutline = request.outline?.chapters?.find(ch => ch.index === request.chapterIndex);

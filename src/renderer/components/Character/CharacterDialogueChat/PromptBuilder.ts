@@ -282,6 +282,17 @@ export function buildLengthGuidancePrompt(
 }
 
 /**
+ * 构建 emoji 增强模式系统提示约束。
+ *
+ * 开启后引导 AI 在回复中适度使用 emoji 表达情感与语气，增强对话表现力。
+ * emoji 应自然融入文本，不堆砌；每条回复 1-3 个为宜。
+ */
+export function buildEmojiEnhancedPrompt(charName: string = 'Character'): string {
+  const name = charName || 'Character';
+  return `\n【表情增强】${name} 的回复中应适度使用 emoji 表达情感与语气，例如喜悦😊、思考🤔、害羞😳、惊讶😲、无奈😅、调皮😜等。emoji 应自然融入对话文本与动作描写中，不得滥用或堆砌，每条回复使用 1-3 个 emoji 为宜。也可适度使用颜文字（如 (≧▽≦)、(╯‵□′)╯︵┻━┻）增强表现力。`;
+}
+
+/**
  * 构建用户回复生成专用系统提示。
  *
  * Spec: add-ai-user-reply-button / Task 1.1
@@ -639,6 +650,17 @@ export function buildCharacterContext(
 
 export function buildPersonaSection(persona?: UserPersona): string {
   if (!persona || !persona.name) return '';
+
+  // 通用人设：不注入固定人设描述，而是引导 AI 根据角色卡中 {{user}} 的设定动态确定用户身份
+  if (persona.isGeneric) {
+    return `
+## 用户人设（通用人设）
+
+用户当前使用的是"通用人设"，没有预设特定的身份背景。请根据角色卡中关于 {{user}} 的描述（如身份、关系、背景等）来确定用户在当前对话中的角色定位。
+
+角色卡中关于 {{user}} 的设定即为用户的身份依据；角色卡中未指定的细节，你可以根据对话场景自由发挥，但需保持与世界观和角色关系的一致性。
+`;
+  }
 
   return `
 ## 用户人设

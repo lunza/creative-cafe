@@ -48,8 +48,8 @@ export interface ProcessingProgress {
   message: string;
 }
 
-const MAX_CHUNK_SIZE = 500;
-const CHUNK_OVERLAP = 50;
+const MAX_CHUNK_SIZE = 1000;
+const CHUNK_OVERLAP = 150;
 const SUPPORTED_EXTENSIONS = ['pdf', 'docx', 'doc', 'xlsx', 'xls', 'txt', 'md', 'json'] as const;
 
 export class DocumentProcessorService {
@@ -578,7 +578,7 @@ ${e.content}`;
   }
 
   /**
-   * 标准文本分块 - 按500字符分割
+   * 标准文本分块 - 按1000字符分割，按中文标点/换行寻找切分点
    */
   private chunkStandardText(text: string): DocumentChunk[] {
     const cleaned = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
@@ -604,11 +604,7 @@ ${e.content}`;
             break;
           }
           
-          let splitPoint = MAX_CHUNK_SIZE;
-          const lastSpace = remaining.lastIndexOf(' ', MAX_CHUNK_SIZE);
-          if (lastSpace > MAX_CHUNK_SIZE * 0.3) {
-            splitPoint = lastSpace;
-          }
+          const splitPoint = this.findBestSplitPoint(remaining, MAX_CHUNK_SIZE);
           
           const chunkText2 = remaining.slice(0, splitPoint).trim();
           chunks.push({ index: chunkIndex++, text: chunkText2 });
@@ -637,6 +633,36 @@ ${e.content}`;
     }
 
     return chunks.length > 0 ? chunks : [{ index: 0, text: cleaned.trim() }];
+  }
+
+  /**
+   * 在 maxSize 范围内寻找最佳切分点（优先中文标点 > 换行 > 空格 > 硬切分）
+   * 避免在词组/句子中间切断，保证语义完整性
+   */
+  private findBestSplitPoint(text: string, maxSize: number): number {
+    // 优先级 1：中文句末标点（。！？；！？;）+ 换行
+    const sentenceEndPunctuation = ['。', '！', '？', '；', '!', '?', ';', '\n'];
+    for (const p of sentenceEndPunctuation) {
+      const idx = text.lastIndexOf(p, maxSize);
+      if (idx > maxSize * 0.3) {
+        return idx + 1;
+      }
+    }
+    // 优先级 2：中文逗号/顿号/冒号
+    const clausePunctuation = ['，', '、', '：', ',', ':'];
+    for (const p of clausePunctuation) {
+      const idx = text.lastIndexOf(p, maxSize);
+      if (idx > maxSize * 0.3) {
+        return idx + 1;
+      }
+    }
+    // 优先级 3：空格（英文/混排场景）
+    const spaceIdx = text.lastIndexOf(' ', maxSize);
+    if (spaceIdx > maxSize * 0.3) {
+      return spaceIdx;
+    }
+    // 兜底：硬切分
+    return maxSize;
   }
 
   /**

@@ -160,6 +160,22 @@ const CharacterManager: React.FC = () => {
       setFormValues(values);
       setOriginalValues(values);
 
+      // 加载角色卡已有的 PNG 图片作为编辑时的角色图片，避免误提示需要重新上传
+      try {
+        const imageResult = await window.electronAPI.file.readAsBase64(record.path);
+        if (imageResult.success && imageResult.data) {
+          setUploadedImage(imageResult.data);
+          setUploadedImageName(record.name ? `${record.name}.png` : '角色卡图片.png');
+        } else {
+          setUploadedImage(null);
+          setUploadedImageName('');
+        }
+      } catch (e) {
+        addLog(`[Character] 读取角色卡图片失败: ${record.path}`, 'warn');
+        setUploadedImage(null);
+        setUploadedImageName('');
+      }
+
       await fetchWorldBooks();
 
       const relationsResult = await window.electronAPI.character.getWorldBookRelations(record.path);

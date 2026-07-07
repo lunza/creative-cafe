@@ -189,8 +189,10 @@ export class VectorRepository {
 
   /**
    * 通过 metadata 解析目标 backend
+   * 修复：确保新创建的 source backend 在返回前完成 initialize()，
+   * 否则 VecstoreBackend.add() 会抛出 "尚未初始化" 异常
    */
-  private resolveBackendByMetadata(metadata: Record<string, any>): { backend: RepositoryBackendEntry['backend'], source: string, sourceId: string, sourceKey: string } {
+  private async resolveBackendByMetadata(metadata: Record<string, any>): Promise<{ backend: RepositoryBackendEntry['backend'], source: string, sourceId: string, sourceKey: string }> {
     const source = metadata?.source || 'default';
     const sourceId = metadata?.sourceId || metadata?.docId || source || 'default';
 
@@ -204,6 +206,11 @@ export class VectorRepository {
     }
 
     const backend = this.getBackendForSource(source, sourceId);
+    // 新创建的 backend 未初始化时，在此处自动初始化
+    if (!backend.initialized) {
+      console.log(`[VectorRepository] Auto-initializing backend for source="${source}", sourceId="${sourceId}"`);
+      await backend.initialize({ source, sourceId });
+    }
     return {
       backend,
       source,
@@ -216,7 +223,7 @@ export class VectorRepository {
    * 添加单个向量：自动路由到正确的 source backend，并维护反向索引
    */
   async add(id: string, vector: number[], metadata: Record<string, any>): Promise<void> {
-    const { backend, sourceKey } = this.resolveBackendByMetadata(metadata);
+    const { backend, sourceKey } = await this.resolveBackendByMetadata(metadata);
 
     // 若 id 已存在但归属不同的 source，先在旧 source 删除（保持单一归属）
     const existingSourceKey = this.idToSource.get(id);
@@ -235,7 +242,7 @@ export class VectorRepository {
   async addBatch(items: VectorItem[]): Promise<void> {
     const grouped = this.groupItemsBySource(items);
     for (const [, group] of grouped) {
-      const { backend, sourceKey } = this.resolveBackendByMetadata({
+      const { backend, sourceKey } = await this.resolveBackendByMetadata({
         source: group.source,
         sourceId: group.sourceId
       });
@@ -252,7 +259,7 @@ export class VectorRepository {
   async addBatchNoPersist(items: VectorItem[]): Promise<void> {
     const grouped = this.groupItemsBySource(items);
     for (const [, group] of grouped) {
-      const { backend, sourceKey } = this.resolveBackendByMetadata({
+      const { backend, sourceKey } = await this.resolveBackendByMetadata({
         source: group.source,
         sourceId: group.sourceId
       });
@@ -289,7 +296,7 @@ export class VectorRepository {
   async update(id: string, vector: number[], metadata?: Record<string, any>): Promise<void> {
     // 如果 metadata 中包含 source/sourceId 信息，按 source 路由
     if (metadata?.source || metadata?.sourceId) {
-      const { backend, sourceKey } = this.resolveBackendByMetadata(metadata);
+      const { backend, sourceKey } = await this.resolveBackendByMetadata(metadata);
       const existingSourceKey = this.idToSource.get(id);
       if (existingSourceKey && existingSourceKey !== sourceKey) {
         await this.removeFromSource(id, existingSourceKey);
@@ -433,7 +440,7 @@ export class VectorRepository {
   async deleteByPrefix(prefix: string, options?: { sourceType?: string; sourceId?: string }): Promise<number> {
     if (options?.sourceType) {
       const sourceId = options.sourceId || options.sourceType;
-      const { backend, sourceKey } = this.resolveBackendByMetadata({
+      const { backend, sourceKey } = await this.resolveBackendByMetadata({
         source: options.sourceType,
         sourceId
       });

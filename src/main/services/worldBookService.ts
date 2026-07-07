@@ -6,7 +6,6 @@ import { getUserDataPath } from '../utils/appPath';
 import { embeddingService } from './EmbeddingService';
 import { vectorStoreService } from './VectorStoreService';
 import { vectorRegistryService } from './VectorRegistryService';
-import { getStorageService } from './storageService';
 import { VectorSourceType, VectorSourceTypeStorageConfig } from '../types/vectorConfig';
 import { WorldBookKeywordMatcher, matchWorldBookKeywords, formatKeywordMatchResults, type KeywordMatchResult } from './WorldBookKeywordMatcher';
 
@@ -382,58 +381,6 @@ class WorldBookService {
     }
   }
 
-  async vectorizeEntry(worldBookPath: string, entryUid: number, entryContent: string, entryKey?: string[]): Promise<{ success: boolean; error?: string }> {
-    try {
-      const storageService = getStorageService();
-      const settings = storageService.get<any>('settings');
-      const vectorConfig = settings?.vector;
-      if (!vectorConfig || !vectorConfig.autoVectorizeWorldBook) {
-        return { success: false, error: '自动向量化未启用' };
-      }
-      if (!entryContent || entryContent.trim().length === 0) {
-        return { success: false, error: '条目内容为空' };
-      }
-      const embedResult = await embeddingService.generateEmbedding(entryContent);
-      if (!embedResult.success || !embedResult.vector) {
-        return { success: false, error: embedResult.error || '向量化失败' };
-      }
-      const vectorId = `wb_${path.basename(worldBookPath, path.extname(worldBookPath))}_${entryUid}`;
-      await vectorStoreService.add(vectorId, embedResult.vector, {
-        text: entryContent,
-        source: VectorSourceType.WORLDBOOK,
-        sourceId: worldBookPath,
-        entryUid: String(entryUid),
-        key: entryKey || [],
-        worldBookPath: worldBookPath,
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      });
-      await vectorStoreService.persist();
-      console.log(`[WorldBookService] vectorizeEntry: persisted ${vectorId} after vectorization`);
-      return { success: true };
-    } catch (error) {
-      console.error('Failed to vectorize entry:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
-    }
-  }
-
-  async vectorizeAllEntries(worldBookPath: string, entries: Record<string, any>): Promise<{ success: boolean; processed: number; failed: number }> {
-    let processed = 0;
-    let failed = 0;
-    for (const [key, entry] of Object.entries(entries)) {
-      const e = entry as any;
-      if (e.content && e.enabled !== false) {
-        const result = await this.vectorizeEntry(worldBookPath, e.uid || parseInt(key), e.content, e.key);
-        if (result.success) {
-          processed++;
-        } else {
-          failed++;
-        }
-      }
-    }
-    return { success: true, processed, failed };
-  }
-
   async searchWorldBookEntriesByVector(query: string, topK: number = 5): Promise<Array<{ id: string; score: number; metadata: Record<string, any> }>> {
     try {
       console.log(`[WorldBookService] 开始搜索条目: query="${query?.substring(0, 50)}...", topK=${topK}`);
@@ -590,6 +537,15 @@ class WorldBookService {
       }
       console.log(`[WorldBookService] vectorizeWorldBook: completed - entriesVectorized=${result.entriesVectorized}, entriesFailed=${result.entriesFailed}`);
       if (result.entriesVectorized > 0) {
+        // 修复：显式持久化向量数据到磁盘，确保向量落盘后再注册到注册表
+        // VecstoreBackend.add 默认使用 500ms debounce 合并落盘，若不显式 persist，
+        // 向量数据可能仅存在于内存（WASM store）中，应用关闭后丢失
+        try {
+          await vectorStoreService.persist();
+          console.log(`[WorldBookService] vectorizeWorldBook: persisted ${result.entryVectorIds.length} vectors to disk`);
+        } catch (error) {
+          console.error('[WorldBookService] vectorizeWorldBook: failed to persist vectors:', error);
+        }
         try {
           await vectorRegistryService.registerVectorFile({
             vectorFileId: worldBookName,

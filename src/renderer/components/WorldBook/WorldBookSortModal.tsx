@@ -1,6 +1,6 @@
-import React from 'react';
-import { Modal, Button, Radio, Card } from 'antd';
-import { UpOutlined, DownOutlined } from '@ant-design/icons';
+import React, { useState } from 'react';
+import { Modal, Button, Radio, Card, Input, message } from 'antd';
+import { UpOutlined, DownOutlined, ThunderboltOutlined, EditOutlined } from '@ant-design/icons';
 import TextEditor from '../Common/TextEditor';
 
 /**
@@ -37,6 +37,9 @@ export interface WorldBookSortModalProps {
   editingDescriptionTemp: string;
   setEditingDescriptionTemp: (value: string) => void;
   setWorldBookContent: (updater: (prev: any) => any) => void;
+  // AI 生成/润色主题描述
+  onAIGenerateDescription: (requirements: string) => Promise<string>;
+  onAIPolishDescription: (currentText: string, requirements: string) => Promise<string>;
   // 主题
   appTheme: string;
   // 日志（使用 any 兼容 logStore 中复杂的 addLog 签名）
@@ -60,9 +63,48 @@ const WorldBookSortModal: React.FC<WorldBookSortModalProps> = ({
   editingDescriptionTemp,
   setEditingDescriptionTemp,
   setWorldBookContent,
+  onAIGenerateDescription,
+  onAIPolishDescription,
   appTheme,
   addLog,
 }) => {
+  // AI 生成/润色主题描述的本地状态
+  const [aiActionType, setAiActionType] = useState<'generate' | 'polish' | null>(null);
+  const [aiRequirements, setAiRequirements] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+
+  const handleExecuteAIAction = async () => {
+    if (aiActionType === 'generate') {
+      if (!editingDescriptionTemp && !aiRequirements.trim()) {
+        // 生成时无需现有文本，但要有条目（hook 内部会校验）
+      }
+    } else if (aiActionType === 'polish') {
+      if (!editingDescriptionTemp.trim()) {
+        message.warning('当前没有可润色的主题描述文本');
+        return;
+      }
+    }
+
+    setAiLoading(true);
+    try {
+      let result = '';
+      if (aiActionType === 'generate') {
+        result = await onAIGenerateDescription(aiRequirements);
+      } else {
+        result = await onAIPolishDescription(editingDescriptionTemp, aiRequirements);
+      }
+      if (result) {
+        setEditingDescriptionTemp(result);
+        message.success(aiActionType === 'generate' ? 'AI 生成完成' : 'AI 润色完成');
+      }
+    } catch (error) {
+      message.error(`AI 操作失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    } finally {
+      setAiLoading(false);
+      setAiActionType(null);
+      setAiRequirements('');
+    }
+  };
   return (
     <>
       {/* 手动拖拽排序模态框 */}
@@ -144,6 +186,24 @@ const WorldBookSortModal: React.FC<WorldBookSortModalProps> = ({
             取消
           </Button>,
           <Button
+            key="ai-generate"
+            icon={<ThunderboltOutlined />}
+            loading={aiLoading && aiActionType === 'generate'}
+            disabled={aiLoading}
+            onClick={() => { setAiActionType('generate'); setAiRequirements(''); }}
+          >
+            AI 生成
+          </Button>,
+          <Button
+            key="ai-polish"
+            icon={<EditOutlined />}
+            loading={aiLoading && aiActionType === 'polish'}
+            disabled={aiLoading || !editingDescriptionTemp.trim()}
+            onClick={() => { setAiActionType('polish'); setAiRequirements(''); }}
+          >
+            AI 润色
+          </Button>,
+          <Button
             key="save"
             type="primary"
             onClick={() => {
@@ -166,6 +226,45 @@ const WorldBookSortModal: React.FC<WorldBookSortModalProps> = ({
             placeholder="在此编辑世界书描述..."
           />
         </div>
+      </Modal>
+
+      {/* AI 生成/润色主题描述 - 要求输入模态框 */}
+      <Modal
+        title={aiActionType === 'generate' ? 'AI 生成主题描述' : 'AI 润色主题描述'}
+        open={aiActionType !== null}
+        onCancel={() => { if (!aiLoading) { setAiActionType(null); setAiRequirements(''); } }}
+        width="600px"
+        style={{ zIndex: 3100 }}
+        zIndex={3100}
+        maskClosable={false}
+        footer={[
+          <Button key="cancel" disabled={aiLoading} onClick={() => { setAiActionType(null); setAiRequirements(''); }}>
+            取消
+          </Button>,
+          <Button key="execute" type="primary" loading={aiLoading} onClick={handleExecuteAIAction}>
+            {aiActionType === 'generate' ? '开始生成' : '开始润色'}
+          </Button>
+        ]}
+      >
+        <div style={{ marginBottom: 12, color: 'var(--text-secondary, #8c8c8c)', fontSize: 13 }}>
+          {aiActionType === 'generate'
+            ? '根据世界书中的现有条目内容，AI 将逆向还原/生成一段主题描述。可在下方输入额外要求（可选）：'
+            : 'AI 将根据你的要求润色当前主题描述文本。可在下方输入润色要求（可选）：'}
+        </div>
+        <Input.TextArea
+          value={aiRequirements}
+          onChange={(e) => setAiRequirements(e.target.value)}
+          rows={4}
+          placeholder={aiActionType === 'generate'
+            ? '例如：侧重描述世界观的政治格局和科技水平...'
+            : '例如：使语言更精炼、增强文学性、统一术语...'}
+          disabled={aiLoading}
+        />
+        {aiActionType === 'polish' && (
+          <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-secondary, #8c8c8c)' }}>
+            当前文本长度：{editingDescriptionTemp.length} 字符
+          </div>
+        )}
       </Modal>
 
       {/* 排序模态框 */}

@@ -61,7 +61,6 @@ export function useWorldBookFormState() {
     constant: false,
     selective: false,
     useRegex: false,
-    vectorized: false,
     caseSensitive: false,
     // Creative-Cafe 独有字段
     automationId: '',

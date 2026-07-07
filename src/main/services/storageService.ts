@@ -330,6 +330,40 @@ class StorageService {
     } catch (error) {
       console.error('[StorageService] Failed to load custom paths:', error);
     }
+
+    // 确保通用人设预设存在
+    await this.ensureGenericPersona();
+  }
+
+  /**
+   * 确保通用人设预设文件存在（内置预设，不可删除）
+   * 通用人设不提供固定身份描述，而是引导 AI 根据角色卡中 {{user}} 的设定动态确定用户身份
+   */
+  private async ensureGenericPersona(): Promise<void> {
+    try {
+      const userDataPath = getUserDataPath();
+      const avatarDir = path.join(userDataPath, 'data', 'avatars');
+      if (!fs.existsSync(avatarDir)) {
+        fs.mkdirSync(avatarDir, { recursive: true });
+      }
+      const genericPersonaPath = path.join(avatarDir, 'generic-persona.json');
+      if (!fs.existsSync(genericPersonaPath)) {
+        const genericPersona = {
+          id: 'generic-persona',
+          name: 'User',
+          description: '',
+          avatarPath: '',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          isGeneric: true,
+          isSystem: true
+        };
+        fs.writeFileSync(genericPersonaPath, JSON.stringify(genericPersona, null, 2), 'utf-8');
+        console.log('[StorageService] Created generic persona preset');
+      }
+    } catch (error) {
+      console.error('[StorageService] Failed to ensure generic persona:', error);
+    }
   }
 
   /**

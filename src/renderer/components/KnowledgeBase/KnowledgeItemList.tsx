@@ -1,12 +1,12 @@
 /**
- * 知识列表面板 - 对应原 KnowledgeBaseManager 的 "知识列表" Tab。
+ * 向量化知识库列表面板 - 对应原 KnowledgeBaseManager 的 "向量化知识库" Tab。
  *
- * 同时整合了原任务描述中的「文档树面板」语义：本组件即文档树 + 知识条目树形表，
- * 二者在原 KnowledgeBaseManager 中本就合并在一个 Tab 中展示。
+ * 仅展示已完成向量化的文档（世界书、聊天记录、用户上传文档、手动知识等），
+ * 数据源为向量注册表（vector.getAvailableScopes），未向量化的文档不会出现。
  *
  * 包含：
  * - 工具栏（新建知识、全部向量化、刷新）
- * - 文档/知识条目树形表（懒加载子节点、删除整树、查看/编辑/向量化/删除单项）
+ * - 已向量化文档/知识条目树形表（懒加载子节点、删除整树、查看/编辑/向量化/删除单项）
  * - 新建/编辑知识条目 Modal（Form）
  * - 查看知识条目详情 Modal（Descriptions）
  */
@@ -17,14 +17,14 @@ import {
 } from 'antd';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, CloudUploadOutlined,
-  FileTextOutlined, EyeOutlined, FolderOutlined,
+  FileTextOutlined, EyeOutlined, FolderOutlined, ReloadOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useKnowledgeBaseStore } from '../../stores/knowledgeBaseStore';
 import type { KnowledgeItem } from '../../types/knowledgeBase';
 import {
   formatFileSize, formatTime,
-  type TreeKnowledgeItem, type ProcessedDocument,
+  type TreeKnowledgeItem,
 } from './shared';
 
 const { TextArea } = Input;
@@ -42,7 +42,6 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
     updateItem,
     deleteItem,
     vectorizeItem,
-    vectorizeAll,
     fetchItems,
   } = useKnowledgeBaseStore();
 
@@ -57,68 +56,34 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
   const [treeLoading, setTreeLoading] = useState(false);
   // 记录已展开的文档 ID（用于单项删除后刷新对应树节点）
   const [expandedDocIds, setExpandedDocIds] = useState<Set<string>>(new Set());
+  // 根节点多选状态（用于"全部向量化"按钮兼容选中操作）
+  const [selectedRootKeys, setSelectedRootKeys] = useState<React.Key[]>([]);
+  // 正在向量化的根节点 key 集合（用于按钮 loading 状态）
+  const [vectorizingKeys, setVectorizingKeys] = useState<Set<string>>(new Set());
+  // "全部向量化"按钮 loading 状态
+  const [vectorizingAll, setVectorizingAll] = useState(false);
+  // "全部删除"按钮 loading 状态
+  const [deletingSelected, setDeletingSelected] = useState(false);
 
-  // 加载树形数据
+  // 加载树形数据 —— 以向量注册表（getAvailableScopes）为唯一数据源，仅展示已完成向量化的文档
   const loadTreeData = useCallback(async () => {
     setTreeLoading(true);
     try {
-      // 获取所有文档
-      const docs = await window.electronAPI.document.list();
-      const docMap = new Map<string, ProcessedDocument>();
-
-      for (const doc of docs) {
-        const formatted: ProcessedDocument = {
-          documentId: doc.documentId,
-          fileName: doc.metadata?.fileName || doc.documentId,
-          fileSize: doc.metadata?.fileSize || 0,
-          chunkCount: doc.chunkCount || 0,
-          totalChars: doc.metadata?.totalChars || 0,
-          processedAt: doc.metadata?.processedAt || doc.storedAt || 0,
-          fileType: doc.metadata?.fileType || 'unknown',
-        };
-        docMap.set(doc.documentId, formatted);
-      }
-
-      // 构建树形数据 - 从文档加载
       const treeNodes: TreeKnowledgeItem[] = [];
 
-      for (const [docId, docInfo] of docMap) {
-        const treeNode: TreeKnowledgeItem = {
-          key: `doc_${docId}`,
-          id: docId,
-          title: docInfo.fileName,
-          content: '',
-          source: docInfo.fileType,
-          category: [],
-          tags: [],
-          relatedCharacterIds: [],
-          relatedWorldBookPaths: [],
-          metadata: {
-            fileSize: docInfo.fileSize,
-            chunkCount: docInfo.chunkCount,
-            totalChars: docInfo.totalChars,
-            processedAt: docInfo.processedAt,
-            isWorldBook: docInfo.fileType?.toLowerCase().includes('worldbook') || false,
-          },
-          isLeaf: false,
-          documentId: docId,
-          children: [],
-        };
-        treeNodes.push(treeNode);
-      }
-
-      // 从向量注册表加载世界书和角色卡聊天记录条目
+      // 从向量注册表加载所有已向量化的 scope（世界书 / 角色卡聊天记录 / 知识库文档 / 手动知识）
       try {
         const scopesResult = await window.electronAPI.vector.getAvailableScopes();
         if (scopesResult.success && scopesResult.scopes) {
-          // 加载世界书条目
-          const worldbookScopes = scopesResult.scopes.filter(s => s.sourceType === 'worldbook');
+          for (const scope of scopesResult.scopes) {
+            const sourceType: string = scope.sourceType;
+            const scopeMeta = scope.metadata || {};
+            const isWorldBook = sourceType === 'worldbook' || scopeMeta.isWorldBook === true;
+            const isCharacterChat = sourceType === 'character_chat';
 
-          for (const scope of worldbookScopes) {
-            // 检查是否已存在（避免重复）
-            const existingIndex = treeNodes.findIndex(n => n.documentId === scope.sourceId || n.title === scope.sourceName);
-            if (existingIndex === -1) {
-              const worldbookNode: TreeKnowledgeItem = {
+            if (isWorldBook) {
+              // 世界书节点
+              treeNodes.push({
                 key: `wb_${scope.id}`,
                 id: scope.id,
                 title: scope.sourceName,
@@ -132,26 +97,18 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
                   fileSize: 0,
                   chunkCount: scope.vectorCount,
                   totalChars: 0,
-                  processedAt: Date.now(),
+                  processedAt: scopeMeta.processedAt || Date.now(),
                   isWorldBook: true,
                   scopeId: scope.id,
+                  fileType: scopeMeta.fileType,
                 },
                 isLeaf: false,
                 documentId: scope.sourceId,
                 children: [],
-              };
-              treeNodes.push(worldbookNode);
-            }
-          }
-
-          // 加载角色卡聊天记录条目
-          const chatScopes = scopesResult.scopes.filter(s => s.sourceType === 'character_chat');
-
-          for (const scope of chatScopes) {
-            // 检查是否已存在（避免重复）
-            const existingIndex = treeNodes.findIndex(n => n.documentId === scope.sourceId || n.title === scope.sourceName);
-            if (existingIndex === -1) {
-              const chatNode: TreeKnowledgeItem = {
+              });
+            } else if (isCharacterChat) {
+              // 角色卡聊天记录节点
+              treeNodes.push({
                 key: `chat_${scope.id}`,
                 id: scope.id,
                 title: scope.sourceName,
@@ -165,7 +122,7 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
                   fileSize: 0,
                   chunkCount: scope.vectorCount,
                   totalChars: 0,
-                  processedAt: Date.now(),
+                  processedAt: scopeMeta.processedAt || Date.now(),
                   isWorldBook: false,
                   isCharacterChat: true,
                   scopeId: scope.id,
@@ -173,8 +130,35 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
                 isLeaf: false,
                 documentId: scope.sourceId,
                 children: [],
-              };
-              treeNodes.push(chatNode);
+              });
+            } else {
+              // 知识库文档 / 手动知识节点（sourceType: knowledge / manual_knowledge）
+              const docId = scope.sourceId;
+              treeNodes.push({
+                key: `doc_${docId}`,
+                id: docId,
+                title: scope.sourceName || scopeMeta.fileName || docId,
+                content: '',
+                source: scopeMeta.fileType || sourceType,
+                category: [],
+                tags: [],
+                relatedCharacterIds: [],
+                relatedWorldBookPaths: [],
+                metadata: {
+                  fileSize: scopeMeta.fileSize || 0,
+                  chunkCount: scope.vectorCount,
+                  totalChars: scopeMeta.totalChars || 0,
+                  processedAt: scopeMeta.processedAt || Date.now(),
+                  isWorldBook: false,
+                  isCharacterChat: false,
+                  scopeId: scope.id,
+                  fileType: scopeMeta.fileType,
+                  sourceType,
+                },
+                isLeaf: false,
+                documentId: docId,
+                children: [],
+              });
             }
           }
         }
@@ -198,29 +182,61 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
   }, [fetchItems, loadTreeData]);
 
   // 展开文档时加载子节点
-  const loadDocumentChildren = async (docId: string, isWorldbook = false, isCharacterChat = false): Promise<TreeKnowledgeItem[]> => {
+  const loadDocumentChildren = async (
+    docId: string,
+    isWorldbook = false,
+    isCharacterChat = false,
+    sourceType?: string,
+  ): Promise<TreeKnowledgeItem[]> => {
     try {
       if (isWorldbook) {
         const scopesResult = await window.electronAPI.vector.getAvailableScopes();
         if (scopesResult.success && scopesResult.scopes) {
           const scope = scopesResult.scopes.find(s => s.id === docId || s.sourceId === docId);
           if (scope && scope.metadata?.entryVectorIds) {
-            return scope.metadata.entryVectorIds.map((vectorId: string) => ({
-              key: `item_${vectorId}`,
-              id: vectorId,
-              title: vectorId,
-              content: '',
-              source: 'worldbook',
-              category: [],
-              tags: ['worldbook'],
-              relatedCharacterIds: [],
-              relatedWorldBookPaths: [],
-              metadata: {
-                isWorldBook: true,
-                entryVectorId: vectorId,
-              },
-              isLeaf: true,
-            }));
+            // 逐条获取向量元数据以展示条目名称（entryName）
+            const vectorItems = await Promise.all(
+              scope.metadata.entryVectorIds.map(async (vectorId: string) => {
+                try {
+                  const result = await window.electronAPI.vector.getById(vectorId);
+                  if (result.success && result.item) {
+                    const item = result.item as any;
+                    return {
+                      key: `item_${vectorId}`,
+                      id: vectorId,
+                      title: item.metadata?.entryName || vectorId,
+                      content: item.metadata?.text || '',
+                      source: 'worldbook',
+                      category: [],
+                      tags: ['worldbook'],
+                      relatedCharacterIds: [],
+                      relatedWorldBookPaths: [],
+                      metadata: {
+                        isWorldBook: true,
+                        entryVectorId: vectorId,
+                        entryName: item.metadata?.entryName,
+                        entryContent: item.metadata?.text,
+                        entryComment: item.metadata?.entryComment,
+                        entryKey: item.metadata?.entryKey,
+                        entryKeys: item.metadata?.entryKeys,
+                        entryUid: item.metadata?.entryUid,
+                        entryOrder: item.metadata?.entryOrder,
+                        sourceType: item.metadata?.sourceType,
+                        worldBookPath: item.metadata?.worldBookPath,
+                        worldBookName: item.metadata?.worldBookName,
+                        chunkIndex: item.metadata?.chunkIndex,
+                        isDescriptionChunk: item.metadata?.isDescriptionChunk,
+                      },
+                      isLeaf: true,
+                    };
+                  }
+                  return null;
+                } catch {
+                  return null;
+                }
+              })
+            );
+            return vectorItems.filter(Boolean) as TreeKnowledgeItem[];
           }
         }
         return [];
@@ -271,6 +287,29 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
         }
         return [];
       } else {
+        // 知识库文档 / 手动知识
+        // manual_knowledge：sourceId 即知识条目 id，直接获取单条作为子节点
+        if (sourceType === 'manual_knowledge') {
+          try {
+            const itemResult = await window.electronAPI.knowledge.get(docId);
+            if (itemResult) {
+              const item = itemResult as any;
+              return [{
+                ...item,
+                key: `item_${item.id}`,
+                isLeaf: true,
+                metadata: {
+                  ...item.metadata,
+                  isWorldBook: false,
+                },
+              }];
+            }
+          } catch {
+            return [];
+          }
+          return [];
+        }
+        // knowledge（文档上传）：通过 documentId 查询所有知识条目
         const result = await window.electronAPI.knowledge.list({ documentId: docId }, 1, 1000);
         if (result.success && result.items) {
           return result.items.map(item => ({
@@ -296,7 +335,8 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
       // 懒加载子节点
       const isWorldbook = record.metadata?.isWorldBook === true;
       const isCharacterChat = record.metadata?.isCharacterChat === true;
-      const children = await loadDocumentChildren(record.id || record.documentId || '', isWorldbook, isCharacterChat);
+      const sourceType = record.metadata?.sourceType as string | undefined;
+      const children = await loadDocumentChildren(record.id || record.documentId || '', isWorldbook, isCharacterChat, sourceType);
       setTreeData(prev =>
         prev.map(node =>
           node.id === record.id || node.documentId === record.documentId
@@ -327,6 +367,39 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
       loadTreeData();
     } catch {
       message.error('删除失败');
+    }
+  };
+
+  // 批量删除选中的根节点（含其所有向量数据与知识条目）
+  const handleDeleteSelected = async () => {
+    if (selectedRootKeys.length === 0) return;
+    setDeletingSelected(true);
+    try {
+      let successCount = 0;
+      let failCount = 0;
+      for (const key of selectedRootKeys) {
+        const node = treeData.find(n => n.key === key);
+        if (!node) continue;
+        const docId = node.id || node.documentId || '';
+        try {
+          await window.electronAPI.document.delete(docId);
+          successCount++;
+        } catch {
+          failCount++;
+        }
+      }
+      if (failCount === 0) {
+        message.success(`已删除 ${successCount} 个文档`);
+      } else {
+        message.warning(`已删除 ${successCount} 个文档，${failCount} 个删除失败`);
+      }
+      setSelectedRootKeys([]);
+      loadTreeData();
+    } catch (error) {
+      console.error('[KnowledgeItemList] 批量删除失败:', error);
+      message.error('批量删除失败');
+    } finally {
+      setDeletingSelected(false);
     }
   };
 
@@ -391,9 +464,125 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
     }
   };
 
-  const handleVectorizeAll = async () => {
-    const count = await vectorizeAll();
-    message.success(`已向量化 ${count} 个条目`);
+  // 更新整个根节点：获取文档/世界书/聊天记录等的最新数据并重新向量化
+  // silent=true 时不弹 message，返回处理的条目数（供"全部更新"批量调用汇总）
+  const handleUpdateDocument = async (record: TreeKnowledgeItem, silent = false): Promise<number> => {
+    const nodeKey = record.key;
+    setVectorizingKeys(prev => new Set(prev).add(nodeKey));
+    try {
+      const docId = record.id || record.documentId || '';
+      const isWorldbook = record.metadata?.isWorldBook === true;
+      const isCharacterChat = record.metadata?.isCharacterChat === true;
+      const sourceType = record.metadata?.sourceType as string | undefined;
+      let updatedCount = 0;
+
+      if (isWorldbook) {
+        // 世界书：通过 worldBook.list() 找到文件路径，调用 worldBook.vectorize 重新读取并向量化
+        // 注意：世界书节点的 id 是 scope.id（注册表 ID），documentId 才是世界书名称（scope.sourceId）
+        // worldBook.list() 返回的 name 是文件名（带 .json 后缀），需要去掉扩展名匹配
+        const worldBookName = record.documentId || record.title || docId;
+        try {
+          const worldBooks = await window.electronAPI.worldBook.list();
+          const target = worldBooks.find((wb: any) => {
+            const wbNameWithoutExt = wb.name.replace(/\.(json|json5)$/i, '');
+            return wbNameWithoutExt === worldBookName
+              || wb.name === worldBookName
+              || wb.path === worldBookName
+              || wbNameWithoutExt === record.title;
+          });
+          if (target) {
+            const result = await window.electronAPI.worldBook.vectorize(target.path);
+            if (result.success) {
+              updatedCount = result.entriesVectorized || 0;
+            } else if (!silent) {
+              message.error(`更新失败: ${result.error || '未知错误'}`);
+            }
+          } else if (!silent) {
+            message.warning(`未找到世界书: ${worldBookName}`);
+          }
+        } catch (e) {
+          console.error('[KnowledgeItemList] 更新世界书失败:', e);
+          if (!silent) message.error('更新世界书失败');
+        }
+      } else if (isCharacterChat) {
+        // 角色卡聊天记录：调用 memory.vectorizeCharacterChat 重新读取聊天记录并向量化
+        try {
+          const result = await window.electronAPI.memory.vectorizeCharacterChat(docId);
+          if (result.success) {
+            updatedCount = result.messagesVectorized || 0;
+          } else if (!silent) {
+            message.error(`更新失败: ${result.error || '未知错误'}`);
+          }
+        } catch (e) {
+          console.error('[KnowledgeItemList] 更新聊天记录失败:', e);
+          if (!silent) message.error('更新聊天记录失败');
+        }
+      } else if (sourceType === 'manual_knowledge') {
+        // 手动知识：重新获取知识条目内容并向量化
+        const success = await vectorizeItem(docId);
+        updatedCount = success ? 1 : 0;
+      } else {
+        // 文档类型（knowledge）：通过 documentId 查出所有知识条目后逐条重新向量化
+        const result = await window.electronAPI.knowledge.list({ documentId: docId }, 1, 1000);
+        if (result.success && result.items) {
+          for (const item of result.items) {
+            const success = await vectorizeItem(item.id);
+            if (success) updatedCount++;
+          }
+        }
+      }
+
+      if (!silent) {
+        if (updatedCount > 0) {
+          message.success(`已更新 ${updatedCount} 个条目`);
+        } else {
+          message.warning('未找到可更新的条目');
+        }
+      }
+      // 更新后刷新树形数据（向量计数可能变化）
+      loadTreeData();
+      return updatedCount;
+    } catch (error) {
+      console.error('[KnowledgeItemList] 更新文档失败:', error);
+      if (!silent) {
+        message.error('更新失败');
+      }
+      return 0;
+    } finally {
+      setVectorizingKeys(prev => {
+        const next = new Set(prev);
+        next.delete(nodeKey);
+        return next;
+      });
+    }
+  };
+
+  const handleUpdateAll = async () => {
+    setVectorizingAll(true);
+    try {
+      if (selectedRootKeys.length > 0) {
+        // 有选中根节点时，仅更新选中的根节点
+        let totalCount = 0;
+        for (const key of selectedRootKeys) {
+          const node = treeData.find(n => n.key === key);
+          if (node) {
+            const count = await handleUpdateDocument(node, true);
+            totalCount += count;
+          }
+        }
+        message.success(`已更新 ${totalCount} 个条目`);
+      } else {
+        // 无选中时，更新全部根节点
+        let totalCount = 0;
+        for (const node of treeData) {
+          const count = await handleUpdateDocument(node, true);
+          totalCount += count;
+        }
+        message.success(`已更新 ${totalCount} 个条目`);
+      }
+    } finally {
+      setVectorizingAll(false);
+    }
   };
 
   const handleSubmit = async (values: any) => {
@@ -431,17 +620,23 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
         key: 'title',
         width: 300,
         ellipsis: true,
-        render: (text, record) => (
-          <Space>
-            {record.isLeaf ? <FileTextOutlined /> : <FolderOutlined style={{ color: '#1890ff' }} />}
-            <span style={{ fontWeight: record.isLeaf ? 'normal' : 500 }}>{text}</span>
-            {!record.isLeaf && (
-              <Tag color="blue" style={{ marginLeft: 4 }}>
-                {record.metadata?.chunkCount || 0} 条
-              </Tag>
-            )}
-          </Space>
-        ),
+        render: (text, record) => {
+          // 叶子节点优先展示条目名称（entryName），与"查看知识条目"弹窗中的条目名称保持一致
+          const displayName = record.isLeaf
+            ? (record.metadata?.entryName || text)
+            : text;
+          return (
+            <Space>
+              {record.isLeaf ? <FileTextOutlined /> : <FolderOutlined style={{ color: '#1890ff' }} />}
+              <span style={{ fontWeight: record.isLeaf ? 'normal' : 500 }}>{displayName}</span>
+              {!record.isLeaf && (
+                <Tag color="blue" style={{ marginLeft: 4 }}>
+                  {record.metadata?.chunkCount || 0} 条
+                </Tag>
+              )}
+            </Space>
+          );
+        },
       },
       {
         title: '类型',
@@ -515,22 +710,34 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
       {
         title: '操作',
         key: 'action',
-        width: 200,
+        width: 260,
         render: (_, record) => {
           if (!record.isLeaf) {
+            const isVectorizing = vectorizingKeys.has(record.key);
             return (
-              <Popconfirm
-                title="确认删除整个文档"
-                description="删除后该文档的所有向量数据和知识条目都将被删除，无法恢复"
-                onConfirm={() => handleDeleteDocumentTree(record.id || record.documentId || '')}
-                okText="删除"
-                cancelText="取消"
-                okButtonProps={{ danger: true }}
-              >
-                <Button type="link" size="small" danger icon={<DeleteOutlined />}>
-                  删除整个文档
+              <Space size="small">
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<ReloadOutlined />}
+                  loading={isVectorizing}
+                  onClick={() => handleUpdateDocument(record)}
+                >
+                  更新
                 </Button>
-              </Popconfirm>
+                <Popconfirm
+                  title="确认删除整个文档"
+                  description="删除后该文档的所有向量数据和知识条目都将被删除，无法恢复"
+                  onConfirm={() => handleDeleteDocumentTree(record.id || record.documentId || '')}
+                  okText="删除"
+                  cancelText="取消"
+                  okButtonProps={{ danger: true }}
+                >
+                  <Button type="link" size="small" danger icon={<DeleteOutlined />}>
+                    删除整个文档
+                  </Button>
+                </Popconfirm>
+              </Space>
             );
           }
 
@@ -598,8 +805,9 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
         },
       },
     ],
-    // 依赖 expandedDocIds 以便删除单项后能正确刷新当前展开节点
-    [expandedDocIds]
+    // 依赖 expandedDocIds 以便删除单项后能正确刷新当前展开节点；
+    // 依赖 vectorizingKeys 以便根节点向量化按钮的 loading 状态实时更新
+    [expandedDocIds, vectorizingKeys]
   );
 
   return (
@@ -609,9 +817,32 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
           <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
             新建知识
           </Button>
-          <Button icon={<CloudUploadOutlined />} onClick={handleVectorizeAll}>
-            全部向量化
+          <Button
+            icon={<ReloadOutlined />}
+            onClick={handleUpdateAll}
+            loading={vectorizingAll}
+          >
+            {selectedRootKeys.length > 0 ? `更新选中(${selectedRootKeys.length})` : '全部更新'}
           </Button>
+          {selectedRootKeys.length > 0 && (
+            <Popconfirm
+              title="确认批量删除"
+              description={`将删除选中的 ${selectedRootKeys.length} 个文档及其所有向量数据，无法恢复`}
+              onConfirm={handleDeleteSelected}
+              okText="删除"
+              cancelText="取消"
+              okButtonProps={{ danger: true }}
+            >
+              <Button danger icon={<DeleteOutlined />} loading={deletingSelected}>
+                全部删除({selectedRootKeys.length})
+              </Button>
+            </Popconfirm>
+          )}
+          {selectedRootKeys.length > 0 && (
+            <Button type="link" onClick={() => setSelectedRootKeys([])}>
+              取消选择
+            </Button>
+          )}
           <Button icon={<FolderOutlined />} onClick={loadTreeData} loading={treeLoading}>
             刷新
           </Button>
@@ -619,7 +850,7 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
       </div>
       <Alert
         message="提示"
-        description="点击文档行可展开查看该文档下的所有知识条目，点击「删除整个文档」将删除该文档及其所有数据"
+        description="本列表仅展示已完成向量化的文档（世界书、聊天记录、用户上传文档等）。点击行可展开查看该文档下的所有知识条目，点击「删除整个文档」将删除该文档及其所有向量数据"
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
@@ -634,16 +865,23 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
           bordered
           scroll={{ y: 500 }}
           rowKey="key"
+          rowSelection={{
+            selectedRowKeys: selectedRootKeys,
+            onChange: (selectedRowKeys: React.Key[]) => setSelectedRootKeys(selectedRowKeys),
+            // 仅根节点可勾选，叶子节点禁用复选框
+            getCheckboxProps: (record: TreeKnowledgeItem) => ({
+              disabled: record.isLeaf,
+            }),
+          }}
           expandable={{
             onExpand: handleExpand,
             defaultExpandAllRows: false,
-            expandIconColumnIndex: 0,
           }}
           pagination={{
             pageSize,
             showSizeChanger: true,
             showQuickJumper: true,
-            showTotal: (total) => `共 ${total} 个文档`,
+            showTotal: (total) => `共 ${total} 个已向量化文档`,
             pageSizeOptions: ['10', '20', '50'],
             className: 'table-pagination-wrapper',
           }}

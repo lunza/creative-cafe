@@ -151,7 +151,7 @@ export const GAMES_INDEX_VERSION = '1.0.0';
 // ==================== 超时与限流 ====================
 
 /** AI 叙事生成超时（ms），与 AI_CHECK_TIMEOUT 对齐 */
-export const GAME_NARRATIVE_TIMEOUT = 120000;
+export const GAME_NARRATIVE_TIMEOUT = 300000;
 
 /** 流式 chunk 之间最大间隔（ms），超过则判定为断流 */
 export const GAME_STREAM_CHUNK_TIMEOUT = 30000;

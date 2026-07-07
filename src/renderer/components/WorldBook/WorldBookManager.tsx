@@ -381,7 +381,6 @@ const WorldBookManager: React.FC = () => {
       constant: entry.constant || false,
       selective: entry.selective || false,
       useRegex: entry.useRegex !== undefined ? entry.useRegex : (entry.use_regex || false),
-      vectorized: entry.vectorized || false,
       caseSensitive: entry.caseSensitive !== undefined ? entry.caseSensitive : (entry.case_sensitive || false),
       // Creative-Cafe 独有字段
       automationId: entry.automationId || '',
@@ -793,6 +792,8 @@ const WorldBookManager: React.FC = () => {
         editingDescriptionTemp={editingDescriptionTemp}
         setEditingDescriptionTemp={setEditingDescriptionTemp}
         setWorldBookContent={setWorldBookContent}
+        onAIGenerateDescription={aiOps.handleGenerateWorldBookDescription}
+        onAIPolishDescription={aiOps.handlePolishWorldBookDescription}
         appTheme={appTheme}
         addLog={addLog}
       />

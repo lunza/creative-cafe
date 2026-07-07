@@ -503,8 +503,13 @@ export class VectorStoreService {
   }): Promise<SearchResult[]> {
     await this.ensureInitialized();
 
+    // 修复：缓存 key 需包含 topK/filter/scopeIds，否则相同查询文本换 topK 会命中旧缓存
     const queryHash = this.hashVector(query);
-    const cachedResult = await this.cache.getSearchResult(queryHash);
+    const scopeKey = options?.scopeIds && options.scopeIds.length > 0 ? options.scopeIds.slice().sort().join(',') : '';
+    const sourceTypeKey = options?.sourceType || '';
+    const filterKey = filter ? JSON.stringify(filter) : '';
+    const cacheKey = `${queryHash}_k${topK}_s${scopeKey}_t${sourceTypeKey}_f${filterKey}`;
+    const cachedResult = await this.cache.getSearchResult(cacheKey);
     if (cachedResult) {
       return cachedResult;
     }
@@ -558,7 +563,7 @@ export class VectorStoreService {
     const results = await strategy.search(query, topK, filter);
 
     if (results.length > 0) {
-      await this.cache.setSearchResult(queryHash, results);
+      await this.cache.setSearchResult(cacheKey, results);
     }
 
     return results;

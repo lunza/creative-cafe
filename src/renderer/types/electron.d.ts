@@ -179,6 +179,9 @@ interface ElectronAPI {
 
     // 自动初始化（首次对话时自动绑定模板并创建空表格）
     autoInitializeSession: (chatId: string) => Promise<{ success: boolean; templateId: string | null }>;
+
+    // 角色卡聊天记录向量化（读取聊天记录并重新向量化）
+    vectorizeCharacterChat: (fileName: string) => Promise<{ success: boolean; messagesVectorized?: number; messagesFailed?: number; error?: string; messageVectorIds?: string[] }>;
   };
   // AI 请求 API
   ai: {
@@ -226,13 +229,15 @@ interface ElectronAPI {
   vector: {
     add: (id: string, vector: number[], metadata: Record<string, any>) => Promise<{ success: boolean; error?: string }>;
     addBatch: (items: Array<{ id: string; vector: number[]; metadata: Record<string, any> }>) => Promise<{ success: boolean; error?: string }>;
-    search: (query: number[], topK: number, filter?: Record<string, any>) => Promise<{ success: boolean; results?: Array<{ id: string; score: number; metadata: Record<string, any> }>; error?: string }>;
+    search: (query: number[], topK: number, filter?: Record<string, any>, scopeIds?: string[]) => Promise<{ success: boolean; results?: Array<{ id: string; score: number; metadata: Record<string, any> }>; error?: string }>;
     update: (id: string, vector: number[], metadata?: Record<string, any>) => Promise<{ success: boolean; error?: string }>;
     delete: (id: string) => Promise<{ success: boolean; error?: string }>;
     count: () => Promise<{ success: boolean; count?: number; error?: string }>;
     rebuildIndex: () => Promise<{ success: boolean; error?: string }>;
     testStorage: () => Promise<{ success: boolean; mode: string; vectorCount: number; storagePath?: string; error?: string; details?: string }>;
     getStorePath: () => Promise<string>;
+    getById: (id: string) => Promise<{ success: boolean; item?: any; error?: string }>;
+    getAvailableScopes: () => Promise<{ success: boolean; scopes?: any[]; error?: string }>;
   };
   // 向量嵌入 API
   embedding: {

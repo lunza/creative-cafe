@@ -85,6 +85,10 @@ export interface UserPersona {
   avatarPath: string;
   createdAt: number;
   updatedAt: number;
+  // 标记是否为通用人设（内置预设，采用角色卡中 {{user}} 的设定）
+  isGeneric?: boolean;
+  // 标记是否为系统内置预设（不可删除）
+  isSystem?: boolean;
 }
 
 // AI参数配置
@@ -127,6 +131,14 @@ export interface AIParameterConfig {
    * 当连续 3 轮回复均低于此阈值时，自动强化约束（Task 4）。
    */
   min_response_chars?: number;
+  /**
+   * Emoji 增强模式开关。
+   *
+   * 开启后，在系统提示末尾注入约束，要求 AI 在回复中适度使用 emoji
+   * 表达情感与语气（如喜悦😊、思考🤔、害羞😳等），增强对话表现力。
+   * 默认开启（undefined 视为开启）。
+   */
+  emoji_enhanced?: boolean;
 }
 
 // 知识库绑定信息

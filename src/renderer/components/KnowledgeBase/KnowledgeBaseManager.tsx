@@ -6,7 +6,7 @@
  * - 跨 Tab 共享的本地 UI 分页大小（pageSize）状态
  *
  * 拆分映射：
- * - "知识列表" Tab → <KnowledgeItemList />（含文档树 + 知识项 Modal）
+ * - "向量化知识库" Tab → <KnowledgeItemList />（含已向量化文档树 + 知识项 Modal）
  * - "文档上传" Tab → <UploadDocumentModal />（含已处理文档列表 + 详情/分块 Modal）
  * - "向量测试" Tab → <VectorSearchPanel />（含相似性查询 + 向量化测试）
  *
@@ -27,7 +27,7 @@ export const KnowledgeBaseManager: React.FC = () => {
   const tabItems = [
     {
       key: 'list',
-      label: '知识列表',
+      label: '向量化知识库',
       children: <KnowledgeItemList pageSize={pageSize} />,
     },
     {

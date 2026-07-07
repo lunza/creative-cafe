@@ -74,11 +74,6 @@ export const VectorSourceTypeStorageConfig: Record<VectorSourceType, SourceTypeS
     perEntrySubdir: true,
     filePrefix: 'kb',
   },
-  [VectorSourceType.DOCUMENT]: {
-    storageDir: 'knowledge',
-    perEntrySubdir: true,
-    filePrefix: 'kb_doc',
-  },
   [VectorSourceType.MANUAL_KNOWLEDGE]: {
     storageDir: 'default',
     perEntrySubdir: true,
@@ -115,7 +110,7 @@ export interface VectorConfig {
   contextWindowTokens: number;
   autoVectorizeWorldBook: boolean;
   autoVectorizeKnowledge: boolean;
-  dimension?: 1024 | 4096;
+  dimension?: number;
   
   // 禁止字段说明（以下字段不应出现在此配置中）：
   // - vectors: number[][] - 向量数组，应存储在 vecstore.json

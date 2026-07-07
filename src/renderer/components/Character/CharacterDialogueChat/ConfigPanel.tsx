@@ -35,6 +35,9 @@ interface ConfigPanelProps {
   // 自定义停止序列（Spec: optimize-chat-ai-intelligence / Task 3.4）
   customStopSequencesEnabled?: boolean;
   customStopSequences?: string[];
+  // Emoji 增强模式
+  emojiEnhanced?: boolean;
+  onEmojiEnhancedToggle?: (enabled: boolean) => void;
   /**
    * 后端能力探测结果（Spec: optimize-chat-ai-intelligence / Task 6.1 / 6.4）。
    * 透传给 ParameterPanel，决定 repetition_penalty 滑块与 DRY 采样折叠区的显隐。
@@ -72,6 +75,8 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
   tokenManagementConfig,
   customStopSequencesEnabled,
   customStopSequences,
+  emojiEnhanced,
+  onEmojiEnhancedToggle,
   engineCapabilities,
   onPersonaChange,
   onParameterChange,
@@ -105,6 +110,8 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
         customStopSequences={customStopSequences}
         onCustomStopSequencesToggle={onCustomStopSequencesToggle}
         onCustomStopSequencesChange={onCustomStopSequencesChange}
+        emojiEnhanced={emojiEnhanced}
+        onEmojiEnhancedToggle={onEmojiEnhancedToggle}
         engineCapabilities={engineCapabilities}
       />
       <div className="config-panel-divider" />

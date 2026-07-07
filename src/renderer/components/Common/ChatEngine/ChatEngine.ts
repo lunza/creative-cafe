@@ -163,7 +163,7 @@ export class ChatEngine implements IChatEngine {
         method: 'POST',
         headers: requestHeaders,
         body: requestBody,
-        timeout: 120000, // 默认 120 秒超时（AI 生成通常较长）
+        timeout: 300000, // 默认 300 秒超时（AI 生成通常较长）
         streaming: true,
       });
 
