@@ -48,8 +48,11 @@ const DEFAULT_CONFIGS: Record<EmbeddingMode, VectorDefaults> = {
 };
 
 // 本地模型 → 向量维度映射（用于本地模型切换时自动联动 dimension 字段）
+// 维度来源：Qwen3-Embedding 官方模型卡（0.6B→1024, 4B→2560, 8B→4096）
 const LOCAL_MODEL_DIMENSIONS: Record<string, number> = {
   'onnx-community/Qwen3-Embedding-0.6B-ONNX': 1024,
+  'onnx-community/Qwen3-Embedding-4B-ONNX': 2560,
+  'onnx-community/Qwen3-Embedding-8B-ONNX': 4096,
 };
 
 // 旧模型名 → 新模型名迁移映射（用户已保存的设置中可能仍含旧名称）
@@ -167,8 +170,15 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
       }
     });
 
-    // Auto-link dimension to mode (local→1024, remote→4096)
-    preservedValues.dimension = newMode === 'local' ? 1024 : 4096;
+    // Auto-link dimension to mode / selected local model.
+    // 本地模式：按所选 localModel 推导维度（0.6B→1024, 4B→2560, 8B→4096），
+    // 未知模型回退到 0.6B 默认 1024；远程模式默认 4096。
+    if (newMode === 'local') {
+      const localModel = (preservedValues.localModel as string) || DEFAULT_CONFIGS.local.localModel || '';
+      preservedValues.dimension = LOCAL_MODEL_DIMENSIONS[localModel] || 1024;
+    } else {
+      preservedValues.dimension = 4096;
+    }
 
     form.setFieldsValue(preservedValues);
     setActiveEmbeddingMode(newMode);
@@ -295,15 +305,16 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
             label={
               <Space>
                 向量维度
-                <Tooltip title="1024 维：本地模型 qwen3-emb-0.6b，适合本地降级；4096 维：远程模型 qwen3-embedding-8b，检索精度更高。切换维度时，不同维度的向量数据独立存储，互不影响。">
+                <Tooltip title="向量维度需与所选嵌入模型一致。本地模式：qwen3-emb-0.6b→1024 维、qwen3-emb-4b→2560 维、qwen3-emb-8b→4096 维；远程模式默认 4096 维（qwen3-embedding-8b）。选择本地模型时维度会自动联动。切换维度时，不同维度的向量数据独立存储，互不影响。">
                   <QuestionCircleOutlined style={{ color: '#999', cursor: 'pointer' }} />
                 </Tooltip>
               </Space>
             }
           >
             <Select placeholder="选择向量维度">
-              <Option value={1024}>1024 维（本地模型，兼容 qwen3-emb-0.6b）</Option>
-              <Option value={4096}>4096 维（远程模型，兼容 qwen3-embedding-8b）</Option>
+              <Option value={1024}>1024 维（qwen3-emb-0.6b 本地）</Option>
+              <Option value={2560}>2560 维（qwen3-emb-4b 本地）</Option>
+              <Option value={4096}>4096 维（qwen3-emb-8b 本地 / 远程）</Option>
             </Select>
           </Form.Item>
         );
@@ -671,12 +682,12 @@ const LocalModelSelector: React.FC<{
       <Form.Item
         name="localModel"
         label="本地模型名称"
-        tooltip="HuggingFace 提供的轻量级嵌入模型,首次使用需下载"
+        tooltip="Qwen3-Embedding 系列 ONNX 本地模型（0.6B/4B/8B），首次使用需从 ModelScope 下载，请根据显存大小选择"
         style={{ marginBottom: 8 }}
       >
         <Select
           placeholder="选择模型"
-          listHeight={200}
+          listHeight={260}
           onChange={(value) => {
             setSelectedModel(value);
             if (value && isDownloaded[value] === undefined) {
@@ -688,8 +699,22 @@ const LocalModelSelector: React.FC<{
           <Option value="onnx-community/Qwen3-Embedding-0.6B-ONNX">
             <div>
               <div>qwen3-emb-0.6b (1024 维, ~250MB)</div>
-              <div style={{ fontSize: 11, color: '#999' }}>中英文双语 · 兼容 qwen3-embedding-8b · 本地降级方案</div>
-              <div style={{ fontSize: 11, color: '#bbb' }}>https://huggingface.co/onnx-community/Qwen3-Embedding-0.6B-ONNX</div>
+              <div style={{ fontSize: 11, color: '#999' }}>轻量首选 · 建议 4GB+ 显存 · 兼容远程 8B 降级方案</div>
+              <div style={{ fontSize: 11, color: '#bbb' }}>https://modelscope.cn/models/onnx-community/Qwen3-Embedding-0.6B-ONNX</div>
+            </div>
+          </Option>
+          <Option value="onnx-community/Qwen3-Embedding-4B-ONNX">
+            <div>
+              <div>qwen3-emb-4b (2560 维, ~2GB)</div>
+              <div style={{ fontSize: 11, color: '#999' }}>平衡方案 · 建议 8GB+ 显存 · 精度与速度兼顾</div>
+              <div style={{ fontSize: 11, color: '#bbb' }}>https://modelscope.cn/models/onnx-community/Qwen3-Embedding-4B-ONNX</div>
+            </div>
+          </Option>
+          <Option value="onnx-community/Qwen3-Embedding-8B-ONNX">
+            <div>
+              <div>qwen3-emb-8b (4096 维, ~4GB)</div>
+              <div style={{ fontSize: 11, color: '#999' }}>最高精度 · 建议 16GB+ 显存 · 与远程 8B 同维度</div>
+              <div style={{ fontSize: 11, color: '#bbb' }}>https://modelscope.cn/models/onnx-community/Qwen3-Embedding-8B-ONNX</div>
             </div>
           </Option>
         </Select>

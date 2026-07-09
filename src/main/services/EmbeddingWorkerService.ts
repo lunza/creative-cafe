@@ -1,6 +1,7 @@
-import { ipcMain, app } from 'electron';
+import { ipcMain } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
+import { getProjectRoot } from '../utils/appPath';
 
 // 旧模型名 → 新模型名迁移映射
 const MODEL_NAME_MIGRATIONS: Record<string, string> = {
@@ -64,7 +65,7 @@ export class EmbeddingWorkerService {
 
   private getCacheDir(): string {
     if (!this.modelCacheDir) {
-      this.modelCacheDir = path.join(app.getPath('userData'), 'models');
+      this.modelCacheDir = path.join(getProjectRoot(), 'models');
     }
     return this.modelCacheDir;
   }

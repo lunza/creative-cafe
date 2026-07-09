@@ -6,7 +6,7 @@ export interface VectorDefaults {
   remoteApiKey?: string;
   remoteApiKeyTransmission?: 'header' | 'body';
   localModel?: string;
-  dimension?: 1024 | 4096;
+  dimension?: 1024 | 2560 | 4096;
   vectorStoreMode: 'vecstore';
   cacheEnabled: boolean;
   cacheL1Size: number;

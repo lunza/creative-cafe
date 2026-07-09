@@ -54,6 +54,9 @@ pnpm-lock.yaml
 # Data directory
 data/
 
+# Downloaded embedding models (local mode model cache)
+/models/
+
 # Settings directory (project-level only)
 /settings/
 

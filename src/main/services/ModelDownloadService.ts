@@ -1,6 +1,7 @@
-import { ipcMain, app } from 'electron';
+import { ipcMain } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
+import { getProjectRoot } from '../utils/appPath';
 
 export class ModelDownloadService {
   private cacheDir: string | null = null;
@@ -8,7 +9,7 @@ export class ModelDownloadService {
 
   private getCacheDir(): string {
     if (!this.cacheDir) {
-      this.cacheDir = path.join(app.getPath('userData'), 'models');
+      this.cacheDir = path.join(getProjectRoot(), 'models');
     }
     return this.cacheDir;
   }

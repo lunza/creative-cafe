@@ -66,6 +66,22 @@ export function getTempPath(): string {
 }
 
 /**
+ * 获取项目根目录
+ * 优先使用 Electron 的 app.getAppPath()（开发环境返回项目根，含 package.json 的目录），
+ * 失败时降级到 process.cwd()（与 fileService / pluginService 等模块一致）。
+ */
+export function getProjectRoot(): string {
+  try {
+    if (app && typeof app.getAppPath === 'function') {
+      return app.getAppPath();
+    }
+  } catch {
+    // 静默失败，使用兜底方案
+  }
+  return process.cwd();
+}
+
+/**
  * 将 __USER_DATA__ 占位符替换为实际用户数据路径
  * 仅当路径以 __USER_DATA__ 开头时执行替换，否则原样返回。
  * @param dir - 可能包含 __USER_DATA__ 占位符的路径
