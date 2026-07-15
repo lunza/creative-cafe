@@ -9,10 +9,11 @@ import { ChatMessage, CharacterInfo, ChatState, UserPersona, EffectiveAIParams }
 import { ChatEngineFactory } from '../../Common/ChatEngine/ChatEngine.factory';
 import { AIEngineConfig, AIResponse, getDefaultEngineCapabilities } from '../../Common/ChatEngine/ChatEngine.types';
 import { usePromptBuilder } from './usePromptBuilder';
-import { buildAsyncTableOrganizeInstructions, buildStopSequences, buildRoleAnchorMessage, buildContinueNudgePrompt, buildLengthGuidancePrompt, buildEmojiEnhancedPrompt, buildUserReplySystemPrompt, buildStopSequencesForUserReply, buildPolishInputSystemPrompt } from './PromptBuilder';
+import { buildAssistModePrompt, buildAsyncTableOrganizeInstructions, buildStopSequences, buildRoleAnchorMessage, buildContinueNudgePrompt, buildLengthGuidancePrompt, buildEmojiEnhancedPrompt, buildUserReplySystemPrompt, buildStopSequencesForUserReply, buildPolishInputSystemPrompt } from './PromptBuilder';
 import { TokenCounter, ContextTruncator, DEFAULT_MAX_TOKENS } from './TokenManagement';
 import type { TruncationConfig } from './TokenManagement/types';
 import { nGramJaccard, overlapRate } from './utils/similarityUtils';
+import { stripThinkingTags } from './utils/messageProcessor';
 import {
   shouldTriggerRagRetrieval,
   shouldTriggerIncrementalVectorize,
@@ -912,6 +913,14 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       effectiveSystemPrompt += buildEmojiEnhancedPrompt(charName);
     }
 
+    // 辅助模式：默认关闭，显式设为 true 时开启
+    const assistMode = characterConfig?.customParameters?.assist_mode === true;
+    if (assistMode) {
+      const charName = characterInfo.characterCardName || 'Character';
+      effectiveSystemPrompt += buildAssistModePrompt(charName);
+      addLog(`[CharacterDialogueChat] 辅助模式已开启，已注入提示词约束`, 'info');
+    }
+
     // Debug: 显示提示词末尾（背景知识注入位置）
     const promptTail = effectiveSystemPrompt.substring(Math.max(0, effectiveSystemPrompt.length - 500));
     addLog(`[CharacterDialogueChat] System prompt length: ${effectiveSystemPrompt.length}, tail: ...${promptTail}`, 'info');
@@ -1078,6 +1087,74 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         }));
         message.warning('AI returned empty response');
         return;
+      }
+
+      // ===== Think 标签后处理（Spec: handle-think-tags-overflow） =====
+      // 针对 deepseek3.2 等老模型返回的 think、thinking、thought 推理标签，
+      // 在写入存储 / RAG / 回传上下文前剥离其内容。默认开启（undefined 视为开启），
+      // 显式设为 false 时跳过剥离（渲染层仍由 processMessage 兜底剥离）。
+      // 注意：流式 onStream 阶段不剥离，避免未闭合标签误删后续正文。
+      // 【重点标记】修复：记录 thinkTagsStripped 标志，供后续内容保护检查跳过此场景，
+      // 否则剥离后 displayContent 变短会触发内容保护检查导致状态不更新、UI 卡死。
+      let thinkTagsStripped = false;
+      let optionsStripped = false;
+      if (characterConfig?.customParameters?.strip_think_tags !== false) {
+        const beforeStripLen = finalContent.length;
+        finalContent = stripThinkingTags(finalContent);
+        if (finalContent.length !== beforeStripLen) {
+          thinkTagsStripped = true;
+          addLog(`[CharacterDialogueChat] think 标签已剥离，原始长度: ${beforeStripLen}, 剥离后: ${finalContent.length}`, 'info');
+        }
+      }
+
+      // ===== 辅助模式：解析推荐选项（Spec: add-assist-mode-options） =====
+      // 【重点标记】修复：原仅匹配 HTML 注释格式，多数 AI 模型不生成 HTML 注释导致功能失效。
+      // 改用多格式容错匹配：优先匹配 <<<SUGGESTED_OPTIONS>>> 文本标记格式，
+      // 回退匹配 HTML 注释、纯标签、方括号等变体。
+      let suggestedOptions: string[] = [];
+      const assistModeEnabled = characterConfig?.customParameters?.assist_mode === true;
+      if (assistModeEnabled) {
+        // 多格式正则匹配，按优先级排列
+        const optionPatterns = [
+          // 主格式：<<<SUGGESTED_OPTIONS>>> ... <<<END_OPTIONS>>>
+          { regex: /<<<SUGGESTED_OPTIONS>>>\s*([\s\S]*?)<<<END_OPTIONS>>>/i, name: 'text-marker' },
+          // 兼容旧格式：<!-- <suggestedOptions> ... </suggestedOptions> -->
+          { regex: /<!--\s*<suggestedOptions>([\s\S]*?)<\/suggestedOptions>\s*-->/i, name: 'html-comment' },
+          // 兼容变体：纯标签 <suggestedOptions> ... </suggestedOptions>
+          { regex: /<suggestedOptions>([\s\S]*?)<\/suggestedOptions>/i, name: 'plain-tag' },
+          // 兼容变体：方括号 [suggested_options] ... [/suggested_options]
+          { regex: /\[suggested_options\]\s*([\s\S]*?)\[\/suggested_options\]/i, name: 'bracket-tag' },
+        ];
+
+        let matchedOptions: string | null = null;
+        let matchedPatternName = '';
+        let matchedFullText = '';
+        for (const pattern of optionPatterns) {
+          pattern.regex.lastIndex = 0;
+          const m = finalContent.match(pattern.regex);
+          if (m) {
+            matchedOptions = m[1];
+            matchedFullText = m[0];
+            matchedPatternName = pattern.name;
+            break;
+          }
+        }
+
+        if (matchedOptions) {
+          suggestedOptions = matchedOptions
+            .split('\n')
+            .map(line => line.replace(/^\d+[\.\)、]\s*/, '').trim())
+            .filter(line => line.length > 0 && !/^<<<|^<!--|^<suggestedOptions|^<\/suggestedOptions|^\[\/?suggested/i.test(line))
+            .slice(0, 3);
+          // 从显示内容和最终内容中剥离选项块
+          finalContent = finalContent.replace(matchedFullText, '').trim();
+          // 【重点标记】修复：设置 optionsStripped 标志，供后续内容保护检查跳过此场景，
+          // 否则剥离后 displayContent 变短会触发内容保护检查导致状态不更新、UI 卡死。
+          optionsStripped = true;
+          addLog(`[CharacterDialogueChat] 辅助模式：通过 [${matchedPatternName}] 格式解析到 ${suggestedOptions.length} 个推荐选项`, 'info');
+        } else {
+          addLog(`[CharacterDialogueChat] 辅助模式已开启但未匹配到选项块，回复末尾 200 字: ${finalContent.substring(Math.max(0, finalContent.length - 200))}`, 'warn');
+        }
       }
 
       // ===== 异步整理模式：检测并执行tableEdit命令（保留原始内容，HTML注释对用户不可见） =====
@@ -1288,13 +1365,16 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         const existingContent = targetMessage.content;
         // 异步模式下，tableEdit标签从显示内容中移除导致内容变短，需要跳过内容保护检查
         const isAsyncMode = memoryTableAutoOrganizeRef.current && memoryTableOrganizeModeRef.current === 'async' && hasAsyncCommands;
-        if (!isAsyncMode && existingContent.length > 0 && displayContent.length < existingContent.length) {
+        // 【重点标记】修复：think 标签剥离导致的合法内容缩短也不应触发保护检查，
+        // 否则状态不更新 → UI 卡死在"正在生成中"（Spec: fix-think-strip-content-protection）
+        // 【重点标记】修复：辅助模式选项块剥离同样会导致合法内容缩短，需跳过保护检查（Spec: add-assist-mode-options）
+        if (!isAsyncMode && !thinkTagsStripped && !optionsStripped && existingContent.length > 0 && displayContent.length < existingContent.length) {
           addLog(`[CharacterDialogueChat] Content protection: preventing content loss (${existingContent.length} -> ${displayContent.length})`, 'error');
           return prev;
         }
 
         const finalMessages = prev.messages.map(msg =>
-          msg.id === targetMessageId ? { ...msg, content: displayContent, status: 'sent' as const } : msg
+          msg.id === targetMessageId ? { ...msg, content: displayContent, status: 'sent' as const, suggestedOptions: suggestedOptions.length > 0 ? suggestedOptions : undefined } : msg
         );
 
         // 保存聊天记录 - 注意：不在 setState 内部调用异步函数，避免 React 状态管理产生循环引用
@@ -1557,7 +1637,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
    *
    * @returns 生成的用户回复文本；前置校验失败时返回空串
    */
-  const generateUserReply = useCallback(async (): Promise<string> => {
+  const generateUserReply = useCallback(async (userInstruction?: string): Promise<string> => {
     // 前置校验：未选择用户人设
     if (!selectedPersona) {
       message.warning('请先在右侧面板选择用户人设');
@@ -1589,6 +1669,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
 
     // 构建用户回复专用系统提示（Spec: add-ai-user-reply-button / Task 1.1）
     // 与 requestAIResponse 不同：不拼接全局 system_prompt，避免淡化"仅生成用户回复"约束
+    // userInstruction: 输入框中的内容作为用户指令，引导 AI 按用户意图生成回复
     const userReplySystemPrompt = buildUserReplySystemPrompt(
       {
         characterCardName: characterInfo.characterCardName,
@@ -1600,7 +1681,8 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         creator_notes: characterInfo.creator_notes,
       },
       selectedPersona,
-      characterConfig?.userReplyPerson  // 人称视角（Spec: add-person-attribute-to-ai-reply / Task 2）
+      characterConfig?.userReplyPerson,  // 人称视角（Spec: add-person-attribute-to-ai-reply / Task 2）
+      userInstruction                    // 用户指令（输入框内容，可选）
     );
 
     // 构造 engineConfigWithParams（复用 requestAIResponse 的参数注入模式）
@@ -1947,7 +2029,12 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
 
       engine.onComplete((response: AIResponse) => {
         // 优先使用 server 返回的 content，回退到本地流式累积（与 generateUserReply 一致）
-        const finalContent = response?.content || polishedAccumulatedRef.current;
+        let finalContent = response?.content || polishedAccumulatedRef.current;
+        // ===== Think 标签后处理（Spec: handle-think-tags-overflow） =====
+        // 润色结果同样按开关剥离 think 标签，避免污染用户输入框。
+        if (characterConfig?.customParameters?.strip_think_tags !== false) {
+          finalContent = stripThinkingTags(finalContent);
+        }
         addLog(`[CharacterDialogueChat] polishInput completed: ${finalContent.length} chars`, 'info');
         resolve(finalContent);
       });

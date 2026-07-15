@@ -131,6 +131,25 @@ const FIELD_DESCRIPTIONS: Record<string, { label: string; guide: string }> = {
 };
 
 /**
+ * 构建角色卡其他字段的上下文信息，供翻译和润色操作参考。
+ * 与 generate 操作的 existingFieldsInfo 构建逻辑一致：
+ * 遍历 FIELD_DESCRIPTIONS 中除目标字段外的已填字段，完整传递每个字段的值。
+ * 当所有其他字段都为空时返回空字符串。
+ */
+function buildCharacterContext(formValues: Record<string, any>, excludeField: string): string {
+  return Object.entries(FIELD_DESCRIPTIONS)
+    .filter(([key]) => key !== excludeField)
+    .map(([key, info]) => {
+      const value = formValues[key];
+      const displayValue = Array.isArray(value) ? value.join('\n') : (value || '');
+      if (!displayValue) return null;
+      return `- ${info.label}：${displayValue}`;
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
+/**
  * 处理标签字段中的顿号分隔：转换为逗号分隔。
  */
 function normalizeTagsField(cleanedText: string, field: string, addLog: (msg: string, level?: 'info' | 'error' | 'warn' | 'debug') => void): string {
@@ -223,7 +242,16 @@ export function useCharacterAIOperations(args: UseCharacterAIOperationsArgs): Us
 
       addLog(`[Character] 系统提示词长度: ${finalSystemPrompt.length} 字符`, 'info');
 
-      const translatedText = await sendCharacterAIRequest(activeEngine, finalSystemPrompt, text);
+      // 构建包含角色卡上下文的 user prompt（与 generate 操作保持一致的参数参考机制）
+      const characterContext = buildCharacterContext(formValues, field);
+      const contextFieldCount = characterContext ? characterContext.split('\n').length : 0;
+      addLog(`[Character] 角色卡上下文参考: ${characterContext.length} 字符, ${contextFieldCount} 个字段`, 'info');
+      const enhancedUserPrompt = characterContext
+        ? `${text}\n\n【角色卡其他字段参考】\n${characterContext}\n\n请在翻译时参考上述角色卡上下文信息，确保翻译用词与角色卡整体设定保持一致。`
+        : text;
+      addLog(`[Character] user prompt 总长度: ${enhancedUserPrompt.length} 字符 (原文 ${text.length} + 上下文 ${characterContext.length})`, 'info');
+
+      const translatedText = await sendCharacterAIRequest(activeEngine, finalSystemPrompt, enhancedUserPrompt);
 
       if (!isProcessingRef.current) {
         addLog('[Character] 翻译请求已被用户中断', 'warn');
@@ -335,7 +363,7 @@ export function useCharacterAIOperations(args: UseCharacterAIOperationsArgs): Us
           const value = characterData[key];
           const displayValue = Array.isArray(value) ? value.join('\n') : (value || '');
           if (!displayValue) return null;
-          return `- ${info.label}：${displayValue.substring(0, 300)}${displayValue.length > 300 ? '...' : ''}`;
+          return `- ${info.label}：${displayValue}`;
         })
         .filter(Boolean)
         .join('\n');
@@ -367,6 +395,7 @@ export function useCharacterAIOperations(args: UseCharacterAIOperationsArgs): Us
 
       addLog(`[Character] 系统提示词长度: ${finalSystemPrompt.length} 字符`, 'info');
       addLog(`[Character] 用户提示词长度: ${userPrompt.length} 字符`, 'info');
+      addLog(`[Character] existingFieldsInfo 长度: ${existingFieldsInfo.length} 字符`, 'info');
       addLog(`[Character] 用户生成指导: ${requirements || '无'}`, 'info');
 
       const generatedContent = await sendCharacterAIRequest(activeEngine, finalSystemPrompt, userPrompt);
@@ -499,7 +528,16 @@ export function useCharacterAIOperations(args: UseCharacterAIOperationsArgs): Us
 
       addLog(`[Character] 系统提示词长度: ${finalSystemPrompt.length} 字符`, 'info');
 
-      const polishedText = await sendCharacterAIRequest(activeEngine, finalSystemPrompt, currentPolishText);
+      // 构建包含角色卡上下文的 user prompt（与 generate 操作保持一致的参数参考机制）
+      const characterContext = buildCharacterContext(formValues, currentPolishField);
+      const contextFieldCount = characterContext ? characterContext.split('\n').length : 0;
+      addLog(`[Character] 角色卡上下文参考: ${characterContext.length} 字符, ${contextFieldCount} 个字段`, 'info');
+      const enhancedUserPrompt = characterContext
+        ? `${currentPolishText}\n\n【角色卡其他字段参考】\n${characterContext}\n\n请在润色时参考上述角色卡上下文信息，确保润色结果与角色卡整体设定保持一致。`
+        : currentPolishText;
+      addLog(`[Character] user prompt 总长度: ${enhancedUserPrompt.length} 字符 (原文 ${currentPolishText.length} + 上下文 ${characterContext.length})`, 'info');
+
+      const polishedText = await sendCharacterAIRequest(activeEngine, finalSystemPrompt, enhancedUserPrompt);
 
       if (!isProcessingRef.current) {
         addLog('[Character] 润色请求已被用户中断', 'warn');
@@ -547,7 +585,7 @@ export function useCharacterAIOperations(args: UseCharacterAIOperationsArgs): Us
       setPolishingField(null);
       isProcessingRef.current = false;
     }
-  }, [addLog, currentPolishField, currentPolishText, getActiveEngineConfig, polishRequirements, setFormValues, setPolishingField]);
+  }, [addLog, currentPolishField, currentPolishText, formValues, getActiveEngineConfig, polishRequirements, setFormValues, setPolishingField]);
 
   return {
     aiOperation,

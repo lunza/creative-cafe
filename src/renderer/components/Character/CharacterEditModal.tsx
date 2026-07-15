@@ -1,10 +1,44 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Button, Space, Checkbox, Input, message, Tabs } from 'antd';
 import { PlusOutlined, StopOutlined, UserOutlined, MessageOutlined, SettingOutlined } from '@ant-design/icons';
 import { FieldEditor } from './FieldEditor';
 import { WorldBookRelationPanel } from './WorldBookRelationPanel';
 import { useCharacterAIOperations } from './hooks/useCharacterAIOperations';
 import type { AIEngine } from '../../types/setting';
+
+/**
+ * 将任意格式的图片 Data URL 转换为 PNG 格式的 Data URL。
+ *
+ * 角色卡载体格式要求为 PNG（tEXt chunks 仅能嵌入 PNG），但前端文件选择器
+ * 接受 image/* 。对于 JPG/WebP 等非 PNG 格式，需要先通过 canvas 转换为
+ * PNG，否则后端 createCharacterFromImage 的 PNG 魔数校验会失败。
+ *
+ * 【重点标记 - 图片格式兼容性修复】此函数解决了非 PNG 格式图片无法用作
+ * 角色卡载体的问题。
+ */
+function convertToPng(dataUrl: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject(new Error('无法获取 canvas 上下文'));
+        return;
+      }
+      ctx.drawImage(img, 0, 0);
+      try {
+        resolve(canvas.toDataURL('image/png'));
+      } catch (error) {
+        reject(error);
+      }
+    };
+    img.onerror = () => reject(new Error('图片加载失败'));
+    img.src = dataUrl;
+  });
+}
 
 export interface CharacterEditCharacter {
   name: string;
@@ -56,10 +90,14 @@ export interface CharacterEditModalProps {
  * `useCharacterAIOperations` hook, which is instantiated here so that the
  * parent (CharacterManager) doesn't need to know about AI internals.
  *
- * Behavior is preserved verbatim:
+ * Behavior (updated — image replacement bug fix):
  *  - New-card branch requires an uploaded PNG (extracted as base64 and passed
  *    to `character.createFromImage`).
- *  - Existing-card branch writes the JSON content back via `character.write`.
+ *  - Existing-card branch: if the user uploaded a new image (`imageChanged`),
+ *    calls `character.createFromImage` to rebuild the PNG with the new base
+ *    image. Otherwise, writes the JSON content back via `character.write`.
+ *  - All uploaded images are converted to PNG via canvas before processing,
+ *    ensuring compatibility with the PNG character card carrier format.
  *  - Both branches persist world-book relations.
  */
 const CharacterEditModal: React.FC<CharacterEditModalProps> = ({
@@ -87,6 +125,17 @@ const CharacterEditModal: React.FC<CharacterEditModalProps> = ({
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [imageUploadLoading, setImageUploadLoading] = useState<boolean>(false);
+  // 追踪用户是否更换了图片（区别于编辑时加载的原始图片）
+  // 【重点标记 - 图片替换无效 Bug 修复】此状态用于判断编辑已有角色卡时
+  // 是否需要调用 createFromImage 重建 PNG 文件（替换基底图片）
+  const [imageChanged, setImageChanged] = useState<boolean>(false);
+
+  // 模态框打开时重置 imageChanged，确保每次编辑会话的图片更换状态独立
+  useEffect(() => {
+    if (open) {
+      setImageChanged(false);
+    }
+  }, [open]);
 
   const aiOps = useCharacterAIOperations({
     formValues,
@@ -225,6 +274,7 @@ const CharacterEditModal: React.FC<CharacterEditModalProps> = ({
           setOriginalValues({});
           setUploadedImage(null);
           setUploadedImageName('');
+          setImageChanged(false);
           onSaved(null);
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : String(error);
@@ -239,8 +289,38 @@ const CharacterEditModal: React.FC<CharacterEditModalProps> = ({
         }
       } else if (editingItem.path) {
         // 已有路径的编辑模式
-        addLog(`[Character] 写入文件: ${editingItem.path}`);
-        await window.electronAPI.character.write(editingItem.path, updatedContent);
+        // 【重点标记 - 图片替换无效 Bug 修复】
+        // 原实现仅调用 character.write，只更新 tEXt chunks，完全忽略用户上传的新图片。
+        // 修复后：当检测到用户更换了图片（imageChanged && uploadedImage），使用
+        // createFromImage 以新图片为载体重建 PNG 文件，确保基底图片被正确替换。
+        if (imageChanged && uploadedImage) {
+          addLog(`[Character] 检测到图片更换，使用新图片重建角色卡: ${editingItem.path}`);
+
+          const dataUrlPrefix = 'data:';
+          if (!uploadedImage.startsWith(dataUrlPrefix)) {
+            throw new Error('无效的图片数据格式');
+          }
+          const commaIndex = uploadedImage.indexOf(',');
+          if (commaIndex === -1) {
+            throw new Error('图片数据格式错误: 未找到逗号分隔符');
+          }
+          const base64String = uploadedImage.substring(commaIndex + 1);
+          addLog(`[Character] 新图片 base64 长度: ${base64String.length}`);
+
+          addLog(`[Character] 调用 createFromImage 替换基底图片...`);
+          const replaceResult = await window.electronAPI.character.createFromImage(
+            editingItem.path, base64String, updatedContent
+          );
+          addLog(`[Character] createFromImage 返回: ${JSON.stringify(replaceResult)}`);
+
+          if (!replaceResult.success) {
+            throw new Error(`替换图片失败: ${replaceResult.error || '未知错误'}`);
+          }
+          addLog(`[Character] 基底图片替换成功`, 'info');
+        } else {
+          addLog(`[Character] 写入文件（仅更新数据）: ${editingItem.path}`);
+          await window.electronAPI.character.write(editingItem.path, updatedContent);
+        }
 
         const relationsToSave = worldBookRelations.map(rel => ({
           worldBookPath: rel.worldBookPath,
@@ -259,6 +339,7 @@ const CharacterEditModal: React.FC<CharacterEditModalProps> = ({
         setOriginalValues({});
         setUploadedImage(null);
         setUploadedImageName('');
+        setImageChanged(false);
         onSaved(editingItem.path);
       } else {
         // 新建角色卡但没有上传图片
@@ -281,7 +362,7 @@ const CharacterEditModal: React.FC<CharacterEditModalProps> = ({
       }
     }
   }, [
-    addLog, characterDir, editingContent, editingItem, formValues, onSaved,
+    addLog, characterDir, editingContent, editingItem, formValues, imageChanged, onSaved,
     originalValues, setEditingContent, setEditingItem, setFormValues,
     setOriginalValues, setUploadedImage, setUploadedImageName, uploadedImage,
     uploadedImageName, worldBookRelations,
@@ -293,9 +374,21 @@ const CharacterEditModal: React.FC<CharacterEditModalProps> = ({
       setImageUploadLoading(true);
       try {
         const reader = new FileReader();
-        reader.onload = (ev) => {
-          setUploadedImage(ev.target?.result as string);
+        reader.onload = async (ev) => {
+          const rawDataUrl = ev.target?.result as string;
+          try {
+            // 【重点标记 - 图片格式兼容性修复】
+            // 将任意格式图片转换为 PNG，确保与角色卡载体格式兼容。
+            // canvas 转换会去除原始文件中的 tEXt chunks（包括旧的 chara/ccv3），
+            // 这正是图片替换所需的——获得纯净的新图片作为载体。
+            const pngDataUrl = await convertToPng(rawDataUrl);
+            setUploadedImage(pngDataUrl);
+          } catch {
+            // 转换失败时回退到原始 Data URL（PNG 图片无需转换也能工作）
+            setUploadedImage(rawDataUrl);
+          }
           setUploadedImageName(file.name);
+          setImageChanged(true);
           setImageUploadLoading(false);
         };
         reader.onerror = () => {
@@ -314,6 +407,7 @@ const CharacterEditModal: React.FC<CharacterEditModalProps> = ({
   const handleRemoveImage = useCallback(() => {
     setUploadedImage(null);
     setUploadedImageName('');
+    setImageChanged(true);
   }, [setUploadedImage, setUploadedImageName]);
 
   const handlePolishModalClose = useCallback(() => {

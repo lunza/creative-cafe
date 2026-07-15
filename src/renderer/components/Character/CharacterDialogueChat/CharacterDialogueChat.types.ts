@@ -9,6 +9,8 @@ export interface ChatMessage {
   status?: 'sending' | 'sent' | 'error';
   speakerName?: string;
   versionInfo?: ChatMessageVersionInfo;
+  /** AI 推荐选项（辅助模式开启时，AI 回复中解析出的 3 个推荐选项） */
+  suggestedOptions?: string[];
 }
 
 export interface ChatMessageVersionInfo {
@@ -139,6 +141,25 @@ export interface AIParameterConfig {
    * 默认开启（undefined 视为开启）。
    */
   emoji_enhanced?: boolean;
+  /**
+   * Think 标签处理开关。
+   *
+   * 开启后，在 AI 完成回复或润色后（写入存储前）自动剥离 think、
+   * thinking、thought 等推理标签及其内容，针对 deepseek3.2 等
+   * 老模型返回的 think 标签做清理，避免污染 chat history / RAG / 回传上下文。
+   * 默认开启（undefined 视为开启）。关闭时渲染层仍由 processMessage 内的
+   * stripThinkingTags 兜底剥离，保持显示干净，但存储与上下文仍含标签。
+   */
+  strip_think_tags?: boolean;
+  /**
+   * 辅助模式开关。
+   *
+   * 开启后，AI 在常规回复之外额外生成 3 个推荐选项，
+   * 用户可点击选项快速填入输入框进行润色或直接发送。
+   * 选项采用 Galgame 风格的对话分支设计，引导对话推进。
+   * 默认关闭（undefined 视为关闭）。
+   */
+  assist_mode?: boolean;
 }
 
 // 知识库绑定信息

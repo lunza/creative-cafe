@@ -11,7 +11,7 @@ interface ChatInputBarProps {
   isOrganizing?: boolean;
   placeholder?: string;
   // 新增 props（Spec: add-ai-user-reply-button）
-  onGenerateUserReply?: () => void;
+  onGenerateUserReply?: (currentInput?: string) => void;
   isGeneratingUserReply?: boolean;
   generatedReplyText?: string;
   onGeneratedReplyTextConsumed?: () => void;
@@ -252,7 +252,8 @@ const ChatInputBar: React.FC<ChatInputBarProps> = ({
                 if (isGeneratingUserReply) {
                   onCancel?.();
                 } else {
-                  onGenerateUserReply?.();
+                  // 传入输入框内容作为用户指令（为空时传 undefined，保持原有行为）
+                  onGenerateUserReply?.(input.trim() || undefined);
                 }
               }}
               disabled={!isGeneratingUserReply && (disabled || isStreaming || isOrganizing || isPolishingInput)}

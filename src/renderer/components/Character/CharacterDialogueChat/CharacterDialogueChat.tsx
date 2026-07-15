@@ -233,9 +233,10 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
 
   // AI 用户回复生成回调（Spec: add-ai-user-reply-button / Task 4.3）
   // 调用 hook 的 generateUserReply，成功后暂存文本到 generatedReplyText，由 ChatInputBar 通过 prop 消费
-  const handleGenerateUserReply = useCallback(async () => {
+  // currentInput: 输入框中的内容，作为用户指令引导 AI 生成回复（可选，为空时保持原有行为）
+  const handleGenerateUserReply = useCallback(async (currentInput?: string) => {
     try {
-      const text = await generateUserReply();
+      const text = await generateUserReply(currentInput);
       if (text && text.length > 0) {
         setGeneratedReplyText(text);
       }
@@ -248,6 +249,11 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
   // ChatInputBar 消费完 generatedReplyText 后回调清空暂存（Spec: add-ai-user-reply-button / Task 4.4）
   const handleGeneratedReplyTextConsumed = useCallback(() => {
     setGeneratedReplyText('');
+  }, []);
+
+  // 辅助模式：点击推荐选项，填入输入框（Spec: add-assist-mode-options）
+  const handleSelectOption = useCallback((optionText: string) => {
+    setGeneratedReplyText(optionText);
   }, []);
 
   // 润色输入回调（Spec: refine-user-input-text / Task 4.3）
@@ -384,6 +390,7 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
           style={{
             flex: 1,
             overflowY: 'auto',
+            overflowX: 'hidden',
             padding: isFullscreen ? '32px 40px' : '20px',
             position: 'relative',
           }}
@@ -443,6 +450,7 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
               isLastMessage={index === stateWithVersionInfo.messages.length - 1}
               isStreaming={stateWithVersionInfo.isStreaming && index === stateWithVersionInfo.messages.length - 1 && msg.role === 'assistant'}
               isGenerating={stateWithVersionInfo.isLoading && index === stateWithVersionInfo.messages.length - 1 && msg.role === 'assistant' && msg.status === 'sending'}
+              onSelectOption={handleSelectOption}
             />
           ))}
 
@@ -554,6 +562,10 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
         customStopSequences={characterConfig?.customStopSequences}
         emojiEnhanced={characterConfig?.customParameters?.emoji_enhanced !== false}
         onEmojiEnhancedToggle={(enabled) => handleParameterChange({ emoji_enhanced: enabled })}
+        stripThinkTags={characterConfig?.customParameters?.strip_think_tags !== false}
+        onStripThinkTagsToggle={(enabled) => handleParameterChange({ strip_think_tags: enabled })}
+        assistMode={characterConfig?.customParameters?.assist_mode === true}
+        onAssistModeToggle={(enabled) => handleParameterChange({ assist_mode: enabled })}
         engineCapabilities={engineCapabilities}
         onPersonaChange={handlePersonaChange}
         onParameterChange={handleParameterChange}

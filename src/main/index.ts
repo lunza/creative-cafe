@@ -3,6 +3,18 @@ import path from 'path';
 import { setupIpcHandlers } from './ipc';
 import { abortAllActiveRequests } from './ipc/handlers/writingHandlers';
 
+// ========== 全局异常处理器（防止未捕获的 Promise rejection / 同步异常导致主进程崩溃） ==========
+// 【重点标记】修复：增量向量化等 fire-and-forget 调用若产生逃逸异常，Node.js 16+ 默认会退出进程，
+// 导致 vite-plugin-electron 的 taskkill 触发超时崩溃。此处仅记录日志，不退出进程。
+process.on('unhandledRejection', (reason, _promise) => {
+  console.error('[Main Process] UNHANDLED REJECTION (swallowed to prevent crash):', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('[Main Process] UNCAUGHT EXCEPTION (swallowed to prevent crash):', error);
+  // 不调用 process.exit()，让进程继续运行；真正的致命错误由 Electron 自身处理
+});
+
 if (process.platform === 'win32') {
   try {
     require('child_process').execSync('chcp 65001', { stdio: 'ignore' });

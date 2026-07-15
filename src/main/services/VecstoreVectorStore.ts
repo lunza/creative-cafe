@@ -990,19 +990,21 @@ export class VecstoreBackend implements IVectorBackend {
         return;
       }
 
+      const exportStart = Date.now();
       const data = this.store.export_json();
-      console.log(`[VecstoreBackend] export_json() returned ${data.length} bytes`);
+      console.log(`[VecstoreBackend] export_json() returned ${data.length} bytes in ${Date.now() - exportStart}ms`);
 
       const storePath = this.getStoreFilePath();
+      const writeStart = Date.now();
       await fsPromises.writeFile(storePath, data, 'utf-8');
 
       const stats = await fsPromises.stat(storePath);
-      console.log(`[VecstoreBackend] Vector file written: ${stats.size} bytes`);
+      console.log(`[VecstoreBackend] Vector file written: ${stats.size} bytes in ${Date.now() - writeStart}ms`);
 
       // 保存元数据到独立文件
       await this.saveMetadataToFile();
 
-      console.log(`[VecstoreBackend] Persisted ${storeLen} vectors and ${this.metadataCache.size} metadata entries to disk`);
+      console.log(`[VecstoreBackend] Persisted ${storeLen} vectors and ${this.metadataCache.size} metadata entries to disk (total ${Date.now() - exportStart}ms)`);
     } catch (error) {
       console.error('[VecstoreBackend] 持久化失败:', error);
       throw error;

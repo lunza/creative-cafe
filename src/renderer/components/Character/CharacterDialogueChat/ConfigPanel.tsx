@@ -38,6 +38,12 @@ interface ConfigPanelProps {
   // Emoji 增强模式
   emojiEnhanced?: boolean;
   onEmojiEnhancedToggle?: (enabled: boolean) => void;
+  // Think 标签处理（Spec: handle-think-tags-overflow）
+  stripThinkTags?: boolean;
+  onStripThinkTagsToggle?: (enabled: boolean) => void;
+  // 辅助模式开关（Spec: add-assist-mode-options）
+  assistMode?: boolean;
+  onAssistModeToggle?: (enabled: boolean) => void;
   /**
    * 后端能力探测结果（Spec: optimize-chat-ai-intelligence / Task 6.1 / 6.4）。
    * 透传给 ParameterPanel，决定 repetition_penalty 滑块与 DRY 采样折叠区的显隐。
@@ -77,6 +83,10 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
   customStopSequences,
   emojiEnhanced,
   onEmojiEnhancedToggle,
+  stripThinkTags,
+  onStripThinkTagsToggle,
+  assistMode,
+  onAssistModeToggle,
   engineCapabilities,
   onPersonaChange,
   onParameterChange,
@@ -112,6 +122,10 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
         onCustomStopSequencesChange={onCustomStopSequencesChange}
         emojiEnhanced={emojiEnhanced}
         onEmojiEnhancedToggle={onEmojiEnhancedToggle}
+        stripThinkTags={stripThinkTags}
+        onStripThinkTagsToggle={onStripThinkTagsToggle}
+        assistMode={assistMode}
+        onAssistModeToggle={onAssistModeToggle}
         engineCapabilities={engineCapabilities}
       />
       <div className="config-panel-divider" />

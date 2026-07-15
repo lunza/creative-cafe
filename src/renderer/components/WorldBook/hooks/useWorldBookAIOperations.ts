@@ -1782,6 +1782,13 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       const data = result.data;
       let aiResponse = data.choices?.[0]?.message?.content || data.choices?.[0]?.text || '';
 
+      // 检测是否因 max_tokens 不足导致生成被截断
+      const finishReason = data.choices?.[0]?.finish_reason;
+      if (finishReason === 'length') {
+        addLog(`[WorldBook] AI 生成可能因 max_tokens(${maxTokens})不足被截断 (finish_reason=length)`, 'warn');
+        message.warning('AI 生成内容可能因 max_tokens 不足被截断，建议调大 max_tokens 或减少生成条目数');
+      }
+
       // 清理响应，提取JSON
       aiResponse = aiResponse.trim();
 

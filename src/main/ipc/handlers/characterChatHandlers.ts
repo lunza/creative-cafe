@@ -111,12 +111,18 @@ export function registerCharacterChatHandlers(): void {
     topK?: number,
     minScore?: number
   ) => {
-    return await chatVectorizationService.retrieveChatHistory(
-      chatId,
-      queryText,
-      topK ?? 3,
-      minScore ?? 0.6
-    );
+    console.log(`[IPC] chatHistory:retrieve: entered, chatId=${chatId}, queryLen=${queryText?.length}, topK=${topK ?? 3}`);
+    try {
+      return await chatVectorizationService.retrieveChatHistory(
+        chatId,
+        queryText,
+        topK ?? 3,
+        minScore ?? 0.6
+      );
+    } catch (error) {
+      console.error(`[IPC] chatHistory:retrieve: handler error (chatId=${chatId}):`, error);
+      return []; // 返回空数组，与 retrieveChatHistory 内部失败时的行为一致
+    }
   });
 
   ipcMain.handle('chatHistory:vectorizeIncremental', async (
@@ -124,8 +130,14 @@ export function registerCharacterChatHandlers(): void {
     chatId: string,
     messages: ChatMessage[]
   ) => {
-    await chatVectorizationService.vectorizeIncremental(chatId, messages);
-    return { success: true };
+    console.log(`[IPC] chatHistory:vectorizeIncremental: entered, chatId=${chatId}, messages=${messages?.length}`);
+    try {
+      await chatVectorizationService.vectorizeIncremental(chatId, messages);
+      return { success: true };
+    } catch (error) {
+      console.error(`[IPC] chatHistory:vectorizeIncremental: handler error (chatId=${chatId}):`, error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
   });
 
   ipcMain.handle('chatVersion:getVersions', async (_event, characterCardName: string) => {

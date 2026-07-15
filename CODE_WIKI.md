@@ -907,6 +907,13 @@ const temperature = activeEngine.temperature || 0.7;  // 禁止
 - **能力**：写作辅助面板支持从系统全部素材中选择（世界书/角色卡/用户人设/知识库四类），300ms 防抖搜索，已选高亮
 - **文件**：`useWritingMaterials.ts`、`MaterialList.tsx`、`WritingModeRightPanel.tsx`
 
+### 14.9 辅助模式推荐选项渲染与交互（Spec: add-assist-mode-options）
+
+- **能力**：AI 消息渲染推荐选项（`suggestedOptions`），用户点击后选项文本填入输入框（复用 `generatedReplyText` 机制）
+- **渲染条件**：仅 AI 消息（`!isUser`）、非流式（`!isStreaming`）、`message.suggestedOptions` 非空时渲染
+- **交互**：`ChatMessageBubble` 新增 `onSelectOption` prop；`CharacterDialogueChat` 新增 `handleSelectOption` 回调，调用 `setGeneratedReplyText` 填入输入框
+- **文件**：`ChatMessageBubble.tsx`、`CharacterDialogueChat.tsx`
+
 ---
 
 ## 附录：关键文件索引

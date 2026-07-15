@@ -18,6 +18,7 @@ interface ChatMessageBubbleProps {
   isLastMessage?: boolean;
   isStreaming?: boolean;
   isGenerating?: boolean;
+  onSelectOption?: (optionText: string) => void;
 }
 
 const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
@@ -32,6 +33,7 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
   isLastMessage = false,
   isStreaming = false,
   isGenerating = false,
+  onSelectOption,
 }) => {
   const [copied, setCopied] = useState(false);
   const [showActions, setShowActions] = useState(false);
@@ -305,6 +307,7 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
           display: 'flex',
           gap: '12px',
           maxWidth: '75%',
+          minWidth: 0,
           flexDirection: isUser ? 'row-reverse' : 'row',
         }}
         onMouseEnter={handleBubbleMouseEnter}
@@ -334,7 +337,7 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
           )}
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: 0, flex: 1 }}>
           <div style={{
             fontSize: '12px',
             color: 'var(--text-secondary, #6b7280)',
@@ -353,6 +356,8 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
             padding: '12px 16px',
             borderRadius: isUser ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
             wordBreak: 'break-word',
+            overflowWrap: 'break-word',
+            overflow: 'hidden',
             backdropFilter: 'blur(10px)',
             boxShadow: isUser
               ? 'var(--chat-bubble-user-shadow, 0 4px 12px rgba(99, 102, 241, 0.3))'
@@ -449,6 +454,21 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
                     animation: 'blink 1s step-end infinite',
                     verticalAlign: 'text-bottom',
                   }} />
+                )}
+                {/* 辅助模式：推荐选项渲染（Spec: add-assist-mode-options） */}
+                {!isUser && !isStreaming && message.suggestedOptions && message.suggestedOptions.length > 0 && (
+                  <div className="suggested-options-container">
+                    {message.suggestedOptions.map((option, idx) => (
+                      <div
+                        key={idx}
+                        className="suggested-option-item"
+                        onClick={() => onSelectOption?.(option)}
+                      >
+                        <span className="suggested-option-number">{idx + 1}</span>
+                        <span className="suggested-option-text">{option}</span>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </>
             )}

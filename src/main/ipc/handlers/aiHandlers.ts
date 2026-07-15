@@ -626,7 +626,15 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
         }
         
         // 发送流式响应完成信号
+        // 【重点标记】修复：此前检查 data?.content?.length，但 SSE 解析后内容在
+        // data?.choices?.[0]?.message?.content，导致日志永远显示 0 chars，误导诊断。
+        const completeContentLength = data?.choices?.[0]?.message?.content?.length
+          || data?.choices?.[0]?.text?.length
+          || data?.content?.length
+          || 0;
+        console.log(`[ai-handler] [${requestId}] Sending ai:stream:complete event to renderer (content length: ${completeContentLength} chars, data is null: ${data === null})`);
         event.sender.send('ai:stream:complete', { data });
+        console.log(`[ai-handler] [${requestId}] ai:stream:complete event sent`);
         
         // 清理 AbortController
         activeRequests.delete(senderId);

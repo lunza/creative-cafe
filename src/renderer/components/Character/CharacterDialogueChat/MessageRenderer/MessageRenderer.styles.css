@@ -21,10 +21,15 @@
   line-height: 1.6;
   word-wrap: break-word;
   overflow-wrap: break-word;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .message-renderer-content {
   position: relative;
+  overflow: hidden;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .message-renderer-content h1,

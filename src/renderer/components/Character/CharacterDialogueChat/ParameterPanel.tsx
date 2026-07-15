@@ -28,6 +28,12 @@ interface ParameterPanelProps {
   // Emoji 增强模式开关
   emojiEnhanced?: boolean;
   onEmojiEnhancedToggle?: (enabled: boolean) => void;
+  // Think 标签处理开关（Spec: handle-think-tags-overflow）
+  stripThinkTags?: boolean;
+  onStripThinkTagsToggle?: (enabled: boolean) => void;
+  // 辅助模式开关（Spec: add-assist-mode-options）
+  assistMode?: boolean;
+  onAssistModeToggle?: (enabled: boolean) => void;
   /**
    * 后端能力探测结果（Spec: optimize-chat-ai-intelligence / Task 6.1 / 6.4）。
    * 决定 repetition_penalty 滑块与 DRY 采样折叠区的显隐。
@@ -47,6 +53,10 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
   onCustomStopSequencesChange,
   emojiEnhanced = true,
   onEmojiEnhancedToggle,
+  stripThinkTags = true,
+  onStripThinkTagsToggle,
+  assistMode = false,
+  onAssistModeToggle,
   engineCapabilities,
 }) => {
   const [collapsed, setCollapsed] = useState(() => {
@@ -348,6 +358,26 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
             </div>
           </div>
 
+          {/* Think 标签处理（Spec: handle-think-tags-overflow） */}
+          {/* 针对 deepseek3.2 等老模型返回的 think 推理标签，在 AI 完成回复或润色后
+              （写入存储前）剥离其内容，避免污染 chat history / RAG / 回传上下文。
+              默认开启；关闭时渲染层仍由 processMessage 内 stripThinkingTags 兜底。 */}
+          <div className="parameter-strip-think-tags-section" style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
+            <div className="parameter-strip-think-tags-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <div className="parameter-label-group" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span className="parameter-label" style={{ fontSize: 13 }}>Think 标签处理</span>
+                <Tooltip title="开启后，AI 完成回复或润色后自动剥离 think、thinking、thought 等推理标签内容（针对 deepseek3.2 等老模型）。默认开启。剥离发生在写入存储前，避免污染历史与上下文。">
+                  <QuestionCircleOutlined className="parameter-tooltip-icon" />
+                </Tooltip>
+              </div>
+              <Switch
+                size="small"
+                checked={stripThinkTags}
+                onChange={onStripThinkTagsToggle}
+              />
+            </div>
+          </div>
+
           {/* 自定义停止序列配置区（Spec: optimize-chat-ai-intelligence / Task 3.4） */}
           {/* 借鉴 SillyTavern names_as_stop_strings 防抢话机制；默认用户名变体停止序列已内置，
               此处供用户追加自定义停止串，与默认数组合并注入请求体 stop 字段。 */}
@@ -375,6 +405,24 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
                 style={{ fontSize: 12, fontFamily: 'monospace' }}
               />
             )}
+          </div>
+
+          {/* 辅助模式（Spec: add-assist-mode-options） */}
+          {/* 开启后，AI 在常规回复之外额外生成 3 个推荐选项，用户可点击选项快速填入输入框 */}
+          <div className="parameter-assist-mode-section" style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
+            <div className="parameter-assist-mode-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <div className="parameter-label-group" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span className="parameter-label" style={{ fontSize: 13 }}>辅助模式</span>
+                <Tooltip title="开启后，AI 在每次回复正文之外额外生成 3 个推荐选项（类似 Galgame 剧情选项），用户可点击选项快速填入输入框进行润色或直接发送，降低输入负担并引导对话推进。默认关闭。">
+                  <QuestionCircleOutlined className="parameter-tooltip-icon" />
+                </Tooltip>
+              </div>
+              <Switch
+                size="small"
+                checked={assistMode}
+                onChange={onAssistModeToggle}
+              />
+            </div>
           </div>
 
           {/* 高级采样参数折叠区（Spec: optimize-chat-ai-intelligence / Task 6.4） */}

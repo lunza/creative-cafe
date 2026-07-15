@@ -270,8 +270,18 @@ const WorldBookAIGenerateFlow: React.FC<WorldBookAIGenerateFlowProps> = ({
                       <Text type="secondary">关键词: </Text>
                       {entry.key?.join(', ') || '无'}
                     </div>
-                    <div style={{ fontSize: '13px', color: 'var(--text-secondary, #8c8c8c)' }}>
-                      {entry.content?.substring(0, 100)}{entry.content?.length > 100 ? '...' : ''}
+                    <div style={{
+                      fontSize: '13px',
+                      color: 'var(--text-secondary, #8c8c8c)',
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      maxHeight: '120px',
+                      overflowY: 'auto',
+                      padding: '4px 8px',
+                      backgroundColor: 'var(--bg-elevated, rgba(0,0,0,0.2))',
+                      borderRadius: 4,
+                    }}>
+                      {entry.content || '无'}
                     </div>
                   </Card>
                 ))}
@@ -411,12 +421,22 @@ const WorldBookAIGenerateFlow: React.FC<WorldBookAIGenerateFlowProps> = ({
                         <Text type="secondary">关键词: </Text>
                         {entry.key?.join(', ') || '无'}
                       </div>
-                      <div style={{ fontSize: '13px', color: 'var(--text-secondary, #8c8c8c)' }}>
-                        {entry.content?.substring(0, 100)}{entry.content?.length > 100 ? '...' : ''}
-                      </div>
-                    </Card>
-                  ))}
-                </Card>
+                      <div style={{
+                      fontSize: '13px',
+                      color: 'var(--text-secondary, #8c8c8c)',
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      maxHeight: '120px',
+                      overflowY: 'auto',
+                      padding: '4px 8px',
+                      backgroundColor: 'var(--bg-elevated, rgba(0,0,0,0.2))',
+                      borderRadius: 4,
+                    }}>
+                      {entry.content || '无'}
+                    </div>
+                  </Card>
+                ))}
+              </Card>
               )}
             </div>
 

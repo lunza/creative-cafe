@@ -256,15 +256,20 @@ export class ChatEngine implements IChatEngine {
         }
       }
 
-      if (finalContent) {
-        const response: AIResponse = {
-          content: finalContent,
-          finishReason: data.data?.choices?.[0]?.finish_reason || 'stop',
-          usage: data.data?.usage,
-          id: data.data?.id || '',
-        };
-        this.completeCallback?.(response);
+      // 【重点标记】修复：即使 finalContent 为空也必须调用 completeCallback，
+      // 否则 hooks.ts 的 onComplete 永远不会触发，消息状态停留在 "sending"，
+      // UI 永远显示"正在生成中"。
+      if (!finalContent) {
+        console.warn('[ChatEngine] handleComplete: finalContent is empty, calling completeCallback with empty content to prevent UI stuck');
       }
+
+      const response: AIResponse = {
+        content: finalContent || '',
+        finishReason: data.data?.choices?.[0]?.finish_reason || 'stop',
+        usage: data.data?.usage,
+        id: data.data?.id || '',
+      };
+      this.completeCallback?.(response);
 
       this.streamCallback?.('', true);
       this.cleanupListeners();

@@ -11,3 +11,80 @@
   cursor: pointer;
   color: var(--chat-action-text, #9ca3af);
 }
+
+/* ===== 辅助模式：推荐选项样式（Spec: add-assist-mode-options） ===== */
+.suggested-options-container {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.suggested-option-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.suggested-option-item:hover {
+  background: rgba(99, 102, 241, 0.15);
+  border-color: rgba(99, 102, 241, 0.4);
+  transform: translateX(2px);
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.15);
+}
+
+.suggested-option-item:active {
+  background: rgba(99, 102, 241, 0.2);
+  transform: translateX(2px) scale(0.99);
+}
+
+.suggested-option-number {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  margin-top: 1px;
+}
+
+.suggested-option-text {
+  flex: 1;
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.85);
+  word-break: break-word;
+}
+
+/* 响应式：小屏幕适配 */
+@media (max-width: 480px) {
+  .suggested-option-item {
+    padding: 8px 10px;
+    gap: 8px;
+  }
+
+  .suggested-option-number {
+    width: 20px;
+    height: 20px;
+    font-size: 11px;
+  }
+
+  .suggested-option-text {
+    font-size: 12px;
+  }
+}

@@ -9,6 +9,7 @@ import { UnifiedChatDialog } from '../Chat/UnifiedChatDialog';
 import CharacterCardGenerateModal from './CharacterCardGenerateModal';
 import CharacterListView, { type CharacterListItem } from './CharacterListView';
 import CharacterEditModal, { type CharacterEditCharacter } from './CharacterEditModal';
+import { invalidateCharacterImageCache } from './utils/characterThumbnailCache';
 import type { AIEngine } from '../../types/setting';
 import '../../styles/list-common.css';
 import './CharacterManager.css';
@@ -116,6 +117,8 @@ const CharacterManager: React.FC = () => {
     addLog(`[Character] 删除角色卡: ${path}`);
     try {
       await window.electronAPI.character.delete(path);
+      // 【重点标记 - 缓存失效 Bug 修复】删除后清除该路径的图片缓存
+      invalidateCharacterImageCache(path);
       addLog(`[Character] 删除成功: ${path}`, 'info');
       message.success('删除成功');
       fetchCharacters();
@@ -318,6 +321,10 @@ const CharacterManager: React.FC = () => {
         const result = await window.electronAPI.character.import(selectedFilePath, fileName);
 
         if (result.success) {
+          // 【重点标记 - 缓存失效 Bug 修复】导入可能覆盖同名文件，清除该路径缓存
+          if (result.targetPath) {
+            invalidateCharacterImageCache(result.targetPath);
+          }
           addLog(`[Character] 导入成功: ${fileName}`, 'info');
           message.success('导入成功');
           fetchCharacters();
@@ -347,20 +354,20 @@ const CharacterManager: React.FC = () => {
   /**
    * Called by CharacterEditModal after a successful save. `savedPath` is the
    * path of the saved card (existing-card edit) or `null` for newly-created
-   * cards. We refresh the list and (if the View modal happens to be showing
-   * the same card) refresh the View modal content. The View modal lives in
-   * CharacterListView, so we trigger an indirect refresh by re-fetching the
-   * characters list; the user can re-open the View modal to see fresh data.
+   * cards. We refresh the list and invalidate the image cache for the saved
+   * path so that ThumbnailImage/AvatarImage components re-fetch the latest
+   * image from disk.
    *
-   * Note: the original implementation also re-read the open View modal's
-   * content in-place when paths matched. Because the View modal is now
-   * encapsulated inside CharacterListView, the simplest behavior-preserving
-   * approach is to refresh the list (which the original always did) — the
-   * View modal will reflect updated content the next time it's opened. This
-   * is a minor UX nuance, not a behavior regression for the save flow itself.
+   * 【重点标记 - 缓存失效 Bug 修复】
+   * 原实现仅调用 fetchCharacters() 刷新文件列表元数据，未清除图片缓存，
+   * 导致编辑后列表缩略图和查看弹窗头像仍显示旧图片。修复后在保存成功时
+   * 调用 invalidateCharacterImageCache 清除该路径的缓存。
    */
-  const handleSaved = useCallback((_savedPath: string | null) => {
+  const handleSaved = useCallback((savedPath: string | null) => {
     setIsEditModalOpen(false);
+    if (savedPath) {
+      invalidateCharacterImageCache(savedPath);
+    }
     fetchCharacters();
   }, [fetchCharacters]);
 

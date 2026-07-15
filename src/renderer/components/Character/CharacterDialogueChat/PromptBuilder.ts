@@ -293,6 +293,34 @@ export function buildEmojiEnhancedPrompt(charName: string = 'Character'): string
 }
 
 /**
+ * 构建辅助模式系统提示词约束。
+ *
+ * Spec: add-assist-mode-options
+ * 开启后，要求 AI 在回复正文末尾以结构化格式输出 3 个推荐选项，
+ * 供用户点击选择以推进对话。选项需与当前对话上下文高度相关，
+ * 具有 Galgame 风格的对话分支导向性。
+ *
+ * 【重点标记】修复：原使用 HTML 注释格式 `<!-- <suggestedOptions> -->`，
+ * 但多数 AI 模型不会自然生成 HTML 注释，导致功能不生效。
+ * 改用纯文本标记格式 `<<<SUGGESTED_OPTIONS>>>` ... `<<<END_OPTIONS>>>`，
+ * 并在解析端增加多格式容错匹配。
+ */
+export function buildAssistModePrompt(charName: string = 'Character'): string {
+  const name = charName || 'Character';
+  return `\n【辅助模式】在回复正文完成后，${name} 必须在末尾附加 3 个推荐对话选项，供用户选择以推进对话。选项应紧扣当前对话上下文，具有明确的对话导向性和分支感（类似 Galgame 剧情选项），每个选项为一句用户可能说出的话或做出的行动。
+
+格式要求：在正文之后另起一行，严格按以下格式输出（包含开始和结束标记），不要额外解释：
+
+<<<SUGGESTED_OPTIONS>>>
+1. 第一个选项内容
+2. 第二个选项内容
+3. 第三个选项内容
+<<<END_OPTIONS>>>
+
+注意：选项内容应简洁（通常 10-50 字），三个选项应提供不同方向的对话分支，避免雷同。此选项块对用户不可见，系统会自动解析并展示为可点击按钮。`;
+}
+
+/**
  * 构建用户回复生成专用系统提示。
  *
  * Spec: add-ai-user-reply-button / Task 1.1
@@ -317,7 +345,8 @@ export function buildEmojiEnhancedPrompt(charName: string = 'Character'): string
 export function buildUserReplySystemPrompt(
   characterInfo: CharacterInfoForPrompt,
   persona: UserPersona,
-  person?: 'first' | 'second' | 'third'
+  person?: 'first' | 'second' | 'third',
+  userInstruction?: string
 ): string {
   // 防御性校验：persona 缺失或 name 为空时返回空串
   if (!persona || !persona.name || !persona.name.trim()) return '';
@@ -363,6 +392,17 @@ export function buildUserReplySystemPrompt(
     personConstraint = `以第一人称（"我"）视角生成回复，使用"我"作为自称`;
   }
 
+  // 用户指令段落（输入框有内容时注入，引导 AI 按用户意图生成回复）
+  const trimmedInstruction = userInstruction && userInstruction.trim() ? userInstruction.trim() : '';
+  const instructionSection = trimmedInstruction
+    ? `\n\n## 用户指令\n${trimmedInstruction}\n\n请在生成回复时参考上述用户指令，使回复内容符合用户的意图。`
+    : '';
+
+  // 任务要求第 5 条：有用户指令时追加遵循提示
+  const requirement5 = trimmedInstruction
+    ? `5. 结合对话历史与 ${charName} 的最新发言自然衔接，并遵循上方"用户指令"的要求`
+    : `5. 结合对话历史与 ${charName} 的最新发言自然衔接`;
+
   return `你是对话模拟器，需要扮演用户 **${userName}** 生成下一句回复。
 
 ## 用户人设
@@ -371,13 +411,13 @@ export function buildUserReplySystemPrompt(
 
 ## 对方角色上下文
 ${charContextLines}
-
+${instructionSection}
 ## 任务要求
 1. 仅输出 ${userName} 的下一句回复内容
 2. 不要输出 ${charName} 的回复
 3. 不要解释、不要引号包裹、不要前缀（如"${userName}:"）
 4. 回复内容应符合 ${userName} 的人设特征与说话方式
-5. 结合对话历史与 ${charName} 的最新发言自然衔接
+${requirement5}
 6. 回复长度建议 50-200 字（用户回复通常较短，避免长篇大论）
 7. ${personConstraint}
 

@@ -300,6 +300,7 @@ export class ChatVectorizationService {
       let skippedCount = 0;
       let failedCount = 0;
       const vectorIds: string[] = [];
+      const vectorizeStartTime = Date.now();
 
       for (let i = 0; i < messages.length; i++) {
         const message = messages[i];
@@ -324,13 +325,18 @@ export class ChatVectorizationService {
           const existing = await vectorStoreService.getById(vectorId);
           if (existing) {
             skippedCount++;
+            console.log(`[ChatVectorizationService] vectorizeIncremental: [${i + 1}/${messages.length}] skipped (already vectorized) id=${vectorId}`);
             continue;
           }
 
           const vectorizeText = this.buildMessageText(message, i);
+          const embedStart = Date.now();
+          console.log(`[ChatVectorizationService] vectorizeIncremental: [${i + 1}/${messages.length}] generating embedding, role=${message.role}, textLen=${vectorizeText.length}, id=${vectorId}`);
           const embedResult = await embeddingService.generateEmbedding(vectorizeText);
+          const embedDuration = Date.now() - embedStart;
 
           if (embedResult.success && embedResult.vector) {
+            console.log(`[ChatVectorizationService] vectorizeIncremental: [${i + 1}/${messages.length}] embedding done in ${embedDuration}ms, dim=${embedResult.vector.length}, writing to store`);
             const metadata: Record<string, any> = {
               text: vectorizeText,
               source: VectorSourceType.CHARACTER_CHAT,
@@ -352,20 +358,23 @@ export class ChatVectorizationService {
             await vectorStoreService.add(vectorId, embedResult.vector, metadata);
             vectorizedCount++;
             vectorIds.push(vectorId);
+            console.log(`[ChatVectorizationService] vectorizeIncremental: [${i + 1}/${messages.length}] added to store, total vectorized=${vectorizedCount}`);
           } else {
             failedCount++;
-            console.warn(`[ChatVectorizationService] vectorizeIncremental: embedding failed for message ${i}: ${embedResult.error}`);
+            console.warn(`[ChatVectorizationService] vectorizeIncremental: [${i + 1}/${messages.length}] embedding failed in ${embedDuration}ms: ${embedResult.error}`);
           }
         } catch (error) {
           failedCount++;
-          console.error(`[ChatVectorizationService] vectorizeIncremental: message ${i} vectorization error:`, error);
+          console.error(`[ChatVectorizationService] vectorizeIncremental: [${i + 1}/${messages.length}] vectorization error:`, error);
         }
       }
 
       if (vectorizedCount > 0) {
         try {
+          const persistStart = Date.now();
+          console.log(`[ChatVectorizationService] vectorizeIncremental: persisting ${vectorizedCount} new vectors...`);
           await vectorStoreService.persist();
-          console.log(`[ChatVectorizationService] vectorizeIncremental: persisted vectors after incremental vectorization`);
+          console.log(`[ChatVectorizationService] vectorizeIncremental: persist done in ${Date.now() - persistStart}ms`);
         } catch (persistError) {
           console.error('[ChatVectorizationService] vectorizeIncremental: persist failed:', persistError);
         }
@@ -406,7 +415,7 @@ export class ChatVectorizationService {
       }
 
       console.log(
-        `[ChatVectorizationService] vectorizeIncremental: completed - vectorized=${vectorizedCount}, skipped=${skippedCount}, failed=${failedCount}`
+        `[ChatVectorizationService] vectorizeIncremental: completed in ${Date.now() - vectorizeStartTime}ms - vectorized=${vectorizedCount}, skipped=${skippedCount}, failed=${failedCount}`
       );
     } catch (error) {
       // spec: "向量化失败不阻塞对话主流程（仅记录日志）"

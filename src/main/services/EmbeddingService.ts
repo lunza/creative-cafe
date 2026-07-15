@@ -64,12 +64,14 @@ export class EmbeddingService {
         requestBody.api_key = this.vectorConfig.remoteApiKey.trim();
       }
 
+      const fetchStart = Date.now();
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers,
         body: JSON.stringify(requestBody),
         signal: AbortSignal.timeout(30000)
       });
+      console.log(`[EmbeddingService] Remote embedding fetch done in ${Date.now() - fetchStart}ms, status=${response.status}, textLen=${text.length}`);
 
       if (!response.ok) {
         const errorText = await response.text();

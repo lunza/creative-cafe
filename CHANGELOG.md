@@ -3,6 +3,48 @@
 ## [Unreleased] - 2026-07-05
 
 ### Added
+- **【重点标记】think 标签剥离导致内容保护检查误触发修复（Spec: fix-think-strip-content-protection）**：针对 `strip_think_tags` 开关启用后 UI 卡死在"正在生成中"的问题，定位真正的根因并修复。
+  - **问题现象**：`strip_think_tags` 默认开启后，AI 回复完成后对话状态卡在"正在生成中"，流式渲染正常（用户能看到内容），向量化也正常触发，但状态指示器永远不切换到"完成"
+  - **根因**：`onComplete` 回调中 `stripThinkingTags` 剥离了 think 标签内容，导致 `displayContent.length` 小于流式渲染时累积的 `existingContent.length`（后者含 think 标签）。这触发了 `hooks.ts:1305` 的内容保护检查（`return prev`），状态不更新 → UI 卡死
+  - **修复方案**：在 think 标签剥离处增加 `thinkTagsStripped` 标志位，在内容保护检查条件中增加 `&& !thinkTagsStripped`，跳过 think 标签剥离导致的合法缩短
+  - 涉及文件：`src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.hooks.ts`（第 1091-1099 行标志位、第 1311 行保护检查条件）
+  - 这是 `handle-think-tags-overflow` spec 的配套修复——没有此修复，think 标签开关启用时必然导致 UI 卡死
+  - 文档同步：`doc/04b-character-dialogue-chat-module.md` 追加【重点标记】段落
+- **【重点标记】对话卡死修复：AI 返回空内容时 completeCallback 未触发**：针对用户反馈"AI 响应完成后对话状态仍旧显示正在生成中"的问题，定位根因并修复。
+  - **问题现象**：日志显示 `SSE 解析成功` → `ai:stream:complete event sent`，但 UI 永远停留在"正在生成中"状态
+  - **根因**：`ChatEngine.ts` 的 `handleComplete` 中有 `if (finalContent) { this.completeCallback?.(response); }` 守卫——当 AI 返回空内容（流式 chunk 全部无 `delta.content`，且最终 `message.content` 也为空）时，`finalContent` 为空字符串（falsy），`completeCallback` **永远不会被调用**，导致 hooks.ts 的 `onComplete` 回调不触发，消息状态不从 "sending" 更新
+  - **修复方案**：移除 `if (finalContent)` 守卫，始终调用 `completeCallback`，即使内容为空。空内容时输出 warn 日志 `[ChatEngine] handleComplete: finalContent is empty, calling completeCallback with empty content to prevent UI stuck`
+  - **附带修复**：`aiHandlers.ts` 的 content length 日志此前检查 `data?.content?.length`（错误路径，SSE 解析后内容在 `data?.choices?.[0]?.message?.content`），导致日志永远显示 `0 chars` 误导诊断。修正为检查正确的三级路径
+  - 涉及文件：`src/renderer/components/Common/ChatEngine/ChatEngine.ts`（第 259-272 行）、`src/main/ipc/handlers/aiHandlers.ts`（第 629-635 行）
+  - 文档同步：`doc/04b-character-dialogue-chat-module.md` 追加【重点标记】段落
+- **【重点标记】向量化崩溃修复：全局异常处理器 + IPC handler try-catch**：针对用户反馈"向量化过程中 Electron 主进程自动崩溃"的问题，定位根因并修复。
+  - **问题现象**：AI 流式响应完成后（`SSE 解析成功`），增量向量化触发但主进程随即崩溃，`vectorizeIncremental: starting` 日志一条都没输出，紧接着出现 `ERROR: This operation returned because the timeout period expired.` 和 `vite-plugin-electron` 的 `taskkill /T /F` 超时崩溃
+  - **根因**：`src/main` 目录**完全没有 `process.on('unhandledRejection')` / `process.on('uncaughtException')` 处理器**（致命缺陷）。`ipcMain.handle('chatHistory:vectorizeIncremental')` handler **无 try-catch 包裹**，若 `vectorizeIncremental` 内部有任何异常逃逸三层 try-catch（或产生未 await 的 Promise rejection），Node.js 16+ 默认会退出进程。Electron 主进程退出后触发 `vite-plugin-electron` 的 `startup.exit → treeKillSync → taskkill /T /F`，而 `taskkill` 无超时保护，最终导致 Vite 父进程也崩溃
+  - **修复方案**：
+    1. 在 `src/main/index.ts` 顶部添加全局 `process.on('unhandledRejection')` 和 `process.on('uncaughtException')` 处理器，仅记录日志不退出进程（兜底所有逃逸异常）
+    2. 为 `chatHistory:vectorizeIncremental` IPC handler 添加 try-catch + 进入日志，返回 `{success: false, error}` 而非抛出异常
+    3. 为 `chatHistory:retrieve` IPC handler 添加 try-catch + 进入日志，失败返回空数组（与内部失败行为一致）
+  - **验证方式**：下次复现时，若异常逃逸，日志将输出 `[Main Process] UNHANDLED REJECTION (swallowed to prevent crash): ...` 而非崩溃；若异常在 handler 内，日志将输出 `[IPC] chatHistory:vectorizeIncremental: handler error: ...` 并返回 `{success: false}`
+  - 涉及文件：`src/main/index.ts`（第 6-16 行全局异常处理器）、`src/main/ipc/handlers/characterChatHandlers.ts`（第 107-135 行两个 handler 的 try-catch 包裹）
+  - 文档同步：`doc/04b-character-dialogue-chat-module.md` 在诊断日志段落后追加【重点标记】向量化崩溃修复段落
+- **【重点标记】对话向量化可观测性诊断日志补全**：针对用户反馈"向量化结果长时间不返回，无法判断是向量化未完成还是结果未处理"的可观测性盲点，在增量向量化全链路补全耗时与进度日志。
+  - **问题现象**：AI 流式响应完成后（日志 `SSE 解析成功`），增量向量化触发但 20-30 秒内无任何日志输出，用户无法判断卡在哪一步
+  - **根因**：`ChatVectorizationService.vectorizeIncremental` 对最近 10 条消息**串行**调用远程 Embedding API（10 × 2-3s = 20-30s 等待期），循环内此前无逐条进度日志
+  - **新增日志节点**：
+    - `ChatVectorizationService.vectorizeIncremental`：每条消息的 embedding 开始（`role`/`textLen`/`id`）、完成耗时、`add` 确认、跳过/失败原因；`starting` / `persisting N vectors` / `persist done in Xms` / `completed in Xms`
+    - `VecstoreVectorStore.doPersist`：`export_json()` 耗时（WASM 同步阻塞可观测）、`writeFile` 耗时、总耗时
+    - `EmbeddingService.generateEmbedding`（remote）：`fetch` 耗时与状态码（与 30s 超时配套，定位是慢还是卡死）
+    - `aiHandlers.ts`：`ai:stream:complete` 发送前后各一条日志（确认主进程事件链路完整）
+  - 渲染层 `hooks.ts` 已有 `[DEBUG-COMPLETE] === engine.onComplete called ===` 与 `Step A2-incremental: triggering vectorizeIncremental` 日志，构成完整事件链
+  - 本次仅补日志，串行→并行化优化待后续 spec 处理
+  - 涉及文件：`src/main/services/ChatVectorizationService.ts`、`src/main/services/VecstoreVectorStore.ts`、`src/main/services/EmbeddingService.ts`、`src/main/ipc/handlers/aiHandlers.ts`
+  - 文档同步：`doc/04b-character-dialogue-chat-module.md` 在 `vectorizeIncremental` 小节后追加【重点标记】增量更新段落
+- **对话模式 Think 标签后处理开关**（Spec: handle-think-tags-overflow）：针对 deepseek3.2 等老模型在 AI 回复 / 润色结果中内联 think / thinking / thought 推理标签的问题，新增 `AIParameterConfig.strip_think_tags` 开关，默认开启，在 `onComplete` 写入存储前剥离其内容。
+  - **问题现象**：现有 `stripThinkingTags` 工具仅在渲染时（`processMessage` 内）清理，存储 / 上下文回传 / RAG 向量化仍保留原始标签，造成历史污染与无效 token 累积
+  - **解决方案**：在 `requestAIResponse.onComplete` 与 `polishInput.onComplete` 写入存储前按开关调用 `stripThinkingTags(finalContent)`；渲染层 `processMessage` 内的兜底剥离保留（处理历史脏数据）；流式 `onStream` 阶段不剥离，避免未闭合标签误删后续正文
+  - **UI**：`ParameterPanel` 在「Emoji 增强模式」与「自定义停止序列」之间新增「Think 标签处理」Switch（沿用 emoji 区块的样式 + Tooltip），经 `ConfigPanel` 透传，由 `CharacterDialogueChat.tsx` 绑定 `characterConfig.customParameters.strip_think_tags !== false` 并通过 `handleParameterChange` 持久化到 `localStorage['character-session-<cardId>']`
+  - 涉及文件：`CharacterDialogueChat.types.ts`（`strip_think_tags?: boolean`）、`CharacterDialogueChat.hooks.ts`（导入 `stripThinkingTags` + 两处 `onComplete` 后处理）、`ParameterPanel.tsx`（Switch UI）、`ConfigPanel.tsx`（props 透传）、`CharacterDialogueChat.tsx`（状态绑定）
+  - 文档同步：`doc/04b-character-dialogue-chat-module.md` 3.5 节新增「Think 标签后处理」表格 + 4.4 节边界情况新增条目
 - **创作中心聊天模式向量化/知识库/记忆面板优化（E1-E5）**：优化 `CharacterDialogueChat` 配置面板的命名、分组、健康度反馈与检索效果反馈。
   - **E1 面板重命名**：`VectorizationPanel.tsx` 标题「向量化设置」→「知识库检索」，Tooltip 说明更新为「绑定知识库文档，对话时自动检索相关内容注入上下文。向量化模型请在系统设置中配置。」
   - **E3 概念分组与说明**：`ConfigPanel.tsx` 在 VectorizationPanel 与 MemoryTablePanel 之上新增分组标题「记忆与上下文增强」（fontSize 14px，color `var(--config-panel-sub-title-color)`）；两个面板下方各增加一行说明小字（fontSize 12px，color `var(--config-panel-sub-text-color, #94a3b8)`，marginTop 4px）—— VectorizationPanel 下「从文档中检索相关知识注入上下文」，MemoryTablePanel 下「AI 自动整理对话中的关键信息到表格」
