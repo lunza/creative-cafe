@@ -13,8 +13,7 @@ dist-ssr
 *.local
 release
 knowledge_base
-docs
-doc
+
 
 # Editor directories and files
 .vscode/*
