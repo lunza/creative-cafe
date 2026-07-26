@@ -191,39 +191,42 @@ ${contextParts}
       }
     }
 
-    addLog(`【剧情检查】JSON 提取${extracted ? '成功' : '未找到代码块，尝试直接解析'}`, 'debug');
-    addLog(`【剧情检查】提取后 JSON 长度: ${jsonStr.length}`, 'debug');
-    addLog(`【剧情检查】提取后 JSON 前200字符: ${jsonStr.substring(0, 200)}`, 'debug');
-    addLog(`【剧情检查】提取后 JSON 后200字符: ${jsonStr.substring(Math.max(0, jsonStr.length - 200))}`, 'debug');
+    // 步骤2: 无条件提取最外层 JSON 对象
+    // 处理多种场景：带前后缀文本、代码块内残留前后缀、代码块正则截断（JSON 内含 ```）
+    const extractedJson = this.extractJsonObject(jsonStr);
+    if (extractedJson) {
+      jsonStr = extractedJson;
+    }
 
-    // 修复 AI 返回的中文引号问题：将中文引号替换为英文引号
-    jsonStr = this.fixChineseQuotes(jsonStr);
+    addLog(`【剧情检查】JSON 提取完成, 长度: ${jsonStr.length}, 来源: ${extracted ? '代码块' : '原始'}`, 'debug');
+    addLog(`【剧情检查】JSON 前200字符: ${jsonStr.substring(0, 200)}`, 'debug');
 
-    // 步骤2: 尝试解析 JSON
-    let parsed: any;
-    try {
-      parsed = JSON.parse(jsonStr);
-      addLog(`【剧情检查】JSON 解析成功`, 'debug');
-    } catch (parseError) {
-      addLog(`【剧情检查】JSON 解析失败: ${parseError instanceof Error ? parseError.message : String(parseError)}`, 'error');
-      addLog(`【剧情检查】尝试修复后重新解析...`, 'debug');
+    // 步骤3: 多策略解析（按破坏性递增排序，先尝试最小修复）
+    const strategies: Array<{ name: string; fn: (s: string) => string }> = [
+      { name: '直接解析', fn: (s: string) => s },
+      { name: '修复中文引号', fn: (s: string) => this.fixChineseQuotes(s) },
+      { name: '修复JSON格式', fn: (s: string) => this.fixJsonForParsing(this.fixChineseQuotes(s)) },
+    ];
 
-      // 步骤3: 尝试修复 JSON（AI 可能在字符串值中使用了字面换行符而非 \n 转义）
+    let parsed: any = null;
+    let lastError: any = null;
+    for (const { name, fn } of strategies) {
       try {
-        let fixedJson = this.fixJsonForParsing(jsonStr);
-
-        addLog(`【剧情检查】修复后 JSON 长度: ${fixedJson.length}`, 'debug');
-        addLog(`【剧情检查】修复后 JSON 前200字符: ${fixedJson.substring(0, 200)}`, 'debug');
-
-        // 尝试再次解析
-        parsed = JSON.parse(fixedJson);
-        addLog(`【剧情检查】修复后 JSON 解析成功`, 'debug');
-      } catch (secondError) {
-        addLog(`【剧情检查】修复后 JSON 解析仍失败: ${secondError instanceof Error ? secondError.message : String(secondError)}`, 'error');
-        addLog(`【剧情检查】JSON 前500字符: ${jsonStr.substring(0, 500)}`, 'debug');
-        addLog(`【剧情检查】JSON 后500字符: ${jsonStr.substring(Math.max(0, jsonStr.length - 500))}`, 'debug');
-        return this.createFallbackReport(chapterIndex);
+        const processed = fn(jsonStr);
+        parsed = JSON.parse(processed);
+        addLog(`【剧情检查】JSON 解析成功（策略: ${name}）`, 'debug');
+        break;
+      } catch (err) {
+        lastError = err;
+        addLog(`【剧情检查】策略"${name}"失败: ${err instanceof Error ? err.message : String(err)}`, 'debug');
       }
+    }
+
+    if (!parsed) {
+      addLog(`【剧情检查】所有解析策略均失败，最后错误: ${lastError instanceof Error ? lastError.message : String(lastError)}`, 'error');
+      addLog(`【剧情检查】JSON 前500字符: ${jsonStr.substring(0, 500)}`, 'debug');
+      addLog(`【剧情检查】JSON 后500字符: ${jsonStr.substring(Math.max(0, jsonStr.length - 500))}`, 'debug');
+      return this.createFallbackReport(chapterIndex);
     }
 
     const dimensions: DimensionScore[] = [];
@@ -598,8 +601,40 @@ ${contextParts}
     result = temp;
 
     // 步骤3: 处理键名未加引号的情况（如 { key: "value" } -> { "key": "value" }）
-    // 只处理简单的标识符键名
-    result = result.replace(/(\{|\,)\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/g, '$1 "$2":');
+    // 仅在字符串外部执行，避免破坏字符串值内部的 {key: 或 ,key: 模式
+    inString = false;
+    escapeNext = false;
+    let step3Result = '';
+    for (let i = 0; i < result.length; i++) {
+      const char = result[i];
+      if (escapeNext) {
+        step3Result += char;
+        escapeNext = false;
+        continue;
+      }
+      if (char === '\\') {
+        step3Result += char;
+        escapeNext = true;
+        continue;
+      }
+      if (char === '"') {
+        inString = !inString;
+        step3Result += char;
+        continue;
+      }
+      // 仅在字符串外部，遇到 { 或 , 时检查后面是否跟着未加引号的键名
+      if (!inString && (char === '{' || char === ',')) {
+        const rest = result.substring(i + 1);
+        const keyMatch = rest.match(/^\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/);
+        if (keyMatch) {
+          step3Result += char + ' "' + keyMatch[1] + '":';
+          i += keyMatch[0].length; // 跳过已处理的部分
+          continue;
+        }
+      }
+      step3Result += char;
+    }
+    result = step3Result;
 
     // 步骤4: 移除 trailing commas（在 } 或 ] 前的逗号）
     result = result.replace(/,\s*([\]}])/g, '$1');
@@ -658,6 +693,53 @@ ${contextParts}
     }
 
     return fixed;
+  }
+
+  // 从可能包含前后缀文本的字符串中提取最外层 JSON 对象
+  // 通过追踪大括号深度（考虑字符串字面量和转义字符）定位第一个完整的 {...} 结构
+  private extractJsonObject(text: string): string | null {
+    const startIndex = text.indexOf('{');
+    if (startIndex === -1) {
+      return null;
+    }
+
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+
+    for (let i = startIndex; i < text.length; i++) {
+      const ch = text[i];
+
+      if (escape) {
+        escape = false;
+        continue;
+      }
+
+      if (ch === '\\' && inString) {
+        escape = true;
+        continue;
+      }
+
+      if (ch === '"') {
+        inString = !inString;
+        continue;
+      }
+
+      if (inString) continue;
+
+      if (ch === '{') {
+        depth++;
+      } else if (ch === '}') {
+        depth--;
+        if (depth === 0) {
+          return text.substring(startIndex, i + 1);
+        }
+      }
+    }
+
+    // 未找到匹配的闭合大括号
+    addLog(`【剧情检查】extractJsonObject: 未找到匹配的闭合大括号，起始位置=${startIndex}`, 'warn');
+    return null;
   }
 
   // 将 JSON 字符串中的中文引号替换为英文引号，以修复 AI 返回非标准 JSON 的问题
@@ -939,6 +1021,10 @@ ${contextParts}
         maxTokens: modelConfig.maxTokens,
         timeoutMs: AI_CHECK_TIMEOUT
       });
+      // 记录 AI 原始响应（info 级别），便于排查 JSON 解析失败问题
+      addLog(`【剧情检查】AI 原始响应长度: ${rawContent.length}`, 'info');
+      addLog(`【剧情检查】AI 原始响应前500字符: ${rawContent.substring(0, 500)}`, 'info');
+      addLog(`【剧情检查】AI 原始响应后500字符: ${rawContent.substring(Math.max(0, rawContent.length - 500))}`, 'info');
       const report = this.parseCheckResponse(rawContent, request.chapterIndex, request.content);
 
       // 合并规则验证结果

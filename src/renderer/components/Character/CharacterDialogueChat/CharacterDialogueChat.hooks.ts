@@ -9,7 +9,7 @@ import { ChatMessage, CharacterInfo, ChatState, UserPersona, EffectiveAIParams }
 import { ChatEngineFactory } from '../../Common/ChatEngine/ChatEngine.factory';
 import { AIEngineConfig, AIResponse, getDefaultEngineCapabilities } from '../../Common/ChatEngine/ChatEngine.types';
 import { usePromptBuilder } from './usePromptBuilder';
-import { buildAssistModePrompt, buildAsyncTableOrganizeInstructions, buildStopSequences, buildRoleAnchorMessage, buildContinueNudgePrompt, buildLengthGuidancePrompt, buildEmojiEnhancedPrompt, buildUserReplySystemPrompt, buildStopSequencesForUserReply, buildPolishInputSystemPrompt } from './PromptBuilder';
+import { buildAssistModePrompt, buildAsyncTableOrganizeInstructions, buildStopSequences, buildRoleAnchorMessage, buildContinueNudgePrompt, buildLengthGuidancePrompt, buildEmojiEnhancedPrompt, buildLanguagePrompt, buildUserReplySystemPrompt, buildStopSequencesForUserReply, buildPolishInputSystemPrompt } from './PromptBuilder';
 import { TokenCounter, ContextTruncator, DEFAULT_MAX_TOKENS } from './TokenManagement';
 import type { TruncationConfig } from './TokenManagement/types';
 import { nGramJaccard, overlapRate } from './utils/similarityUtils';
@@ -610,8 +610,15 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     console.log(`[CharacterDialogueChat] activeEngine.max_tokens:`, activeEngine.max_tokens);
     console.log(`[CharacterDialogueChat] effectiveParams.max_tokens:`, effectiveParams.max_tokens);
     console.log(`[CharacterDialogueChat] effectiveParams.max_tokens type:`, typeof effectiveParams.max_tokens);
-    console.log(`[CharacterDialogueChat] effectiveParams object:`, JSON.stringify(effectiveParams, null, 2));
     
+    // 辅助模式开启时，为选项块预留额外 token 空间，防止 AI 回复正文占满 max_tokens 后选项被截断
+    // 选项块约需 200-300 token（3 个选项 + 标记），预留 512 token 作为安全余量
+    // 注意：max_tokens=0 表示不限制，此时不需要 +512（0 会被 ChatEngine 解析为不发送 max_tokens 字段）
+    const assistModeNeedsExtraTokens = characterConfig?.customParameters?.assist_mode === true;
+    const adjustedMaxTokens = assistModeNeedsExtraTokens && effectiveParams.max_tokens && effectiveParams.max_tokens > 0
+      ? effectiveParams.max_tokens + 512
+      : effectiveParams.max_tokens;
+
     const engineConfigWithParams: AIEngineConfig = {
       id: activeEngine.id,
       name: activeEngine.name,
@@ -620,7 +627,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       model_name: activeEngine.model_name,
       api_mode: activeEngine.api_mode,
       api_key_transmission: activeEngine.api_key_transmission,
-      max_tokens: effectiveParams.max_tokens,
+      max_tokens: adjustedMaxTokens,
       system_prompt: activeEngine.system_prompt,
       temperature: effectiveParams.temperature,
       // Stop sequences 防抢话（Spec: optimize-chat-ai-intelligence / Task 3.2 + 3.4）
@@ -906,6 +913,10 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       }
     }
 
+    // 语言要求：默认中文（undefined 视为中文）
+    const language = characterConfig?.customParameters?.language ?? 'zh';
+    effectiveSystemPrompt += buildLanguagePrompt(language);
+
     // Emoji 增强模式：默认开启（undefined 视为开启），显式设为 false 时关闭
     const emojiEnhanced = characterConfig?.customParameters?.emoji_enhanced !== false;
     if (emojiEnhanced) {
@@ -1013,7 +1024,25 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
 
       messagesToUse = truncatedMessages;
     } else {
-      addLog(`[TokenManagement] Token management disabled, sending all ${messagesToSend.length} messages`, 'info');
+      // 🐛 Bug修复（重点，2026-07-26）：TokenManagement 关闭时的安全网。
+      // 原实现直接发送所有消息，长对话会耗尽模型上下文窗口（如 32K），
+      // 导致 finish_reason=length 截断。此处增加消息数量软限制：
+      // 超过 maxMessagesToKeep（默认 60）时，仅保留最近 N 条，防止上下文溢出。
+      const maxMsgs = characterConfig?.maxMessagesToKeep ?? 60;
+      if (messagesToSend.length > maxMsgs) {
+        messagesToUse = messagesToSend.slice(-maxMsgs);
+        // 确保以 user 消息开头（丢弃开头的 assistant 消息）
+        if (messagesToUse.length > 0 && messagesToUse[0].role === 'assistant') {
+          messagesToUse = messagesToUse.slice(1);
+        }
+        addLog(
+          `[TokenManagement] Token management disabled but message count (${messagesToSend.length}) exceeds safety limit (${maxMsgs}). ` +
+          `Auto-truncated to last ${messagesToUse.length} messages to prevent context window exhaustion.`,
+          'warn'
+        );
+      } else {
+        addLog(`[TokenManagement] Token management disabled, sending all ${messagesToSend.length} messages`, 'info');
+      }
     }
 
     console.log('[DEBUG-FLOW] Step D: Token management done, messagesToUse count:', messagesToUse.length);
@@ -1089,6 +1118,22 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         return;
       }
 
+      // ===== 上下文窗口耗尽检测（finish_reason=length） =====
+      // 当 AI 因上下文窗口耗尽或 max_tokens 达到上限被截断时，finish_reason="length"。
+      // 此时输出内容不完整，需告知用户并提示启用 TokenManagement 裁剪历史。
+      const finishReason = response?.finishReason || 'stop';
+      if (finishReason === 'length') {
+        const tokenMgmtEnabled = characterConfig?.tokenManagementEnabled === true;
+        const hint = tokenMgmtEnabled
+          ? '已启用上下文管理但仍被截断，请尝试增大 maxContextTokens 或减小 maxMessagesToKeep'
+          : '建议在右侧面板启用「Token 管理」以自动裁剪历史对话，为 AI 输出预留足够空间';
+        addLog(`[CharacterDialogueChat] AI 回复被截断（finish_reason=length），上下文窗口或 max_tokens 耗尽。${hint}`, 'warn');
+        message.warning({
+          content: `AI 回复被截断（达到长度上限）。${hint}`,
+          duration: 8,
+        });
+      }
+
       // ===== Think 标签后处理（Spec: handle-think-tags-overflow） =====
       // 针对 deepseek3.2 等老模型返回的 think、thinking、thought 推理标签，
       // 在写入存储 / RAG / 回传上下文前剥离其内容。默认开启（undefined 视为开启），
@@ -1111,6 +1156,8 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       // 【重点标记】修复：原仅匹配 HTML 注释格式，多数 AI 模型不生成 HTML 注释导致功能失效。
       // 改用多格式容错匹配：优先匹配 <<<SUGGESTED_OPTIONS>>> 文本标记格式，
       // 回退匹配 HTML 注释、纯标签、方括号等变体。
+      // 【重点标记】修复：增加对缺少结束标记的半截选项块的容错提取，
+      // 以及更多编号格式（①②③、-、*、()等）的支持。
       let suggestedOptions: string[] = [];
       const assistModeEnabled = characterConfig?.customParameters?.assist_mode === true;
       if (assistModeEnabled) {
@@ -1118,8 +1165,12 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         const optionPatterns = [
           // 主格式：<<<SUGGESTED_OPTIONS>>> ... <<<END_OPTIONS>>>
           { regex: /<<<SUGGESTED_OPTIONS>>>\s*([\s\S]*?)<<<END_OPTIONS>>>/i, name: 'text-marker' },
+          // 容错：仅有开始标记 <<<SUGGESTED_OPTIONS>>> 到文本末尾（AI 遗漏结束标记或被截断）
+          { regex: /<<<SUGGESTED_OPTIONS>>>\s*([\s\S]*?)$/i, name: 'text-marker-unclosed' },
           // 兼容旧格式：<!-- <suggestedOptions> ... </suggestedOptions> -->
           { regex: /<!--\s*<suggestedOptions>([\s\S]*?)<\/suggestedOptions>\s*-->/i, name: 'html-comment' },
+          // 容错：仅有 <suggestedOptions> 开始标签到末尾
+          { regex: /<suggestedOptions>([\s\S]*?)$/i, name: 'plain-tag-unclosed' },
           // 兼容变体：纯标签 <suggestedOptions> ... </suggestedOptions>
           { regex: /<suggestedOptions>([\s\S]*?)<\/suggestedOptions>/i, name: 'plain-tag' },
           // 兼容变体：方括号 [suggested_options] ... [/suggested_options]
@@ -1141,10 +1192,17 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         }
 
         if (matchedOptions) {
+          // 解析选项行，支持多种编号格式：1. / 1) / ① / - / * / ()
           suggestedOptions = matchedOptions
             .split('\n')
-            .map(line => line.replace(/^\d+[\.\)、]\s*/, '').trim())
-            .filter(line => line.length > 0 && !/^<<<|^<!--|^<suggestedOptions|^<\/suggestedOptions|^\[\/?suggested/i.test(line))
+            .map(line => line
+              .replace(/^[①②③④⑤⑥⑦⑧⑨⑩]\s*/, '')
+              .replace(/^\d+[\.\)、\)]\s*/, '')
+              .replace(/^[-\*]\s*/, '')
+              .replace(/^\(\d+\)\s*/, '')
+              .trim()
+            )
+            .filter(line => line.length > 0 && !/^<<<|^<!--|^<suggestedOptions|^<\/suggestedOptions|^\[\/?suggested|^<<<END/i.test(line))
             .slice(0, 3);
           // 从显示内容和最终内容中剥离选项块
           finalContent = finalContent.replace(matchedFullText, '').trim();
@@ -1368,7 +1426,13 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         // 【重点标记】修复：think 标签剥离导致的合法内容缩短也不应触发保护检查，
         // 否则状态不更新 → UI 卡死在"正在生成中"（Spec: fix-think-strip-content-protection）
         // 【重点标记】修复：辅助模式选项块剥离同样会导致合法内容缩短，需跳过保护检查（Spec: add-assist-mode-options）
-        if (!isAsyncMode && !thinkTagsStripped && !optionsStripped && existingContent.length > 0 && displayContent.length < existingContent.length) {
+        // 【重点标记】修复：stop sequences 或 max_tokens 截断会导致 finalContent 短于流式累积的
+        // existingContent。此时 displayContent 是 AI 实际完成的回复（被后端合法截断），
+        // 不应误判为内容丢失。容差阈值：displayContent 不少于 existingContent 的 30% 即视为合法截断。
+        const stopTruncated = existingContent.length > 0
+          && displayContent.length < existingContent.length
+          && displayContent.length >= existingContent.length * 0.3;
+        if (!isAsyncMode && !thinkTagsStripped && !optionsStripped && !stopTruncated && existingContent.length > 0 && displayContent.length < existingContent.length) {
           addLog(`[CharacterDialogueChat] Content protection: preventing content loss (${existingContent.length} -> ${displayContent.length})`, 'error');
           return prev;
         }
@@ -1387,6 +1451,8 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
           status: msg.status,
           speakerName: msg.speakerName,
           speakerAvatar: msg.speakerAvatar,
+          // 保存辅助模式推荐选项，使刷新/重启后仍可展示（Spec: add-assist-mode-options）
+          suggestedOptions: msg.suggestedOptions,
         }));
         
         // 使用 setTimeout 延迟保存，避免在 setState 回调中执行异步操作

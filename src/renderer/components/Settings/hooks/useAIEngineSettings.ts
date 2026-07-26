@@ -393,32 +393,8 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
       if (result.success) {
         addLog('AI 引擎连通性测试成功', 'info');
         message.success(`连接测试成功：${result.details || '成功'}`);
-
-        // 同步到 store
-        const syncedEngine: AIEngineSetting = {
-          id: 'test_engine',
-          name: '测试引擎',
-          api_url: formValues.api_url,
-          api_key: formValues.api_key,
-          model_name: formValues.model_name,
-          api_mode: formValues.api_mode,
-          api_key_transmission: formValues.api_key_transmission,
-          max_tokens: Number(formValues.max_tokens) || 10240,
-          temperature: Number(formValues.temperature) ?? 0.7,
-          top_p: Number(formValues.top_p) || undefined,
-          top_k: Number(formValues.top_k) || undefined,
-          min_p: Number(formValues.min_p) || undefined,
-          frequency_penalty: Number(formValues.frequency_penalty) || undefined,
-          presence_penalty: Number(formValues.presence_penalty) || undefined,
-          n: Number(formValues.n) || 1,
-          system_prompt: formValues.system_prompt || '',
-        } as AIEngineSetting;
-        useSettingStore.getState().setSetting({
-          ...setting!,
-          aiEngines: [syncedEngine],
-          activeEngineId: 'test_engine',
-        });
-        addLog('测试通过的配置已同步到 store', 'info');
+        // 注意：测试连通性仅用于验证配置是否可用，不应修改已存储的引擎列表。
+        // 用户可通过"保存设置"按钮将表单中的配置持久化。
       } else {
         addLog('AI 引擎连通性测试失败', 'error');
         message.error('连接测试失败');
@@ -473,31 +449,8 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
       if (result.success) {
         addLog('引擎连通性测试成功', 'info');
         message.success(`连接测试成功：${result.details || '成功'}`);
-
-        const syncedEngine: AIEngineSetting = {
-          id: 'test_engine',
-          name: '测试引擎',
-          api_url: values.api_url,
-          api_key: values.api_key,
-          model_name: values.model_name,
-          api_mode: values.api_mode,
-          api_key_transmission: values.api_key_transmission,
-          max_tokens: Number(values.max_tokens) || 10240,
-          temperature: Number(values.temperature) ?? 0.7,
-          top_p: Number(values.top_p) || undefined,
-          top_k: Number(values.top_k) || undefined,
-          min_p: Number(values.min_p) || undefined,
-          frequency_penalty: Number(values.frequency_penalty) || undefined,
-          presence_penalty: Number(values.presence_penalty) || undefined,
-          n: Number(values.n) || 1,
-          system_prompt: values.system_prompt || '',
-        } as AIEngineSetting;
-        useSettingStore.getState().setSetting({
-          ...setting!,
-          aiEngines: [syncedEngine],
-          activeEngineId: 'test_engine',
-        });
-        addLog('测试通过的配置已同步到 store', 'info');
+        // 注意：测试连通性仅用于验证配置是否可用，不应修改已存储的引擎列表。
+        // 用户可通过"保存修改"按钮将编辑中的引擎配置持久化。
       } else {
         addLog('引擎连通性测试失败', 'error');
         message.error('连接测试失败');

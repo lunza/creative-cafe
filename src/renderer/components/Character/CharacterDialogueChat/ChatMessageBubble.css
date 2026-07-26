@@ -63,12 +63,70 @@
   margin-top: 1px;
 }
 
-.suggested-option-text {
+/* 三个选项的差异化编号颜色 */
+.suggested-option-number.suggested-option-tag-stable {
+  background: linear-gradient(135deg, #10b981, #059669);
+}
+
+.suggested-option-number.suggested-option-tag-balanced {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+}
+
+.suggested-option-number.suggested-option-tag-creative {
+  background: linear-gradient(135deg, #f59e0b, #ef4444);
+}
+
+.suggested-option-content {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.suggested-option-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 4px;
+  width: fit-content;
+  line-height: 1.4;
+}
+
+.suggested-option-tag-stable {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.suggested-option-tag-balanced {
+  background: rgba(99, 102, 241, 0.15);
+  color: #818cf8;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+.suggested-option-tag-creative {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.suggested-option-text {
   font-size: 13px;
   line-height: 1.5;
   color: rgba(255, 255, 255, 0.85);
   word-break: break-word;
+}
+
+/* 动作描写（() 包裹内容）：斜体、颜色稍淡 */
+.suggested-option-action {
+  font-style: italic;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+/* 对话内容（"" 包裹内容）：正常颜色，略带高亮 */
+.suggested-option-dialogue {
+  color: rgba(255, 255, 255, 0.95);
 }
 
 /* 响应式：小屏幕适配 */
@@ -82,6 +140,11 @@
     width: 20px;
     height: 20px;
     font-size: 11px;
+  }
+
+  .suggested-option-tag {
+    font-size: 9px;
+    padding: 1px 5px;
   }
 
   .suggested-option-text {

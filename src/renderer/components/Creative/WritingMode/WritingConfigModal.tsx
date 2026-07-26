@@ -254,12 +254,29 @@ const WritingConfigModal: React.FC<WritingConfigModalProps> = ({ open, onConfirm
 
       const personaResult = await window.electronAPI?.avatar?.list?.();
       if (personaResult && Array.isArray(personaResult)) {
-        setAvailablePersonas(personaResult.filter((p: any) => p.path.endsWith('.json') && !p.path.includes('user-profile.json')).map((p: any) => ({
-          id: p.path,
-          name: p.name || p.path.replace(/\.json$/i, ''),
-          path: p.path,
-          description: p.description || ''
-        })));
+        const personaFiles = personaResult.filter((p: any) => p.path.endsWith('.json') && !p.path.includes('user-profile.json'));
+        // 人设名称需要读取 JSON 文件内容获取，avatar.list 仅返回文件名
+        const personaItems: { id: string; name: string; path: string; description: string }[] = [];
+        for (const p of personaFiles) {
+          let personaName = p.path.replace(/\.json$/i, '');
+          let personaDescription = '';
+          try {
+            const content = await window.electronAPI.avatar.read(p.path);
+            if (content) {
+              personaName = content.name || personaName;
+              personaDescription = content.description || '';
+            }
+          } catch (error) {
+            console.error('Failed to read persona:', p.path, error);
+          }
+          personaItems.push({
+            id: p.path,
+            name: personaName,
+            path: p.path,
+            description: personaDescription,
+          });
+        }
+        setAvailablePersonas(personaItems);
       }
     } catch (error) {
       console.error('Failed to load resources:', error);

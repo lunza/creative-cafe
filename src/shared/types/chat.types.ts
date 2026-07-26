@@ -58,6 +58,8 @@ export interface ChatMessage {
   timestamp: number;
   status?: 'sending' | 'sent' | 'error';
   speakerName?: string;
+  /** AI 推荐选项（辅助模式开启时，AI 回复中解析出的 3 个推荐选项） */
+  suggestedOptions?: string[];
   versionInfo?: ChatMessageVersionInfo;
 }
 

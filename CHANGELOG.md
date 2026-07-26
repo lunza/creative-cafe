@@ -1,5 +1,75 @@
 # Changelog
 
+## [Unreleased] - 2026-07-26
+
+### Fixed
+- **⭐⭐⭐【重点标记】修复 AI 引擎配置在系统重启后消失（仅剩测试引擎）**：用户在系统设置中配置的多个 AI 引擎在正常退出或重启后全部丢失，仅保留一个名为"测试引擎"的临时条目，严重影响使用体验。
+  - **根因**：`useAIEngineSettings.ts` 的 `handleTestConnection`（主表单测试连通性）和 `handleTestEngineConnection`（引擎管理弹窗测试连通性）在测试成功后执行了"同步到 store"操作，调用 `setSetting({ ...setting!, aiEngines: [syncedEngine], activeEngineId: 'test_engine' })`，**将整个 `aiEngines` 数组替换为仅包含一个临时测试引擎**。此后任何 `saveSetting`（保存设置/切换引擎/保存删除复制引擎等）操作都会将这个被污染的内存状态持久化到 `settings.json`，重启后即丢失所有引擎配置
+  - **修复方案**：移除两个测试连通性函数中"同步到 store"的代码块。测试操作是纯验证行为，不应修改已存储的引擎配置；用户通过"保存设置"/"保存修改"按钮持久化表单配置
+  - **数据流（Bug 路径）**：用户点击"测试连通性"成功 → `setSetting({ aiEngines: [test_engine] })`（内存被污染）→ 用户点击"保存设置"等任意持久化操作 → `saveSetting(corrupted_setting)` 写入 settings.json → 重启后只剩一个测试引擎
+  - **验证流程**：配置 3+ 引擎 → 测试连通性成功 → 确认引擎列表仍保持 3+ → 保存设置 → 重启应用 → 所有引擎配置完整保留
+  - 涉及文件：`src/renderer/components/Settings/hooks/useAIEngineSettings.ts`（移除两处 `useSettingStore.getState().setSetting(...)` 调用及相关 `syncedEngine` 构建代码）
+  - **核心教训**：测试操作不应修改持久化数据
+- **⭐⭐⭐【重点标记】修复剧情检查返回综合评分=0、问题总数=0（第二次修复，多策略解析）**：写作模式剧情检查功能调用 AI 后返回成功，但日志显示 `综合评分=0, 问题总数=0`，UI 弹窗显示空报告。首次修复（添加 `extractJsonObject`）后问题仍然存在，用户反复反馈 2 次才彻底解决。
+  - **根因分析**：`综合评分=0` 的唯一可能是 `parseCheckResponse` 走到 `createFallbackReport` 分支，即两次 `JSON.parse` 均失败。原解析流程存在 3 个结构性缺陷：
+    1. **`fixJsonForParsing` 步骤 3 正则破坏 JSON**：`/(\{|\,)\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/g` 不考虑字符串边界，当 JSON 字符串值内部包含 `{key:` 或 `,key:` 模式（在 description/suggestion/analysis 字段中常见），会错误插入引号破坏 JSON 结构
+    2. **`fixChineseQuotes` 在 `JSON.parse` 之前无条件执行**：即使 JSON 本身已有效，若字符串值内包含中文引号，`inString` 状态追踪可能出错，破坏原本有效的 JSON
+    3. **`extractJsonObject` 调用条件太窄**：`!extracted || !jsonStr.startsWith('{')` 在代码块正则匹配成功且内容以 `{` 开头时不触发，无法处理代码块正则截断（JSON 内含 ` ``` ` 导致非贪婪匹配提前结束）
+  - **修复方案**：
+    1. **记录 AI 原始响应**（info 级别）：在 `checkChapter` 调用 `parseCheckResponse` 前记录 rawContent 长度和前/后 500 字符，确保即使 debug 日志关闭也能看到 AI 实际返回内容
+    2. **多策略递进解析**：将 `parseCheckResponse` 改为按破坏性递增的 3 策略依次尝试——策略1「直接解析」/ 策略2「修复中文引号」/ 策略3「修复JSON格式」
+    3. **`extractJsonObject` 无条件执行**：去掉条件始终尝试提取最外层 `{...}`，处理代码块截断和前后缀文本
+    4. **`fixJsonForParsing` 步骤 3 改为字符级遍历**：追踪 `inString` 状态，仅在字符串外部执行未加引号键名修复
+  - 涉及文件：`src/main/services/writing/PlotCheckerService.ts`（`checkChapter` 新增原始响应 info 日志 / `parseCheckResponse` 重构为多策略 / `fixJsonForParsing` 步骤 3 字符级遍历）
+  - **核心教训**：JSON 修复函数（fixChineseQuotes/fixJsonForParsing）应在 `JSON.parse` 失败后再应用，而非之前无条件执行——对有效 JSON 的误修复比不修复更危险
+- **【重点标记】修复多轮对话中 AI 输出被截断问题（停止序列 + think 标签 + 内容保护）**：AI 在多轮对话中频繁出现内容被截断、UI 卡死在"正在生成中"等问题，根因涉及多个后处理环节。
+  - **子问题1（停止序列误触发）**：`buildStopSequences` / `buildStopSequencesForUserReply` 原包含 6/4 项单换行前缀变体（`\n用户:` / `\nUser:` 等）作为"兜底防止后端按子串匹配时漏判"。但大多数 OpenAI-compatible 后端（vLLM / textgen-webui / koboldcpp 等）的 stop 字段使用子串匹配，AI 在回复中引用用户话语（如"用户: '我喜欢这个'"）、写内心独白提及用户代词、列举对话片段时被误截断。**修复**：移除所有单换行前缀变体，仅保留 6/4 项双换行前缀（`\n\n`），匹配段落分隔
+  - **子问题2（think 标签正则误删）**：`stripThinkingTags` 的未闭合标签正则原为 `/<(think...)\b[^>]*>[\s\S]*$/gi`，会从首次出现的 `<think` 字面量删到文本末尾。若 AI 在故事中提及"思考标签"、模仿 XML、或输出 `<thought>` 字面量，后半部分内容全部丢失。**修复**：要求未闭合的 `<think` 标签必须位于行首（`^` 或 `\n` 之后），并保留匹配到的起始换行符避免合并前后行
+  - **子问题3（内容保护检查误判合法截断）**：stop sequences 或 max_tokens 截断会导致 `finalContent` 短于流式累积的 `existingContent`，触发内容保护检查（`displayContent.length < existingContent.length`）后状态不更新 → UI 卡死。**修复**：增加 30% 长度容差标志 `stopTruncated`，`displayContent` 不少于 `existingContent` 的 30% 即视为合法截断，跳过保护检查
+  - 涉及文件：`src/renderer/components/Character/CharacterDialogueChat/PromptBuilder.ts`（移除单换行停止序列变体）、`src/renderer/components/Character/CharacterDialogueChat/utils/messageProcessor.ts`（`stripThinkingTags` 行首限制）、`src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.hooks.ts`（30% 容差标志 + finish_reason=length 检测）
+- **【重点标记】修复辅助模式推荐选项重启后丢失问题（hooks + store + 4 处类型断层）**：退出对话模式再进入后，AI 消息的 3 个推荐选项不再显示。此 Bug 涉及 3 层遗漏，需逐层修复：
+  - **第 1 层（hooks.ts）**：`engine.onComplete` 回调中构建 `messagesToSave` 持久化对象时手动逐字段构建 clean 副本，遗漏了 `suggestedOptions` 字段。**修复**：在 map 映射中添加 `suggestedOptions: msg.suggestedOptions`
+  - **第 2 层（store 白名单过滤）**：即使 hooks.ts 传了字段，`characterChatStore.ts` 的 `saveTestChat` 函数构建 `safeMessages` 时使用显式字段白名单（仅 7 个字段：id/role/content/timestamp/status/speakerName/speakerAvatar），`suggestedOptions` 不在白名单中被静默丢弃。**修复**：白名单添加 `suggestedOptions` 字段（含 `Array.isArray` 安全转换）
+  - **第 3 层（类型定义断层）**：项目中存在 4 处独立的 `ChatMessage` 定义，均不包含 `suggestedOptions`，TypeScript 无法检测出字段缺失。**修复**：4 个文件统一添加 `suggestedOptions?: string[]` 字段——`src/shared/types/chat.types.ts`（号称"单一真源"）/ `src/renderer/stores/characterChatStore.ts` / `src/main/services/ChatStorageService.ts` / `CharacterDialogueChat.types.ts`
+  - **核心教训**：项目中存在多处独立的 `ChatMessage` 定义号称"单一真源"但实际未统一，TypeScript 无法检测字段缺失。后续应推动类型定义集中化
+- **【修复】写作模式用户人设显示文件名而非人设名称**：写作模式生成大纲时，用户人设列表显示的是文件名（如 `my-persona.json`）而非人设的实际名称。
+  - **根因**：`avatarService.listAvatars()` 返回的 `name` 字段是文件系统文件名，而非 JSON 文件内部存储的人设名称。写作模式的 3 个组件直接使用了该 `name` 字段，未读取文件内容；而角色对话模式的 `usePersonas` 已正确实现
+  - **修复方案**：3 个组件统一改为读取 JSON 文件内容获取 `name` 和 `description` 字段，读取失败时回退到去扩展名的文件名
+  - 涉及文件：`src/renderer/components/Creative/WritingMode/useWritingMaterials.ts`、`WritingConfigModal.tsx`、`WritingConfigPanel.tsx`（人设映射从 `.map()` 改为 `for...of` 异步读取）
+
+### Added
+- **辅助模式选项生成稳定性强化与三选项差异化**：辅助模式下 AI 偶尔不生成 3 个待选回答，可能由 max_tokens 不足导致选项块被截断，或 AI 遗漏结束标记/编号格式不匹配导致解析失败。本次强化覆盖生成、解析、渲染全链路。
+  - **max_tokens 预留**（`CharacterDialogueChat.hooks.ts`）：辅助模式开启时 `max_tokens += 512`，为选项块预留安全余量。注意 `max_tokens=0`（无限制）时不执行 +512
+  - **半截选项块容错**：新增 2 个"仅开始标记到文本末尾"的正则模式（`text-marker-unclosed`、`plain-tag-unclosed`），在 AI 遗漏结束标记或被截断时仍能提取选项
+  - **多编号格式支持**：选项行解析支持 `①②③`、`1.`、`1)`、`1）`、`-`、`*`、`(1)` 等编号格式
+  - **三选项差异化提示词**（`PromptBuilder.ts` `buildAssistModePrompt`）：明确要求 3 个选项各有侧重——1. 稳妥推进（贴合剧情）/ 2. 平衡探索（适度转换）/ 3. 发散创新（引入新元素）
+  - **结构化格式约束**：要求 AI 用圆括号 `()` 包裹人物动作/状态/表情/环境描写，用双引号 `""` 包裹语言/心理活动，并给出示例 `(微微一笑)"今天天气真好呢"`
+  - **UI 三色差异化**（`ChatMessageBubble.tsx` + `ChatMessageBubble.css`）：
+    - 每个选项上方显示特点标签（稳妥推进/平衡探索/发散创新）
+    - 三色编号系统：稳妥推进=绿色（#10b981）/ 平衡探索=紫色（#6366f1）/ 发散创新=橙红色（#f59e0b→#ef4444）
+    - 选项内容结构化渲染：`renderOptionContent` 用正则解析 `()` 和 `""`，分别渲染为 `.suggested-option-action`（斜体淡色）和 `.suggested-option-dialogue`（高亮）
+    - 小屏幕响应式适配（标签 font-size 9px / padding 1px 5px）
+- **AI 回复语言选择功能**：新增 `AIParameterConfig.language` 字段（'zh' | 'en' | 'ja'，默认中文），控制 AI 生成回复使用的语言。
+  - **类型与配置**：`CharacterDialogueChat.types.ts` 新增 `language?: 'zh' | 'en' | 'ja'` 字段
+  - **提示词注入**：`PromptBuilder.ts` 新增 `buildLanguagePrompt(language)` 函数，向系统提示词追加 `【语言要求】你的回复必须使用{中文/英文/日文}...`
+  - **UI 控件**：`ParameterPanel.tsx` 在「辅助模式」与「Emoji 增强模式」之间新增「语言」Select 下拉框（中文/English/日本語），经 `ConfigPanel.tsx` 透传，由 `CharacterDialogueChat.tsx` 绑定到 `characterConfig.customParameters.language`
+  - **默认值**：undefined 视为中文（与现有 emoji_enhanced、strip_think_tags 等开关的"undefined 视为默认值"约定一致）
+- **max_tokens=0 表示无限制**：扩展 max_tokens 参数配置，支持设为 0 表示不限制最大 token 数（由模型上下文窗口决定）。
+  - `parameterConfigs.ts`：min 由 256 改为 0，max 由 32768 扩展到 262144（支持 256K 上下文模型），tooltip 更新说明"设为 0 表示不限制"
+  - `ChatEngine.ts`：`max_tokens=0` 时不发送 `max_tokens` 字段（让后端使用默认行为），原实现会回退到 `DEFAULT_MAX_TOKENS` 强制发送
+  - `ParameterPanel.tsx`：当 `max_tokens=0` 时显示"无限制"，区分于具体数值
+- **AI 回复序号显示**：在每条 AI 回复消息的发送者名称旁显示序号徽章（如 `#3`），便于在长对话中快速定位 AI 回复次数。
+  - `CharacterDialogueChat.tsx`：渲染消息列表时计算 `aiSequenceNumber`（当前消息之前所有 `role=assistant` 的消息数量 + 1），透传给 `ChatMessageBubble`
+  - `ChatMessageBubble.tsx`：新增 `aiSequenceNumber` prop，仅 assistant 消息且序号 > 0 时显示徽章（10px 字号 / 浅色背景 / 圆角 8px）
+- **TokenManagement 关闭时的安全网**：原实现 TokenManagement 关闭时直接发送所有消息，长对话会耗尽模型上下文窗口（如 32K）导致 `finish_reason=length` 截断。
+  - **修复**：`CharacterDialogueChat.hooks.ts` 新增消息数量软限制——超过 `maxMessagesToKeep`（默认 60）时仅保留最近 N 条，并确保以 user 消息开头（丢弃开头的 assistant 消息）
+  - **finish_reason=length 检测**：在 `onComplete` 回调中检测 `response.finishReason === 'length'`，根据是否启用 TokenManagement 给出不同的用户提示（启用→增大 maxContextTokens / 减小 maxMessagesToKeep；未启用→启用 Token 管理），通过 `message.warning` 显示 8 秒
+- **辅助模式选项结构化格式渲染计划文档**（`.trae/documents/辅助模式选项结构化格式渲染计划.md`）：记录辅助模式选项 `()` 动作描写与 `""` 对话内容结构化渲染功能的设计分析与实施计划
+- **剧情检查评分=0 第二次修复文档**（`.trae/documents/fix-plot-check-score-zero-v2.md`）：详细记录多策略 JSON 解析修复方案的根因分析、修改方案与验证流程
+
+### Changed
+- **技术文档增量更新**（`.trae/documents/技术文档.md`）：追加 7 段开发记录，覆盖辅助模式稳定性强化、推荐选项持久化修复（3 层）、写作模式人设显示修复、剧情检查评分=0 两次修复、AI 引擎配置消失修复，所有用户反复反馈的问题均以 ⭐⭐⭐ 重点标记
+
 ## [Unreleased] - 2026-07-05
 
 ### Added

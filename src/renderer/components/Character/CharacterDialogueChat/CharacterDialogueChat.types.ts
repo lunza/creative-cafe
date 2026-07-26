@@ -160,6 +160,13 @@ export interface AIParameterConfig {
    * 默认关闭（undefined 视为关闭）。
    */
   assist_mode?: boolean;
+  /**
+   * AI 回复语言。
+   *
+   * 控制 AI 生成回复时使用的语言。默认中文（undefined 视为中文）。
+   * 可选值：'zh' | 'en' | 'ja'。
+   */
+  language?: 'zh' | 'en' | 'ja';
 }
 
 // 知识库绑定信息

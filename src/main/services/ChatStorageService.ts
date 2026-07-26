@@ -8,6 +8,7 @@ interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
   timestamp: number;
+  suggestedOptions?: string[];
 }
 
 interface ChatData {

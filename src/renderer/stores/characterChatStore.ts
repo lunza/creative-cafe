@@ -6,6 +6,7 @@ interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
   timestamp: number;
+  suggestedOptions?: string[];
 }
 
 // 角色卡测试对话
@@ -110,6 +111,8 @@ export const useCharacterChatStore = create<CharacterChatStore>((set, get) => ({
             status: String(msg.status || 'sent'),
             speakerName: msg.speakerName ? String(msg.speakerName) : undefined,
             speakerAvatar: msg.speakerAvatar ? String(msg.speakerAvatar) : undefined,
+            // 保存辅助模式推荐选项，使刷新/重启后仍可展示（Spec: add-assist-mode-options）
+            suggestedOptions: Array.isArray(msg.suggestedOptions) ? msg.suggestedOptions.filter((s: any) => typeof s === 'string') : undefined,
           };
           
           // 使用 JSON 序列化来检测循环引用

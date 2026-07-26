@@ -46,11 +46,11 @@ export const PARAMETER_CONFIGS: ParameterConfig[] = [
   {
     key: 'max_tokens',
     label: 'Max Tokens',
-    min: 256,
-    max: 32768,
+    min: 0,
+    max: 262144,
     step: 256,
     defaultValue: DEFAULT_MAX_TOKENS,
-    tooltip: '模型生成的最大 token 数量。值越大，模型能输出的内容越长。默认值：8192',
+    tooltip: '模型生成的最大 token 数量。值越大，模型能输出的内容越长。设为 0 表示不限制最大 token 数（由模型上下文窗口决定）。默认值：8192',
   },
   {
     key: 'temperature',

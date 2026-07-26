@@ -436,7 +436,12 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
             </div>
           )}
 
-          {stateWithVersionInfo.messages.map((msg, index) => (
+          {stateWithVersionInfo.messages.map((msg, index) => {
+            // 计算 AI 回复序号：在当前消息之前所有 role=assistant 的消息数量 + 1
+            const aiSequenceNumber = msg.role === 'assistant'
+              ? stateWithVersionInfo.messages.slice(0, index).filter(m => m.role === 'assistant').length + 1
+              : 0;
+            return (
             <ChatMessageBubble
               key={msg.id}
               message={msg}
@@ -451,8 +456,10 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
               isStreaming={stateWithVersionInfo.isStreaming && index === stateWithVersionInfo.messages.length - 1 && msg.role === 'assistant'}
               isGenerating={stateWithVersionInfo.isLoading && index === stateWithVersionInfo.messages.length - 1 && msg.role === 'assistant' && msg.status === 'sending'}
               onSelectOption={handleSelectOption}
+              aiSequenceNumber={aiSequenceNumber}
             />
-          ))}
+            );
+          })}
 
           {stateWithVersionInfo.isStreaming && stateWithVersionInfo.messages[stateWithVersionInfo.messages.length - 1]?.role === 'user' && (
             <ChatTypingIndicator
@@ -566,6 +573,8 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
         onStripThinkTagsToggle={(enabled) => handleParameterChange({ strip_think_tags: enabled })}
         assistMode={characterConfig?.customParameters?.assist_mode === true}
         onAssistModeToggle={(enabled) => handleParameterChange({ assist_mode: enabled })}
+        language={characterConfig?.customParameters?.language ?? 'zh'}
+        onLanguageChange={(lang) => handleParameterChange({ language: lang })}
         engineCapabilities={engineCapabilities}
         onPersonaChange={handlePersonaChange}
         onParameterChange={handleParameterChange}

@@ -135,6 +135,12 @@ export function restoreCodeBlocks(text: string, blocks: string[]): string {
  * 移除文本中的思考标签及其内容
  * 支持标签变体: <think>, <thinking>, <thought> (不区分大小写)
  * 处理场景: 完整标签、未关闭标签(流式场景)、自闭合标签、多个标签块
+ *
+ * 🐛 Bug修复（重点）：未闭合标签的正则原为 `/<(think...)\b[^>]*>[\s\S]*$/gi`，
+ * 会从首次出现的 `<think` 字面量删到文本末尾。若 AI 在故事中提及"思考标签"、
+ * 模仿 XML、或输出 `<thought>` 字面量，后半部分内容全部丢失。
+ * 修复：要求未闭合的 `<think` 标签必须位于行首（^ 或 \n 之后），因为真实的
+ * 推理标签通常出现在回复开头或新行起始处，而非句子中间。
  */
 export function stripThinkingTags(text: string): string {
   if (!text) return '';
@@ -149,9 +155,13 @@ export function stripThinkingTags(text: string): string {
   const completePattern = /<(think|thinking|thought)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
   result = result.replace(completePattern, '');
 
-  // 3. 移除未关闭标签(流式场景): <think>...到文本末尾
-  const unclosedPattern = /<(think|thinking|thought)\b[^>]*>[\s\S]*$/gi;
-  result = result.replace(unclosedPattern, '');
+  // 3. 移除未关闭标签(流式场景): 仅匹配位于行首的 <think>...到文本末尾
+  //    要求标签前为文本起始(^)或换行(\n)，避免匹配句子中间的字面量 <think>
+  const unclosedPattern = /(?:^|\n)[ \t]*<(think|thinking|thought)\b[^>]*>[\s\S]*$/gi;
+  result = result.replace(unclosedPattern, (match, _tag) => {
+    // 保留匹配到的起始换行符（如果是 \n 开头），避免合并前后行
+    return match.startsWith('\n') ? '\n' : '';
+  });
 
   // 4. 清理多余的连续空行 (将3个或更多连续换行符替换为2个)
   result = result.replace(/\n{3,}/g, '\n\n');

@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Tooltip, Button, Slider, Switch, Input } from 'antd';
+import { Tooltip, Button, Slider, Switch, Input, Select } from 'antd';
 import { QuestionCircleOutlined, ReloadOutlined, DownOutlined, RightOutlined, SlidersOutlined, ExperimentOutlined } from '@ant-design/icons';
 import { AIParameterConfig, EffectiveAIParams } from './CharacterDialogueChat.types';
 import { EngineCapabilities } from '../../Common/ChatEngine/ChatEngine.types';
@@ -34,6 +34,9 @@ interface ParameterPanelProps {
   // 辅助模式开关（Spec: add-assist-mode-options）
   assistMode?: boolean;
   onAssistModeToggle?: (enabled: boolean) => void;
+  // 语言要求
+  language?: 'zh' | 'en' | 'ja';
+  onLanguageChange?: (language: 'zh' | 'en' | 'ja') => void;
   /**
    * 后端能力探测结果（Spec: optimize-chat-ai-intelligence / Task 6.1 / 6.4）。
    * 决定 repetition_penalty 滑块与 DRY 采样折叠区的显隐。
@@ -57,6 +60,8 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
   onStripThinkTagsToggle,
   assistMode = false,
   onAssistModeToggle,
+  language = 'zh',
+  onLanguageChange,
   engineCapabilities,
 }) => {
   const [collapsed, setCollapsed] = useState(() => {
@@ -231,7 +236,11 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
             </Tooltip>
           </div>
           <span className={`parameter-value ${isModified ? 'modified' : ''}`}>
-            {isInteger ? Math.round(currentValue).toString() : Number(currentValue).toFixed(2)}
+            {config.key === 'max_tokens' && currentValue === 0
+              ? '无限制'
+              : isInteger
+                ? Math.round(currentValue).toString()
+                : Number(currentValue).toFixed(2)}
           </span>
         </div>
         <Slider
@@ -339,6 +348,29 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
               onAfterChange={(value) => handleMinResponseCharsAfterChange(value as number)}
               className="parameter-slider"
             />
+          </div>
+
+          {/* 语言要求 */}
+          <div className="parameter-language-section" style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
+            <div className="parameter-language-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <div className="parameter-label-group" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span className="parameter-label" style={{ fontSize: 13 }}>语言</span>
+                <Tooltip title="控制 AI 回复使用的语言。默认中文。">
+                  <QuestionCircleOutlined className="parameter-tooltip-icon" />
+                </Tooltip>
+              </div>
+              <Select
+                size="small"
+                value={language}
+                onChange={onLanguageChange}
+                style={{ width: 100 }}
+                options={[
+                  { value: 'zh', label: '中文' },
+                  { value: 'en', label: 'English' },
+                  { value: 'ja', label: '日本語' },
+                ]}
+              />
+            </div>
           </div>
 
           {/* Emoji 增强模式 */}

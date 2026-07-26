@@ -130,17 +130,31 @@ export function useWritingMaterials(): UseWritingMaterialsReturn {
         metadata: ch,
       }));
 
-      const mappedPersonas: MaterialItem[] = paList
-        .filter((p: any) => p.path.endsWith('.json') && !p.path.includes('user-profile.json'))
-        .map((p: any) => ({
+      // 人设名称需要读取 JSON 文件内容获取，avatar.list 仅返回文件名
+      const personaFileList = paList.filter((p: any) => p.path.endsWith('.json') && !p.path.includes('user-profile.json'));
+      const mappedPersonas: MaterialItem[] = [];
+      for (const p of personaFileList) {
+        let personaName = p.path.replace(/\.json$/i, '');
+        let personaDescription = '';
+        try {
+          const content = await window.electronAPI.avatar.read(p.path);
+          if (content) {
+            personaName = content.name || personaName;
+            personaDescription = content.description || '';
+          }
+        } catch (error) {
+          console.error('[useWritingMaterials] Failed to read persona:', p.path, error);
+        }
+        mappedPersonas.push({
           id: p.path,
-          name: p.name || p.path.replace(/\.json$/i, ''),
+          name: personaName,
           type: 'persona' as MaterialType,
-          description: p.description || '',
+          description: personaDescription,
           path: p.path,
           isSelected: selectedIds.userPersonaIds.includes(p.path),
           metadata: p,
-        }));
+        });
+      }
 
       const mappedKnowledge: MaterialItem[] = kbList.map((item: KnowledgeItemData) => ({
         id: item.id,

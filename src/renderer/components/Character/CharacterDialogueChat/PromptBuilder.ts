@@ -46,20 +46,17 @@ export interface ContextVectorItem {
  * Spec: fix-ai-response-length-degradation / Task 6（停止序列优化）
  * 借鉴 SillyTavern `names_as_stop_strings` 机制（public/script.js:2946 getStoppingStrings）。
  *
- * 默认返回 12 个用户名变体（含中英文冒号），阻断 AI 代替用户发言。
- * 顺序为「先双换行前缀、后单换行前缀」：
- *   - 双换行前缀（优先匹配，减少 AI 在回复中引用用户话语时的误触发）：
- *     - `\n\n{{user}}:` / `\n\n{{user}}：`  （用户名 + 中英文冒号）
- *     - `\n\n用户:` / `\n\n用户：`          （中文通用前缀）
- *     - `\n\nUser:` / `\n\nUser：`          （英文通用前缀）
- *   - 单换行前缀（兜底，防止后端按子串匹配时漏判）：
- *     - `\n{{user}}:` / `\n{{user}}：`
- *     - `\n用户:` / `\n用户：`
- *     - `\nUser:` / `\nUser：`
+ * 默认返回 6 个用户名变体（含中英文冒号），阻断 AI 代替用户发言。
+ * 仅使用双换行前缀（\n\n），匹配段落分隔（用户名通常出现在新段落开头）。
  *
- * 双换行前缀优先匹配段落分隔（用户名通常出现在新段落开头），可减少 AI 在
- * 回复中间引用用户话语（如"用户说..."）时被后端 stop 截断的情况；单换行变体
- * 作为兜底保留，防止后端按子串匹配时因换行符差异漏判。
+ * 🐛 Bug修复（重点）：原实现包含 6 项单换行前缀变体（\n用户: / \nUser: 等），
+ * 作为"兜底防止后端按子串匹配时漏判"。但大多数 OpenAI-compatible 后端
+ * （vLLM / textgen-webui / koboldcpp 等）的 stop 字段使用子串匹配，只要
+ * AI 输出文本中出现该子串即终止生成。单换行变体在以下场景误触发导致截断：
+ *   - AI 在回复中引用用户话语（如"用户: '我喜欢这个'"）
+ *   - AI 写内心独白提及用户代词
+ *   - AI 列举对话片段或写对话剧本
+ * 经评估，单换行变体误触发的风险远大于其"兜底"价值，故移除。
  *
  * 当传入 customStops（用户在 ParameterPanel 自定义）时，合并到数组末尾并去重。
  * 去重保留首次出现顺序，确保默认用户名变体优先。
@@ -70,8 +67,7 @@ export interface ContextVectorItem {
  */
 export function buildStopSequences(userName: string, customStops?: string[]): string[] {
   const safeUserName = (userName && userName.trim()) || DEFAULT_USER_NAME;
-  // 双换行前缀（优先匹配，减少 AI 在回复中引用用户话语时的误触发）
-  // 单换行前缀（兜底，防止后端按子串匹配时漏判）
+  // 仅保留双换行前缀，匹配段落分隔，避免 AI 在回复中间引用用户话语时被误截断
   const defaultStops = [
     `\n\n${safeUserName}:`,
     `\n\n${safeUserName}：`,
@@ -79,12 +75,6 @@ export function buildStopSequences(userName: string, customStops?: string[]): st
     '\n\n用户：',
     '\n\nUser:',
     '\n\nUser：',
-    `\n${safeUserName}:`,
-    `\n${safeUserName}：`,
-    '\n用户:',
-    '\n用户：',
-    '\nUser:',
-    '\nUser：',
   ];
 
   // 合并并去重（保留首次出现顺序）；同时过滤空串与纯空白串。
@@ -109,16 +99,11 @@ export function buildStopSequences(userName: string, customStops?: string[]): st
  * 与 `buildStopSequences`（用户名变体）对称：`buildStopSequences` 阻断 AI
  * 代替用户发言，本函数阻断 AI 在用户回复生成场景下越权代替角色发言。
  *
- * 默认返回 8 项数组（顺序：先双换行前缀、后单换行前缀）：
- *   - 双换行前缀（优先匹配段落分隔，减少 AI 在回复中引用角色话语时的误触发）：
- *     - `\n\n${charName}:` / `\n\n${charName}：`  （角色名 + 中英文冒号）
- *     - `\n\n{{char}}:` / `\n\n{{char}}：`          （模板变量 + 中英文冒号）
- *   - 单换行前缀（兜底，防止后端按子串匹配时漏判）：
- *     - `\n${charName}:` / `\n${charName}：`
- *     - `\n{{char}}:` / `\n{{char}}：`
+ * 默认返回 4 项数组，仅使用双换行前缀（\n\n），匹配段落分隔。
  *
- * 双换行前缀优先匹配段落分隔（角色名通常出现在新段落开头），可减少误触发；
- * 单换行变体作为兜底保留，防止后端按子串匹配时因换行符差异漏判。
+ * 🐛 Bug修复（重点）：与 buildStopSequences 同步，移除单换行前缀变体。
+ * 原实现的单换行变体（\n${charName}: 等）会被 OpenAI-compatible 后端按子串匹配
+ * 误触发，当 AI 在用户回复中引用角色话语时导致截断。
  *
  * 当传入 customStops（用户在 ParameterPanel 自定义）时，合并到数组末尾并去重。
  * 去重保留首次出现顺序，确保默认角色名变体优先。
@@ -129,17 +114,12 @@ export function buildStopSequences(userName: string, customStops?: string[]): st
  */
 export function buildStopSequencesForUserReply(charName: string, customStops?: string[]): string[] {
   const safeCharName = (charName && charName.trim()) || 'Character';
-  // 双换行前缀（优先匹配段落分隔，减少 AI 在回复中引用角色话语时的误触发）
-  // 单换行前缀（兜底，防止后端按子串匹配时漏判）
+  // 仅保留双换行前缀，避免 AI 在回复中间引用角色话语时被误截断
   const defaultStops = [
     `\n\n${safeCharName}:`,
     `\n\n${safeCharName}：`,
     '\n\n{{char}}:',
     '\n\n{{char}}：',
-    `\n${safeCharName}:`,
-    `\n${safeCharName}：`,
-    '\n{{char}}:',
-    '\n{{char}}：',
   ];
 
   // 合并并去重（保留首次出现顺序）；同时过滤空串与纯空白串。
@@ -304,20 +284,50 @@ export function buildEmojiEnhancedPrompt(charName: string = 'Character'): string
  * 但多数 AI 模型不会自然生成 HTML 注释，导致功能不生效。
  * 改用纯文本标记格式 `<<<SUGGESTED_OPTIONS>>>` ... `<<<END_OPTIONS>>>`，
  * 并在解析端增加多格式容错匹配。
+ *
+ * 【重点标记】强化：3 个选项分别具有不同特点，提供稳定/平衡/发散三种对话推进方向。
  */
 export function buildAssistModePrompt(charName: string = 'Character'): string {
   const name = charName || 'Character';
-  return `\n【辅助模式】在回复正文完成后，${name} 必须在末尾附加 3 个推荐对话选项，供用户选择以推进对话。选项应紧扣当前对话上下文，具有明确的对话导向性和分支感（类似 Galgame 剧情选项），每个选项为一句用户可能说出的话或做出的行动。
+  return `\n【辅助模式】在回复正文完成后，${name} 必须在末尾附加 3 个推荐对话选项，供用户选择以推进对话。每个选项为一句用户可能说出的话或做出的行动。
+
+三个选项必须各有侧重：
+1. 稳妥推进——贴合当前剧情走向，延续已有话题或情感线，风险最低、最自然的回应
+2. 平衡探索——在当前语境中适度转换角度，既不完全脱离也不纯跟风，保持对话张力
+3. 发散创新——引入新元素、新话题或意外行动，可能开启全新剧情分支或转折
+
+选项内容格式要求（必须严格遵守）：
+- 用圆括号()包裹人物的动作、状态、表情及周围环境描写等非语言元素，如(微微一笑)、(看向窗外)、(心中一紧)
+- 用双引号""包裹人物的语言、心理活动等对话及内心独白内容，如"你好啊"、"好想再见他一面"
+- 两种描述交替使用，使选项生动具象
+
+示例：(微微一笑)"今天天气真好呢，要一起出去走走吗？"
 
 格式要求：在正文之后另起一行，严格按以下格式输出（包含开始和结束标记），不要额外解释：
 
 <<<SUGGESTED_OPTIONS>>>
-1. 第一个选项内容
-2. 第二个选项内容
-3. 第三个选项内容
+1. (动作描写)"对话内容"
+2. (动作描写)"对话内容"
+3. (动作描写)"对话内容"
 <<<END_OPTIONS>>>
 
-注意：选项内容应简洁（通常 10-50 字），三个选项应提供不同方向的对话分支，避免雷同。此选项块对用户不可见，系统会自动解析并展示为可点击按钮。`;
+注意：选项内容应简洁（通常 10-50 字），三个选项必须内容不同、方向各异。此选项块对用户不可见，系统会自动解析并展示为可点击按钮。`;
+}
+
+/**
+ * 构建 AI 回复语言约束。
+ *
+ * 根据用户选择的语言，在系统提示词中注入语言要求。
+ * 默认中文（undefined 视为中文）。
+ */
+export function buildLanguagePrompt(language: 'zh' | 'en' | 'ja' = 'zh'): string {
+  const langMap: Record<string, string> = {
+    zh: '中文',
+    en: '英文',
+    ja: '日文',
+  };
+  const langName = langMap[language] || '中文';
+  return `\n【语言要求】你的回复必须使用${langName}。无论用户使用什么语言提问，你都应当使用${langName}进行回复。`;
 }
 
 /**

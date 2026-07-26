@@ -44,6 +44,9 @@ interface ConfigPanelProps {
   // 辅助模式开关（Spec: add-assist-mode-options）
   assistMode?: boolean;
   onAssistModeToggle?: (enabled: boolean) => void;
+  // 语言要求
+  language?: 'zh' | 'en' | 'ja';
+  onLanguageChange?: (language: 'zh' | 'en' | 'ja') => void;
   /**
    * 后端能力探测结果（Spec: optimize-chat-ai-intelligence / Task 6.1 / 6.4）。
    * 透传给 ParameterPanel，决定 repetition_penalty 滑块与 DRY 采样折叠区的显隐。
@@ -87,6 +90,8 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
   onStripThinkTagsToggle,
   assistMode,
   onAssistModeToggle,
+  language,
+  onLanguageChange,
   engineCapabilities,
   onPersonaChange,
   onParameterChange,
@@ -126,6 +131,8 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
         onStripThinkTagsToggle={onStripThinkTagsToggle}
         assistMode={assistMode}
         onAssistModeToggle={onAssistModeToggle}
+        language={language}
+        onLanguageChange={onLanguageChange}
         engineCapabilities={engineCapabilities}
       />
       <div className="config-panel-divider" />

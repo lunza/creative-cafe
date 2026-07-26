@@ -19,6 +19,8 @@ interface ChatMessageBubbleProps {
   isStreaming?: boolean;
   isGenerating?: boolean;
   onSelectOption?: (optionText: string) => void;
+  /** AI 回复序号（从 1 开始，仅 assistant 消息有值，user 消息为 0） */
+  aiSequenceNumber?: number;
 }
 
 const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
@@ -34,6 +36,7 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
   isStreaming = false,
   isGenerating = false,
   onSelectOption,
+  aiSequenceNumber = 0,
 }) => {
   const [copied, setCopied] = useState(false);
   const [showActions, setShowActions] = useState(false);
@@ -46,6 +49,35 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
 
   const hasVersionInfo = !!versionInfo && versionInfo.allVersions && versionInfo.allVersions.length > 0;
   const isLatestVersion = versionInfo?.isLatestVersion ?? false;
+
+  // 辅助模式：将选项文本中的 () 动作描写和 "" 对话内容解析为带样式的 React 元素
+  const renderOptionContent = (text: string) => {
+    const parts: React.ReactNode[] = [];
+    const regex = /\(([^)]*)\)|"([^"]*)"/g;
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+    let key = 0;
+
+    while ((match = regex.exec(text)) !== null) {
+      // 匹配前的普通文本
+      if (match.index > lastIndex) {
+        parts.push(<span key={key++}>{text.slice(lastIndex, match.index)}</span>);
+      }
+      if (match[1] !== undefined) {
+        // () 动作描写
+        parts.push(<span key={key++} className="suggested-option-action">({match[1]})</span>);
+      } else if (match[2] !== undefined) {
+        // "" 对话内容
+        parts.push(<span key={key++} className="suggested-option-dialogue">"{match[2]}"</span>);
+      }
+      lastIndex = regex.lastIndex;
+    }
+    // 末尾普通文本
+    if (lastIndex < text.length) {
+      parts.push(<span key={key++}>{text.slice(lastIndex)}</span>);
+    }
+    return parts;
+  };
 
   useEffect(() => {
     if (isEditing && textareaRef.current) {
@@ -342,8 +374,23 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
             fontSize: '12px',
             color: 'var(--text-secondary, #6b7280)',
             padding: isUser ? '0 12px' : '0 4px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
           }}>
             {isUser ? 'You' : characterName}
+            {!isUser && aiSequenceNumber > 0 && (
+              <span style={{
+                fontSize: '10px',
+                color: 'var(--text-tertiary, rgba(255,255,255,0.35))',
+                background: 'rgba(255,255,255,0.06)',
+                padding: '1px 6px',
+                borderRadius: '8px',
+                fontWeight: 500,
+              }}>
+                #{aiSequenceNumber}
+              </span>
+            )}
           </div>
 
           <div style={{
@@ -458,16 +505,23 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
                 {/* 辅助模式：推荐选项渲染（Spec: add-assist-mode-options） */}
                 {!isUser && !isStreaming && message.suggestedOptions && message.suggestedOptions.length > 0 && (
                   <div className="suggested-options-container">
-                    {message.suggestedOptions.map((option, idx) => (
-                      <div
-                        key={idx}
-                        className="suggested-option-item"
-                        onClick={() => onSelectOption?.(option)}
-                      >
-                        <span className="suggested-option-number">{idx + 1}</span>
-                        <span className="suggested-option-text">{option}</span>
-                      </div>
-                    ))}
+                    {message.suggestedOptions.map((option, idx) => {
+                      const labels = ['稳妥推进', '平衡探索', '发散创新'];
+                      const labelClasses = ['suggested-option-tag-stable', 'suggested-option-tag-balanced', 'suggested-option-tag-creative'];
+                      return (
+                        <div
+                          key={idx}
+                          className="suggested-option-item"
+                          onClick={() => onSelectOption?.(option)}
+                        >
+                          <span className={`suggested-option-number ${labelClasses[idx] || ''}`}>{idx + 1}</span>
+                          <div className="suggested-option-content">
+                            {idx < 3 && <span className={`suggested-option-tag ${labelClasses[idx] || ''}`}>{labels[idx]}</span>}
+                            <span className="suggested-option-text">{renderOptionContent(option)}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </>

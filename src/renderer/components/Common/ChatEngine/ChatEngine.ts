@@ -7,7 +7,6 @@
 // 进一步统一需要迁移 CharacterDialogueChat.hooks.ts 到 AIService.tsx（不在本任务范围）。
 
 import { ChatMessage } from '../../Character/CharacterDialogueChat/CharacterDialogueChat.types';
-import { DEFAULT_MAX_TOKENS } from '../../Character/CharacterDialogueChat/TokenManagement';
 import {
   IChatEngine,
   AIEngineConfig,
@@ -73,18 +72,22 @@ export class ChatEngine implements IChatEngine {
       if (!config.model_name) {
         throw new Error('未配置 AI 模型名称');
       }
+      // max_tokens=0 表示不限制最大 token 数，此时不发送 max_tokens 字段，由后端/模型决定
       const maxTokens = (typeof config.max_tokens === 'number' && config.max_tokens > 0)
         ? config.max_tokens
-        : DEFAULT_MAX_TOKENS;
+        : undefined;
       const temperature = Number(config.temperature) ?? 0.8;
       const apiMode = config.api_mode || 'chat_completion';
 
       const requestBody: any = {
         model: config.model_name,
-        max_tokens: maxTokens,
         temperature,
         stream: true,
       };
+      // 仅当 max_tokens 有有效值时才注入请求体；为 0/undefined 时不发送，让后端使用默认行为
+      if (maxTokens !== undefined) {
+        requestBody.max_tokens = maxTokens;
+      }
 
       if (apiMode === 'chat_completion') {
         requestBody.messages = [
