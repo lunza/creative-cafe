@@ -186,7 +186,7 @@ export class VectorConfigManager {
     const errors: string[] = [];
 
     // 检查 embeddingMode
-    if (config.embeddingMode && !['remote', 'local'].includes(config.embeddingMode)) {
+    if (config.embeddingMode && !['remote', 'local', 'disabled'].includes(config.embeddingMode)) {
       errors.push(`无效的 embeddingMode: ${config.embeddingMode}`);
     }
 

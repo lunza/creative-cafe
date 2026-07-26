@@ -15,6 +15,7 @@ import { registerWritingHandlers } from './handlers/writingHandlers';
 import { registerGameHandlers } from './handlers/gameHandlers';
 import { registerPromptHandlers } from './handlers/promptHandlers';
 import { registerTokenHandlers } from './handlers/tokenHandlers';
+import { registerExpressionHandlers } from './handlers/expressionHandlers';
 import './handlers/aiHandlers';
 import { getStorageService } from '../services/storageService';
 import { embeddingService } from '../services/EmbeddingService';
@@ -47,6 +48,8 @@ export function setupIpcHandlers() {
   registerGameHandlers();
   registerPromptHandlers();
   registerTokenHandlers();
+  // 表情管理系统 IPC（Spec: add-character-expression-system / Task 1）
+  registerExpressionHandlers();
 
   embeddingService.initialize();
   embeddingService.registerIpcHandlers();

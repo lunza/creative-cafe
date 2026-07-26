@@ -25,6 +25,11 @@ export class EmbeddingService {
 
       const mode = this.vectorConfig?.embeddingMode || 'remote';
 
+      if (mode === 'disabled') {
+        console.log('[EmbeddingService] 向量化已禁用，跳过 generateEmbedding');
+        return { success: false, error: '向量化已禁用' };
+      }
+
       if (mode === 'local') {
         // Facade: 委托给 EmbeddingWorkerService（主进程内加载本地 ONNX 模型并生成 embedding）
         const localResult = await this.generateLocalEmbeddingFacade(text);
@@ -182,6 +187,11 @@ export class EmbeddingService {
 
       const mode = this.vectorConfig?.embeddingMode || 'remote';
 
+      if (mode === 'disabled') {
+        console.log('[EmbeddingService] 向量化已禁用，跳过 generateBatchEmbeddings');
+        return { success: false, error: '向量化已禁用' };
+      }
+
       const validTexts = texts.filter(t => t && t.trim().length > 0);
       if (validTexts.length === 0) {
         return { success: false, error: '所有文本为空' };
@@ -299,6 +309,11 @@ export class EmbeddingService {
       
       const mode = this.vectorConfig?.embeddingMode || 'remote';
       console.log(`[EmbeddingService] 5. 解析后的模式: ${mode}`);
+
+      if (mode === 'disabled') {
+        console.log('[EmbeddingService] 向量化已禁用，跳过 testConnection');
+        return { success: false, mode: 'disabled', dimension: 0, error: '向量化已禁用，请先在系统设置中启用向量化' };
+      }
 
       if (mode === 'local') {
         console.log('[EmbeddingService] 6. 模式为 local, 返回');

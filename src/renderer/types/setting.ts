@@ -205,7 +205,7 @@ export interface AppSetting {
 
   // 向量化设置
   vector?: {
-    embeddingMode?: 'remote' | 'local';
+    embeddingMode?: 'remote' | 'local' | 'disabled';
     remoteModel?: string;
     remoteApiKey?: string;
     remoteApiUrl?: string;

@@ -957,6 +957,164 @@ interface GameTableEditCommand {
 - `buildStopSequences` / `buildStopSequencesForUserReply`：用户名 / 角色名变体停止序列，防抢话
 - `buildRoleAnchorMessage`：角色深度锚定（depth_prompt），防止长上下文角色漂移
 - `buildLengthGuidancePrompt` / `buildContinueNudgePrompt`：回复长度引导 / 续写去重约束
+- `EMOTION_PRESETS`：30 项预置情绪清单（详见下方「7.3.1 表情管理系统」）
+- `buildExpressionPrompt(charName, availableEmotionKeys)`：表情显示模式系统提示词，约束 AI 在回复末尾输出 `<<<EXPRESSION>>>key<<<END_EXPRESSION>>>` 情绪标记（Spec: add-character-expression-system / Task 3）
+- `parseExpressionFromContent(content)`：从 AI 回复中多格式容错解析情绪标记，返回 `{ emotion, cleanedContent }`（Spec: add-character-expression-system / Task 3）
+
+### 7.3.1 表情管理系统（Spec: add-character-expression-system）
+
+> 增量更新（2026-07-26）：新增角色卡表情管理系统，每个角色卡独立维护表情包，AI 回复时根据语境动态切换头像表情，**代替**原 Emoji 增强模式。
+
+#### 概述
+
+表情管理系统让用户为每个角色卡上传多种情绪表情图片（每个角色卡独立的表情包），AI 在回复时根据语境动态切换头像表情，显著增强角色扮演的沉浸感与表现力。系统覆盖完整的存储层（主进程服务 + IPC）、提示词注入与解析层（PromptBuilder）、UI 层（表情管理弹窗 + 图片裁剪弹窗 + 参数面板开关）、渲染层（ChatMessageBubble 按情绪切换头像）与预加载优化层（expressionStore + 浏览器图像缓存预热）。
+
+#### 存储与目录结构
+
+每个角色卡的表情包独立存储于 `{userData}/data/character-expressions/{sanitizedCharacterCardId}/` 目录下：
+
+```
+{userData}/data/character-expressions/
+└── {sanitizedCharacterCardId}/        # SHA-256(characterCardId) 前 16 个十六进制字符
+    ├── manifest.json                  # 表情包清单（含预置/自定义情绪映射）
+    ├── joy.png                        # 各情绪对应的 PNG 图像
+    ├── anger.png
+    └── shyness.png                    # 自定义情绪图像
+```
+
+`sanitizeCardId(characterCardId)` 取 `sha256(characterCardId)` 前 16 个十六进制字符（`utf8` 编码）：
+- **确定性**：同一 characterCardId（角色卡文件路径字符串，可能含路径分隔符/空格/中文）始终映射到同一目录
+- **抗碰撞性**：基于 SHA-256，不同 characterCardId 几乎不会冲突
+- **文件系统安全**：仅含 `[0-9a-f]`，对任何文件系统都安全
+
+#### Manifest 结构
+
+```json
+{
+  "characterCardId": "原始-characterCardId-字符串",
+  "version": 1,
+  "expressions": {
+    "joy": { "type": "preset", "image": "joy.png" },
+    "shyness": { "type": "custom", "image": "shyness.png" }
+  },
+  "customEmotions": [
+    { "key": "shyness", "label": "害羞" }
+  ]
+}
+```
+
+- `expressions`：已上传表情的映射，`emotionKey → { type, image }`，`type` 为 `'preset'` 或 `'custom'`
+- `customEmotions`：用户为该角色卡添加的自定义情绪类别（含中英文映射），与 `expressions` 中的 `type: 'custom'` 条目一一对应
+
+#### IPC 通道（命名空间 `expression`）
+
+| 通道 | 调用签名 | 返回值 | 说明 |
+|------|---------|--------|------|
+| `expression:list` | `list(characterCardId)` | `ExpressionManifest` | 读取角色卡表情包清单（不存在时返回默认空 manifest） |
+| `expression:saveImage` | `saveImage({ characterCardId, emotionKey, imageBase64, isCustom, label? })` | `{ success, error?, imagePath? }` | 保存表情图像（base64，可含 `data:image/png;base64,` 前缀）并更新 manifest；返回图像绝对路径 |
+| `expression:deleteImage` | `deleteImage({ characterCardId, emotionKey })` | `{ success, error? }` | 删除指定情绪的图像文件（不删除 customEmotions 条目） |
+| `expression:addCustomEmotion` | `addCustomEmotion({ characterCardId, key, label })` | `{ success, error? }` | 添加自定义情绪类别（key 校验 `^[a-z][a-z0-9_]*$`，不与预置重复） |
+| `expression:removeCustomEmotion` | `removeCustomEmotion({ characterCardId, key })` | `{ success, error? }` | 移除自定义情绪：删除 customEmotions 条目 + expressions 条目 + 图像文件 |
+| `expression:getImagePath` | `getImagePath({ characterCardId, emotionKey })` | `{ success, imagePath: string\|null, error? }` | 获取指定情绪的图像绝对路径（不存在返回 null） |
+
+注册入口 `registerExpressionHandlers()` 在 `src/main/ipc/index.ts` 的 `setupIpcHandlers()` 中调用，每个 handler try/catch 兜底返回 `{ success: false, error }`。Preload 暴露 `window.electronAPI.expression.*`。
+
+#### 预置情绪清单（30 项）
+
+基于 GoEmotions 分类（27 项）+ default（默认）+ cheerfulness（快乐）共 30 项。预置类别不可删除，用户可在此基础上追加自定义情绪。
+
+| key | label | key | label | key | label |
+|-----|-------|-----|-------|-----|-------|
+| `default` | 默认 | `disappointment` | 失望 | `optimism` | 乐观 |
+| `admiration` | 钦佩 | `disapproval` | 不赞同 | `pride` | 自豪 |
+| `amusement` | 愉悦 | `disgust` | 厌恶 | `realization` | 顿悟 |
+| `anger` | 愤怒 | `embarrassment` | 尴尬 | `relief` | 宽慰 |
+| `annoyance` | 恼怒 | `excitement` | 兴奋 | `remorse` | 懊悔 |
+| `approval` | 赞同 | `fear` | 恐惧 | `sadness` | 悲伤 |
+| `caring` | 关切 | `gratitude` | 感激 | `surprise` | 惊讶 |
+| `confusion` | 困惑 | `grief` | 悲痛 | `cheerfulness` | 快乐 |
+| `curiosity` | 好奇 | `joy` | 喜悦 | | |
+| `desire` | 渴望 | `love` | 喜爱 | | |
+| | | `nervousness` | 紧张 | | |
+| | | `neutral` | 中性 | | |
+
+#### AI 情绪标记格式
+
+开启表情显示后，系统提示词注入 `buildExpressionPrompt(charName, availableEmotionKeys)`，要求 AI 在回复正文末尾另起一行输出结构化情绪标记：
+
+```
+<<<EXPRESSION>>>emotion_key<<<END_EXPRESSION>>>
+```
+
+- `emotion_key` 必须来自 `availableEmotionKeys` 列表（预置 30 + 当前角色卡自定义）
+- 情绪难以判断时使用 `neutral`
+- 标记对用户不可见，由 `parseExpressionFromContent(content)` 自动解析并剥离
+
+**多格式容错匹配**（参照 `parseSuggestedOptions` 模式）：
+1. 主格式：`<<<EXPRESSION>>>key<<<END_EXPRESSION>>>`（大小写不敏感）
+2. 容错：仅有开始标记 `<<<EXPRESSION>>>key` 到文本末尾（AI 遗漏结束标记或被截断）
+3. 兼容变体：`<expression>key</expression>`（纯标签）
+4. 兼容变体：仅有 `<expression>key` 到末尾
+
+解析成功后将 `emotion` 写入 `ChatMessage.emotion`，并以 `cleanedContent` 覆盖 `finalContent`（剥离标记）；解析失败时 `emotion` 为 `null`，回退默认头像。
+
+#### 显示优先级
+
+`ChatMessageBubble` 渲染头像时按以下优先级解析表情图像：
+1. **自定义情绪表情**：用户为自定义情绪上传的图像
+2. **预置情绪表情**：用户为预置情绪上传的图像
+3. **默认头像**：角色卡 PNG 图像（即当前对话的 `avatarPath`）
+
+`expressionStore.resolveExpressionImage(emotionKey)` 实现：null/undefined/空串/`'default'` 直接返回 null（回退默认头像）；其他 key 从 `imageCache` 查找绝对路径。流式消息（`isStreaming`）期间使用默认头像，待流式完成后再切换为表情图像，避免闪烁。
+
+#### 参数面板开关（代替 Emoji 增强模式）
+
+`ParameterPanel.tsx` 中「开启表情」开关绑定 `expressionDisplay` / `onExpressionDisplayToggle` props，Tooltip 说明：「开启后，AI 回复时根据语境动态切换角色表情头像。需先在「表情管理」中上传表情图片。默认关闭。」
+
+- 配置字段：`AIParameterConfig.expression_display?: boolean`（默认关闭，`undefined` 视为关闭）
+- 透传链路：`ConfigPanel.tsx` → `CharacterDialogueChat.tsx` 计算 `expressionDisplay = characterConfig?.customParameters?.expression_display === true`，回调调用 `updateConfig({ customParameters: { ..., expression_display: enabled } })` 并 `saveConfig`
+- **BREAKING**：移除原「Emoji 增强模式」开关 UI；`emoji_enhanced` 字段保留向后兼容但不再生效（标记 `@deprecated`）；`buildEmojiEnhancedPrompt` 函数保留在 PromptBuilder 中但不再被调用
+
+#### 表情管理弹窗入口
+
+`ChatHeader.tsx` 头部按钮区新增「表情管理」按钮（antd `Button` + `SmileOutlined` 图标），点击后由 `CharacterDialogueChat.tsx` 渲染 `ExpressionManagerModal` 并控制 open 状态，传入 `characterCardId` / `characterName` / `avatarPath`。
+
+**【重点标记 - Task 15 补充入口（用户反馈）】** 用户反馈在角色卡编辑界面找不到表情上传入口，原入口仅位于对话头部。修复后新增第二入口：`CharacterEditModal.tsx` 的 Tabs 中新增第 4 个「表情管理」Tab（与 `角色信息` / `对话与指令` / `世界书关联` 并列）。Tab 内容：若 `editingItem.path` 存在则显示说明 Alert + 「打开表情管理」按钮（调用同一 `ExpressionManagerModal`）；新建角色卡（无 path）时显示「请先保存角色卡」警告。两个入口共用同一 `ExpressionManagerModal` 组件与 `expressionStore`，数据完全互通。
+
+#### 关键文件清单
+
+| 文件 | 职责 |
+|------|------|
+| `src/main/services/expressionService.ts` | 表情包存储/读取/删除主进程服务（单例 `expressionService`），SHA-256 目录哈希、manifest 读写、图像保存/删除/读取、自定义情绪 key 校验 |
+| `src/main/ipc/handlers/expressionHandlers.ts` | IPC 通道注册（`registerExpressionHandlers`），6 个通道 |
+| `src/main/ipc/index.ts` | 在 `setupIpcHandlers()` 中调用 `registerExpressionHandlers()` |
+| `src/main/preload.ts` | 暴露 `electronAPI.expression.*` API |
+| `src/renderer/types/electron.d.ts` | `expression` 命名空间类型声明 |
+| `src/renderer/stores/expressionStore.ts` | Zustand 表情状态 store（`useExpressionStore`），持有 `manifest` / `imageCache` / `loading` / `error`，封装所有 IPC 调用，提供 `loadExpressions` / `saveExpression` / `deleteExpression` / `addCustomEmotion` / `removeCustomEmotion` / `resolveExpressionImage` / `getAvailableEmotionKeys` / `clear` actions |
+| `src/renderer/components/Character/CharacterDialogueChat/PromptBuilder.ts` | `EMOTION_PRESETS` 常量、`buildExpressionPrompt` / `parseExpressionFromContent` 函数 |
+| `src/renderer/components/Character/CharacterDialogueChat/ExpressionManagerModal.tsx` | 表情管理弹窗：30 预置 + 自定义情绪网格、上传/删除/预览、添加/移除自定义情绪表单 |
+| `src/renderer/components/Character/CharacterDialogueChat/ImageCropperModal.tsx` | 图片裁剪弹窗：基于 `react-easy-crop`，方形裁剪、缩放滑块 0.5~5x、滚轮缩放、PNG 输出、长边 > 512px 压缩 |
+| `src/renderer/components/Character/CharacterDialogueChat/ChatHeader.tsx` | 「表情管理」入口按钮（对话头部） |
+| `src/renderer/components/Character/CharacterEditModal.tsx` | 「表情管理」Tab 入口（角色卡编辑弹窗，Task 15 补充） |
+| `src/renderer/components/Character/CharacterDialogueChat/ParameterPanel.tsx` | 「开启表情」开关区块 |
+| `src/renderer/components/Character/CharacterDialogueChat/ConfigPanel.tsx` | 透传 `expressionDisplay` / `onExpressionDisplayToggle` |
+| `src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.tsx` | 渲染 `ExpressionManagerModal`、`expressionDisplay` 状态绑定、`useEffect` 预加载 |
+| `src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.hooks.ts` | 注入 `buildExpressionPrompt`、解析 `parseExpressionFromContent`、写入 `ChatMessage.emotion`、`emotionStripped` 容差标志 |
+| `src/renderer/components/Character/CharacterDialogueChat/ChatMessageBubble.tsx` | 新增 `expressionImage?: string` prop，按情绪渲染头像（自定义 > 预置 > 默认头像三级回退） |
+| `src/shared/types/chat.types.ts` | `ChatMessage.emotion?: string` 字段 |
+| `src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.types.ts` | 同步 `emotion` 字段、`expression_display` 字段、`emoji_enhanced` 标记 `@deprecated` |
+
+#### 图片裁剪工具
+
+`ImageCropperModal` 基于 `react-easy-crop`（v6.2.3）实现方形裁剪：
+- **交互**：`<Cropper>` aspect=1（方形）、`showGrid` + `zoomWithScroll`（滚轮缩放内置）；antd `Slider` 0.5~5 步长 0.1 绑定 zoom；`onCropComplete` 缓存 `croppedAreaPixels`
+- **输出**：`getCroppedImg(imageSrc, pixelCrop)` 异步函数，通过 canvas 提取裁剪区域，输出 PNG data URL；长边超过 512px 时按 `MAX_LONG_SIDE / longSide` 系数等比缩放压缩（一次 drawImage 到目标尺寸），符合 Spec「图像格式统一与压缩」要求
+- **状态重置**：`useEffect` 监听 `open` + `imageSrc`，弹窗打开或图片切换时重置 crop/zoom/croppedAreaPixels/mediaSize
+- **UI 风格**：antd Modal 暗色主题 width=640，自包含 inline styles，使用项目 CSS 变量
+
+#### 表情图像预加载机制
+
+`expressionStore.loadExpressions(characterCardId)` 加载 manifest 时，对每个已上传的表情图像路径创建 `new Image()` 对象预加载（fire-and-forget），写入浏览器图像缓存。后续情绪切换直接命中缓存避免闪烁。`CharacterDialogueChat.tsx` 的 `useEffect` 在 `expressionDisplay === true` 且 `characterInfo.characterCardId` 变化时调用 `loadExpressions`；`ExpressionManagerModal` 保存/删除表情后亦调用 `loadExpressions` 刷新缓存。
 
 ### 7.4 世界书管理 (World Book)
 - 世界书及条目的 CRUD

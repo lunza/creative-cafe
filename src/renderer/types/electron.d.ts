@@ -424,6 +424,35 @@ interface ElectronAPI {
     countBatch: (messages: Array<{ id: string; text: string }>) => Promise<Array<{ id: string; count: number }>>;
   };
 
+  // 角色卡表情管理 API（Spec: add-character-expression-system / Task 1）
+  // 存储路径：{userData}/data/character-expressions/{sha256(characterCardId).slice(0,16)}/
+  // 每个角色卡一个 manifest.json + 多个 {emotionKey}.png
+  expression: {
+    /** 读取角色卡表情包 manifest；若不存在返回空白默认 manifest */
+    list: (characterCardId: string) => Promise<{
+      characterCardId: string;
+      version: 1;
+      expressions: Record<string, { type: 'preset' | 'custom'; image: string }>;
+      customEmotions: Array<{ key: string; label: string }>;
+    }>;
+    /** 保存表情图像（base64，可含 data URI 前缀）并更新 manifest；返回图像绝对路径 */
+    saveImage: (args: {
+      characterCardId: string;
+      emotionKey: string;
+      imageBase64: string;
+      isCustom: boolean;
+      label?: string;
+    }) => Promise<{ success: boolean; error?: string; imagePath?: string }>;
+    /** 删除指定情绪的图像文件，并从 manifest.expressions 移除（保留 customEmotions） */
+    deleteImage: (args: { characterCardId: string; emotionKey: string }) => Promise<{ success: boolean; error?: string }>;
+    /** 添加自定义情绪类别（key 需匹配 ^[a-z][a-z0-9_]*$） */
+    addCustomEmotion: (args: { characterCardId: string; key: string; label: string }) => Promise<{ success: boolean; error?: string }>;
+    /** 移除自定义情绪类别：从 customEmotions + expressions 移除，并删除图像文件 */
+    removeCustomEmotion: (args: { characterCardId: string; key: string }) => Promise<{ success: boolean; error?: string }>;
+    /** 获取指定情绪的图像绝对路径，不存在时返回 null */
+    getImagePath: (args: { characterCardId: string; emotionKey: string }) => Promise<{ success: boolean; imagePath: string | null; error?: string }>;
+  };
+
   // 游戏模式 API（Spec: add-game-mode-framework / Task 5 preload 契约）
   // 命名空间由 Task 5 在 preload.ts 中实现；此处类型声明由 Task 6 提前补全以解耦渲染进程开发
   game: {

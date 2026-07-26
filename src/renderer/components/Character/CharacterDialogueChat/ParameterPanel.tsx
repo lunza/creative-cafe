@@ -25,9 +25,9 @@ interface ParameterPanelProps {
   customStopSequences?: string[];
   onCustomStopSequencesToggle?: (enabled: boolean) => void;
   onCustomStopSequencesChange?: (stops: string[]) => void;
-  // Emoji 增强模式开关
-  emojiEnhanced?: boolean;
-  onEmojiEnhancedToggle?: (enabled: boolean) => void;
+  // 开启表情开关（Spec: add-character-expression-system）
+  expressionDisplay?: boolean;
+  onExpressionDisplayToggle?: (enabled: boolean) => void;
   // Think 标签处理开关（Spec: handle-think-tags-overflow）
   stripThinkTags?: boolean;
   onStripThinkTagsToggle?: (enabled: boolean) => void;
@@ -54,8 +54,8 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
   customStopSequences = [],
   onCustomStopSequencesToggle,
   onCustomStopSequencesChange,
-  emojiEnhanced = true,
-  onEmojiEnhancedToggle,
+  expressionDisplay = false,
+  onExpressionDisplayToggle,
   stripThinkTags = true,
   onStripThinkTagsToggle,
   assistMode = false,
@@ -373,19 +373,21 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
             </div>
           </div>
 
-          {/* Emoji 增强模式 */}
-          <div className="parameter-emoji-enhanced-section" style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
-            <div className="parameter-emoji-enhanced-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          {/* 开启表情（Spec: add-character-expression-system） */}
+          {/* 代替原 Emoji 增强模式：开启后 AI 回复根据语境动态切换角色表情头像。
+              需先在「表情管理」中为角色卡上传表情图片。默认关闭。 */}
+          <div className="parameter-expression-display-section" style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
+            <div className="parameter-expression-display-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
               <div className="parameter-label-group" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span className="parameter-label" style={{ fontSize: 13 }}>Emoji 增强模式</span>
-                <Tooltip title="开启后，引导 AI 在回复中适度使用 emoji 和颜文字表达情感与语气（如喜悦😊、思考🤔、害羞😳等），每条回复 1-3 个为宜，增强对话表现力。默认开启。">
+                <span className="parameter-label" style={{ fontSize: 13 }}>开启表情</span>
+                <Tooltip title="开启后，AI 回复时根据语境动态切换角色表情头像（需先在「表情管理」中上传表情图片）。代替原 Emoji 增强模式。默认关闭。">
                   <QuestionCircleOutlined className="parameter-tooltip-icon" />
                 </Tooltip>
               </div>
               <Switch
                 size="small"
-                checked={emojiEnhanced}
-                onChange={onEmojiEnhancedToggle}
+                checked={expressionDisplay}
+                onChange={onExpressionDisplayToggle}
               />
             </div>
           </div>

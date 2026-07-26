@@ -4,6 +4,7 @@ import { vectorStoreService } from './VectorStoreService';
 import { vectorRegistryService } from './VectorRegistryService';
 import { VectorSourceType } from '../types/vectorConfig';
 import { getStorageService } from './storageService';
+import { vectorConfigManager } from './VectorConfigManager';
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
@@ -27,6 +28,12 @@ export class ChatVectorizationService {
     messages: ChatMessage[]
   ): Promise<VectorizeChatResult> {
     try {
+      const vectorConfig = vectorConfigManager.loadVectorConfig();
+      if (vectorConfig.embeddingMode === 'disabled') {
+        console.log('[ChatVectorizationService] 向量化已禁用，跳过 vectorizeChat');
+        return { success: true, messagesVectorized: 0, messagesFailed: 0, messageVectorIds: [] };
+      }
+
       console.log(`[ChatVectorizationService] vectorizeChat: starting for character ${characterId}`);
 
       if (!characterId || characterId.trim().length === 0) {
@@ -230,6 +237,12 @@ export class ChatVectorizationService {
     minScore: number = 0.6
   ): Promise<Array<{ content: string; score: number; timestamp: number }>> {
     try {
+      const vectorConfig = vectorConfigManager.loadVectorConfig();
+      if (vectorConfig.embeddingMode === 'disabled') {
+        console.log('[ChatVectorizationService] 向量化已禁用，跳过 retrieveChatHistory');
+        return [];
+      }
+
       if (!chatId || !queryText || queryText.trim().length === 0) {
         return [];
       }
@@ -284,6 +297,12 @@ export class ChatVectorizationService {
    */
   async vectorizeIncremental(chatId: string, messages: ChatMessage[]): Promise<void> {
     try {
+      const vectorConfig = vectorConfigManager.loadVectorConfig();
+      if (vectorConfig.embeddingMode === 'disabled') {
+        console.log('[ChatVectorizationService] 向量化已禁用，跳过 vectorizeIncremental');
+        return;
+      }
+
       if (!chatId || chatId.trim().length === 0) {
         console.warn('[ChatVectorizationService] vectorizeIncremental: chatId is empty, skipping');
         return;

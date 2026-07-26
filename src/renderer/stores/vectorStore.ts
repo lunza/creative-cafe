@@ -26,7 +26,7 @@ interface TestResult {
 }
 
 interface VectorState {
-  mode: 'remote' | 'local';
+  mode: 'remote' | 'local' | 'disabled';
   dimension: number;
   isConnected: boolean;
   totalVectors: number;
@@ -39,7 +39,7 @@ interface VectorState {
   selectedScopes: string[];
   scopesLoading: boolean;
 
-  setMode: (mode: 'remote' | 'local') => Promise<void>;
+  setMode: (mode: 'remote' | 'local' | 'disabled') => Promise<void>;
   testConnection: (config?: any) => Promise<TestResult>;
   testStorage: (scopeIds?: string[]) => Promise<TestResult>;
   embed: (text: string) => Promise<number[]>;

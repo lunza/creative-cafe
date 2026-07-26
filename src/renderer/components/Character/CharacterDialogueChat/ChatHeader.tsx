@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { Button, Space, Tooltip, Dropdown } from 'antd';
 import type { MenuProps } from 'antd';
-import { ClearOutlined, ExportOutlined, CloseOutlined, RobotOutlined, FullscreenOutlined, FullscreenExitOutlined, UserOutlined, HeartOutlined, HeartFilled, QuestionCircleOutlined, DownOutlined } from '@ant-design/icons';
+import { ClearOutlined, ExportOutlined, CloseOutlined, RobotOutlined, FullscreenOutlined, FullscreenExitOutlined, UserOutlined, HeartOutlined, HeartFilled, QuestionCircleOutlined, DownOutlined, SmileOutlined } from '@ant-design/icons';
 
 interface ChatHeaderProps {
   characterName: string;
@@ -19,6 +19,8 @@ interface ChatHeaderProps {
   selectedPersona?: { name: string; avatarPath?: string } | null;
   isFavorite?: boolean;
   onToggleFavorite?: () => void;
+  /** 打开表情管理弹窗（Spec: add-character-expression-system / Task 8.1） */
+  onOpenExpressionManager?: () => void;
 }
 
 const ChatHeader: React.FC<ChatHeaderProps> = ({
@@ -37,6 +39,7 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
   selectedPersona,
   isFavorite = false,
   onToggleFavorite,
+  onOpenExpressionManager,
 }) => {
   const hasCharacterList = !!characters && characters.length > 0;
 
@@ -201,6 +204,17 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
               icon={<ClearOutlined />}
               onClick={onClear}
               size="small"
+            />
+          </Tooltip>
+        )}
+        {onOpenExpressionManager && (
+          <Tooltip title="表情管理">
+            <Button
+              type="text"
+              icon={<SmileOutlined />}
+              onClick={() => onOpenExpressionManager?.()}
+              size="small"
+              style={{ color: 'var(--chat-header-btn-color, #8c8c8c)' }}
             />
           </Tooltip>
         )}

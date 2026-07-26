@@ -1,4 +1,4 @@
-export type EmbeddingMode = 'remote' | 'local';
+export type EmbeddingMode = 'remote' | 'local' | 'disabled';
 export type VectorStoreMode = 'vecstore';
 
 /**

@@ -10,6 +10,8 @@ interface ChatMessageBubbleProps {
   message: ChatMessage;
   characterName: string;
   avatarPath?: string;
+  /** AI 回复表情图像路径（Spec: add-character-expression-system / Task 10.1），优先于 avatarPath */
+  expressionImage?: string;
   onRetry?: (messageId: string) => void;
   onContinue?: () => void;
   onEdit?: (messageId: string, newContent: string) => void;
@@ -27,6 +29,7 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
   message,
   characterName,
   avatarPath,
+  expressionImage,
   onRetry,
   onContinue,
   onEdit,
@@ -360,8 +363,12 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
             ? 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)'
             : 'linear-gradient(135deg, #8b5cf6 0%, #a855f7 100%)',
         }}>
-          {avatarPath && !isUser ? (
-            <img src={avatarPath} alt={characterName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          {(expressionImage || avatarPath) && !isUser ? (
+            <img
+              src={expressionImage || avatarPath}
+              alt={characterName}
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            />
           ) : (
             <span style={{ color: '#fff', fontSize: '16px', fontWeight: 'bold' }}>
               {isUser ? 'U' : characterName.charAt(0).toUpperCase()}

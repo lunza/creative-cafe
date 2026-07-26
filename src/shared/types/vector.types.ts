@@ -12,8 +12,8 @@
  * - 字段语义对齐 `vector_registry.json` 与 `vecstore.json` 的存储结构
  */
 
-/** 嵌入模式：远程调用模型 or 本地推理 */
-export type EmbeddingMode = 'remote' | 'local';
+/** 嵌入模式：远程调用模型 / 本地推理 / 禁用向量化 */
+export type EmbeddingMode = 'remote' | 'local' | 'disabled';
 
 /** 向量存储后端模式（当前仅 vecstore） */
 export type VectorStoreMode = 'vecstore';

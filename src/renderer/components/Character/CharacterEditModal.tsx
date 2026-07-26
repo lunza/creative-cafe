@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, Button, Space, Checkbox, Input, message, Tabs } from 'antd';
-import { PlusOutlined, StopOutlined, UserOutlined, MessageOutlined, SettingOutlined } from '@ant-design/icons';
+import { Modal, Button, Space, Checkbox, Input, message, Tabs, Alert } from 'antd';
+import { PlusOutlined, StopOutlined, UserOutlined, MessageOutlined, SettingOutlined, SmileOutlined } from '@ant-design/icons';
 import { FieldEditor } from './FieldEditor';
 import { WorldBookRelationPanel } from './WorldBookRelationPanel';
 import { useCharacterAIOperations } from './hooks/useCharacterAIOperations';
+import ExpressionManagerModal from './CharacterDialogueChat/ExpressionManagerModal';
 import type { AIEngine } from '../../types/setting';
 
 /**
@@ -129,6 +130,9 @@ const CharacterEditModal: React.FC<CharacterEditModalProps> = ({
   // 【重点标记 - 图片替换无效 Bug 修复】此状态用于判断编辑已有角色卡时
   // 是否需要调用 createFromImage 重建 PNG 文件（替换基底图片）
   const [imageChanged, setImageChanged] = useState<boolean>(false);
+  // 表情管理弹窗开关（Spec: add-character-expression-system / Task 15 - 用户反馈补充入口）
+  // 【重点标记】用户反馈原入口仅位于对话头部 ChatHeader，不易发现；新增 CharacterEditModal Tab 入口
+  const [expressionModalOpen, setExpressionModalOpen] = useState<boolean>(false);
 
   // 模态框打开时重置 imageChanged，确保每次编辑会话的图片更换状态独立
   useEffect(() => {
@@ -710,6 +714,47 @@ const CharacterEditModal: React.FC<CharacterEditModalProps> = ({
                 />
               ),
             },
+            {
+              key: 'expressions',
+              label: <span><SmileOutlined /> 表情管理</span>,
+              // 【重点标记 - 用户反馈补充入口】原表情管理入口仅位于对话头部 ChatHeader 的 😊 按钮，
+              // 用户反馈「没有看到上传角色表情包的位置」。新增此 Tab 使在编辑角色卡时即可管理表情。
+              // Spec: add-character-expression-system / Task 15
+              children: (
+                <div style={{ padding: '16px 0' }}>
+                  {editingItem?.path ? (
+                    <>
+                      <Alert
+                        type="info"
+                        showIcon
+                        message="为该角色卡管理表情图片"
+                        description={
+                          <div>
+                            <p>每个角色卡拥有独立的表情包存储空间。支持 30 种预置情绪 + 自定义情绪扩展。上传表情后，在对话中开启「表情显示」开关即可根据 AI 回复情绪动态切换头像。</p>
+                            <p style={{ marginTop: 8 }}>点击下方按钮打开表情管理面板，可上传、裁剪、删除表情图片，以及添加自定义情绪类别。</p>
+                          </div>
+                        }
+                        style={{ marginBottom: 16 }}
+                      />
+                      <Button
+                        type="primary"
+                        icon={<SmileOutlined />}
+                        onClick={() => setExpressionModalOpen(true)}
+                      >
+                        打开表情管理
+                      </Button>
+                    </>
+                  ) : (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      message="请先保存角色卡"
+                      description="新建角色卡需先填写角色信息并保存（生成 PNG 文件）后，才能管理表情图片。请先保存，然后再次打开编辑即可管理表情。"
+                    />
+                  )}
+                </div>
+              ),
+            },
           ]}
         />
       </Modal>
@@ -779,6 +824,16 @@ const CharacterEditModal: React.FC<CharacterEditModalProps> = ({
           />
         </div>
       </Modal>
+
+      {/* 表情管理弹窗（Spec: add-character-expression-system / Task 15 - CharacterEditModal 入口） */}
+      {/* 【重点标记】用户反馈原入口仅位于对话头部 ChatHeader，不易发现；新增此入口 */}
+      <ExpressionManagerModal
+        open={expressionModalOpen}
+        characterCardId={editingItem?.path || ''}
+        characterName={formValues.name || editingItem?.name || '未命名'}
+        avatarPath={uploadedImage || undefined}
+        onClose={() => setExpressionModalOpen(false)}
+      />
     </>
   );
 };

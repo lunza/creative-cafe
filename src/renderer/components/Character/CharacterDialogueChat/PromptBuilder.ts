@@ -37,6 +37,48 @@ export interface ContextVectorItem {
   };
 }
 
+// ==================== 预置常量 ====================
+
+/**
+ * 预置情绪类别清单（Spec: add-character-expression-system）。
+ *
+ * 基于 GoEmotions 分类（27 项）+ default（默认）+ cheerfulness（快乐）共 30 项。
+ * 每项含唯一英文键（AI 输出用）与中文标签（UI 展示用）。
+ * 预置类别不可删除，用户可在此基础上追加自定义情绪。
+ */
+export const EMOTION_PRESETS: ReadonlyArray<{ key: string; label: string }> = [
+  { key: 'default', label: '默认' },
+  { key: 'admiration', label: '钦佩' },
+  { key: 'amusement', label: '愉悦' },
+  { key: 'anger', label: '愤怒' },
+  { key: 'annoyance', label: '恼怒' },
+  { key: 'approval', label: '赞同' },
+  { key: 'caring', label: '关切' },
+  { key: 'confusion', label: '困惑' },
+  { key: 'curiosity', label: '好奇' },
+  { key: 'desire', label: '渴望' },
+  { key: 'disappointment', label: '失望' },
+  { key: 'disapproval', label: '不赞同' },
+  { key: 'disgust', label: '厌恶' },
+  { key: 'embarrassment', label: '尴尬' },
+  { key: 'excitement', label: '兴奋' },
+  { key: 'fear', label: '恐惧' },
+  { key: 'gratitude', label: '感激' },
+  { key: 'grief', label: '悲痛' },
+  { key: 'joy', label: '喜悦' },
+  { key: 'love', label: '喜爱' },
+  { key: 'nervousness', label: '紧张' },
+  { key: 'neutral', label: '中性' },
+  { key: 'optimism', label: '乐观' },
+  { key: 'pride', label: '自豪' },
+  { key: 'realization', label: '顿悟' },
+  { key: 'relief', label: '宽慰' },
+  { key: 'remorse', label: '懊悔' },
+  { key: 'sadness', label: '悲伤' },
+  { key: 'surprise', label: '惊讶' },
+  { key: 'cheerfulness', label: '快乐' },
+];
+
 // ==================== 底层工具函数 ====================
 
 /**
@@ -270,6 +312,95 @@ export function buildLengthGuidancePrompt(
 export function buildEmojiEnhancedPrompt(charName: string = 'Character'): string {
   const name = charName || 'Character';
   return `\n【表情增强】${name} 的回复中应适度使用 emoji 表达情感与语气，例如喜悦😊、思考🤔、害羞😳、惊讶😲、无奈😅、调皮😜等。emoji 应自然融入对话文本与动作描写中，不得滥用或堆砌，每条回复使用 1-3 个 emoji 为宜。也可适度使用颜文字（如 (≧▽≦)、(╯‵□′)╯︵┻━┻）增强表现力。`;
+}
+
+/**
+ * 构建表情显示模式系统提示词约束。
+ *
+ * Spec: add-character-expression-system
+ * 开启后，要求 AI 在回复正文末尾以结构化格式输出当前情绪键名，
+ * 供系统解析后驱动角色卡表情图像渲染（替代原 emoji_enhanced 文本 emoji 方案）。
+ *
+ * 格式要求：在正文之后另起一行，严格按以下格式输出（包含开始和结束标记）：
+ *
+ * <<<EXPRESSION>>>emotion_key<<<END_EXPRESSION>>>
+ *
+ * emotion_key 必须来自传入的 availableEmotionKeys 列表（预置 + 当前角色卡自定义），
+ * 不得自创键名。当情绪难以判断时使用 "neutral"。
+ *
+ * 【重点标记】此标记对用户不可见，系统会自动解析并剥离，不会显示在对话文本中。
+ * 与 buildAssistModePrompt 的 <<<SUGGESTED_OPTIONS>>> 标记互不冲突（两者格式不同）。
+ *
+ * @param charName 角色名（缺省 'Character'）
+ * @param availableEmotionKeys 当前可用的情绪键列表（预置 30 项 + 用户自定义）
+ * @returns 表情约束系统提示字符串
+ */
+export function buildExpressionPrompt(
+  charName: string = 'Character',
+  availableEmotionKeys: string[] = []
+): string {
+  const name = charName || 'Character';
+  // 防御性兜底：未传入 keys 时使用预置全部 key（保证 AI 输出的 key 可被解析）
+  const keys = availableEmotionKeys && availableEmotionKeys.length > 0
+    ? availableEmotionKeys
+    : EMOTION_PRESETS.map(e => e.key);
+  const keysList = keys.join(', ');
+  return `\n【表情显示】${name} 的回复需根据当前对话语境与角色情绪，在回复正文末尾选择一个最匹配的情绪键名输出。可用情绪键：${keysList}。
+
+格式要求：在正文之后另起一行，严格按以下格式输出（包含开始和结束标记），不要额外解释：
+
+<<<EXPRESSION>>>情绪键名<<<END_EXPRESSION>>>
+
+规则：
+1. 情绪键名必须从上方可用列表中选择，不得自创
+2. 当情绪难以判断或为中性时使用 "neutral"
+3. 此标记对用户不可见，系统会自动解析并剥离
+4. 标记必须位于回复最末尾，与正文之间空一行`;
+}
+
+/**
+ * 从 AI 回复内容中解析情绪标记。
+ *
+ * Spec: add-character-expression-system
+ * 多格式容错匹配 <<<EXPRESSION>>>key<<<END_EXPRESSION>>> 标记，参照
+ * parseSuggestedOptions 的多模式匹配策略，兼容 AI 遗漏结束标记、
+ * 大小写不一、空白字符等情况。
+ *
+ * 匹配优先级：
+ * 1. 主格式：<<<EXPRESSION>>>key<<<END_EXPRESSION>>>（大小写不敏感）
+ * 2. 容错：仅有开始标记 <<<EXPRESSION>>>key 到文本末尾（AI 遗漏结束标记或被截断）
+ * 3. 兼容变体：<expression>key</expression>（纯标签）
+ *
+ * @param content AI 回复原始内容
+ * @returns { emotion: 解析出的情绪键名（小写）或 null；cleanedContent: 剥离标记后的内容 }
+ */
+export function parseExpressionFromContent(content: string): { emotion: string | null; cleanedContent: string } {
+  if (!content || typeof content !== 'string') {
+    return { emotion: null, cleanedContent: content || '' };
+  }
+
+  const patterns: Array<{ regex: RegExp; name: string }> = [
+    // 主格式：<<<EXPRESSION>>>key<<<END_EXPRESSION>>>（大小写不敏感）
+    { regex: /<<<EXPRESSION>>>\s*([a-z_][a-z0-9_]*)\s*<<<END_EXPRESSION>>>/i, name: 'text-marker' },
+    // 容错：仅有开始标记 <<<EXPRESSION>>>key 到文本末尾
+    { regex: /<<<EXPRESSION>>>\s*([a-z_][a-z0-9_]*)\s*$/i, name: 'text-marker-unclosed' },
+    // 兼容变体：纯标签 <expression>key</expression>
+    { regex: /<expression>\s*([a-z_][a-z0-9_]*)\s*<\/expression>/i, name: 'plain-tag' },
+    // 兼容变体：仅有 <expression>key 到末尾
+    { regex: /<expression>\s*([a-z_][a-z0-9_]*)\s*$/i, name: 'plain-tag-unclosed' },
+  ];
+
+  for (const pattern of patterns) {
+    pattern.regex.lastIndex = 0;
+    const m = content.match(pattern.regex);
+    if (m) {
+      const emotion = m[1].toLowerCase();
+      const cleanedContent = content.replace(m[0], '').trim();
+      return { emotion, cleanedContent };
+    }
+  }
+
+  return { emotion: null, cleanedContent: content };
 }
 
 /**

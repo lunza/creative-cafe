@@ -35,9 +35,9 @@ interface ConfigPanelProps {
   // 自定义停止序列（Spec: optimize-chat-ai-intelligence / Task 3.4）
   customStopSequencesEnabled?: boolean;
   customStopSequences?: string[];
-  // Emoji 增强模式
-  emojiEnhanced?: boolean;
-  onEmojiEnhancedToggle?: (enabled: boolean) => void;
+  // 开启表情（Spec: add-character-expression-system）
+  expressionDisplay?: boolean;
+  onExpressionDisplayToggle?: (enabled: boolean) => void;
   // Think 标签处理（Spec: handle-think-tags-overflow）
   stripThinkTags?: boolean;
   onStripThinkTagsToggle?: (enabled: boolean) => void;
@@ -84,8 +84,8 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
   tokenManagementConfig,
   customStopSequencesEnabled,
   customStopSequences,
-  emojiEnhanced,
-  onEmojiEnhancedToggle,
+  expressionDisplay,
+  onExpressionDisplayToggle,
   stripThinkTags,
   onStripThinkTagsToggle,
   assistMode,
@@ -125,8 +125,8 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
         customStopSequences={customStopSequences}
         onCustomStopSequencesToggle={onCustomStopSequencesToggle}
         onCustomStopSequencesChange={onCustomStopSequencesChange}
-        emojiEnhanced={emojiEnhanced}
-        onEmojiEnhancedToggle={onEmojiEnhancedToggle}
+        expressionDisplay={expressionDisplay}
+        onExpressionDisplayToggle={onExpressionDisplayToggle}
         stripThinkTags={stripThinkTags}
         onStripThinkTagsToggle={onStripThinkTagsToggle}
         assistMode={assistMode}

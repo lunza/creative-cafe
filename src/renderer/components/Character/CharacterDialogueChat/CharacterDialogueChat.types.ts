@@ -8,9 +8,11 @@ export interface ChatMessage {
   timestamp: number;
   status?: 'sending' | 'sent' | 'error';
   speakerName?: string;
-  versionInfo?: ChatMessageVersionInfo;
   /** AI 推荐选项（辅助模式开启时，AI 回复中解析出的 3 个推荐选项） */
   suggestedOptions?: string[];
+  /** AI 回复情绪键名（Spec: add-character-expression-system），用于驱动表情图像渲染 */
+  emotion?: string;
+  versionInfo?: ChatMessageVersionInfo;
 }
 
 export interface ChatMessageVersionInfo {
@@ -136,11 +138,20 @@ export interface AIParameterConfig {
   /**
    * Emoji 增强模式开关。
    *
-   * 开启后，在系统提示末尾注入约束，要求 AI 在回复中适度使用 emoji
-   * 表达情感与语气（如喜悦😊、思考🤔、害羞😳等），增强对话表现力。
-   * 默认开启（undefined 视为开启）。
+   * @deprecated 已被 `expression_display` 代替，不再生效。保留字段以避免旧配置读取报错。
+   * 原行为：开启后在系统提示末尾注入约束，要求 AI 在回复中适度使用 emoji 表达情感。
    */
   emoji_enhanced?: boolean;
+  /**
+   * 表情显示开关（Spec: add-character-expression-system）。
+   *
+   * 开启后注入 buildExpressionPrompt，要求 AI 在回复末尾输出情绪标记
+   * （<<<EXPRESSION>>>key<<<END_EXPRESSION>>>）；解析后写入 ChatMessage.emotion
+   * 并驱动表情图像渲染（自定义 > 预置 > 默认头像三级回退）。
+   *
+   * 代替原 emoji_enhanced 开关。默认关闭（undefined 视为关闭）。
+   */
+  expression_display?: boolean;
   /**
    * Think 标签处理开关。
    *

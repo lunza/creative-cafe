@@ -5,6 +5,7 @@ import { embeddingService } from './EmbeddingService';
 import { vectorStoreService } from './VectorStoreService';
 import { vectorRegistryService } from './VectorRegistryService';
 import { VectorCache } from './VectorCache';
+import { vectorConfigManager } from './VectorConfigManager';
 
 export class KnowledgeBaseService {
   private items: Map<string, KnowledgeItem> = new Map();
@@ -513,6 +514,12 @@ export class KnowledgeBaseService {
   async vectorizeItem(id: string, skipPersist: boolean = false, options?: { sourceType?: VectorSourceType }): Promise<boolean> {
     await this.ensureInitialized();
 
+    const vectorConfig = vectorConfigManager.loadVectorConfig();
+    if (vectorConfig.embeddingMode === 'disabled') {
+      console.log(`[KnowledgeBaseService] 向量化已禁用，跳过 vectorizeItem id=${id}`);
+      return false;
+    }
+
     const item = this.items.get(id);
     if (!item || !item.content) {
       return false;
@@ -560,8 +567,14 @@ export class KnowledgeBaseService {
     return true;
   }
 
-  async vectorizeAll(): Promise<{ success: boolean; processed: number }> {
+  async vectorizeAll(): Promise<{ success: boolean; processed: number; error?: string }> {
     await this.ensureInitialized();
+
+    const vectorConfig = vectorConfigManager.loadVectorConfig();
+    if (vectorConfig.embeddingMode === 'disabled') {
+      console.log('[KnowledgeBaseService] 向量化已禁用，跳过 vectorizeAll');
+      return { success: false, processed: 0, error: '向量化已禁用，请先在系统设置中启用向量化' };
+    }
 
     let processed = 0;
     for (const item of this.items.values()) {
@@ -690,6 +703,10 @@ export class KnowledgeBaseService {
     ipcMain.handle('knowledge:vectorize', async (_event, { id }: { id: string }) => {
       try {
         await this.initialize();
+        const vectorConfig = vectorConfigManager.loadVectorConfig();
+        if (vectorConfig.embeddingMode === 'disabled') {
+          return { success: false, error: '向量化已禁用，请先在系统设置中启用向量化' };
+        }
         const success = await this.vectorizeItem(id);
         return { success };
       } catch (error) {

@@ -5,11 +5,14 @@ import { message } from 'antd';
 import { useSettingStore } from '../../../stores/settingStore';
 import { useCharacterChatStore } from '../../../stores/characterChatStore';
 import { useLogStore } from '../../../stores/logStore';
+// 表情显示系统状态（Spec: add-character-expression-system / Task 9）
+// 使用 useExpressionStore.getState() 在非 React 上下文（requestAIResponse 回调内）命令式读取可用情绪键
+import { useExpressionStore } from '../../../stores/expressionStore';
 import { ChatMessage, CharacterInfo, ChatState, UserPersona, EffectiveAIParams } from './CharacterDialogueChat.types';
 import { ChatEngineFactory } from '../../Common/ChatEngine/ChatEngine.factory';
 import { AIEngineConfig, AIResponse, getDefaultEngineCapabilities } from '../../Common/ChatEngine/ChatEngine.types';
 import { usePromptBuilder } from './usePromptBuilder';
-import { buildAssistModePrompt, buildAsyncTableOrganizeInstructions, buildStopSequences, buildRoleAnchorMessage, buildContinueNudgePrompt, buildLengthGuidancePrompt, buildEmojiEnhancedPrompt, buildLanguagePrompt, buildUserReplySystemPrompt, buildStopSequencesForUserReply, buildPolishInputSystemPrompt } from './PromptBuilder';
+import { buildAssistModePrompt, buildAsyncTableOrganizeInstructions, buildStopSequences, buildRoleAnchorMessage, buildContinueNudgePrompt, buildLengthGuidancePrompt, buildLanguagePrompt, buildUserReplySystemPrompt, buildStopSequencesForUserReply, buildPolishInputSystemPrompt, buildExpressionPrompt, parseExpressionFromContent } from './PromptBuilder';
 import { TokenCounter, ContextTruncator, DEFAULT_MAX_TOKENS } from './TokenManagement';
 import type { TruncationConfig } from './TokenManagement/types';
 import { nGramJaccard, overlapRate } from './utils/similarityUtils';
@@ -917,19 +920,27 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     const language = characterConfig?.customParameters?.language ?? 'zh';
     effectiveSystemPrompt += buildLanguagePrompt(language);
 
-    // Emoji 增强模式：默认开启（undefined 视为开启），显式设为 false 时关闭
-    const emojiEnhanced = characterConfig?.customParameters?.emoji_enhanced !== false;
-    if (emojiEnhanced) {
-      const charName = characterInfo.characterCardName || 'Character';
-      effectiveSystemPrompt += buildEmojiEnhancedPrompt(charName);
-    }
-
     // 辅助模式：默认关闭，显式设为 true 时开启
     const assistMode = characterConfig?.customParameters?.assist_mode === true;
     if (assistMode) {
       const charName = characterInfo.characterCardName || 'Character';
       effectiveSystemPrompt += buildAssistModePrompt(charName);
       addLog(`[CharacterDialogueChat] 辅助模式已开启，已注入提示词约束`, 'info');
+    }
+
+    // 表情显示模式（Spec: add-character-expression-system / Task 9.1 + 9.2）：代替原 emoji_enhanced
+    // 开启后注入 buildExpressionPrompt，要求 AI 在回复末尾输出 <<<EXPRESSION>>>key<<<END_EXPRESSION>>>
+    // 解析后写入 ChatMessage.emotion 并驱动表情图像渲染。
+    // 默认关闭（undefined 视为关闭）。
+    // 注意：useExpressionStore 不能作为 React hook 在本函数内调用（非组件上下文），
+    // 使用 .getState() 命令式读取 store（Zustand 原生支持）。
+    const expressionDisplay = characterConfig?.customParameters?.expression_display === true;
+    if (expressionDisplay) {
+      const charName = characterInfo.characterCardName || 'Character';
+      // 合并预置情绪 + 当前角色卡自定义情绪作为 AI 可选键（manifest 未加载则仅返回预置 30 项）
+      const availableEmotionKeys = useExpressionStore.getState().getAvailableEmotionKeys();
+      effectiveSystemPrompt += buildExpressionPrompt(charName, availableEmotionKeys);
+      addLog(`[CharacterDialogueChat] 表情显示已开启，已注入表情提示词约束（${availableEmotionKeys.length} 个可用情绪键）`, 'info');
     }
 
     // Debug: 显示提示词末尾（背景知识注入位置）
@@ -1215,6 +1226,28 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         }
       }
 
+      // ===== 表情显示：解析情绪标记（Spec: add-character-expression-system / Task 9.3 + 9.4 + 9.5） =====
+      // 【重点标记】修复：增加 emotionStripped 标志，供后续内容保护检查跳过此场景，
+      // 否则剥离标记后 displayContent 变短会触发内容保护检查导致状态不更新、UI 卡死。
+      // 模式参照 thinkTagsStripped / optionsStripped。
+      let emotionStripped = false;
+      let parsedEmotion: string | null = null;
+      const expressionDisplayEnabled = characterConfig?.customParameters?.expression_display === true;
+      if (expressionDisplayEnabled) {
+        const { emotion, cleanedContent } = parseExpressionFromContent(finalContent);
+        if (emotion) {
+          parsedEmotion = emotion;
+          const beforeStripLen = finalContent.length;
+          finalContent = cleanedContent;
+          if (finalContent.length !== beforeStripLen) {
+            emotionStripped = true;
+          }
+          addLog(`[CharacterDialogueChat] 表情显示：解析到情绪键 "${emotion}"`, 'info');
+        } else {
+          addLog(`[CharacterDialogueChat] 表情显示已开启但未匹配到情绪标记，回退默认头像。回复末尾 200 字: ${finalContent.substring(Math.max(0, finalContent.length - 200))}`, 'warn');
+        }
+      }
+
       // ===== 异步整理模式：检测并执行tableEdit命令（保留原始内容，HTML注释对用户不可见） =====
       let displayContent = finalContent;
       let hasAsyncCommands = false;
@@ -1426,19 +1459,21 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         // 【重点标记】修复：think 标签剥离导致的合法内容缩短也不应触发保护检查，
         // 否则状态不更新 → UI 卡死在"正在生成中"（Spec: fix-think-strip-content-protection）
         // 【重点标记】修复：辅助模式选项块剥离同样会导致合法内容缩短，需跳过保护检查（Spec: add-assist-mode-options）
+        // 【重点标记】修复：表情显示情绪标记剥离同样会导致合法内容缩短，需跳过保护检查
+        // （Spec: add-character-expression-system / Task 9.5）
         // 【重点标记】修复：stop sequences 或 max_tokens 截断会导致 finalContent 短于流式累积的
         // existingContent。此时 displayContent 是 AI 实际完成的回复（被后端合法截断），
         // 不应误判为内容丢失。容差阈值：displayContent 不少于 existingContent 的 30% 即视为合法截断。
         const stopTruncated = existingContent.length > 0
           && displayContent.length < existingContent.length
           && displayContent.length >= existingContent.length * 0.3;
-        if (!isAsyncMode && !thinkTagsStripped && !optionsStripped && !stopTruncated && existingContent.length > 0 && displayContent.length < existingContent.length) {
+        if (!isAsyncMode && !thinkTagsStripped && !optionsStripped && !emotionStripped && !stopTruncated && existingContent.length > 0 && displayContent.length < existingContent.length) {
           addLog(`[CharacterDialogueChat] Content protection: preventing content loss (${existingContent.length} -> ${displayContent.length})`, 'error');
           return prev;
         }
 
         const finalMessages = prev.messages.map(msg =>
-          msg.id === targetMessageId ? { ...msg, content: displayContent, status: 'sent' as const, suggestedOptions: suggestedOptions.length > 0 ? suggestedOptions : undefined } : msg
+          msg.id === targetMessageId ? { ...msg, content: displayContent, status: 'sent' as const, suggestedOptions: suggestedOptions.length > 0 ? suggestedOptions : undefined, emotion: parsedEmotion || undefined } : msg
         );
 
         // 保存聊天记录 - 注意：不在 setState 内部调用异步函数，避免 React 状态管理产生循环引用
@@ -1453,6 +1488,8 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
           speakerAvatar: msg.speakerAvatar,
           // 保存辅助模式推荐选项，使刷新/重启后仍可展示（Spec: add-assist-mode-options）
           suggestedOptions: msg.suggestedOptions,
+          // 保存情绪键名，使刷新/重启后表情仍可还原（Spec: add-character-expression-system / Task 9.4）
+          emotion: msg.emotion,
         }));
         
         // 使用 setTimeout 延迟保存，避免在 setState 回调中执行异步操作

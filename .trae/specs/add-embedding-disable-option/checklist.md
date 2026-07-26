@@ -1,0 +1,21 @@
+- [x] `EmbeddingMode` 类型在 `src/main/types/vectorConfig.ts` 和 `src/renderer/types/vectorConfig.ts` 中均扩展为 `'remote' | 'local' | 'disabled'`
+- [x] VectorConfigPanel 的 Embedding 模式下拉列表显示 3 个选项，"禁用"选项以灰色文字视觉区分
+- [x] "禁用"选项附近有 Tooltip 说明禁用向量化的影响范围（世界书/知识库自动向量化、聊天历史向量化检索、RAG 上下文注入等）
+- [x] 选择"禁用"后，向量模型配置卡片内除 Embedding 模式下拉本身外的所有 Form 控件置灰为 disabled 状态
+- [x] 选择"禁用"后，面板显示 Alert 警示文案说明"向量化已禁用，所有 RAG 检索/自动向量化功能将停止"
+- [x] Embedding 模式下拉在禁用状态下保持可用，允许切换回 remote/local
+- [x] `handleModeChange` 在切换到 disabled 时不执行维度推断，不覆盖 dimension/remoteModel/localModel 等字段
+- [x] `VectorConfigManager.validateConfig` 接受 `embeddingMode === 'disabled'` 为合法取值
+- [x] `VectorConfigManager.validateConfig` 在 disabled 模式下跳过 remoteApiUrl/remoteApiKey 校验
+- [x] `EmbeddingService.generateEmbedding` 在 disabled 模式下立即返回 `{ success: false, error: '向量化已禁用' }`，不产生网络请求
+- [x] `EmbeddingService.generateEmbeddingBatch`（或 `generateBatch`）在 disabled 模式下短路返回
+- [x] `ChatVectorizationService.vectorizeIncremental` 在 disabled 模式下返回 `{ success: true, skipped: true, reason: 'disabled' }`，不调用 EmbeddingService
+- [x] `ChatVectorizationService.retrieve` 在 disabled 模式下返回空数组
+- [x] `KnowledgeBaseService.vectorize` / `vectorizeAll` 在 disabled 模式下返回 `{ success: false, error: '向量化已禁用...' }`
+- [x] `worldBookService.vectorize` 在 disabled 模式下返回 `{ success: false, error: '向量化已禁用...' }`
+- [x] 自动向量化触发点（知识库/世界书创建编辑）在 disabled 模式下跳过，不修改 autoVectorizeWorldBook/autoVectorizeKnowledge 开关状态
+- [x] 禁用状态写入 `settings.json` 的 `vector.embeddingMode` 字段，值为 `"disabled"`
+- [x] 页面刷新或重新进入设置界面后，禁用状态自动恢复（Embedding 模式下拉选中"禁用"，面板置灰）
+- [x] `ConfigCleanupService` 配置清理时不会误删 `embeddingMode: 'disabled'` 字段
+- [x] 从 disabled 切换回 remote/local 后，所有 Form 控件恢复可用，维度字段按原有逻辑恢复默认值（remote→4096, local→按模型推断）
+- [x] TypeScript 类型检查通过，无 `EmbeddingMode` 类型不兼容错误

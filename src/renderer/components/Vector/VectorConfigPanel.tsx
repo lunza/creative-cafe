@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { Card, Form, Input, Select, Switch, InputNumber, Button, Space, message, Divider, Tag, Collapse, Tooltip, Alert, AutoComplete } from 'antd';
-import { CheckCircleOutlined, CloseCircleOutlined, SyncOutlined, SettingOutlined, CloudServerOutlined, DesktopOutlined, DatabaseOutlined, QuestionCircleOutlined, SearchOutlined } from '@ant-design/icons';
+import { CheckCircleOutlined, CloseCircleOutlined, SyncOutlined, SettingOutlined, CloudServerOutlined, DesktopOutlined, DatabaseOutlined, QuestionCircleOutlined, SearchOutlined, StopOutlined } from '@ant-design/icons';
 import { useVectorStore } from '../../stores/vectorStore';
 import { useSettingStore } from '../../stores/settingStore';
 import { rendererEmbeddingService } from '../../services/rendererEmbeddingService';
@@ -14,7 +14,7 @@ export interface VectorConfigPanelRef {
 }
 
 // 默认配置常量
-const DEFAULT_CONFIGS: Record<EmbeddingMode, VectorDefaults> = {
+const DEFAULT_CONFIGS: Record<'remote' | 'local', VectorDefaults> = {
   remote: {
     remoteModel: 'text-embedding-3-small',
     remoteApiUrl: 'https://api.openai.com/v1/embeddings',
@@ -90,6 +90,7 @@ const CONFIG_GROUPS: VectorConfigGroup = {
 const MODE_FIELD_MAP: Record<EmbeddingMode, string[]> = {
   remote: ['remoteModel', 'remoteApiUrl', 'remoteApiKey', 'remoteApiKeyTransmission'],
   local: ['localModel'],
+  disabled: [],
 };
 
 const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
@@ -113,7 +114,6 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
   }));
 
   const getInitialValues = useCallback((embeddingMode: EmbeddingMode): any => {
-    const defaults = DEFAULT_CONFIGS[embeddingMode];
     const saved = setting?.vector || {};
 
     // 迁移旧模型名到新模型名
@@ -122,6 +122,15 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
       migrated.localModel = MODEL_NAME_MIGRATION[migrated.localModel];
     }
 
+    // disabled 模式：不合并 DEFAULT_CONFIGS（无默认值），仅使用已保存配置 + embeddingMode
+    if (embeddingMode === 'disabled') {
+      return {
+        embeddingMode,
+        ...migrated,
+      };
+    }
+
+    const defaults = DEFAULT_CONFIGS[embeddingMode];
     return {
       embeddingMode,
       ...defaults,
@@ -145,6 +154,13 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
   }, [setting, form, initializeForm]);
 
   const handleModeChange = useCallback(async (newMode: EmbeddingMode) => {
+    // disabled 模式：仅更新 embeddingMode 字段，不修改其他字段（保留用户已填值便于切换回来），不执行维度推断
+    if (newMode === 'disabled') {
+      form.setFieldsValue({ embeddingMode: 'disabled' });
+      setActiveEmbeddingMode('disabled');
+      return;
+    }
+
     const currentValues = form.getFieldsValue();
     const newDefaults = DEFAULT_CONFIGS[newMode];
 
@@ -456,8 +472,15 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
 
     return (
       <div key={`mode-${activeEmbeddingMode}`} style={{ transition: 'all 0.3s ease' }}>
-        <Form.Item name="embeddingMode" label="Embedding 模式">
-          <Select onChange={handleModeChange}>
+        <Form.Item name="embeddingMode" label={
+          <Space>
+            <span>Embedding 模式</span>
+            <Tooltip title="选择「禁用」将完全停止向量化服务：世界书/知识库自动向量化、聊天历史向量化检索、RAG 上下文注入等功能均会停止。已存储的向量数据保留，重新启用后可继续使用。">
+              <QuestionCircleOutlined style={{ color: '#999', cursor: 'pointer' }} />
+            </Tooltip>
+          </Space>
+        }>
+          <Select onChange={handleModeChange} disabled={false}>
             <Option value="remote">
               <Space>
                 <CloudServerOutlined />
@@ -468,6 +491,12 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
               <Space>
                 <DesktopOutlined />
                 <span>本地模型模式</span>
+              </Space>
+            </Option>
+            <Option value="disabled">
+              <Space>
+                <StopOutlined style={{ color: '#999' }} />
+                <span style={{ color: '#999' }}>禁用</span>
               </Space>
             </Option>
           </Select>
@@ -543,8 +572,18 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
       }
       size="small"
     >
-      <Form form={form} layout="vertical" disabled={loading}>
+      <Form form={form} layout="vertical" disabled={loading || activeEmbeddingMode === 'disabled'}>
         {renderModeSection()}
+
+        {activeEmbeddingMode === 'disabled' && (
+          <Alert
+            message="向量化已禁用"
+            description="所有 RAG 检索/自动向量化功能将停止。已存储的向量数据保留，重新启用后可继续使用。"
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+        )}
 
         {renderCommonSection}
 

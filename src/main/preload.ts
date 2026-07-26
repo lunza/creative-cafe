@@ -636,5 +636,26 @@ contextBridge.exposeInMainWorld('electronAPI', {
     count: (text: string): Promise<number> => ipcRenderer.invoke('token:count', text),
     countBatch: (messages: Array<{ id: string; text: string }>): Promise<Array<{ id: string; count: number }>> =>
       ipcRenderer.invoke('token:countBatch', messages)
+  },
+  // 角色卡表情管理 API（Spec: add-character-expression-system / Task 1）
+  // 存储路径：{userData}/data/character-expressions/{sha256(characterCardId).slice(0,16)}/
+  // 每个角色卡一个 manifest.json + 多个 {emotionKey}.png
+  expression: {
+    list: (characterCardId: string) => ipcRenderer.invoke('expression:list', characterCardId),
+    saveImage: (args: {
+      characterCardId: string;
+      emotionKey: string;
+      imageBase64: string;
+      isCustom: boolean;
+      label?: string;
+    }) => ipcRenderer.invoke('expression:saveImage', args),
+    deleteImage: (args: { characterCardId: string; emotionKey: string }) =>
+      ipcRenderer.invoke('expression:deleteImage', args),
+    addCustomEmotion: (args: { characterCardId: string; key: string; label: string }) =>
+      ipcRenderer.invoke('expression:addCustomEmotion', args),
+    removeCustomEmotion: (args: { characterCardId: string; key: string }) =>
+      ipcRenderer.invoke('expression:removeCustomEmotion', args),
+    getImagePath: (args: { characterCardId: string; emotionKey: string }) =>
+      ipcRenderer.invoke('expression:getImagePath', args)
   }
 });

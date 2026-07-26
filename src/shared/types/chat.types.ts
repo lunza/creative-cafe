@@ -49,6 +49,7 @@ export interface AIRequestMessage {
  * @property timestamp    消息时间戳（ms 数值）
  * @property status       发送状态（可选，仅 CharacterDialogueChat 使用）
  * @property speakerName  发言者名称（可选，仅 CharacterDialogueChat 使用）
+ * @property emotion      AI 回复情绪键名（可选，仅 CharacterDialogueChat 使用，用于驱动表情图像渲染）
  * @property versionInfo  版本信息（可选，仅 CharacterDialogueChat 使用）
  */
 export interface ChatMessage {
@@ -60,6 +61,13 @@ export interface ChatMessage {
   speakerName?: string;
   /** AI 推荐选项（辅助模式开启时，AI 回复中解析出的 3 个推荐选项） */
   suggestedOptions?: string[];
+  /**
+   * AI 回复情绪键名（Spec: add-character-expression-system）。
+   * 由 buildExpressionPrompt 引导 AI 在回复末尾输出 <<<EXPRESSION>>>key<<<END_EXPRESSION>>> 标记，
+   * 经 parseExpressionFromContent 解析后写入此字段，用于驱动表情图像渲染。
+   * 未开启表情功能或解析失败时为 undefined。
+   */
+  emotion?: string;
   versionInfo?: ChatMessageVersionInfo;
 }
 

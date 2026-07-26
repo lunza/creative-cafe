@@ -8,6 +8,7 @@ import { vectorStoreService } from './VectorStoreService';
 import { vectorRegistryService } from './VectorRegistryService';
 import { VectorSourceType, VectorSourceTypeStorageConfig } from '../types/vectorConfig';
 import { WorldBookKeywordMatcher, matchWorldBookKeywords, formatKeywordMatchResults, type KeywordMatchResult } from './WorldBookKeywordMatcher';
+import { vectorConfigManager } from './VectorConfigManager';
 
 class WorldBookService {
   private worldBookDir: string;
@@ -406,14 +407,20 @@ class WorldBookService {
     }
   }
 
-  async vectorizeWorldBook(worldBookPath: string): Promise<{ 
-    success: boolean; 
+  async vectorizeWorldBook(worldBookPath: string): Promise<{
+    success: boolean;
     entriesVectorized: number;
     entriesFailed: number;
     error?: string;
     entryVectorIds: string[];
   }> {
     try {
+      const vectorConfig = vectorConfigManager.loadVectorConfig();
+      if (vectorConfig.embeddingMode === 'disabled') {
+        console.log(`[worldBookService] 向量化已禁用，跳过 vectorizeWorldBook path=${worldBookPath}`);
+        return { success: false, entriesVectorized: 0, entriesFailed: 0, error: '向量化已禁用，请先在系统设置中启用向量化', entryVectorIds: [] };
+      }
+
       console.log(`[WorldBookService] vectorizeWorldBook: starting for ${worldBookPath}`);
       const worldBookData = await this.readWorldBook(worldBookPath);
       if (!worldBookData) {

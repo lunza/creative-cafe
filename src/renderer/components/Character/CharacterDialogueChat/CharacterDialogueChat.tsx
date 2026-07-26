@@ -7,8 +7,10 @@ import ChatInputBar from './ChatInputBar';
 import ChatTypingIndicator from './ChatTypingIndicator';
 import ConfigPanel from './ConfigPanel';
 import CharacterSelectorPanel from './CharacterSelectorPanel';
+import ExpressionManagerModal from './ExpressionManagerModal';
 import { useCharacterDialogueChat } from './CharacterDialogueChat.hooks';
 import { useFavoritesStore } from '../../../stores/favoritesStore';
+import { useExpressionStore } from '../../../stores/expressionStore';
 import { exportConversation } from './CharacterDialogueChat.utils';
 import { CharacterInfo, AIParameterConfig } from './CharacterDialogueChat.types';
 import { getDefaultEngineCapabilities } from '../../Common/ChatEngine/ChatEngine.types';
@@ -98,7 +100,19 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [generatedReplyText, setGeneratedReplyText] = useState('');
   const [polishFlashKey, setPolishFlashKey] = useState(0);
+  const [expressionManagerOpen, setExpressionManagerOpen] = useState(false);
   const favoritePaths = getFavoritePaths();
+
+  // 表情系统订阅（Spec: add-character-expression-system / Task 10.3 + 12.1）
+  // resolveExpressionImage：emotionKey → 表情图像路径解析器（store 内通过 get() 读取 imageCache）
+  // imageCache：作为订阅依赖，缓存变化时触发消息列表重渲染，确保加载完成后表情图像立即生效
+  // loadExpressions：进入对话时预加载该角色卡所有已上传表情
+  const resolveExpressionImage = useExpressionStore((s) => s.resolveExpressionImage);
+  const imageCache = useExpressionStore((s) => s.imageCache);
+  const loadExpressions = useExpressionStore((s) => s.loadExpressions);
+
+  // 表情显示开关（Spec: Task 11.4 + 12.1）
+  const expressionDisplay = characterConfig?.customParameters?.expression_display === true;
 
   useEffect(() => {
     if (stateWithVersionInfo.messages.length > 0 || stateWithVersionInfo.isStreaming) {
@@ -116,6 +130,22 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
       document.body.style.overflow = '';
     };
   }, [isFullscreen]);
+
+  // 预加载当前角色卡的表情包（Spec: add-character-expression-system / Task 12.1）
+  // 触发条件：开启表情显示 + characterCardId 变化（含首次加载）
+  // 加载完成后 imageCache 引用变化，触发下方 no-op effect 与消息列表重渲染
+  useEffect(() => {
+    if (expressionDisplay && characterInfo.characterCardId) {
+      loadExpressions(characterInfo.characterCardId);
+    }
+  }, [expressionDisplay, characterInfo.characterCardId, loadExpressions]);
+
+  // 订阅 imageCache 引用变化以触发消息列表重渲染（Spec: Task 10.3）
+  // resolveExpressionImage 通过 zustand get() 读取最新缓存，但需要订阅引用变化
+  // 确保表情加载/更新完成后气泡头像立即切换
+  useEffect(() => {
+    // no-op: 仅订阅 imageCache 引用变化
+  }, [imageCache]);
 
   const effectiveParams = useMemo(() => {
     return getEffectiveParams();
@@ -382,6 +412,7 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
           selectedPersona={selectedPersona}
           isFavorite={isFavorite(characterInfo.characterCardId)}
           onToggleFavorite={handleToggleFavorite}
+          onOpenExpressionManager={() => setExpressionManagerOpen(true)}
         />
 
         <div
@@ -447,6 +478,12 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
               message={msg}
               characterName={characterInfo.characterCardName}
               avatarPath={avatarPath}
+              expressionImage={
+                msg.role === 'assistant' && msg.emotion &&
+                !(stateWithVersionInfo.isStreaming && index === stateWithVersionInfo.messages.length - 1)
+                  ? resolveExpressionImage(msg.emotion) ?? undefined
+                  : undefined
+              }
               onRetry={retryMessage}
               onRetryFromVersion={retryMessageFromVersion}
               onContinue={handleContinueConversation}
@@ -567,8 +604,8 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
         tokenManagementConfig={tokenManagementConfig}
         customStopSequencesEnabled={characterConfig?.customStopSequencesEnabled ?? false}
         customStopSequences={characterConfig?.customStopSequences}
-        emojiEnhanced={characterConfig?.customParameters?.emoji_enhanced !== false}
-        onEmojiEnhancedToggle={(enabled) => handleParameterChange({ emoji_enhanced: enabled })}
+        expressionDisplay={expressionDisplay}
+        onExpressionDisplayToggle={(enabled) => handleParameterChange({ expression_display: enabled })}
         stripThinkTags={characterConfig?.customParameters?.strip_think_tags !== false}
         onStripThinkTagsToggle={(enabled) => handleParameterChange({ strip_think_tags: enabled })}
         assistMode={characterConfig?.customParameters?.assist_mode === true}
@@ -589,6 +626,15 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
         onMemoryTableTemplateAssociate={handleMemoryTableTemplateAssociate}
         onTokenManagementConfigChange={handleTokenManagementConfigChange}
         onSaveConfig={saveConfig}
+      />
+
+      {/* 表情管理弹窗（Spec: add-character-expression-system / Task 8.2） */}
+      <ExpressionManagerModal
+        open={expressionManagerOpen}
+        characterCardId={characterInfo.characterCardId}
+        characterName={characterInfo.characterCardName}
+        avatarPath={avatarPath}
+        onClose={() => setExpressionManagerOpen(false)}
       />
     </Modal>
   );
