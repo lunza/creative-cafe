@@ -1,6 +1,9 @@
 import { promptBuilder } from './PromptBuilder';
 import { aiConfigProvider } from '../ai/AIConfigProvider';
 
+// 【多模态兼容性审计】本服务使用字符串 content 构造消息（buildPolishDescriptionPrompt 返回纯文本），
+// 不导入 AIService.ts 的联合类型 ChatMessage，不受多模态 content 扩展影响。
+// 所有消息 content 均为纯文本字符串，适用于描述润色等非视觉任务。
 interface PolishDescriptionRequest {
   description: string;
   resourceContext?: string;

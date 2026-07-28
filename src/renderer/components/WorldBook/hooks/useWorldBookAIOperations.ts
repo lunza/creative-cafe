@@ -12,6 +12,10 @@ import type { UseWorldBookFormStateReturn } from './useWorldBookFormState';
 /**
  * 世界书 AI 操作 Hook（Task 8 拆分产物）。
  *
+ * 【多模态兼容性审计】本 Hook 使用内联 { role, content: string } 构造 messages，
+ * 不导入 AIService.ts 的联合类型 ChatMessage，不受多模态 content 扩展影响。
+ * 所有消息 content 均为纯文本字符串，适用于世界书生成/翻译/润色等非视觉任务。
+ *
  * 从原 WorldBookManager.tsx 迁出的全部 AI 长函数：translateText / polishText /
  * generateKeywords / generateTagsForEntry / handleGenerateNewEntries /
  * handleGenerateEntries / handleTemplateGenerateEntries / handleAISortEntries /

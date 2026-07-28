@@ -4,7 +4,7 @@ import { PlusOutlined, StopOutlined, UserOutlined, MessageOutlined, SettingOutli
 import { FieldEditor } from './FieldEditor';
 import { WorldBookRelationPanel } from './WorldBookRelationPanel';
 import { useCharacterAIOperations } from './hooks/useCharacterAIOperations';
-import ExpressionManagerModal from './CharacterDialogueChat/ExpressionManagerModal';
+import AssetManagerModal from './CharacterDialogueChat/AssetManagerModal';
 import type { AIEngine } from '../../types/setting';
 
 /**
@@ -716,7 +716,7 @@ const CharacterEditModal: React.FC<CharacterEditModalProps> = ({
             },
             {
               key: 'expressions',
-              label: <span><SmileOutlined /> 表情管理</span>,
+              label: <span><SmileOutlined /> 素材管理</span>,
               // 【重点标记 - 用户反馈补充入口】原表情管理入口仅位于对话头部 ChatHeader 的 😊 按钮，
               // 用户反馈「没有看到上传角色表情包的位置」。新增此 Tab 使在编辑角色卡时即可管理表情。
               // Spec: add-character-expression-system / Task 15
@@ -727,7 +727,7 @@ const CharacterEditModal: React.FC<CharacterEditModalProps> = ({
                       <Alert
                         type="info"
                         showIcon
-                        message="为该角色卡管理表情图片"
+                        message="为该角色卡管理素材与特征"
                         description={
                           <div>
                             <p>每个角色卡拥有独立的表情包存储空间。支持 30 种预置情绪 + 自定义情绪扩展。上传表情后，在对话中开启「表情显示」开关即可根据 AI 回复情绪动态切换头像。</p>
@@ -825,12 +825,17 @@ const CharacterEditModal: React.FC<CharacterEditModalProps> = ({
         </div>
       </Modal>
 
-      {/* 表情管理弹窗（Spec: add-character-expression-system / Task 15 - CharacterEditModal 入口） */}
-      {/* 【重点标记】用户反馈原入口仅位于对话头部 ChatHeader，不易发现；新增此入口 */}
-      <ExpressionManagerModal
+      {/* 素材管理弹窗（Spec: add-asset-and-trait-management / Task 11 - CharacterEditModal 入口） */}
+      {/* 【重点标记 - BREAKING UI 变更】原「表情管理」Tab 重构为「素材管理」，渲染 AssetManagerModal。
+          表情数据层（expressionService / expressionStore）保持不变，仅 UI 容器层重构。
+          新增 characterDescription / personality / scenario props 供 Task 13 AI 特征生成使用。 */}
+      <AssetManagerModal
         open={expressionModalOpen}
         characterCardId={editingItem?.path || ''}
         characterName={formValues.name || editingItem?.name || '未命名'}
+        characterDescription={formValues.description || ''}
+        characterPersonality={formValues.personality || ''}
+        characterScenario={formValues.scenario || ''}
         avatarPath={uploadedImage || undefined}
         onClose={() => setExpressionModalOpen(false)}
       />

@@ -567,6 +567,8 @@ Electron 安全模型: `contextIsolation: true`, `nodeIntegration: false`。渲�
 
 #### AI 请求 (ai)
 - `ai.request(config)` → `{ success, data }`
+- `ai.probeCapabilities(args)` → `{ success, capabilities?, error? }` — 探测模型视觉/思维链/工具调用能力（§7.3.5）
+- `ai.recognizeImageTraits(args)` → `{ success, traits?, error? }` — 多模态 LLM 识别角色卡图片提取视觉特征 tag（§7.3.5）
 
 流式事件 (通过 `electronAPI.on/off` 订阅):
 - `ai:stream` — 流式数据块
@@ -960,6 +962,8 @@ interface GameTableEditCommand {
 - `EMOTION_PRESETS`：30 项预置情绪清单（详见下方「7.3.1 表情管理系统」）
 - `buildExpressionPrompt(charName, availableEmotionKeys)`：表情显示模式系统提示词，约束 AI 在回复末尾输出 `<<<EXPRESSION>>>key<<<END_EXPRESSION>>>` 情绪标记（Spec: add-character-expression-system / Task 3）
 - `parseExpressionFromContent(content)`：从 AI 回复中多格式容错解析情绪标记，返回 `{ emotion, cleanedContent }`（Spec: add-character-expression-system / Task 3）
+- `EMOTION_PROMPT_MAP`：30 种预置情绪 → Stable Diffusion 提示词映射表（`Record<string, { positive: string; negative?: string }>`），键名严格对齐 `EMOTION_PRESETS`，用于 AI 表情生成（img2img）（Spec: add-ai-expression-generation / Task 3，详见下方「7.3.2 AI 表情生成」）
+- `buildExpressionGenerationPrompt(charDescription, emotionKey, customLabel?)`：构建 AI 表情生成的 SD 提示词，组合角色卡描述 + 情绪提示词 + 质量词，返回 `{ prompt, negativePrompt }`；自定义情绪通过 `customLabel` 兜底（Spec: add-ai-expression-generation / Task 3）
 
 ### 7.3.1 表情管理系统（Spec: add-character-expression-system）
 
@@ -1011,11 +1015,11 @@ interface GameTableEditCommand {
 | 通道 | 调用签名 | 返回值 | 说明 |
 |------|---------|--------|------|
 | `expression:list` | `list(characterCardId)` | `ExpressionManifest` | 读取角色卡表情包清单（不存在时返回默认空 manifest） |
-| `expression:saveImage` | `saveImage({ characterCardId, emotionKey, imageBase64, isCustom, label? })` | `{ success, error?, imagePath? }` | 保存表情图像（base64，可含 `data:image/png;base64,` 前缀）并更新 manifest；返回图像绝对路径 |
+| `expression:saveImage` | `saveImage({ characterCardId, emotionKey, imageBase64, isCustom, label? })` | `{ success, error?, imagePath? }` | 保存表情图像（base64，可含 `data:image/png;base64,` 前缀）并更新 manifest；返回图像绝对路径。【重点标记 - CSP 兼容】渲染进程不应直接将 `imagePath` 用于 `<img src>`（会被 CSP 拦截），需通过 `file.readAsBase64` 转 data URL，或直接复用入参 `imageBase64`（已是 data URL） |
 | `expression:deleteImage` | `deleteImage({ characterCardId, emotionKey })` | `{ success, error? }` | 删除指定情绪的图像文件（不删除 customEmotions 条目） |
 | `expression:addCustomEmotion` | `addCustomEmotion({ characterCardId, key, label })` | `{ success, error? }` | 添加自定义情绪类别（key 校验 `^[a-z][a-z0-9_]*$`，不与预置重复） |
 | `expression:removeCustomEmotion` | `removeCustomEmotion({ characterCardId, key })` | `{ success, error? }` | 移除自定义情绪：删除 customEmotions 条目 + expressions 条目 + 图像文件 |
-| `expression:getImagePath` | `getImagePath({ characterCardId, emotionKey })` | `{ success, imagePath: string\|null, error? }` | 获取指定情绪的图像绝对路径（不存在返回 null） |
+| `expression:getImagePath` | `getImagePath({ characterCardId, emotionKey })` | `{ success, imagePath: string\|null, error? }` | 获取指定情绪的图像绝对路径（不存在返回 null）。【重点标记 - CSP 兼容】返回值为磁盘绝对路径，渲染进程使用前必须通过 `file.readAsBase64` 转 data URL |
 
 注册入口 `registerExpressionHandlers()` 在 `src/main/ipc/index.ts` 的 `setupIpcHandlers()` 中调用，每个 handler try/catch 兜底返回 `{ success: false, error }`。Preload 暴露 `window.electronAPI.expression.*`。
 
@@ -1065,7 +1069,13 @@ interface GameTableEditCommand {
 2. **预置情绪表情**：用户为预置情绪上传的图像
 3. **默认头像**：角色卡 PNG 图像（即当前对话的 `avatarPath`）
 
-`expressionStore.resolveExpressionImage(emotionKey)` 实现：null/undefined/空串/`'default'` 直接返回 null（回退默认头像）；其他 key 从 `imageCache` 查找绝对路径。流式消息（`isStreaming`）期间使用默认头像，待流式完成后再切换为表情图像，避免闪烁。
+`expressionStore.resolveExpressionImage(emotionKey)` 实现：null/undefined/空串/`'default'` 直接返回 null（回退默认头像）；其他 key 从 `imageCache` 查找 **data URL**。流式消息（`isStreaming`）期间使用默认头像，待流式完成后再切换为表情图像，避免闪烁。
+
+**【重点标记 - CSP 裂图 BUG 修复（2026-07-27）】** `imageCache` 中**只存 data URL**，不存磁盘绝对路径。早期实现直接将 `expressionService.getImagePath / saveImage` 返回的磁盘路径（如 `C:\Users\...\character-expressions\{hash}\joy.png`）存入 `imageCache` 并用于 `<img src>`，但 `src/main/index.ts` 中 CSP 限制 `img-src 'self' data: blob:`，本地文件路径被浏览器拦截导致「裂开图片」图标。修复方案：
+- `loadExpressions`：拿到 `getImagePath` 返回的绝对路径后，再调 `window.electronAPI.file.readAsBase64(path)` 读为 `data:image/png;base64,...` 存入 `imageCache`（与 `useCharacterSwitch.ts` 加载头像方式一致）
+- `saveExpression`：入参 `imageDataUrl` 本身已是 data URL（来自 `ImageCropperModal` 裁剪输出 / `ExpressionGenerateModal` 的 SD 生成输出），保存成功后直接复用存入 `imageCache`，无需再读盘
+
+**核心教训**：Electron 渲染进程启用了 `webSecurity: true` + 严格 CSP 时，本地文件路径不能直接用于 `<img src>`，必须通过 `file.readAsBase64` 转为 data URL（或注册自定义 protocol）。后续涉及「在渲染进程展示主进程落盘的图片」场景应统一遵循 data URL 模式。
 
 #### 参数面板开关（代替 Emoji 增强模式）
 
@@ -1090,8 +1100,8 @@ interface GameTableEditCommand {
 | `src/main/ipc/index.ts` | 在 `setupIpcHandlers()` 中调用 `registerExpressionHandlers()` |
 | `src/main/preload.ts` | 暴露 `electronAPI.expression.*` API |
 | `src/renderer/types/electron.d.ts` | `expression` 命名空间类型声明 |
-| `src/renderer/stores/expressionStore.ts` | Zustand 表情状态 store（`useExpressionStore`），持有 `manifest` / `imageCache` / `loading` / `error`，封装所有 IPC 调用，提供 `loadExpressions` / `saveExpression` / `deleteExpression` / `addCustomEmotion` / `removeCustomEmotion` / `resolveExpressionImage` / `getAvailableEmotionKeys` / `clear` actions |
-| `src/renderer/components/Character/CharacterDialogueChat/PromptBuilder.ts` | `EMOTION_PRESETS` 常量、`buildExpressionPrompt` / `parseExpressionFromContent` 函数 |
+| `src/renderer/stores/expressionStore.ts` | Zustand 表情状态 store（`useExpressionStore`），持有 `manifest` / `imageCache`（**仅存 data URL，CSP 兼容**）/ `loading` / `error`，封装所有 IPC 调用，提供 `loadExpressions` / `saveExpression` / `deleteExpression` / `addCustomEmotion` / `removeCustomEmotion` / `resolveExpressionImage` / `getAvailableEmotionKeys` / `clear` actions。【重点标记 - CSP 裂图 BUG 修复】imageCache 不存磁盘绝对路径，避免被 CSP `img-src 'self' data: blob:` 拦截 |
+| `src/renderer/components/Character/CharacterDialogueChat/PromptBuilder.ts` | `EMOTION_PRESETS` 常量、`buildExpressionPrompt` / `parseExpressionFromContent` 函数（Spec: add-character-expression-system）；`EMOTION_PROMPT_MAP` 常量、`buildExpressionGenerationPrompt` 函数（Spec: add-ai-expression-generation / Task 3） |
 | `src/renderer/components/Character/CharacterDialogueChat/ExpressionManagerModal.tsx` | 表情管理弹窗：30 预置 + 自定义情绪网格、上传/删除/预览、添加/移除自定义情绪表单 |
 | `src/renderer/components/Character/CharacterDialogueChat/ImageCropperModal.tsx` | 图片裁剪弹窗：基于 `react-easy-crop`，方形裁剪、缩放滑块 0.5~5x、滚轮缩放、PNG 输出、长边 > 512px 压缩 |
 | `src/renderer/components/Character/CharacterDialogueChat/ChatHeader.tsx` | 「表情管理」入口按钮（对话头部） |
@@ -1115,6 +1125,968 @@ interface GameTableEditCommand {
 #### 表情图像预加载机制
 
 `expressionStore.loadExpressions(characterCardId)` 加载 manifest 时，对每个已上传的表情图像路径创建 `new Image()` 对象预加载（fire-and-forget），写入浏览器图像缓存。后续情绪切换直接命中缓存避免闪烁。`CharacterDialogueChat.tsx` 的 `useEffect` 在 `expressionDisplay === true` 且 `characterInfo.characterCardId` 变化时调用 `loadExpressions`；`ExpressionManagerModal` 保存/删除表情后亦调用 `loadExpressions` 刷新缓存。
+
+### 7.3.2 AI 表情生成（Spec: add-ai-expression-generation）
+
+> 增量更新（2026-07-27）：新增 AI 表情生成功能，基于角色卡基底图片 + Stable Diffusion img2img + 情绪提示词自动生成对应表情图像，免去用户手动上传每一种情绪表情的负担。本节为 Task 3（情绪 → SD 提示词映射）的落地说明。
+>
+> 增量更新（2026-07-27 / Task 6）：新增 SD WebUI 设置面板（`SDWebuiSettings.tsx`），位于 Settings 页面 AI 引擎设置与向量配置之间。配置项包括端点 URL、模型选择、denoising strength、steps、CFG scale、ADetailer 开关、自定义负面提示词，持久化到 `AppSetting.sdWebui`。连接测试与模型列表通过 `window.electronAPI.sd.checkStatus` / `sd.getModels` 调用主进程 `sdGenerationService`。详见 CODE_WIKI.md §14.16。
+>
+> 增量更新（2026-07-27 / Task 5）：在 `ExpressionManagerModal` 中新增两个 AI 生成入口，调用 Task 4 的 `ExpressionGenerateModal` 组件。
+> - **批量入口**：顶部工具栏新增「AI 生成全部表情」按钮（`ThunderboltOutlined` 图标），位于「添加自定义情绪」按钮右侧。若已有任何表情图，`handleBatchGenerate` 弹出 `Modal.confirm` 二次确认避免误覆盖。
+> - **单张入口**：每个非 default 情绪卡片操作区新增「AI 生成」按钮（`RobotOutlined` 图标，位于「上传」与「删除」按钮之间），`onClick` 调用 `e.stopPropagation()` 后打开单张生成弹窗。
+> - **新增 state**：`generateModalOpen` / `generateMode`（`'batch' | 'single'`）/ `generateTargetKey?` / `generateTargetLabel?`
+> - **刷新机制**：`ExpressionGenerateModal` 的 `onGenerated` 回调调用 `loadExpressions(characterCardId)` 刷新 store，使新生成的图片立即显示在网格中。
+> - **【重点标记】未导入 `ExpressionGenerateModalProps` 类型**：项目 `tsconfig.json` 启用 `noUnusedLocals: true`，本组件直接 inline 传递 props，故仅 import 默认导出，避免未使用类型导入触发 tsc 错误。
+> - 详见 `CODE_WIKI.md` §14.12.3。
+
+#### 概述
+
+与 7.3.1 的「手动上传表情」机制互补：用户既可手动上传表情图片，也可一键调用 AI 生成。AI 表情生成的提示词构建逻辑独立于「让 AI 在回复文本中输出情绪标记」的 `buildExpressionPrompt`（后者只产出情绪键名，不涉及 SD 提示词）。
+
+#### 情绪 → SD 提示词映射（`EMOTION_PROMPT_MAP`）
+
+`PromptBuilder.ts` 末尾新增 `EMOTION_PROMPT_MAP: Record<string, { positive: string; negative?: string }>`，键名严格对齐 `EMOTION_PRESETS` 的 30 个 key（`default` / `admiration` / ... / `cheerfulness`）。
+
+- `positive`：情绪正面提示词（英文，SD 语义），如 `joy` → `joyful expression, bright smile, radiant, happy tears, elated`
+- `negative`（可选）：该情绪特有的负面提示词；多数情绪不提供，仅使用通用负面词
+
+#### 提示词构建函数（`buildExpressionGenerationPrompt`）
+
+```typescript
+buildExpressionGenerationPrompt(charDescription, emotionKey, customLabel?): { prompt, negativePrompt }
+```
+
+组合规则：
+1. **角色描述**：使用 `charDescription`（角色卡 `description` 字段）；为空时 fallback 到 `"character"` 占位，避免 SD 生成无主体图像
+2. **情绪提示词解析**（优先级递减）：
+   - 预置情绪（`emotionKey` 在 `EMOTION_PROMPT_MAP` 中）：取 `mapped.positive` / `mapped.negative`
+   - 自定义情绪（不在 MAP 中但提供 `customLabel`）：`${customLabel} expression, emotional face`（保留中文语义以备翻译层处理）
+   - 既不在 MAP 中也无 `customLabel`：回退到 `EMOTION_PROMPT_MAP.neutral.positive`
+3. **正面提示词拼接**：`{charDescription}, {emotionPositive}, portrait, looking at viewer, simple background, high quality, best quality, masterpiece, detailed face`
+4. **负面提示词拼接**：通用负面 `deformed, ugly, bad anatomy, multiple faces, text, watermark, low quality, blurry, mutated hands, extra digits, missing fingers, bad proportions` + 情绪特有负面（若有）
+
+注：不硬编码 `"1girl"` 等角色类型 tag，由 `charDescription` 自行包含角色外观描述，兼容任意性别/物种的角色卡。
+
+#### 【重点标记 - Spec 约束修改】
+
+原 Spec `add-character-expression-system` 约束 1.b「表情图像仅通过用户上传实现，无任何『自动生成』入口」**已修改**为「允许通过本地 SD WebUI AI 生成，用户也可手动上传，两种方式并存」（见 `add-ai-expression-generation/spec.md` §MODIFIED Requirements）。
+
+这是架构层面的约束变更：从「纯手动」演进为「AI 生成 + 手动上传并存」。关键设计原则：
+
+- **存储完全共用**：AI 生成的图片与手动上传的图片写入同一目录（`data/character-expressions/{sha256(cardId).slice(0,16)}/`）、同一 manifest，无任何区分
+- **渲染逻辑不变**：`ChatMessageBubble` / `expressionStore.resolveExpressionImage` 不感知图片来源，统一按 `emotionKey` 查找
+- **AI 生成仅是「写入表情存储」的另一条数据源**：调用 `expressionStore.saveExpression` 保存，与手动上传走完全相同的 IPC 通道（`expression:saveImage`）
+- **可互相替换/删除**：AI 生成的表情可被手动上传覆盖，手动上传的表情可被 AI 生成覆盖，删除逻辑完全一致
+
+#### 完整管线架构
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         渲染进程 (Renderer)                          │
+│                                                                     │
+│  ExpressionManagerModal                                             │
+│    ├─ 「AI 生成全部表情」按钮 (ThunderboltOutlined) ── batch 模式    │
+│    └─ 每个情绪格子「AI 生成」按钮 (RobotOutlined) ── single 模式    │
+│            ↓                                                        │
+│  ExpressionGenerateModal                                            │
+│    ├─ 加载 SD 设置 (setting.load → sdWebui)                         │
+│    ├─ 加载角色卡描述 (character.read → data.description)            │
+│    ├─ 检测 SD 状态 (sd.checkStatus)                                 │
+│    ├─ 构建提示词 (buildExpressionGenerationPrompt)                  │
+│    ├─ batch: sd.generateAllExpressions + 监听 progress 事件         │
+│    │         每张成功 → expressionStore.saveExpression 立即保存     │
+│    └─ single: sd.generateExpression → 预览 → 保存/重新生成          │
+└───────────────────────────────┬─────────────────────────────────────┘
+                                │ IPC (window.electronAPI.sd.*)
+                                ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│                          主进程 (Main)                              │
+│                                                                     │
+│  sdGenerationHandlers (IPC 层)                                      │
+│    ├─ sd:checkStatus / sd:getModels                                 │
+│    ├─ sd:generateExpression (extractBaseImage + generateExpression) │
+│    ├─ sd:generateAllExpressions (循环 + progress 事件推送)          │
+│    └─ sd:cancelGeneration (设置 isCancelled 标志位)                 │
+│            ↓                                                        │
+│  sdGenerationService (服务层)                                       │
+│    ├─ extractBaseImage: readFileSync(characterCardPath) → base64    │
+│    ├─ generateExpression: POST /sdapi/v1/img2img                    │
+│    │   ├─ init_images: [base64]                                     │
+│    │   ├─ prompt / negative_prompt                                  │
+│    │   ├─ denoising_strength: 0.55, steps: 28, cfg: 7              │
+│    │   ├─ sampler: DPM++ 2M Karras, 512×512                         │
+│    │   └─ alwayson_scripts.ADetailer (face_yolov8n.pt, denoising 0.4)│
+│    ├─ cancelGeneration: POST /sdapi/v1/interrupt                    │
+│    └─ checkStatus: GET /sdapi/v1/options                            │
+└───────────────────────────────┬─────────────────────────────────────┘
+                                │ HTTP (fetch + AbortController)
+                                ↓
+                    ┌───────────────────────┐
+                    │  SD WebUI Forge Neo   │
+                    │  (localhost:7860)     │
+                    │  需 --api 参数启动    │
+                    └───────────────────────┘
+```
+
+#### 批量生成工作流（batch 模式）
+
+1. **入口**：`ExpressionManagerModal` 顶部工具栏「AI 生成全部表情」按钮 → 若已有表情图则 `Modal.confirm` 二次确认 → 打开 `ExpressionGenerateModal` mode=batch
+2. **初始化**：弹窗打开时加载 SD 设置 + 角色卡描述 + 检测 SD 状态（不可达时显示错误 + 启动指引）
+3. **启动生成**：用户点击「开始生成」→ 为全部 30 个预置情绪构建提示词 → 调用 `sd:generateAllExpressions`
+4. **进度推送**：主进程循环生成，每张完成通过 `sd:generationProgress` 推送 `{ current, total, emotionKey, status, imageBase64? }`
+5. **实时保存**：渲染进程收到 progress 事件且 `status === 'success'` 时，**立即**调用 `expressionStore.saveExpression` 保存该张（不等全部完成），网格实时刷新
+6. **取消**：用户点击「取消生成」→ `sd:cancelGeneration` 设置 `isCancelled = true` → 主进程下次循环检查时退出；当前进行中的 img2img 请求由 120s 超时兜底
+7. **完成**：主进程推送 `sd:generationComplete` `{ total, success, failed, cancelled }` → 弹窗显示汇总 → `loadExpressions` 刷新 store → `onGenerated?.()` 通知父组件
+
+#### 单个生成工作流（single 模式）
+
+1. **入口**：情绪格子操作区「AI 生成」按钮（RobotOutlined）→ 打开 `ExpressionGenerateModal` mode=single，传入 `targetEmotionKey`
+2. **构建提示词**：`buildExpressionGenerationPrompt(charDescription, targetEmotionKey, customLabel?)` + 合并用户自定义负面提示词
+3. **生成**：用户点击「开始生成」→ `sd:generateExpression({ characterCardPath, emotionKey, prompt, negativePrompt, options })`
+4. **预览**：成功后拼接 `data:image/png;base64,` 前缀，展示 256×256 预览（antd `Image` 支持点击放大）
+5. **保存/重新生成**：用户选择「保存」（调用 `saveExpression` → 刷新 store → 关闭弹窗）或「重新生成」（重新调用 IPC）
+6. **自定义情绪**：`isCustom = !EMOTION_PRESETS.some(e => e.key === targetEmotionKey)`，保存时传入 `isCustom` 与 `label`
+
+#### 错误处理
+
+| 场景 | 表现 | 用户提示 |
+|------|------|---------|
+| SD WebUI 未启动 | `checkStatus` 返回 `available: false` | Alert 显示「无法连接 SD WebUI，请确认 Forge Neo 已启动且开启了 API（--api 参数）」 |
+| 请求超时（120s） | `generateExpression` 返回 `error` | 单个模式显示错误 + 「重新生成」按钮；批量模式该张记为 failed，继续下一张 |
+| 模型未加载 | `checkStatus` 返回 `currentModel: undefined` | Alert 提示「SD WebUI 未加载模型」 |
+| img2img 返回空 images | `generateExpression` 返回 `error` | 同请求超时处理 |
+| 批量生成中部分失败 | progress 事件 `status: 'failed'` | 进度条继续，失败张数累计，完成后汇总显示「成功 N 张 / 失败 N 张」 |
+
+#### SD WebUI 设置（Settings 页面）
+
+`SDWebuiSettings.tsx` 位于 Settings 页面，配置项持久化到 `AppSetting.sdWebui`：
+
+| 配置项 | 字段 | 默认值 | 说明 |
+|--------|------|--------|------|
+| 端点 URL | `endpoint` | `http://localhost:7860` | Forge Neo API 地址，需 `--api` 启动 |
+| 模型 | `model` | （空=使用当前） | 从 `sd:getModels` 拉取的下拉列表 |
+| Denoising Strength | `denoisingStrength` | 0.55 | 滑块 0.1-0.9，控制表情变化幅度 |
+| Steps | `steps` | 28 | SDXL 推荐步数 |
+| CFG Scale | `cfgScale` | 7 | 提示词遵循度 |
+| Sampling Method | `sampler` | `DPM++ 2M Karras` | 【重点标记 - 采样器可配置（2026-07-27）】`AutoComplete` 下拉 + 自由输入，10 个 SDXL 推荐采样器预设。早期版本缺失此字段导致采样器固定无法更改 |
+| ADetailer | `adetailerEnabled` | true | 面部修复开关 |
+| 自定义负面提示词 | `customNegativePrompt` | （空） | 留空使用 `buildExpressionGenerationPrompt` 默认负面词 |
+| **ADetailer 高级参数**（折叠面板） | — | — | 【重点标记 - ADetailer-Neo 兼容性 + 参数扩展（2026-07-27）】字段名严格对齐 `extensions/ADetailer-Neo/lib_adetailer/args.py` 的 `ADetailerArgs`（pydantic `extra="forbid"`）。包含 16 个字段：`adModel`（检测模型，9 预设）/ `adConfidence`（0-1）/ `adDenoisingStrength`（0-1）/ `adMaskBlur`（0-20）/ `adDilateErode`（-20~20）/ `adInpaintOnlyMasked`（bool）/ `adInpaintOnlyMaskedPadding`（0-128）/ `adUseInpaintWidthHeight`+`adInpaintWidth`+`adInpaintHeight` / `adUseSteps`+`adSteps` / `adUseCfgScale`+`adCfgScale` / `adUseSampler`+`adSampler` |
+
+连接测试按钮调用 `sd.checkStatus`，结果显示当前模型 checkpoint 或错误信息。
+
+**【重点标记 - ADetailer-Neo 兼容性修复（2026-07-27）】** 早期实现错误使用了 `ad_inpaint_full_res`（Neo 已移除）和 `ad_dilation`（正确字段名为 `ad_dilate_erode`），导致 SD WebUI 控制台报 `pydantic_core._pydantic_core.ValidationError: Extra inputs are not permitted`。修复方案：直接读取用户本地 `extensions/ADetailer-Neo/lib_adetailer/args.py` 确认 `ADetailerArgs` 字段定义，移除非法字段、修正字段名、补全 `ad_inpaint_only_masked_padding` 等缺失字段，并扩展设置 UI 暴露全套高级参数。**核心教训**：集成 SD WebUI 扩展时必须直接读取本地扩展源码确认 pydantic 模型的 `extra` 策略与字段名，不能依赖网络搜索到的「原版」参数文档。
+
+#### IPC 通道（命名空间 `sd`）
+
+| 通道 | 调用签名 | 返回值 | 说明 |
+|------|---------|--------|------|
+| `sd:checkStatus` | `checkStatus(endpoint)` | `{ available, currentModel?, error? }` | GET `/sdapi/v1/options`，检测 SD WebUI 可用性 |
+| `sd:getModels` | `getModels(endpoint)` | `{ success, models: SDModel[], error? }` | GET `/sdapi/v1/sd-models`，获取模型清单 |
+| `sd:generateExpression` | `generateExpression({ characterCardPath, emotionKey, prompt, negativePrompt, options? })` | `{ success, imageBase64?, error? }` | 单个生成：extractBaseImage + img2img |
+| `sd:generateAllExpressions` | `generateAllExpressions({ characterCardPath, emotions, options? })` | `{ success, total, successCount, failedCount, cancelledCount }` | 批量生成 + progress 事件推送 |
+| `sd:cancelGeneration` | `cancelGeneration()` | `{ success: true }` | 设置 `isCancelled` 标志位，下次循环退出 |
+
+**事件推送**（渲染进程通过 `onGenerationProgress` / `onGenerationComplete` 监听）：
+- `sd:generationProgress`：`{ current, total, emotionKey, status: 'success'|'failed', error?, imageBase64? }`
+- `sd:generationComplete`：`{ total, success, failed, cancelled }`
+
+#### 关键文件清单
+
+| 文件 | 职责 |
+|------|------|
+| `src/main/services/sdGenerationService.ts` | SD WebUI API 客户端服务（单例），fetch + AbortController 超时控制，img2img 请求体构建，ADetailer 面部修复配置 |
+| `src/main/ipc/handlers/sdGenerationHandlers.ts` | IPC 通道注册（5 个），批量生成循环 + progress 事件推送 + isCancelled 取消机制 |
+| `src/main/ipc/index.ts` | 在 `setupIpcHandlers()` 中调用 `registerSdGenerationHandlers()` |
+| `src/main/preload.ts` | 暴露 `electronAPI.sd.*` 命名空间（8 个方法含事件监听） |
+| `src/renderer/types/electron.d.ts` | `sd` 命名空间 TypeScript 类型声明 |
+| `src/renderer/components/Character/CharacterDialogueChat/ExpressionGenerateModal.tsx` | AI 表情生成弹窗（batch + single 双模式），进度条 + 实时保存 + 预览 |
+| `src/renderer/components/Character/CharacterDialogueChat/ExpressionManagerModal.tsx` | AI 生成入口（顶部「AI 生成全部表情」按钮 + 格子内「AI 生成」按钮） |
+| `src/renderer/components/Character/CharacterDialogueChat/PromptBuilder.ts` | `EMOTION_PROMPT_MAP`（30 项）+ `buildExpressionGenerationPrompt` 函数 |
+| `src/renderer/components/Settings/SDWebuiSettings.tsx` | SD WebUI 设置面板（端点/模型/denoising/steps/cfg/ADetailer/负面提示词） |
+| `src/renderer/components/Settings/Settings.tsx` | 集成 SDWebuiSettings，handleSave 时合并 sdWebui 配置 |
+| `src/renderer/types/setting.ts` | `SDWebuiConfig` 接口定义 |
+| `src/shared/settings.ts` | `defaultSetting.sdWebui` 默认配置（与 sdGenerationService 默认参数一致） |
+
+### 7.3.3 角色素材管理与特征管理（Spec: add-asset-and-trait-management）
+
+> 增量更新（2026-07-27 / Task 2 + Task 7）：在表情管理（7.3.1）基础上扩展为通用素材管理 + 角色视觉特征管理。本节为 IPC 层（Task 2 + Task 7）落地说明，服务层（Task 1 + Task 6）由其他 Sub-Agent 完成。
+>
+> 设计目标：
+> - **特征管理（Task 1 + 2）**：为每个角色卡持久化视觉特征 tag 数组（如 `["white fur", "dog girl", "black shirt"]`），SD 生成素材时携带该特征以保证角色一致性（毛色/服饰/物种等关键特征不漂移）。
+> - **素材管理（Task 6 + 7）**：将表情管理拓展为通用素材管理，新增三种素材类型 `illustration`（角色立绘）/ `general`（一般图像）/ `three-view`（三视图 front/side/back 三槽位）。表情类型继续由 `expressionService` 管理，不纳入本服务，保证向后兼容。
+
+#### 存储路径设计
+
+| 数据类型 | 存储路径 |
+|---------|---------|
+| 角色特征 | `{userData}/data/character-traits/{sha256(characterCardId).slice(0,16)}/traits.json` |
+| 素材 PNG | `{userData}/data/character-assets/{sha256(characterCardId).slice(0,16)}/{assetType}/{assetId}.png` |
+| 素材清单 | `{userData}/data/character-assets/{sha256(characterCardId).slice(0,16)}/{assetType}/manifest.json` |
+
+- `sha256(characterCardId).slice(0,16)` 与 `expressionService.sanitizeCardId` 完全一致，同一角色卡在 `character-expressions / character-traits / character-assets` 三个目录下使用同一 hash 子目录名
+- 每个 `assetType` 拥有独立子目录与独立 manifest，便于按类型批量读取/迁移
+
+#### Manifest 结构
+
+**特征 manifest（traits.json）**：
+
+```json
+{
+  "characterCardId": "原始-characterCardId-字符串",
+  "version": 1,
+  "traits": ["white fur", "dog girl", "black shirt"]
+}
+```
+
+**素材 manifest（manifest.json）**：
+
+```json
+{
+  "characterCardId": "原始-characterCardId-字符串",
+  "version": 1,
+  "assets": {
+    "front": {
+      "id": "front",
+      "type": "three-view",
+      "slot": "front",
+      "image": "front.png",
+      "createdAt": "2026-07-27T12:00:00.000Z"
+    },
+    "main_illustration": {
+      "id": "main_illustration",
+      "type": "illustration",
+      "image": "main_illustration.png",
+      "createdAt": "2026-07-27T12:00:00.000Z"
+    }
+  }
+}
+```
+
+- 三视图类型（`three-view`）的 `assetId` 仅允许 `front` / `side` / `back`，`slot` 字段与 `assetId` 一致；非 `three-view` 类型忽略 `slot` 字段
+
+#### IPC 通道（命名空间 `characterTrait`，Task 2）
+
+| 通道 | 调用签名 | 返回值 | 说明 |
+|------|---------|--------|------|
+| `character-trait:list` | `list(characterCardId)` | `string[]` | 读取角色卡视觉特征 tag 数组；文件不存在或解析失败时返回 `[]` |
+| `character-trait:save` | `save({ characterCardId, traits })` | `{ success, error? }` | 覆盖保存特征 tag 数组（自动创建目录，原子写入 traits.json） |
+| `character-trait:clear` | `clear(characterCardId)` | `{ success, error? }` | 删除 traits.json 文件（文件不存在视为幂等成功，仅删文件保留目录） |
+
+#### IPC 通道（命名空间 `asset`，Task 7）
+
+| 通道 | 调用签名 | 返回值 | 说明 |
+|------|---------|--------|------|
+| `asset:list` | `list({ characterCardId, assetType })` | `AssetManifest` | 读取角色卡 × assetType 的素材包清单；不存在时返回默认空 manifest |
+| `asset:save` | `save({ characterCardId, assetType, assetId, imageBase64, slot? })` | `{ success, error?, imagePath? }` | 保存素材图像（base64，可含 `data:image/png;base64,` 前缀）并更新 manifest；返回图像绝对路径。【重点标记 - CSP 兼容】imagePath 为磁盘路径，渲染进程不应直接用于 `<img src>`，需通过 `file.readAsBase64` 转 data URL |
+| `asset:delete` | `delete({ characterCardId, assetType, assetId })` | `{ success, error? }` | 删除素材图像并从 manifest.assets 移除条目（图像不存在视为幂等成功） |
+| `asset:getImagePath` | `getImagePath({ characterCardId, assetType, assetId })` | `{ success, imagePath: string\|null, error? }` | 获取指定素材的图像绝对路径；不存在时 `imagePath=null`、`success=true`。【重点标记 - CSP 兼容】返回值为磁盘绝对路径，渲染进程使用前必须通过 `file.readAsBase64` 转 data URL（与 `expression:getImagePath` 处理方式一致） |
+
+注册入口 `registerCharacterTraitHandlers()` / `registerAssetHandlers()` 在 `src/main/ipc/index.ts` 的 `setupIpcHandlers()` 中调用（紧跟 `registerExpressionHandlers()` 之后），每个 handler try/catch 兜底返回 `{ success: false, error }`。Preload 暴露 `window.electronAPI.characterTrait.*` 与 `window.electronAPI.asset.*`。
+
+#### 类型契约约定
+
+- **preload 透传类型**：`assetType` 在 preload 中透传为 `string`（避免主进程 `AssetType` 联合类型泄露到渲染进程），实际仅接受 `'illustration' | 'general' | 'three-view'`，`slot` 字段仅接受 `'front' | 'side' | 'back'`，service 内部对三视图类型校验 `assetId` 是否在 `front/side/back` 白名单内
+- **electron.d.ts 内联声明**：`AssetManifest` / `AssetEntry` 类型在 `electron.d.ts` 中采用内联声明（与 expression 命名空间一致），避免主进程服务类型导入到渲染进程类型声明文件
+
+#### 关键文件清单
+
+| 文件 | 职责 |
+|------|------|
+| `src/main/services/characterTraitService.ts` | 特征存储主进程服务（单例 `characterTraitService`），Task 1 产出；SHA-256 目录哈希、traits.json 读写、特征清单覆盖保存/清除 |
+| `src/main/services/assetService.ts` | 素材存储主进程服务（单例 `assetService`），Task 6 产出；按 `assetType` 分目录管理 PNG + manifest、三视图槽位约束、图像保存/删除/读取 |
+| `src/main/ipc/handlers/characterTraitHandlers.ts` | IPC 通道注册（`registerCharacterTraitHandlers`），3 个通道（list / save / clear），Task 2 产出 |
+| `src/main/ipc/handlers/assetHandlers.ts` | IPC 通道注册（`registerAssetHandlers`），4 个通道（list / save / delete / getImagePath），Task 7 产出；`getImagePath` 把 `string\|null` 包装为 `{ success, imagePath, error? }` 结构，与 `expression:getImagePath` 返回形态一致 |
+| `src/main/ipc/index.ts` | 在 `setupIpcHandlers()` 中依次调用 `registerExpressionHandlers` / `registerCharacterTraitHandlers` / `registerAssetHandlers` / `registerSdGenerationHandlers` |
+| `src/main/preload.ts` | 暴露 `electronAPI.characterTrait.{list, save, clear}` 与 `electronAPI.asset.{list, save, delete, getImagePath}` 命名空间 |
+| `src/renderer/types/electron.d.ts` | `characterTrait` / `asset` 命名空间 TypeScript 类型声明（内联 `AssetManifest` 结构） |
+
+#### 与表情系统的关系（向后兼容策略）
+
+- **目录隔离**：表情 / 特征 / 素材三个数据集存储在 `data/character-expressions/` / `data/character-traits/` / `data/character-assets/` 三个独立根目录下，互不重叠
+- **服务隔离**：`expressionService` 继续负责表情类型，`characterTraitService` 负责特征清单，`assetService` 负责三种新素材类型；三个服务互不依赖，单例各自独立
+- **哈希一致**：三个服务的 `sanitizeCardId` 实现完全一致（SHA-256 前 16 位），同一角色卡在三个目录下使用同一 hash 子目录名，便于未来跨类型检索
+- **零回归**：表情系统（7.3.1）的所有现有功能无需迁移，所有现有 IPC 通道与 store 不受影响
+
+#### 整体架构图（Task 1-15 全量落地，2026-07-27 补充）
+
+```
+┌──────────────────────── 渲染进程（Renderer） ─────────────────────────┐
+│                                                                      │
+│  AssetManagerModal.tsx ── 5 Tab ──────────────────────────────────┐  │
+│   ├─ 表情 Tab    ──> ExpressionTabContent                          │  │
+│   ├─ 角色立绘   ──> AssetGridTabContent('illustration')              │  │
+│   ├─ 一般图像   ──> AssetGridTabContent('general')                  │  │
+│   ├─ 三视图     ──> ThreeViewTabContent('three-view')               │  │
+│   └─ 角色特征   ──> CharacterTraitTabContent                         │  │
+│                                                                     │  │
+│   顶层统一入口：openGenerateModal(mode, options?)                   │  │
+│       │                                                             │  │
+│       v                                                             │  │
+│   AssetGenerateModal.tsx ── 5 mode ───────────────────────────────┐  │  │
+│   ├─ batch-expression / single-expression  ──> expressionStore    │  │  │
+│   ├─ illustration / general / three-view    ──> assetStore         │  │  │
+│   └─ 所有 mode 打开时读 characterTrait.list ──> options.characterTraits │
+│                                                                     │  │
+│   Stores:                                                           │  │
+│   ├─ expressionStore       (§7.3.1)                                  │  │
+│   ├─ assetStore           (Task 8) ── imageCache 仅存 data URL     │  │
+│   └─ characterTraitStore  (Task 3 + Task 13 setTraits)              │  │
+│                                                                     │  │
+└──────────────────────────────────┬───────────────────────────────────┘
+                                   │ IPC (preload 透传)
+                                   v
+┌──────────────────────── 主进程（Main） ─────────────────────────────┐
+│                                                                     │
+│  IPC Handlers (src/main/ipc/handlers/):                            │
+│   ├─ expressionHandlers       ──> expressionService                │
+│   ├─ characterTraitHandlers   ──> characterTraitService            │
+│   ├─ characterTraitAIHandlers ──> characterTraitAIService           │
+│   ├─ assetHandlers            ──> assetService                    │
+│   └─ sdGenerationHandlers     ──> sdGenerationService               │
+│                                  │                                  │
+│                                  v                                  │
+│                          sdGenerationService:                       │
+│                          options.characterTraits ──> 替换 prompt 中 │
+│                              的 {traits} 占位符（含 ADetailer       │
+│                              ad_prompt 同步注入）                   │
+│                                  │                                  │
+│                                  v                                  │
+│                          本地 Forge Neo /sdapi/v1/img2img           │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   v
+┌─────────────────────────── 数据持久层 ──────────────────────────────┐
+│  {userData}/data/                                                  │
+│   ├─ character-expressions/{hash}/         (expressionService)      │
+│   │   └─ {emotionKey}.png + manifest.json                          │
+│   ├─ character-traits/{hash}/              (characterTraitService)  │
+│   │   └─ traits.json                                                │
+│   └─ character-assets/{hash}/              (assetService)           │
+│       ├─ illustration/{assetId}.png + manifest.json                 │
+│       ├─ general/{assetId}.png + manifest.json                      │
+│       └─ three-view/{front|side|back}.png + manifest.json          │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+#### 素材类型表
+
+| assetType | 中文名 | assetId 规则 | 存储路径 | 主进程服务 | 渲染进程 store |
+|-----------|--------|-------------|---------|-----------|----------------|
+| `expression`（不属于本 Spec） | 表情 | `emotionKey`（30 预置 + 自定义） | `data/character-expressions/{hash}/{emotionKey}.png` | `expressionService` | `expressionStore` |
+| `illustration` | 角色立绘 | `ill_{timestamp}_{random}` | `data/character-assets/{hash}/illustration/{assetId}.png` | `assetService` | `assetStore` |
+| `general` | 一般图像 | `gen_{timestamp}_{random}` | `data/character-assets/{hash}/general/{assetId}.png` | `assetService` | `assetStore` |
+| `three-view` | 三视图 | **仅 `front` / `side` / `back`** | `data/character-assets/{hash}/three-view/{front|side|back}.png` | `assetService` | `assetStore` |
+
+- 表情类型继续由 `expressionService` 管理，**不纳入 `assetService`**，保证向后兼容
+- `three-view` 类型在 `assetService` 内部对 `assetId` 做白名单校验（`THREE_VIEW_ALLOWED_SLOTS = ['front', 'side', 'back']`），违例返回 `{ success: false, error }`
+- 三个 `assetType` 共用同一 hash 子目录但各占独立子目录与独立 manifest，便于按类型批量读取/迁移
+
+#### 特征携带流程（Task 4 + Task 5 + Task 10）
+
+**【重点标记 - 特征携带机制是角色一致性的核心保障】** 该机制保证 SD 生成素材时自动携带角色视觉特征 tag，避免毛色/服饰/物种等关键特征漂移。
+
+```
+1. 用户在 AssetManagerModal「角色特征」Tab 编辑特征 tag 数组
+   └─ characterTraitStore.saveTraits ──IPC──> characterTraitService.saveTraits
+                                                └─> 写入 traits.json
+
+2. 用户在 AssetGenerateModal 任一 mode 点击「开始生成」
+   └─ 打开弹窗时调 characterTrait.list(characterCardId) 读取 traits
+   └─ buildSdOptions 时透传 traits 到 options.characterTraits
+
+3. 渲染进程 sd.generateExpression IPC
+   └─> 主进程 sdGenerationHandlers
+        └─> sdGenerationService.generateExpression(params, options)
+             ├─ options.characterTraits 存在？
+             │   ├─ 是：prompt 中的 {traits} 占位符替换为 "trait1, trait2, trait3"
+             │   │      循环 replace(/,\s*,/g, ',') 直至收敛（清理空逗号）
+             │   │      清理开头/结尾逗号与多余空格
+             │   │      ADetailer ad_prompt 同步使用已注入特征的最终 prompt
+             │   └─ 否：{traits} 替换为空字符串并清理多余逗号
+             └─> POST /sdapi/v1/img2img 生成
+```
+
+- `{traits}` 占位符由上游 `PromptBuilder.buildExpressionGenerationPrompt(emotionKey, customLabel, characterTraits)` 写入到 `positivePromptTemplate`（默认 `'portrait, {traits}, looking at viewer, simple background, {emotion}, high quality, best quality, masterpiece'`，{traits} 放在 portrait 之后确保角色特征优先）
+- 替换使用函数形式 `replace(re, () => traits.join(', '))` 避免 `$` 特殊字符干扰
+- 旧配置兼容：若用户 `positivePromptTemplate` 不含 `{traits}` 占位符，特征 tag 会在 prompt 开头追加（不破坏旧模板）
+
+#### AI 特征生成流程（Task 12 + Task 13）
+
+```
+1. 用户在 AssetManagerModal「角色特征」Tab 点击「AI 生成特征」按钮
+   └─ CharacterTraitTabContent.handleAIGenerateTraits (异步)
+        ├─ 校验 characterCardId 非空
+        ├─ 校验至少一个描述字段（characterDescription/personality/scenario）非空
+        ├─ 若 traits.length > 0 弹 Modal.confirm 二次确认（已有特征将被覆盖）
+        │   └─ 【重点标记 - antd v6 兼容性】okType:'warning' 替换为 okButtonProps:{danger:true}
+        ├─ setAiGenerating(true)
+        └─ window.electronAPI.ai.generateCharacterTraits IPC
+
+2. 主进程 characterTraitAIHandlers
+   └─> characterTraitAIService.generateCharacterTraits(params)
+        ├─ 入参校验 + 读取 aiConfigProvider 配置
+        ├─ 校验 baseUrl/apiKey/modelName（缺失返回「AI 引擎未配置」）
+        ├─ 读取激活引擎 temperature/max_tokens
+        │   └─ 【项目最高优先级规则】任一字段缺失返回 null → 友好错误
+        │      （禁止使用 AI 参数默认值，与 WritingStyleLearningService 一致）
+        ├─ 构建 system + user 消息（CHARACTER_TRAIT_SYSTEM_PROMPT）
+        ├─ 非流式 POST /v1/chat/completions
+        └─ 解析 data.choices[0].message.content
+            └─ 按逗号/换行/分号切分 → trim → 过滤空串 →
+               移除前缀编号 → 移除尾部标点 → Set 去重保留顺序
+
+3. 渲染进程收到 { success, traits?, error? }
+   ├─ success + traits.length > 0
+   │   └─ characterTraitStore.setTraits(traits)  ← 仅本地批量替换
+   │      └─ 防御性处理：非数组转空 + trim + 过滤空串 + Set 去重
+   │   └─ message.success('AI 生成了 N 个特征，请确认后点击「保存」')
+   ├─ success + traits.length === 0
+   │   └─ message.info('AI 未能从角色描述中提取到视觉特征，请手动添加')
+   └─ failure → message.error(result.error)
+   └─ finally setAiGenerating(false)
+
+4. 用户在编辑区逐条 review / 编辑 / 删除 / 追加
+   └─ 点击「保存」按钮 → characterTraitStore.saveTraits(characterCardId, traits)
+       └─ 乐观更新 + 失败回滚 → characterTraitService.saveTraits → traits.json
+```
+
+- **设计要点**：`setTraits` 仅修改本地 state，**不调 IPC 持久化**。AI 返回的特征可能含冗余/低质量 tag，用户必须 review/编辑后再点击「保存」触发 `saveTraits` 落盘。避免直接覆盖持久化数据丢失用户已有特征
+
+#### 完整文件清单（Task 1-15 全量）
+
+**新增文件**：
+
+| 文件 | Task | 职责 |
+|------|------|------|
+| `src/main/services/characterTraitService.ts` | 1 | 角色特征持久化服务（loadTraits/saveTraits/clearTraits） |
+| `src/main/services/assetService.ts` | 6 | 素材管理服务（listAssets/saveAsset/deleteAsset/getAssetPath） |
+| `src/main/services/characterTraitAIService.ts` | 12 | AI 辅助特征生成服务，复用 aiConfigProvider |
+| `src/main/ipc/handlers/characterTraitHandlers.ts` | 2 | IPC：`character-trait:list` / `save` / `clear` |
+| `src/main/ipc/handlers/assetHandlers.ts` | 7 | IPC：`asset:list` / `save` / `delete` / `getImagePath` |
+| `src/main/ipc/handlers/characterTraitAIHandlers.ts` | 12 | IPC：`ai:generateCharacterTraits` |
+| `src/renderer/stores/characterTraitStore.ts` | 3 + 13 | Zustand store（loadTraits/saveTraits/addTrait/removeTrait/updateTrait/setTraits/clear） |
+| `src/renderer/stores/assetStore.ts` | 8 | Zustand store 按 assetType 分组，imageCache 仅存 data URL |
+| `src/renderer/components/Character/CharacterDialogueChat/AssetManagerModal.tsx` | 9 | 5 Tab 弹窗：表情/角色立绘/一般图像/三视图/角色特征 |
+| `src/renderer/components/Character/CharacterDialogueChat/AssetGenerateModal.tsx` | 10 | 5 mode 生成弹窗：batch-expression/single-expression/illustration/general/three-view |
+
+**修改文件**：
+
+| 文件 | Task | 改动 |
+|------|------|------|
+| `src/main/services/sdGenerationService.ts` | 4 | `SDGenerationOptions.characterTraits?: string[]` + `{traits}` 占位符替换 + ADetailer `ad_prompt` 同步注入 |
+| `src/renderer/components/Character/CharacterDialogueChat/PromptBuilder.ts` | 5 | `buildExpressionGenerationPrompt` 接收 `characterTraits` 参数 |
+| `src/shared/settings.ts` | 5 | `defaultSetting.sdWebui.positivePromptTemplate` 默认含 `{traits}` |
+| `src/renderer/types/setting.ts` | 5 | `SDWebuiConfig.positivePromptTemplate` 字段类型 |
+| `src/renderer/components/Character/CharacterEditModal.tsx` | 11 | Tab 重命名「表情管理」→「素材管理」，`ExpressionManagerModal` → `AssetManagerModal`，新增 characterDescription/personality/scenario props |
+| `src/renderer/components/Character/CharacterDialogueChat/ChatHeader.tsx` | 11 | Tooltip「表情管理」→「素材管理」 |
+| `src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.tsx` | 11 | `ExpressionManagerModal` → `AssetManagerModal`，新增 characterDescription/personality/scenario props |
+| `src/main/preload.ts` | 14 | 暴露 `characterTrait.*` / `asset.*` / `ai.generateCharacterTraits` |
+| `src/renderer/types/electron.d.ts` | 14 | 新增 `characterTrait` / `asset` / `ai.generateCharacterTraits` 类型声明 |
+| `src/main/ipc/index.ts` | 14 | 注册 `registerCharacterTraitHandlers` / `registerAssetHandlers` / `registerCharacterTraitAIHandlers` |
+
+#### 重点标记汇总
+
+- **【重点标记 - BREAKING UI 变更】** `ExpressionManagerModal` → `AssetManagerModal`，用户可见的「表情管理」Tab/Tooltip 统一更名为「素材管理」。**表情数据层（`expressionService` / `expressionStore`）完全不变，仅 UI 容器层重构，零数据迁移**；内部命名（state/prop 名）保留 `expressionModalOpen` / `onOpenExpressionManager` 等原名以最小化改动面
+- **【重点标记 - 特征携带机制是角色一致性的核心保障】** `SDGenerationOptions.characterTraits` → `{traits}` 占位符替换 → ADetailer `ad_prompt` 同步注入 → 所有素材生成（表情/立绘/一般图像/三视图）自动携带角色特征
+- **【重点标记 - CSP 兼容】** `assetStore.imageCache` 仅存 data URL（参照 `expressionStore` 修复模式），不存磁盘绝对路径，避免渲染进程 `<img src="C:/...">` 被 CSP `img-src 'self' data: blob:` 拦截导致裂图
+- **【重点标记 - antd v6 兼容性修复】** `Modal.confirm` 的 `okType: 'warning'` 在 antd v6 中被移除（v5 已 deprecated），改用 `okButtonProps: { danger: true }`
+- **【重点标记 - 三视图槽位约束】** `three-view` 类型仅允许 `front` / `side` / `back` 三个 `assetId`
+- **【重点标记 - setTraits 本地批量替换】** 为 Task 13 AI 特征生成新增的 local-only action，AI 返回后用户可编辑后再 `saveTraits` 持久化，避免直接覆盖持久化数据
+
+### 7.3.4 自然语言驱动 SD 模型集成（Spec: integrate-nl-driven-sd-models）
+
+> 增量更新（2026-07-28）：在原 SDXL img2img + ADetailer 表情生成管线（§7.3.2）基础上，新增对自然语言（NL）驱动 SD 模型的多模型分支支持，覆盖 qwen-image / qwen-image-edit / flux2 三种新模型类型。所有模型均使用 sd-webui-forge-neo 的标准 `/sdapi/v1/txt2img` 与 `/sdapi/v1/img2img` 端点，无需自定义路由。
+
+#### 概述
+
+原表情/素材生成管线仅支持 SDXL 模型（img2img + ADetailer 面部修复），对 NL 驱动模型（qwen-image / qwen-image-edit / flux2）无法适配。本次集成引入模型类型系统，使 `generateExpression()` 能根据模型类型自动选择正确的端点（txt2img / img2img）、参数预设（denoising / sampler / ADetailer 开关）与提示词风格（tag / 自然语言），一套代码支撑四种模型类型。
+
+#### 模型类型系统
+
+`sdGenerationService.ts` 新增以下类型与函数：
+
+```typescript
+export type SDModelType = 'sdxl' | 'qwen-image' | 'qwen-image-edit' | 'flux2';
+
+export interface SDModelTypePreset {
+  endpoint: 'img2img' | 'txt2img';
+  denoising: number;
+  steps: number;
+  cfgScale: number;
+  sampler: string;
+  adetailerEnabled: boolean;
+  width: number;
+  height: number;
+}
+
+export const MODEL_TYPE_PRESETS: Record<SDModelType, SDModelTypePreset>;
+
+export function detectModelType(modelName: string): SDModelType;
+```
+
+**自动检测规则**（`detectModelType`，根据模型文件名小写匹配）：
+
+| 匹配条件 | 检测结果 | 说明 |
+|---------|---------|------|
+| 文件名含 `qwen` 且含 `edit` | `qwen-image-edit` | 编辑模型，img2img + 视觉编码 |
+| 文件名含 `qwen` | `qwen-image` | 纯文生图模型 |
+| 文件名含 `klein` 或 `flux.2` | `flux2` | Flux2 模型 |
+| 其他 | `sdxl` | 默认兜底 |
+
+`SDGenerationOptions` 接口新增 `modelType?: SDModelType` 字段，供调用方显式指定或由上游自动检测后传入。
+
+#### txt2img 端点集成
+
+新增 `generateTxt2Img(params: SDTxt2ImgParams): Promise<SDGenerationResult>` 方法：
+
+- **端点**：POST `${endpoint}/sdapi/v1/txt2img`
+- **请求体**：`prompt` / `negative_prompt` / `steps` / `cfg_scale` / `width` / `height` / `sampler_name` / `batch_size: 1` / `n_iter: 1`
+- **不包含**：`init_images` / `denoising_strength` / `alwayson_scripts`（txt2img 无需基底图片与 ADetailer）
+- **超时**：120 秒
+- **返回**：`{ success, imageBase64?, error?, warning? }`
+
+`SDTxt2ImgParams` 接口已导出，供 IPC 层与类型声明引用。`SDGenerationResult` 接口新增 `warning?: string` 字段，生成成功时可附带参数推荐提示。
+
+#### 多模型分支生成
+
+`generateExpression()` 方法内部按 `options.modelType`（默认 `'sdxl'`）分流：
+
+```
+generateExpression(params)
+  │
+  ├─ {traits} 占位符替换（所有模型类型都执行，保证角色特征携带）
+  │
+  ├─ modelType === 'qwen-image'  ──> generateTxt2Img()  [txt2img，无需基底图片]
+  ├─ modelType === 'flux2' && 无基底图片 ──> generateTxt2Img()
+  │
+  └─ modelType === 'sdxl' / 'qwen-image-edit' / 'flux2(有基底)'
+       └─> img2img 路径
+            ├─ sdxl：ADetailer 开启（面部修复）
+            ├─ qwen-image-edit：ADetailer 关闭（NL 编辑模型内置一致性能力）
+            └─ flux2：ADetailer 关闭
+```
+
+**关键设计**：
+- 特征携带机制（`{traits}` 占位符替换）在分流**之前**执行，保证所有模型类型都携带角色特征
+- qwen-image-edit 走 img2img 但**跳过 ADetailer**——NL 编辑模型内置视觉编码一致性能力，面部修复反而干扰编辑效果
+- flux2 有基底图片时走 img2img，无基底图片时回退到 txt2img
+
+#### 【重点标记 - qwen-image-edit 工作流】
+
+qwen-image-edit 是表情生成的**推荐模型**，凭借视觉编码（vision encoding）能力在 img2img 编辑时保持角色面部特征一致性（identity consistency）。
+
+| 特性 | 说明 |
+|------|------|
+| 检测方式 | 文件名含 "qwen" + "edit" |
+| 端点 | img2img（`/sdapi/v1/img2img`） |
+| denoising | ≥ 0.9（推荐 0.95），过低导致编辑效果不明显 |
+| ADetailer | **关闭**（NL 编辑模型内置一致性能力） |
+| 视觉编码 | 自动启用，保持角色面部/发型/服饰一致性 |
+| 提示词风格 | 编辑指令风格（见下方 NL 提示词构建） |
+| 宽高 | 原图比例（保持基底图片宽高比） |
+
+**与 sdxl 的对比**：sdxl img2img 依赖 ADetailer 面部修复 + 高 denoising 容易导致角色特征漂移；qwen-image 纯文生图无法保留具体角色外貌。qwen-image-edit 在两者间取得平衡——既保留角色外貌（img2img），又能精确编辑表情（视觉编码 + 编辑指令）。
+
+#### NL 提示词构建
+
+`PromptBuilder.ts` 新增 NL 提示词构建体系，与原 `EMOTION_PROMPT_MAP` / `buildExpressionGenerationPrompt`（SDXL tag 风格）对称：
+
+**`EMOTION_NL_PROMPT_MAP: Record<string, string>`**：30 种预置情绪 → 自然语言描述映射，键名严格对齐 `EMOTION_PRESETS`。示例：
+- `joy` → `'a joyful expression with a bright smile and sparkling eyes'`
+- `anger` → `'an angry expression with furrowed brows and an intense glare'`
+- `default` → `'a calm and neutral expression with a serene face'`
+
+**`buildNLExpressionPrompt(emotionKey, options?): { prompt, negativePrompt }`**：
+
+组合规则：
+1. **情绪 NL 描述解析**：预置情绪从 `EMOTION_NL_PROMPT_MAP` 取值；自定义情绪以 `customLabel` 兜底（`${customLabel.toLowerCase()} expression`）
+2. **特征描述**：`{traits}` 替换为 `with {trait1, trait2, ...}` 格式的自然语言特征描述
+3. **模板替换**：默认模板 `"A portrait of a character. {traits} The character has {emotion}, looking at the viewer. High quality, detailed."`，`{traits}` 与 `{emotion}` 依次替换
+4. **【重点标记 - qwen-image-edit 编辑指令风格】** 当 `modelType === 'qwen-image-edit'` 时，提示词重构为编辑指令风格：`"Change the character's expression to {emotion}. Maintain the character's identity, facial features, hairstyle, and clothing."`——因为 qwen-image-edit 是 img2img 编辑模型，需要明确的编辑指令而非描述性提示词
+
+#### 参数映射表
+
+| 参数 | sdxl | qwen-image | qwen-image-edit | flux2 |
+|------|------|------------|-----------------|-------|
+| 端点 | img2img | txt2img | img2img | txt2img/img2img |
+| denoising | 0.55 | N/A | ≥0.95 | 0.8 |
+| steps | 28 | 28 | 28 | 28 |
+| cfg_scale | 7 | 7 | 7 | 7 |
+| sampler | DPM++ 2M Karras | Euler | Euler | Euler |
+| ADetailer | 开启 | 关闭 | 关闭 | 关闭 |
+| 宽高 | 512×512 | 1024×1024 | 原图比例 | 1024×1024 |
+
+#### API 调用约定（来自 sd-webui-forge-neo）
+
+所有模型使用标准 `/sdapi/v1/txt2img` 和 `/sdapi/v1/img2img` 端点，**无自定义路由**：
+
+| 模型 | 端点 | 文本编码器 | 提示词风格 | 特殊行为 |
+|------|------|-----------|-----------|---------|
+| sdxl | img2img | CLIP | tag 风格 | ADetailer 面部修复 |
+| qwen-image | txt2img | Qwen 2.5 VL 7B | 自然语言 | 纯文生图，无基底图片 |
+| qwen-image-edit | img2img | Qwen 2.5 VL 7B | 编辑指令 | 视觉编码保持角色一致性，denoising ≥ 0.9 |
+| flux2 | txt2img/img2img | Qwen3 | 自然语言 | 自动选择 "Flux2" scheduler |
+
+#### IPC 通道（新增 `sd:generateTxt2Img`）
+
+在原 5 个 `sd:*` 通道（§7.3.2）基础上新增 1 个通道：
+
+| 通道 | 调用签名 | 返回值 | 说明 |
+|------|---------|--------|------|
+| `sd:generateTxt2Img` | `generateTxt2Img({ endpoint, prompt, negativePrompt?, options? })` | `{ success, imageBase64?, error?, warning? }` | 文生图，NL 驱动模型专用，不走 img2img 流程 |
+
+- Preload 暴露 `window.electronAPI.sd.generateTxt2Img(args)`
+- `src/renderer/types/electron.d.ts` 补全类型声明
+- `ExpressionGenerateModal` 仍统一调用 `sd:generateExpression`（内部按 modelType 分流到 txt2img），`sd:generateTxt2Img` 供 `AssetGenerateModal` 等其他场景直接使用
+
+#### 设置 UI 扩展
+
+`SDWebuiSettings.tsx` 新增以下配置项（持久化到 `AppSetting.sdWebui`）：
+
+| 配置项 | 字段 | 控件 | 条件渲染 | 说明 |
+|--------|------|------|---------|------|
+| 模型类型 | `modelType` | `Select`（4 选项） | 始终显示 | 切换时自动填充推荐参数 |
+| 自动检测 | — | `Button` | 始终显示 | 根据当前模型名推断 modelType |
+| NL 提示词模板 | `nlPromptTemplate` | `TextArea` | `modelType !== 'sdxl'` | 支持 `{traits}` / `{emotion}` 占位符 |
+| txt2img 输出宽度 | `txt2imgWidth` | `InputNumber` | `qwen-image / flux2` | 默认 1024 |
+| txt2img 输出高度 | `txt2imgHeight` | `InputNumber` | `qwen-image / flux2` | 默认 1024 |
+| 去噪警告 | — | `Alert` | `qwen-image-edit && denoising < 0.9` | 提示推荐 denoising ≥ 0.9 |
+
+**条件渲染逻辑**：
+- `modelType === 'sdxl'`：显示 ADetailer 面部修复开关 + ADetailer 高级参数折叠面板
+- `modelType !== 'sdxl'`：显示 NL 提示词模板 TextArea，隐藏 ADetailer 相关 UI
+- `modelType` 为 `qwen-image` 或 `flux2`：显示 txt2img 输出宽高 InputNumber
+- `modelType` 为 `qwen-image-edit` 且 `denoisingStrength < 0.9`：显示去噪强度警告 Alert
+
+**Denoising Strength 滑块范围扩展**：从 0.1-0.9 扩展至 0.1-1.0，以支持 qwen-image (1.0) 与 qwen-image-edit (0.95) 的推荐去噪强度。
+
+`SDWebuiConfig` 接口新增 4 个字段：`modelType: SDModelType` / `nlPromptTemplate: string` / `txt2imgWidth: number` / `txt2imgHeight: number`。
+
+#### ExpressionGenerateModal 适配
+
+- **提示词构建器切换**：`buildEmotionPrompt` 按 `sdConfig.modelType` 切换——sdxl 使用 `buildExpressionGenerationPrompt`（tag 风格），NL 模型使用 `buildNLExpressionPrompt`（自然语言风格）
+- **`buildSdOptions` 透传**：新增 `modelType` / `txt2imgWidth` / `txt2imgHeight` 字段透传到 IPC options
+- **模型类型 Alert**：qwen-image-edit 去噪偏低警告（denoising < 0.9）/ qwen-image 文生图模式提示（不需要基底图片）
+- **warning 展示**：`SDGenerationResult.warning` 字段在生成成功时展示为 Alert
+- **`DEFAULT_SD_CONFIG` 补全**：新增 `modelType: 'sdxl'` / `nlPromptTemplate` / `txt2imgWidth: 1024` / `txt2imgHeight: 1024` 默认值，避免旧配置无新字段时读取 undefined
+
+#### 关键文件清单
+
+| 文件 | 改动 |
+|------|------|
+| `src/main/services/sdGenerationService.ts` | `SDModelType` / `detectModelType` / `MODEL_TYPE_PRESETS` / `generateTxt2Img` 方法 / `generateExpression` 模型类型分流 / `SDTxt2ImgParams` 导出 / `SDGenerationResult.warning` 字段 / `SDGenerationOptions.modelType` 字段 |
+| `src/main/ipc/handlers/sdGenerationHandlers.ts` | 新增 `sd:generateTxt2Img` 通道 |
+| `src/main/preload.ts` | 暴露 `sd.generateTxt2Img(args)` |
+| `src/renderer/types/electron.d.ts` | `sd.generateTxt2Img` 类型声明 |
+| `src/renderer/types/setting.ts` | `SDWebuiConfig` 新增 `modelType` / `nlPromptTemplate` / `txt2imgWidth` / `txt2imgHeight` 字段 |
+| `src/shared/settings.ts` | `defaultSetting.sdWebui` 新增 NL 模型默认值 |
+| `src/renderer/components/Settings/SDWebuiSettings.tsx` | 模型类型 Select + 自动检测 + 条件渲染（ADetailer/NL 模板/txt2img 宽高/去噪警告）+ Denoising 滑块范围扩展 |
+| `src/renderer/components/Character/CharacterDialogueChat/PromptBuilder.ts` | `EMOTION_NL_PROMPT_MAP`（30 项）+ `buildNLExpressionPrompt` 函数 + `NLExpressionPromptOptions` 接口 |
+| `src/renderer/components/Character/CharacterDialogueChat/ExpressionGenerateModal.tsx` | 提示词构建器切换 + `buildSdOptions` 透传 modelType + 模型类型 Alert + warning 展示 + `DEFAULT_SD_CONFIG` 补全 |
+| `src/renderer/components/Character/CharacterDialogueChat/AssetGenerateModal.tsx` | `DEFAULT_SD_CONFIG` 补全 NL 模型字段 |
+
+### 7.3.5 AI 模型能力检测与图片识别（Spec: ai-capability-detection-and-image-recognition）
+
+> 增量更新（2026-07-28）：为 AI 引擎新增视觉（Vision）/ 思维链（Thinking）/ 工具调用（Tool Calling）三项能力自动探测，并在素材生成弹窗中集成基于多模态 LLM 的角色卡图片识别，自动提取视觉特征 tag。
+
+#### 概述
+
+原 AI 引擎配置仅有文本连通性测试，无法获知模型是否支持视觉输入、思维链、工具调用等高级能力。本次新增能力探测系统——连通性测试通过后自动探测三项能力并持久化到引擎配置；UI 以图标徽章直观展示能力状态。同时，当模型支持视觉输入时，在角色特征 Tab 提供「AI 图片识别」功能，通过多模态 LLM 读取角色卡 PNG 自动提取视觉特征 tag，免去用户手动描述。
+
+#### 模型能力检测系统
+
+`AIService.ts` 新增 `ProbeConfig` 接口与四个探测方法：
+
+```typescript
+export interface ProbeConfig {
+  baseUrl: string;
+  apiKey: string;
+  apiKeyTransmission: string;
+  modelName: string;
+}
+```
+
+| 方法 | 探测方式 | 判定逻辑 |
+|------|----------|----------|
+| `probeVisionCapability(config)` | 向 `/v1/chat/completions` 发送含 1×1 透明 PNG 的多模态请求（OpenAI Vision 格式 `content: [{type:'text'...}, {type:'image_url'...}]`） | HTTP 200 → 支持；10s 超时或异常 → 不支持 |
+| `probeThinkingCapability(modelName)` | 基于模型名关键词匹配（`thinking` / `reasoning` / `r1` / `o1` / `o3` / `qwq`） | 同步方法，无网络请求 |
+| `probeToolCallingCapability(config)` | 发送含 `tools` 参数的最小请求（`tools: [{type:'function', function:{name:'test',...}}]`） | HTTP 200 → 支持；10s 超时或异常 → 不支持 |
+| `probeAllCapabilities(config)` | `Promise.all` 并行执行上述三项 | 返回完整 `AIEngineCapabilities` |
+
+`AIEngineCapabilities` 接口（`src/renderer/types/setting.ts`）：
+
+```typescript
+export interface AIEngineCapabilities {
+  supportsStopArray?: boolean;
+  supportsRepPen?: boolean;
+  supportsDrySampler?: boolean;
+  supportsVision?: boolean;
+  supportsThinking?: boolean;
+  supportsToolCalling?: boolean;
+}
+```
+
+`AIEngineSetting.capabilities?: AIEngineCapabilities` 字段持久化探测结果到 `settings.json`，`src/shared/settings.ts` 中默认引擎的三个新字段默认值为 `false`。
+
+#### 连通性测试扩展
+
+`useAIEngineSettings.ts` 的 `handleTestConnection`（主表单）与 `handleTestEngineConnection`（引擎管理弹窗）在文本测试通过后，自动调用 `ai:probeCapabilities` IPC 探测能力，将结果写入 `engine.capabilities` 并随设置持久化。测试结果 UI 同步展示能力徽章。
+
+#### 能力徽章 UI
+
+`AIEngineSettingsPanel.tsx` 新增 `renderCapabilityBadges(capabilities)` 函数，使用 antd `Tag` + antd Icons 渲染四个能力徽章：
+
+| 徽章 | 图标 | 颜色 | 显示条件 |
+|------|------|------|----------|
+| 文本 | `EditOutlined` | 蓝色 | 始终显示 |
+| 视觉 | `EyeOutlined` | 绿色 | `supportsVision === true` |
+| 思维链 | `BulbOutlined` | 紫色 | `supportsThinking === true` |
+| 工具调用 | `ToolOutlined` | 橙色 | `supportsToolCalling === true` |
+
+徽章展示于三处：引擎下拉选项（`Select.Option`）、引擎管理弹窗表格列、连通性测试结果区域。
+
+#### ChatMessage 多模态扩展
+
+`AIService.ts` 的 `ChatMessage` 接口 `content` 字段从 `string` 扩展为联合类型，兼容 OpenAI Vision 多模态格式：
+
+```typescript
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string | Array<
+    | { type: 'text'; text: string }
+    | { type: 'image_url'; image_url: { url: string } }
+  >;
+}
+```
+
+`characterTraitAIService` 导入并复用该类型构建多模态请求。原文本消息（`content: string`）完全向后兼容。
+
+#### 图片识别特征提取工作流
+
+`characterTraitAIService.recognizeImageTraits(characterCardPath, characterName?)` 方法实现以下流程：
+
+1. 读取 AI 引擎配置（baseUrl / apiKey / modelName / systemPrompt），缺失时返回「AI 引擎未配置」错误
+2. `readFileSync` 读取角色卡 PNG → base64 编码为 `data:image/png;base64,...` data URI
+3. 注入 `IMAGE_TRAIT_SYSTEM_PROMPT`（与 `generateCharacterTraits` 的 system prompt 合并策略一致）
+4. 构建多模态 messages：`[{role:'system', content: systemContent}, {role:'user', content:[{type:'text', text:...}, {type:'image_url', image_url:{url: dataUri}}]}]`
+5. 非流式 POST `/v1/chat/completions`（`stream: false`）
+6. 解析响应 `data.choices[0].message.content`，按逗号分割为英文 tag 数组
+7. 返回 `{ success: true, traits: string[] }` 或 `{ success: false, error: string }`
+
+> 前置条件：当前 AI 引擎 `supportsVision === true`（由前端判断，主进程不重复检测）。
+
+#### AssetGenerateModal 集成
+
+`AssetGenerateModal.tsx` 角色特征 Tab 集成图片识别：
+
+- 从 `settingStore` 读取当前激活引擎的 `capabilities.supportsVision`
+- `supportsVision === true` 时显示「AI 图片识别」按钮（`EyeOutlined` 图标），点击调用 `ai.recognizeImageTraits`
+- loading 状态禁用按钮（`loading={imageRecognizing}`）
+- 成功后将返回 tag 追加到现有 `characterTraits`（大小写不敏感去重）
+- `supportsVision !== true` 时显示「图片识别不可用」Tooltip
+
+#### IPC 通道
+
+| 通道 | Handler 文件 | 调用方法 |
+|------|-------------|----------|
+| `ai:probeCapabilities` | `aiHandlers.ts` | `aiService.probeAllCapabilities(config)` |
+| `ai:recognizeImageTraits` | `characterTraitAIHandlers.ts` | `characterTraitAIService.recognizeImageTraits(args)` |
+
+Preload 暴露：`window.electronAPI.ai.probeCapabilities(args)` / `window.electronAPI.ai.recognizeImageTraits(args)`。
+
+#### 关键文件清单
+
+| 文件 | 改动 |
+|------|------|
+| `src/main/services/AIService.ts` | `ChatMessage` 多模态扩展 + `ProbeConfig` 接口 + `probeVisionCapability` / `probeThinkingCapability` / `probeToolCallingCapability` / `probeAllCapabilities` 四个方法 |
+| `src/main/services/characterTraitAIService.ts` | `recognizeImageTraits` 方法 + `IMAGE_TRAIT_SYSTEM_PROMPT` 常量 |
+| `src/main/ipc/handlers/aiHandlers.ts` | 新增 `ai:probeCapabilities` 通道 |
+| `src/main/ipc/handlers/characterTraitAIHandlers.ts` | 新增 `ai:recognizeImageTraits` 通道 |
+| `src/main/preload.ts` | 暴露 `ai.probeCapabilities` / `ai.recognizeImageTraits` |
+| `src/renderer/types/electron.d.ts` | `ai.probeCapabilities` / `ai.recognizeImageTraits` 类型声明 + `AIEngineCapabilities` 导入 |
+| `src/renderer/types/setting.ts` | `AIEngineCapabilities` 接口扩展三字段 + `AIEngineSetting.capabilities` 字段 |
+| `src/shared/settings.ts` | 默认引擎 `capabilities` 三字段默认值 `false` |
+| `src/renderer/components/Settings/AIEngineSettingsPanel.tsx` | `renderCapabilityBadges` 函数 + 引擎下拉/管理弹窗/测试结果三处展示 |
+| `src/renderer/components/Settings/hooks/useAIEngineSettings.ts` | 连通性测试通过后调用 `ai:probeCapabilities` 探测能力并持久化 |
+| `src/renderer/components/Character/CharacterDialogueChat/AssetGenerateModal.tsx` | 图片识别按钮 + `supportsVision` 判断 + 去重追加 |
+| `src/renderer/components/Common/ChatEngine/ChatEngine.types.ts` | `EngineCapabilities` 接口扩展 `supportsVision` / `supportsThinking` / `supportsToolCalling` |
+
+### 7.3.6 AIService 多模态兼容性修复与全局能力徽章（2026-07-28）
+
+本节记录 `ChatMessage` 多模态扩展（§7.3.5 / Task 6）落地后，针对全项目 AI 调用链路的兼容性加固与可视化增强。
+
+#### enrichSystemPrompt 多模态兼容性修复
+
+`AIService.enrichSystemPrompt(messages, engineSystemPrompt)` 在拼接引擎级 system prompt 时，原逻辑无条件使用 `'+'` 拼接 `msg.content`。当 `ChatMessage.content` 为多模态数组（`Array<{type:'text'|'image_url', ...}>`）时，拼接会产生 `"[object Object]"` 字符串，导致 system prompt 静默损坏。
+
+**修复方案**：在拼接前增加类型守卫 `typeof msg.content === 'string'`：
+- 字符串 content：走原拼接逻辑（`engineSystemPrompt.trim() + '\n\n' + msg.content`），保持向后兼容
+- 数组 content：原样保留不变，引擎 system prompt 的注入由调用方在构建 messages 时自行处理
+
+该守卫为防御性编程——目前所有调用方（GameNarrativeService 等）的 system message 始终为字符串，但防止未来多模态 system message 传入时静默出错。
+
+#### 全局模型能力徽章（Header Logo 区）
+
+`src/renderer/components/Layout/Header.tsx` 在应用 Logo 区域新增当前激活 AI 引擎的能力标识组合，让用户在任意页面都能一眼看到当前引擎的能力组合，无需进入设置页。
+
+- **数据来源**：`useSettingStore()` → `setting.activeEngineId` → `setting.aiEngines.find(...)` → `activeEngine.capabilities`
+- **四种图标**：
+  - `EditOutlined`（铅笔，灰色）— 文本生成能力，作为基础能力常驻显示
+  - `EyeOutlined`（眼睛，绿色 `#52c41a`）— 视觉/图片识别，`supportsVision=true` 时显示
+  - `BulbOutlined`（灯泡，紫色 `#722ed1`）— 思维链/推理，`supportsThinking=true` 时显示
+  - `ToolOutlined`（工具，橙色 `#fa8c16`）— 工具调用，`supportsToolCalling=true` 时显示
+- **未检测行为**：`capabilities` 为 `undefined`（用户尚未测试连通性）时仅显示编辑图标，鼠标悬停 Tooltip 提示「请先测试连通性以检测模型能力」
+- **与设置页的关系**：与 `AIEngineSettingsPanel` 的 `renderCapabilityBadges`（§7.3.5 / Task 5）形成「全局概览 + 详细管理」的双层能力可视化
+
+#### ChatEngine 请求构建能力感知
+
+`src/renderer/components/Common/ChatEngine/ChatEngine.ts` 在构建请求体时新增对 `supportsThinking` / `supportsToolCalling` 的能力守卫，避免向不支持的模型注入参数导致 4xx 错误：
+
+- **思维链守卫**：`enable_chain_of_thought` 开关仅在 `config.capabilities?.supportsThinking === true` 时生效。若开关为 true 但模型不支持思维链，则不注入思维链参数，降级为纯文本聊天
+- **工具调用守卫**：`use_function_calling` 开关仅在 `config.capabilities?.supportsToolCalling === true` 时生效。若开关为 true 但模型不支持工具调用，则禁用工具调用，降级为纯文本聊天
+
+`ChatEngine.types.ts` 的 `EngineCapabilities` 接口已扩展 `supportsThinking` / `supportsToolCalling` 字段，`getDefaultEngineCapabilities` 同步返回三字段默认值 `false`，`buildSamplingExtras` 接收 `capabilities` 参数（优先于 `config.capabilities`）。
+
+#### AI 调用点多模态兼容性审计
+
+对全项目 15+ 处 AI 请求调用点进行系统性审计，确认所有服务的消息构建均使用字符串 content，不受 `AIService.ts` 的 `ChatMessage` 联合类型扩展影响：
+
+- **审计结论**：仅 `characterTraitAIService`（§7.3.5 / Task 12）使用多模态数组 content（text + image_url），其余服务均使用内联 `{ role, content: string }` 对象，不导入 `ChatMessage` 联合类型，类型安全
+- **已审计调用点**：`GameNarrativeService` / `DescriptionPolisher` / `OutlineGenerator` / `WritingStyleLearningService` / `characterTraitAIService`（多模态）/ `useCreativeAI`（Creative hook）/ `WorldBookEditor` / `CharacterManager`（翻译/生成/润色）/ `MarkdownAITools` / `CharacterDialogueChat.hooks` 等
+- **审计注释**：两个渲染进程 Creative 模块文件已补充中文兼容性审计注释：
+  - `src/renderer/components/Creative/hooks/useCreativeAI.ts`（`generate` / `optimize` 的 messages 构建处）
+  - `src/renderer/components/Creative/WorldBookEditor.tsx`（`handleGenerate` 的 messages 构建处）
+
+#### 关键文件清单
+
+| 文件 | 改动 |
+|------|------|
+| `src/main/services/AIService.ts` | `enrichSystemPrompt` 增加类型守卫 `typeof msg.content === 'string'` |
+| `src/renderer/components/Layout/Header.tsx` | Logo 区能力徽章（4 图标）+ `useSettingStore` 引入 |
+| `src/renderer/components/Common/ChatEngine/ChatEngine.ts` | `supportsThinking` / `supportsToolCalling` 能力守卫 |
+| `src/renderer/components/Common/ChatEngine/ChatEngine.types.ts` | `EngineCapabilities` 扩展三字段 + `getDefaultEngineCapabilities` 默认值 |
+| `src/renderer/components/Creative/hooks/useCreativeAI.ts` | 多模态兼容性审计注释 |
+| `src/renderer/components/Creative/WorldBookEditor.tsx` | 多模态兼容性审计注释 |
+
+### 7.3.7 LoRA 模型选择（Spec: add-lora-model-selection，2026-07-28）
+
+> 增量更新（2026-07-28）：在 SD 表情/素材生成流程（§7.3.2 / §7.3.3）中新增 LoRA 模型选择能力。用户可在生成前从 SD WebUI 拉取可用 LoRA 列表，多选并调整权重（0-1，步进 0.05，默认 0.7），生成时自动注入 `<lora:name:weight>` 标签到 prompt 前部。LoRA 选择持久化到 `AppSetting.sdWebui.selectedLoras`，跨会话保留。
+
+#### 数据流
+
+```
+用户点击 LoRA 入口 Tag
+  └─> LoraSelectModal 打开
+       └─> window.electronAPI.lora.list(endpoint)
+            └─> IPC lora:list
+                 └─> loraService.fetchLoraList(endpoint)
+                      ├─> GET {endpoint}/sdapi/v1/loras        ← Forge Neo API
+                      ├─> 构建预览图 URL（/sd_extra_networks/thumb?filename=...）
+                      ├─> 读取本地 JSON 元数据文件（description / activation text / ...）
+                      └─> 从 path 提取分类（子目录名）
+      ←─ 返回 LoraModel[]（含 name / previewUrl / description / category 等 10 字段）
+
+用户多选 LoRA + 调整权重 → 点击确认
+  └─> onConfirm(localSelected) → 写入 sdConfig.selectedLoras
+       └─> buildSdOptions() 透传 selectedLoras 到 options
+            └─> sdGenerationService.generateExpression()
+                 ├─> 替换 {traits} 占位符（§7.3.3 特征携带机制）
+                 ├─> 将 selectedLoras 转为 <lora:name:weight> 标签注入 prompt 前部
+                 └─> 模型类型分流（sdxl img2img / qwen-image txt2img / ...）
+```
+
+#### LoRA 服务层（loraService.ts）
+
+`src/main/services/loraService.ts` 为单例服务（`export const loraService = new LoraService()`），通过 Forge Neo 的 `/sdapi/v1/loras` 端点获取可用 LoRA 列表。
+
+- **fetchLoraList(endpoint)**：返回 `{ success, loras?: LoraModel[], error? }`
+  - GET `{endpoint}/sdapi/v1/loras`，10s 超时（`AbortSignal.timeout`）
+  - 为每个 LoRA 构建预览图 URL：`{endpoint}/sd_extra_networks/thumb?filename={encodeURIComponent(path)}`
+  - 读取本地 JSON 元数据文件（`{path_without_extension}.json`），解析 `description` / `activation text` / `preferred weight` / `sd version` / `notes` 五个字段（缺失返回空字符串/0）
+  - 从 path 提取分类（子目录名，如 `models/Lora/画风/xxx.safetensors` → `画风`）
+  - 按名称排序（`localeCompare('zh')`）
+
+#### LoraModel 接口
+
+| 字段 | 类型 | 来源 |
+|------|------|------|
+| `name` | string | API `name`（文件名不含扩展名） |
+| `alias` | string | API `alias`（无则 fallback 到 name） |
+| `path` | string | API `path`（LoRA 文件绝对路径） |
+| `previewUrl` | string | 构建的 thumb 端点 URL |
+| `description` | string | JSON 元数据 `description` |
+| `activationText` | string | JSON 元数据 `activation text` |
+| `preferredWeight` | number | JSON 元数据 `preferred weight`（0 表示无推荐） |
+| `sdVersion` | string | JSON 元数据 `sd version` |
+| `notes` | string | JSON 元数据 `notes` |
+| `category` | string | 从 path 子目录名提取 |
+
+#### IPC 通道
+
+| 通道 | Handler | Preload | 说明 |
+|------|---------|---------|------|
+| `lora:list` | `loraHandlers.ts` → `loraService.fetchLoraList` | `window.electronAPI.lora.list(endpoint)` | 获取 LoRA 列表，返回 `{ success, loras?, error? }` |
+
+`registerLoraHandlers()` 在 `setupIpcHandlers()` 中调用（`src/main/ipc/index.ts`）。
+
+#### LoraSelectModal 组件
+
+`src/renderer/components/Character/CharacterDialogueChat/LoraSelectModal.tsx` 为 LoRA 模型选择弹窗。
+
+- **Props**：`{ open, endpoint, selectedLoras, onConfirm, onCancel }`
+- **UI 组成**：
+  - 顶部搜索框（前端不区分大小写过滤）+ 分类筛选 Select（从 category 去重，含「全部」选项）
+  - 已选区域：Tag + 权重 Slider Popover（0-1，步进 0.05）+ 移除按钮
+  - 主体网格布局（`grid-template-columns: repeat(auto-fill, minmax(130px, 1fr))`），每个卡片含预览图（`loading="lazy"` 懒加载）+ 模型名
+  - 悬停 Tooltip 显示 JSON 元数据（description / activationText / sdVersion / notes），无元数据显示「无额外说明」
+  - 缺失预览图显示 `PictureOutlined` 占位图标
+- **性能优化**：
+  - 预览图懒加载（`<img loading="lazy">`）
+  - `loraCacheRef` 缓存列表：endpoint 未变化时不重复请求，Modal 关闭再打开复用缓存
+  - `useMemo` 计算分类选项与过滤后列表
+- **权重默认值**：`DEFAULT_WEIGHT = 0.7`（新增选中时使用）
+
+#### 生成流程集成
+
+`sdGenerationService.SDGenerationOptions` 新增 `selectedLoras?: Array<{ name: string; weight: number }>` 字段。`generateExpression` 方法在 `{traits}` 占位符替换与清理之后、模型类型分流之前，将 `selectedLoras` 转为 `<lora:name:weight>` 标签并注入到 prompt 前部：
+
+```
+原始 prompt: portrait, white fur, dog girl, looking at viewer, ...
+注入后:      <lora:character_style:0.8> <lora:detail_enhancer:0.6> portrait, white fur, dog girl, looking at viewer, ...
+```
+
+- Forge Neo 的 prompt parser 自动解析 `<lora:...>` 标签并加载对应 LoRA 文件
+- 空数组/undefined 时不注入，行为不变
+- 注入位置在模型类型分流之前，确保 txt2img 与 img2img 路径均生效
+
+`ExpressionGenerateModal` 与 `AssetGenerateModal` 均新增：
+- LoRA 入口 Tag（青色 `color="cyan"`，显示已选数量，点击打开 Modal）
+- `buildSdOptions()` 透传 `selectedLoras: sdConfig.selectedLoras`
+- `LoraSelectModal` 组件渲染，确认后写入 `sdConfig.selectedLoras`
+
+#### 持久化
+
+`SDWebuiConfig.selectedLoras` 持久化到 `AppSetting.sdWebui.selectedLoras`。`SDWebuiSettings.getFormValues()` 中 `selectedLoras` 不在表单中编辑（由 LoRA 选择 Modal 设置），`form.getFieldsValue(true)` 可能不返回此字段。因此在 `getFormValues` 返回值中显式从 `setting.sdWebui.selectedLoras` 合并，合并顺序：`DEFAULT_SD_WEBUI_CONFIG` → `selectedLoras`（来自 setting）→ `values`（来自表单），确保表单值优先级最高且已持久化的 LoRA 选择不丢失。
+
+#### 关键文件清单
+
+| 文件 | 改动 |
+|------|------|
+| `src/main/services/loraService.ts` | 新建：LoRA 模型列表获取服务（fetchLoraList + buildLoraModel + readJsonMetadata） |
+| `src/main/ipc/handlers/loraHandlers.ts` | 新建：`lora:list` IPC 通道注册 |
+| `src/main/ipc/index.ts` | 修改：注册 `registerLoraHandlers()` |
+| `src/main/preload.ts` | 修改：暴露 `lora.list(endpoint)` |
+| `src/renderer/types/electron.d.ts` | 修改：`lora` 命名空间类型声明 |
+| `src/renderer/types/setting.ts` | 修改：`SDWebuiConfig` 新增 `selectedLoras?` 字段 |
+| `src/shared/settings.ts` | 修改：默认值 `selectedLoras: []` |
+| `src/renderer/components/Settings/SDWebuiSettings.tsx` | 修改：`DEFAULT_SD_WEBUI_CONFIG` 同步 + `getFormValues` 持久化 selectedLoras |
+| `src/renderer/components/Character/CharacterDialogueChat/LoraSelectModal.tsx` | 新建：LoRA 选择弹窗组件 |
+| `src/renderer/components/Character/CharacterDialogueChat/ExpressionGenerateModal.tsx` | 修改：LoRA 入口 + `buildSdOptions` 透传 + Modal 渲染 |
+| `src/renderer/components/Character/CharacterDialogueChat/AssetGenerateModal.tsx` | 修改：同上 |
+| `src/main/services/sdGenerationService.ts` | 修改：`SDGenerationOptions.selectedLoras` + `<lora:name:weight>` 标签注入逻辑 |
 
 ### 7.4 世界书管理 (World Book)
 - 世界书及条目的 CRUD
@@ -1167,7 +2139,7 @@ interface GameTableEditCommand {
 ### 7.11 设置中心 (Settings)
 - 外观: 主题 (亮/暗)、动画开关、紧凑模式、背景图片
 - 路径: 6 类数据目录配置 (世界书/角色卡/人设/创意/记忆/插件)
-- AI 引擎管理: 多引擎配置 (增删改查)、默认引擎、连通性测试
+- AI 引擎管理: 多引擎配置 (增删改查)、默认引擎、连通性测试 + 模型能力检测（视觉/思维链/工具调用，§7.3.5）、能力徽章展示
 - 向量配置: 嵌入模式/缓存策略/上下文窗口
 - 高级: 调试模式、日志级别
 

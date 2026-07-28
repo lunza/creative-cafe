@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import { randomUUID } from 'crypto';
 import { createLogger } from '../../services/logger';
 import { BoundedQueue } from './utils/boundedQueue';
+import { aiService } from '../../services/AIService';
 
 /**
  * AI 请求处理器
@@ -77,6 +78,9 @@ ipcMain.handle('ai:cancel', async (event) => {
 });
 
 // 处理 AI 请求
+// 【多模态兼容性审计】ai:request 通用转发器透传 requestConfig.body，
+// 不检查也不修改 messages 内容，对 content 类型（string | 多模态数组）完全透明。
+// 多模态请求由调用方（如 characterTraitAIService）构建 body，转发器仅负责 HTTP 传输。
 ipcMain.handle('ai:request', async (event, requestConfig: {
   url: string;
   method: string;
@@ -944,6 +948,30 @@ ipcMain.handle('ai:listModels', async (_event, params: { apiUrl?: string; apiKey
     return { success: false, models: [], error: 'API 响应格式不正确' };
   } catch (error) {
     return { success: false, models: [], error: error instanceof Error ? error.message : '未知错误' };
+  }
+});
+
+// 探测 AI 模型能力（Spec: add-model-capability-detection-and-image-recognition / Task 3）
+// 并行探测 vision / thinking / tool-calling 等能力，供前端在连通性测试后展示徽章
+ipcMain.handle('ai:probeCapabilities', async (_event, args: {
+  apiUrl: string;
+  apiKey: string;
+  apiKeyTransmission: string;
+  modelName: string;
+}) => {
+  try {
+    const capabilities = await aiService.probeAllCapabilities({
+      baseUrl: args.apiUrl,
+      apiKey: args.apiKey,
+      apiKeyTransmission: args.apiKeyTransmission,
+      modelName: args.modelName,
+    });
+    return { success: true, capabilities };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 });
 

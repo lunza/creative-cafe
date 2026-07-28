@@ -317,6 +317,8 @@ ${userRequirements.trim()}`;
         finalSystemPrompt = engine.system_prompt.trim() + '\n\n' + systemPrompt;
       }
 
+      // 【多模态兼容性审计】本 hook 使用内联 { role, content: string } 对象构建消息，
+      // 不导入 AIService.ts 的联合类型 ChatMessage，不受多模态 content 扩展影响。
       const messages = [
         { role: 'system', content: finalSystemPrompt },
         { role: 'user', content: userPrompt }

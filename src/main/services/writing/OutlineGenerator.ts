@@ -14,6 +14,9 @@ import { writingResourceManager } from '../WritingResourceManager';
 import { aiConfigProvider } from '../ai/AIConfigProvider';
 import { SSEStreamParser } from '../ai/SSEStreamParser';
 
+// 【多模态兼容性审计】本服务使用本地 ChatMessage 类型（content: string），
+// 不导入 AIService.ts 的联合类型 ChatMessage，不受多模态 content 扩展影响。
+// 所有消息 content 均为纯文本字符串，适用于文本生成/润色等非视觉任务。
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;

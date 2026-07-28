@@ -197,7 +197,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('ai:request', config),
     cancel: () => ipcRenderer.invoke('ai:cancel'),
     listModels: (params: { apiUrl?: string; apiKey?: string; apiKeyTransmission?: string }) =>
-      ipcRenderer.invoke('ai:listModels', params)
+      ipcRenderer.invoke('ai:listModels', params),
+    // AI 辅助角色特征生成（Spec: add-asset-and-trait-management / Task 12）
+    // 基于角色卡 description/personality/scenario 调用 LLM 生成视觉特征 tag 列表 + 角色外观描述
+    // 返回 { success, traits?: string[], appearanceDescription?: string, error?: string }，traits 可能为空数组
+    generateCharacterTraits: (args: {
+      characterCardId: string;
+      description: string;
+      personality?: string;
+      scenario?: string;
+      includeImage?: boolean;
+    }) => ipcRenderer.invoke('ai:generateCharacterTraits', args),
+    // AI 图片识别特征提取（Spec: add-model-capability-detection-and-image-recognition / Task 6）
+    // 通过多模态模型识别角色卡 PNG 图片，提取视觉特征 tag 列表 + 角色外观描述
+    // 前置条件：当前 AI 引擎 supportsVision=true（由前端判断）
+    // 返回 { success, traits?: string[], appearanceDescription?: string, error?: string }，traits 可能为空数组
+    recognizeImageTraits: (args: { characterCardPath: string; characterName?: string }) =>
+      ipcRenderer.invoke('ai:recognizeImageTraits', args),
+    // 探测 AI 模型能力（Spec: add-model-capability-detection-and-image-recognition / Task 3）
+    // 并行探测 vision / thinking / tool-calling，返回 { success, capabilities?, error? }
+    probeCapabilities: (args: { apiUrl: string; apiKey: string; apiKeyTransmission: string; modelName: string }) =>
+      ipcRenderer.invoke('ai:probeCapabilities', args)
   },
   // 创意数据 API
   creative: {
@@ -657,5 +677,99 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('expression:removeCustomEmotion', args),
     getImagePath: (args: { characterCardId: string; emotionKey: string }) =>
       ipcRenderer.invoke('expression:getImagePath', args)
+  },
+  // ============================================================================
+  // 角色特征管理 API（Spec: add-asset-and-trait-management / Task 2）
+  // ============================================================================
+  // 为每个角色卡持久化「视觉特征清单」（如 white fur, dog girl, black shirt），
+  // 在 SD 生成素材时自动携带该特征 tag，保证角色一致性。
+  // 存储路径：{userData}/data/character-traits/{sha256(characterCardId).slice(0,16)}/traits.json
+  characterTrait: {
+    // 读取角色卡视觉特征 tag 数组；文件不存在时返回 []（不抛异常）
+    list: (characterCardId: string) =>
+      ipcRenderer.invoke('character-trait:list', characterCardId),
+    // 覆盖保存角色卡视觉特征 tag 数组（可附带外观描述）
+    save: (args: { characterCardId: string; traits: string[]; appearanceDescription?: string }) =>
+      ipcRenderer.invoke('character-trait:save', args),
+    // 读取角色卡外观描述（中文自然语言）；不存在时返回空串
+    loadDescription: (characterCardId: string) =>
+      ipcRenderer.invoke('character-trait:loadDescription', characterCardId),
+    // 清除角色卡视觉特征文件（删除 traits.json，幂等）
+    clear: (characterCardId: string) =>
+      ipcRenderer.invoke('character-trait:clear', characterCardId)
+  },
+  // ============================================================================
+  // 素材管理 API（Spec: add-asset-and-trait-management / Task 7）
+  // ============================================================================
+  // 通用素材管理，新增三种素材类型：illustration / general / three-view。
+  // 表情类型（expression）继续走 expressionService.ts，不纳入本命名空间。
+  // 存储路径：{userData}/data/character-assets/{sha256(characterCardId).slice(0,16)}/{assetType}/...
+  asset: {
+    // 读取角色卡 × assetType 的素材包 manifest；不存在返回默认空 manifest
+    list: (args: { characterCardId: string; assetType: string }) =>
+      ipcRenderer.invoke('asset:list', args),
+    // 保存素材图像（base64，可含 data URI 前缀）并更新 manifest；返回图像绝对路径
+    save: (args: {
+      characterCardId: string;
+      assetType: string;
+      assetId: string;
+      imageBase64: string;
+      slot?: string;
+    }) => ipcRenderer.invoke('asset:save', args),
+    // 删除指定素材的图像文件并从 manifest 移除条目（幂等）
+    delete: (args: { characterCardId: string; assetType: string; assetId: string }) =>
+      ipcRenderer.invoke('asset:delete', args),
+    // 获取指定素材的图像绝对路径；不存在返回 null。
+    // 【重点标记 - CSP 兼容】渲染进程应通过 file.readAsBase64 转 data URL 后再用于 <img src>
+    getImagePath: (args: { characterCardId: string; assetType: string; assetId: string }) =>
+      ipcRenderer.invoke('asset:getImagePath', args)
+  },
+  // ============================================================================
+  // SD 表情生成 API（Spec: add-ai-expression-generation / Task 2 + integrate-nl-driven-sd-models / Task 5）
+  // ============================================================================
+  // 调用 sdGenerationService 通过 SD WebUI img2img / txt2img 端点生成角色卡表情图片
+  // 支持单次生成与批量生成（含进度推送与取消）
+  // 注意：本命名空间合并了 Task 6 的 checkStatus / getModels（改用 { endpoint } 包装），
+  //       sdHandlers.ts 不再注册，由 sdGenerationHandlers.ts 统一提供全部 6 个通道
+  sd: {
+    checkStatus: (endpoint: string) => ipcRenderer.invoke('sd:checkStatus', { endpoint }),
+    getModels: (endpoint: string) => ipcRenderer.invoke('sd:getModels', { endpoint }),
+    generateExpression: (args: {
+      characterCardPath: string;
+      emotionKey: string;
+      prompt: string;
+      negativePrompt: string;
+      options?: any;
+    }) => ipcRenderer.invoke('sd:generateExpression', args),
+    generateTxt2Img: (args: {
+      endpoint: string;
+      prompt: string;
+      negativePrompt?: string;
+      options?: any;
+    }) => ipcRenderer.invoke('sd:generateTxt2Img', args),
+    generateAllExpressions: (args: {
+      characterCardPath: string;
+      emotions: Array<{ key: string; prompt: string; negativePrompt: string }>;
+      options?: any;
+    }) => ipcRenderer.invoke('sd:generateAllExpressions', args),
+    cancelGeneration: () => ipcRenderer.invoke('sd:cancelGeneration'),
+    onGenerationProgress: (callback: (data: any) => void) => {
+      ipcRenderer.on('sd:generationProgress', (_event, data) => callback(data));
+    },
+    onGenerationComplete: (callback: (data: any) => void) => {
+      ipcRenderer.on('sd:generationComplete', (_event, data) => callback(data));
+    },
+    removeProgressListeners: () => {
+      ipcRenderer.removeAllListeners('sd:generationProgress');
+      ipcRenderer.removeAllListeners('sd:generationComplete');
+    }
+  },
+  // ============================================================================
+  // LoRA 模型列表 API（Spec: add-lora-model-selection / Task 3）
+  // ============================================================================
+  // 通过 SD WebUI API 获取可用 LoRA 模型列表，含预览图 URL 和 JSON 元数据
+  // 返回 { success, loras?: LoraModel[], error? }
+  lora: {
+    list: (endpoint: string) => ipcRenderer.invoke('lora:list', { endpoint }),
   }
 });

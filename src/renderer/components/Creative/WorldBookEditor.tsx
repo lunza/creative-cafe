@@ -228,6 +228,8 @@ const WorldBookEditor: React.FC = () => {
         addLog(`[Creative] 拼接后的systemPrompt长度: ${finalSystemPrompt.length}`, 'info');
         console.log('[DEBUG] finalSystemPrompt:', finalSystemPrompt);
 
+        // 【多模态兼容性审计】本组件使用内联对象构建 AI 请求消息，content 均为字符串，
+        // 不受 AIService.ts 多模态 ChatMessage 联合类型影响。
         requestBody = {
           model: modelName,
           messages: [

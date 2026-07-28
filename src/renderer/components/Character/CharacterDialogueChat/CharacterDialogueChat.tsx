@@ -7,7 +7,7 @@ import ChatInputBar from './ChatInputBar';
 import ChatTypingIndicator from './ChatTypingIndicator';
 import ConfigPanel from './ConfigPanel';
 import CharacterSelectorPanel from './CharacterSelectorPanel';
-import ExpressionManagerModal from './ExpressionManagerModal';
+import AssetManagerModal from './AssetManagerModal';
 import { useCharacterDialogueChat } from './CharacterDialogueChat.hooks';
 import { useFavoritesStore } from '../../../stores/favoritesStore';
 import { useExpressionStore } from '../../../stores/expressionStore';
@@ -628,11 +628,17 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
         onSaveConfig={saveConfig}
       />
 
-      {/* 表情管理弹窗（Spec: add-character-expression-system / Task 8.2） */}
-      <ExpressionManagerModal
+      {/* 素材管理弹窗（Spec: add-asset-and-trait-management / Task 11） */}
+      {/* 【重点标记 - BREAKING UI 变更】原 ExpressionManagerModal 替换为 AssetManagerModal，
+          支持表情/立绘/一般图像/三视图/角色特征多 Tab 管理。
+          characterDescription 传 characterCardContent（即角色卡 description 字段）。 */}
+      <AssetManagerModal
         open={expressionManagerOpen}
         characterCardId={characterInfo.characterCardId}
         characterName={characterInfo.characterCardName}
+        characterDescription={characterInfo.characterCardContent || ''}
+        characterPersonality={characterInfo.personality}
+        characterScenario={characterInfo.scenario}
         avatarPath={avatarPath}
         onClose={() => setExpressionManagerOpen(false)}
       />

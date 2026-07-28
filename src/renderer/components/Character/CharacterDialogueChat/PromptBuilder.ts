@@ -1438,3 +1438,298 @@ export async function buildSystemPrompt(
   // 第六步：将向量上下文和记忆表格数据追加到提示词末尾
   return await buildFinalSystemPrompt(systemPrompt, vectorContextItems, memoryTableData, organizeMode, tableStructure, chatHistoryItems);
 }
+
+// ==================== AI 表情生成：情绪 → SD 提示词映射 ====================
+// Spec: add-ai-expression-generation / Task 3
+// 用于 AI 表情生成（img2img）：以角色卡基底图片 + 情绪提示词生成对应表情图像，
+// 与上方 `buildExpressionPrompt`（让 AI 在回复文本中输出情绪标记）为两套独立机制。
+
+/**
+ * 30 种预置情绪 → Stable Diffusion 提示词映射（Spec: add-ai-expression-generation / Task 3）。
+ *
+ * 用于 AI 表情生成：以角色卡基底图片 + img2img + 情绪提示词生成对应表情。
+ * positive 为情绪正面提示词（英文，SD 语义），negative 为该情绪特有的负面提示词（可选）。
+ *
+ * 键名严格对齐 `EMOTION_PRESETS` 的 30 个 key（default / admiration / ... / cheerfulness），
+ * 自定义情绪（不在预置清单内）由 `buildExpressionGenerationPrompt` 通过 customLabel 兜底处理。
+ */
+export const EMOTION_PROMPT_MAP: Record<string, { positive: string; negative?: string }> = {
+  default: { positive: 'neutral expression, calm face, gentle look, serene' },
+  admiration: { positive: 'admiring expression, awestruck, starry eyes, inspired, reverent' },
+  amusement: { positive: 'amused, playful smile, twinkling eyes, lighthearted, cheerful grin' },
+  anger: { positive: 'angry expression, furrowed brows, intense glare, clenched teeth, furious' },
+  annoyance: { positive: 'annoyed expression, slight frown, irritated look, displeased' },
+  approval: { positive: 'approving nod, satisfied smile, warm expression, agreeable' },
+  caring: { positive: 'caring expression, tender look, soft smile, worried eyes, compassionate' },
+  confusion: { positive: 'confused expression, tilted head, raised eyebrow, puzzled, uncertain' },
+  curiosity: { positive: 'curious expression, wide eyes, eager look, leaning forward, inquisitive' },
+  desire: { positive: 'desiring expression, longing gaze, intense eyes, yearning' },
+  disappointment: { positive: 'disappointed expression, downcast eyes, sad smile, let down' },
+  disapproval: { positive: 'disapproving look, frown, stern expression, shaking head' },
+  disgust: { positive: 'disgusted expression, wrinkled nose, grimace, revulsed' },
+  embarrassment: { positive: 'embarrassed expression, blushing cheeks, averted gaze, flustered' },
+  excitement: { positive: 'excited expression, wide grin, sparkling eyes, energetic, thrilled' },
+  fear: { positive: 'fearful expression, wide eyes, pale face, trembling, terrified' },
+  gratitude: { positive: 'grateful expression, warm smile, thankful eyes, appreciative' },
+  grief: { positive: 'grief expression, teary eyes, sorrowful face, mourning, devastated' },
+  joy: { positive: 'joyful expression, bright smile, radiant, happy tears, elated' },
+  love: { positive: 'loving expression, tender gaze, warm smile, affectionate, heart eyes' },
+  nervousness: { positive: 'nervous expression, biting lip, anxious eyes, fidgeting, uneasy' },
+  neutral: { positive: 'neutral expression, calm, composed face, impassive' },
+  optimism: { positive: 'optimistic expression, hopeful smile, bright outlook, positive' },
+  pride: { positive: 'proud expression, confident smile, chin up, chest out, triumphant' },
+  realization: { positive: 'realization expression, widened eyes, open mouth, eureka moment' },
+  relief: { positive: 'relieved expression, sigh, relaxed shoulders, gentle smile, at ease' },
+  remorse: { positive: 'remorseful expression, guilty look, downcast, apologetic, regretful' },
+  sadness: { positive: 'sad expression, teary eyes, downturned mouth, melancholic, sorrowful' },
+  surprise: { positive: 'surprised expression, wide eyes, open mouth, shocked, astonished' },
+  cheerfulness: { positive: 'cheerful expression, bright smile, sunny disposition, joyful laugh, beaming' },
+};
+
+/**
+ * 构建 AI 表情生成的 SD 提示词（Spec: add-ai-expression-generation / Task 3）。
+ *
+ * 【重点标记 - 提示词可编辑】
+ * 原实现使用角色卡 description 字段（自然语言长文本）作为 SD 提示词基底，
+ * 但 description 通常是完整的段落描述（如"她是一个温柔的女孩..."），不适合 SD 的
+ * tag 格式。修改后改为使用用户可编辑的正面提示词模板（含 {emotion} 占位符），
+ * 用户可在设置页或生成弹窗中自定义角色外观 tag（如 "1girl, silver hair, blue eyes"）。
+ *
+ * 【重点标记 - 特征携带机制（Spec: add-asset-and-trait-management / Task 5）】
+ * 函数签名新增 `characterTraits?: string[]` 参数，用于将角色视觉特征 tag
+ * （如 `['white fur', 'dog girl']`）注入到正面提示词模板的 `{traits}` 占位符中。
+ *
+ * 提示词组合规则：
+ *   - 正面提示词：先替换 `{traits}` 占位符为特征 tag 字符串，再替换 `{emotion}` 占位符为情绪专用提示词
+ *   - 预置情绪：从 `EMOTION_PROMPT_MAP` 取 positive / negative
+ *   - 自定义情绪（key 不在 MAP 中）：以 customLabel 兜底，组成 `${customLabel} expression, emotional face`
+ *   - 负面提示词：用户自定义负面词优先；否则使用通用默认 + 情绪特有负面（若有）
+ *
+ * 【重点标记 - 特征携带机制 - 占位符注入逻辑】
+ * - 若模板含 `{traits}` 占位符：将 traits 拼接为逗号分隔字符串替换占位符
+ *   （空 traits 替换为空字符串，并清理多余逗号与空格）
+ * - 若模板不含 `{traits}` 占位符（旧配置兼容）：traitsStr 非空时在 prompt 开头
+ *   追加 `traitsStr + ', '`；traitsStr 为空时不追加，保持原模板行为
+ * - 与 sdGenerationService.generateExpression 的清理逻辑形成"上游 + 下游"双重保险：
+ *   本函数（上游）先做一次清理，sdGenerationService（下游）再做一次清理，
+ *   两处都清理是安全的（幂等操作，不会引入副作用）
+ *
+ * @param emotionKey - 情绪键名（EMOTION_PRESETS 的 key 或用户自定义 key）
+ * @param options - 可选配置
+ *   - positivePromptTemplate: 正面提示词模板（含 {emotion} / {traits} 占位符），默认使用内置模板
+ *   - customNegativePrompt: 用户自定义负面提示词，为空时使用默认负面
+ *   - customLabel: 自定义情绪的中文标签
+ *   - characterTraits: 角色视觉特征 tag 数组（Spec: add-asset-and-trait-management / Task 5），用于替换 {traits} 占位符
+ * @returns `{ prompt: string; negativePrompt: string }`
+ */
+export function buildExpressionGenerationPrompt(
+  emotionKey: string,
+  options?: {
+    positivePromptTemplate?: string;
+    customNegativePrompt?: string;
+    customLabel?: string;
+    characterTraits?: string[];
+  },
+): { prompt: string; negativePrompt: string } {
+  const {
+    positivePromptTemplate,
+    customNegativePrompt,
+    customLabel,
+    characterTraits,
+  } = options || {};
+
+  // 情绪提示词解析：预置情绪 → MAP；自定义情绪 → customLabel 兜底
+  let emotionPositive: string;
+  let emotionNegative: string | undefined;
+  const mapped = EMOTION_PROMPT_MAP[emotionKey];
+  if (mapped) {
+    emotionPositive = mapped.positive;
+    emotionNegative = mapped.negative;
+  } else if (customLabel && customLabel.trim()) {
+    emotionPositive = `${customLabel.trim()} expression, emotional face`;
+  } else {
+    emotionPositive = EMOTION_PROMPT_MAP.neutral.positive;
+  }
+
+  // 【重点标记 - 特征携带机制】拼接角色特征 tag 字符串
+  // 过滤空字符串与纯空白串，trim 后以逗号 + 空格连接（SD tag 标准格式）
+  const traitsStr = (characterTraits || [])
+    .map((t) => (typeof t === 'string' ? t.trim() : ''))
+    .filter((t) => t.length > 0)
+    .join(', ');
+
+  // 正面提示词：使用模板，将 {traits} 与 {emotion} 占位符依次替换
+  // 默认模板同时含 {traits} 与 {emotion} 两个占位符
+  // {traits} 放在 portrait 之后，确保角色特征优先；{emotion} 位置保留
+  const defaultTemplate = 'portrait, {traits}, looking at viewer, simple background, {emotion}, high quality, best quality, masterpiece, detailed face';
+  const template = (positivePromptTemplate && positivePromptTemplate.trim()) || defaultTemplate;
+
+  // 【重点标记 - 特征携带机制 - 占位符注入逻辑】
+  // 1. 若模板含 {traits} 占位符：替换为 traitsStr（可能为空字符串）
+  // 2. 若模板不含 {traits} 占位符（旧配置兼容）：traitsStr 非空时在开头追加，为空时保持原样
+  let prompt: string;
+  if (template.includes('{traits}')) {
+    // 使用函数形式替换，避免 $ 等特殊字符干扰（与 sdGenerationService 保持一致）
+    prompt = template.replace(/\{traits\}/g, () => traitsStr);
+  } else if (traitsStr) {
+    // 旧配置兼容：模板不含 {traits} 占位符，但传入了非空特征 → 在开头追加
+    prompt = `${traitsStr}, ${template}`;
+  } else {
+    // 旧配置兼容：模板不含 {traits} 占位符，且特征为空 → 保持原模板
+    prompt = template;
+  }
+
+  // 替换 {emotion} 占位符
+  // 若模板含 {emotion}：替换为情绪提示词；否则追加到末尾（与原行为一致）
+  prompt = prompt.includes('{emotion}')
+    ? prompt.replace(/\{emotion\}/g, emotionPositive)
+    : `${prompt}, ${emotionPositive}`;
+
+  // 【重点标记 - 特征携带机制 - 清理多余逗号与空格】
+  // 场景：模板 `portrait, {traits}, looking at viewer` + 空 traits → `portrait, , looking at viewer`
+  // 循环处理连续逗号（如 `a, , , b` 需多次匹配才能完全收敛）
+  // 与 sdGenerationService.generateExpression 的清理逻辑保持一致（下游会再清理一次，幂等安全）
+  let prevPrompt: string;
+  do {
+    prevPrompt = prompt;
+    prompt = prompt.replace(/,\s*,/g, ',');
+  } while (prompt !== prevPrompt);
+  prompt = prompt.replace(/^\s*,\s*/, ''); // 清理开头逗号
+  prompt = prompt.replace(/\s*,\s*$/, ''); // 清理结尾逗号
+
+  // 负面提示词：用户自定义优先；否则使用默认 + 情绪特有负面
+  const baseNegative = 'deformed, ugly, bad anatomy, multiple faces, text, watermark, low quality, blurry, mutated hands, extra digits, missing fingers, bad proportions';
+  const userNegative = (customNegativePrompt && customNegativePrompt.trim()) || '';
+  const negativePrompt = userNegative
+    ? (emotionNegative ? `${userNegative}, ${emotionNegative}` : userNegative)
+    : (emotionNegative ? `${baseNegative}, ${emotionNegative}` : baseNegative);
+
+  return { prompt, negativePrompt };
+}
+
+// ==================== NL（自然语言）表情生成：情绪 → NL 提示词映射 ====================
+// Spec: integrate-nl-driven-sd-models / Task 4
+// 用于 NL 驱动 SD 模型（qwen-image / qwen-image-edit / flux2）的表情生成，
+// 与上方 `buildExpressionGenerationPrompt`（SDXL tag 风格）为两套独立机制。
+
+/**
+ * 30 种预置情绪 → 自然语言描述映射（Spec: integrate-nl-driven-sd-models / Task 4.1）。
+ *
+ * 用于 NL 驱动 SD 模型：以自然语言句子描述表情，替代 SDXL 的 tag 风格提示词。
+ * 键名严格对齐 `EMOTION_PRESETS` 的 30 个 key。
+ */
+export const EMOTION_NL_PROMPT_MAP: Record<string, string> = {
+  default: 'a calm and neutral expression with a serene face',
+  admiration: 'an admiring expression with awestruck eyes and a reverent look',
+  amusement: 'an amused expression with a playful smile and twinkling eyes',
+  anger: 'an angry expression with furrowed brows and an intense glare',
+  annoyance: 'an annoyed expression with a slight frown and an irritated look',
+  approval: 'an approving expression with a satisfied smile and a warm look',
+  caring: 'a caring expression with a tender look and a soft smile',
+  confusion: 'a confused expression with a tilted head and a raised eyebrow',
+  curiosity: 'a curious expression with wide eyes and an eager look',
+  desire: 'a desiring expression with a longing gaze and intense eyes',
+  disappointment: 'a disappointed expression with downcast eyes and a sad smile',
+  disapproval: 'a disapproving expression with a frown and a stern look',
+  disgust: 'a disgusted expression with a wrinkled nose and a grimace',
+  embarrassment: 'an embarrassed expression with blushing cheeks and an averted gaze',
+  excitement: 'an excited expression with a wide grin and sparkling eyes',
+  fear: 'a fearful expression with wide eyes and a pale, trembling face',
+  gratitude: 'a grateful expression with a warm smile and thankful eyes',
+  grief: 'a grief expression with teary eyes and a sorrowful face',
+  joy: 'a joyful expression with a bright smile and radiant happiness',
+  love: 'a loving expression with a tender gaze and a warm smile',
+  nervousness: 'a nervous expression with lip biting and anxious eyes',
+  neutral: 'a neutral expression with a calm and composed face',
+  optimism: 'an optimistic expression with a hopeful smile and a bright outlook',
+  pride: 'a proud expression with a confident smile and chin raised',
+  realization: 'a realization expression with widened eyes and an open mouth',
+  relief: 'a relieved expression with a sigh and relaxed shoulders',
+  remorse: 'a remorseful expression with a guilty look and downcast eyes',
+  sadness: 'a sad expression with teary eyes and a downturned mouth',
+  surprise: 'a surprised expression with wide eyes and an open mouth',
+  cheerfulness: 'a cheerful expression with a bright smile and a sunny disposition',
+};
+
+/**
+ * NL 表情生成提示词构建选项（Spec: integrate-nl-driven-sd-models / Task 4.2）。
+ *
+ * @param nlPromptTemplate - NL 提示词模板（含 {traits} / {emotion} 占位符）
+ * @param customNegativePrompt - 用户自定义负面提示词
+ * @param customLabel - 自定义情绪的标签（用于兜底生成 NL 描述）
+ * @param characterTraits - 角色视觉特征描述数组（自然语言，如 ['blue eyes', 'long black hair']）
+ * @param modelType - SD 模型类型，影响提示词风格（qwen-image-edit 使用编辑指令风格）
+ */
+export interface NLExpressionPromptOptions {
+  nlPromptTemplate?: string;
+  customNegativePrompt?: string;
+  customLabel?: string;
+  characterTraits?: string[];
+  modelType?: 'sdxl' | 'qwen-image' | 'qwen-image-edit' | 'flux2';
+}
+
+/**
+ * 构建 NL（自然语言）驱动的表情生成提示词（Spec: integrate-nl-driven-sd-models / Task 4.2）。
+ *
+ * 与 `buildExpressionGenerationPrompt`（SDXL tag 风格）对称，本函数生成自然语言句子风格的
+ * 提示词，适用于 qwen-image / qwen-image-edit / flux2 等 NL 驱动 SD 模型。
+ *
+ * 提示词组合规则：
+ *   - 默认模板：`"A portrait of a character. {traits} The character has {emotion}, looking at the viewer. High quality, detailed."`
+ *   - `{traits}` 替换为自然语言特征描述（如 "with blue eyes and long black hair"）
+ *   - `{emotion}` 替换为 `EMOTION_NL_PROMPT_MAP[emotionKey]`
+ *   - 预置情绪：从 `EMOTION_NL_PROMPT_MAP` 取 NL 描述
+ *   - 自定义情绪（key 不在 MAP 中）：以 customLabel 兜底，组成 `${customLabel} expression`
+ *
+ * 【重点标记 - qwen-image-edit 编辑指令风格】
+ * 当 modelType 为 `qwen-image-edit` 时，提示词重构为编辑指令风格：
+ *   `"Change the character's expression to {emotion}. Maintain the character's identity, facial features, hairstyle, and clothing."`
+ * 因为 qwen-image-edit 是 img2img 编辑模型，需要明确的编辑指令而非描述性提示词。
+ *
+ * @param emotionKey - 情绪键名（EMOTION_PRESETS 的 key 或用户自定义 key）
+ * @param options - 可选配置（见 NLExpressionPromptOptions）
+ * @returns `{ prompt: string; negativePrompt: string }`
+ */
+export function buildNLExpressionPrompt(
+  emotionKey: string,
+  options?: NLExpressionPromptOptions
+): { prompt: string; negativePrompt: string } {
+  const modelType = options?.modelType ?? 'qwen-image-edit';
+  const emotionNl = EMOTION_NL_PROMPT_MAP[emotionKey]
+    || (options?.customLabel ? `${options.customLabel.toLowerCase()} expression` : 'a neutral expression');
+
+  const traitsStr = (options?.characterTraits || [])
+    .map(t => t.trim())
+    .filter(Boolean)
+    .join(', ');
+  const traitsDescription = traitsStr ? `with ${traitsStr}` : '';
+
+  const template = options?.nlPromptTemplate
+    || 'A portrait of a character. {traits} The character has {emotion}, looking at the viewer. High quality, detailed.';
+
+  let prompt = template;
+  // Replace {traits}
+  if (prompt.includes('{traits}')) {
+    prompt = prompt.replace(/\{traits\}/g, traitsDescription);
+  } else if (traitsDescription) {
+    // If no placeholder, prepend traits description
+    prompt = `${traitsDescription}. ${prompt}`;
+  }
+  // Replace {emotion}
+  if (prompt.includes('{emotion}')) {
+    prompt = prompt.replace(/\{emotion\}/g, emotionNl);
+  } else {
+    // If no placeholder, append emotion
+    prompt = `${prompt} The character has ${emotionNl}.`;
+  }
+
+  // For qwen-image-edit, use edit instruction style
+  if (modelType === 'qwen-image-edit') {
+    prompt = `Change the character's expression to ${emotionNl}. Maintain the character's identity, facial features, hairstyle, and clothing. ${traitsDescription ? `The character has ${traitsDescription}.` : ''}`.trim();
+  }
+
+  const negativePrompt = options?.customNegativePrompt
+    || 'blurry, low quality, distorted, deformed, disfigured, bad anatomy, watermark, text';
+
+  return { prompt, negativePrompt };
+}

@@ -4,6 +4,10 @@
  * - 并发控制：整理锁（organizingLocks）与 AbortController 管理、断点续传
  * - 锁工具：canStartOrganize / setOrganizingLock / releaseOrganizingLock / stopOrganizing
  *
+ * 【多模态兼容性审计】本编排器将 AI 调用委托给 aiClient.ts（callAIAPI/callAIAPIWithRetry），
+ * 自身不构造 messages 数组，不受多模态 content 扩展影响。
+ * aiClient 使用纯文本字符串 content，适用于记忆整理等非视觉任务。
+ *
  * 已迁出的原"工具方法"（避免本文件超 800 行）：
  * - buildOrganizeConfig/aiClient.ts、rollbackTableData+saveProcessingResult/tableFileRepository.ts
  * - sendOrganizeNotification/logger.ts、readAndFilterMessages+splitChatIntoSegments/chatSessionRepository.ts

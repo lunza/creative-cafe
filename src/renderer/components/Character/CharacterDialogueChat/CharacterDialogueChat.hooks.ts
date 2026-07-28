@@ -644,6 +644,11 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       ),
       // 后端能力探测（Spec: Task 3.3）：优先用引擎显式配置，缺省按 api_mode 推断默认值
       capabilities: activeEngine.capabilities || getDefaultEngineCapabilities(activeEngine.api_mode),
+      // 能力感知透传（Spec: upgrade-ai-handler-multimodal-compatibility / Task 3.2 + 3.4）
+      // 将用户思维链/工具调用开关透传给 ChatEngine，由其在 sendMessage 中按
+      // supportsThinking / supportsToolCalling 做双条件守卫后再决定是否注入参数。
+      enable_chain_of_thought: activeEngine.enable_chain_of_thought,
+      use_function_calling: activeEngine.use_function_calling,
     };
 
     console.log(`[CharacterDialogueChat] engineConfigWithParams.max_tokens:`, engineConfigWithParams.max_tokens);
@@ -1807,6 +1812,10 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       stopSequences: buildStopSequencesForUserReply(charName, customStopSequences),
       // 后端能力探测：优先用引擎显式配置，缺省按 api_mode 推断默认值
       capabilities: activeEngine.capabilities || getDefaultEngineCapabilities(activeEngine.api_mode),
+      // 能力感知透传（Spec: upgrade-ai-handler-multimodal-compatibility / Task 3.2 + 3.4）
+      // 将用户思维链/工具调用开关透传给 ChatEngine，由其按 supportsThinking / supportsToolCalling 守卫。
+      enable_chain_of_thought: activeEngine.enable_chain_of_thought,
+      use_function_calling: activeEngine.use_function_calling,
     };
 
     if (effectiveParams.top_p !== undefined) {
@@ -2018,6 +2027,10 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       stopSequences: buildStopSequencesForUserReply(charName, customStopSequences),
       // 后端能力探测：优先用引擎显式配置，缺省按 api_mode 推断默认值
       capabilities: activeEngine.capabilities || getDefaultEngineCapabilities(activeEngine.api_mode),
+      // 能力感知透传（Spec: upgrade-ai-handler-multimodal-compatibility / Task 3.2 + 3.4）
+      // 将用户思维链/工具调用开关透传给 ChatEngine，由其按 supportsThinking / supportsToolCalling 守卫。
+      enable_chain_of_thought: activeEngine.enable_chain_of_thought,
+      use_function_calling: activeEngine.use_function_calling,
     };
 
     if (effectiveParams.top_p !== undefined) {

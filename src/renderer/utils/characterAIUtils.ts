@@ -7,6 +7,9 @@ function ensurePositiveInteger(value: unknown, defaultValue: number): number {
   return Number.isInteger(num) && num > 0 ? num : defaultValue;
 }
 
+// 【多模态兼容性审计】本工具使用 { role, content: string }[] 构造消息，
+// 经 defaultAIService（AIChatMessage，content: string）发送，不含多模态联合类型。
+// 不受 AIService.ts 主进程联合类型 ChatMessage 扩展影响，适用于角色卡 AI 等非视觉任务。
 function buildAIRequestOptions(
   engine: AIEngine,
   messages: { role: 'system' | 'user' | 'assistant'; content: string }[]

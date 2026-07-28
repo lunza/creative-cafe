@@ -9,6 +9,9 @@ import { usePathSettings } from './hooks/usePathSettings';
 import GeneralSettingsPanel from './GeneralSettingsPanel';
 import PathSettingsPanel from './PathSettingsPanel';
 import AIEngineSettingsPanel from './AIEngineSettingsPanel';
+// Spec: add-ai-expression-generation / Task 6
+// SDWebuiSettings 通过 ref 暴露 getFormValues()，与 VectorConfigPanel 模式一致
+import SDWebuiSettings, { SDWebuiSettingsRef } from './SDWebuiSettings';
 import './Settings.css';
 
 /**
@@ -86,6 +89,8 @@ const Settings: React.FC = () => {
   const [dashboardBackgroundImage, setDashboardBackgroundImage] = useState('');
   const [debugMode, setDebugMode] = useState(false);
   const vectorConfigRef = React.useRef<VectorConfigPanelRef>(null);
+  // Spec: add-ai-expression-generation / Task 6
+  const sdWebuiConfigRef = React.useRef<SDWebuiSettingsRef>(null);
 
   // 路径管理 Hook
   const {
@@ -199,6 +204,9 @@ const Settings: React.FC = () => {
               presence_penalty: Number(values.presence_penalty) || undefined,
               n: Number(values.n) || 1,
               system_prompt: values.system_prompt || '',
+              // 【重点标记 - 保留已持久化的模型能力】保存设置时不覆盖 capabilities，
+              // 因为 capabilities 由测试连通性时自动探测并持久化，不在表单中编辑。
+              // ...engine 展开已保留 capabilities，此处不显式设置即保留原值。
             };
           }
           return engine;
@@ -206,6 +214,9 @@ const Settings: React.FC = () => {
 
         // 合并向量配置
         const vectorConfig = vectorConfigRef.current?.getFormValues() || {};
+
+        // 合并 SD WebUI 配置（Spec: add-ai-expression-generation / Task 6）
+        const sdWebuiConfig = sdWebuiConfigRef.current?.getFormValues();
 
         const updatedSetting = {
           ...setting,
@@ -220,6 +231,8 @@ const Settings: React.FC = () => {
           dashboardBackgroundImage: dashboardBackgroundImage,
           debugMode: debugMode,
           vector: vectorConfig,
+          // 仅在 ref 成功取值时写入，避免覆盖已有配置
+          ...(sdWebuiConfig ? { sdWebui: sdWebuiConfig } : {}),
         };
 
         addLog(`更新后的设置: ${JSON.stringify(updatedSetting)}`, 'info');
@@ -332,6 +345,9 @@ const Settings: React.FC = () => {
         />
 
         <AIEngineSettingsPanel form={form} />
+
+        {/* Spec: add-ai-expression-generation / Task 6 — SD WebUI 配置 */}
+        <SDWebuiSettings ref={sdWebuiConfigRef} />
 
         <VectorConfigPanel ref={vectorConfigRef} />
 

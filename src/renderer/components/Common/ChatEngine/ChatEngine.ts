@@ -128,6 +128,43 @@ export class ChatEngine implements IChatEngine {
         requestBody[key] = value;
       }
 
+      // ============================================================
+      // 能力感知：思维链参数注入（Spec: upgrade-ai-handler-multimodal-compatibility / Task 3.2）
+      // ============================================================
+      // 能力感知逻辑：思维链参数仅在"双条件"同时满足时才注入请求体：
+      //   1. enable_chain_of_thought === true（用户在引擎设置中启用了思维链）
+      //   2. capabilities.supportsThinking === true（模型探测支持思维链/推理）
+      // 触发条件：双条件判断（用户配置 + 模型能力），缺一不可。
+      // 兼容性考量（降级策略）：
+      //   - 若 enable_chain_of_thought=true 但 supportsThinking!==true：模型不支持思维链，
+      //     此时【不注入】任何思维链参数，保持纯文本聊天，避免向后端发送不支持字段导致 4xx 错误。
+      //   - 若 enable_chain_of_thought 未启用：用户未开启，自然不注入。
+      // 注入字段 `enable_thinking: true` 为 OpenAI 兼容后端常见思维链开关（如 Qwen3 系列）；
+      // 具体字段名取决于模型 API，supportsThinking 探测成功即认为后端可识别该参数。
+      const thinkingEnabled =
+        config.enable_chain_of_thought === true &&
+        config.capabilities?.supportsThinking === true;
+      if (thinkingEnabled) {
+        requestBody.enable_thinking = true;
+      }
+
+      // ============================================================
+      // 能力感知：工具/函数调用一致性守卫（Spec: upgrade-ai-handler-multimodal-compatibility / Task 3.4）
+      // ============================================================
+      // 一致性要求：use_function_calling 必须与 supportsToolCalling 保持一致。
+      //   - use_function_calling=true 且 supportsToolCalling=true  → 工具调用生效
+      //   - use_function_calling=true 但 supportsToolCalling!==true → 禁用工具调用（模型不支持，降级为纯文本聊天）
+      //   - use_function_calling 未启用                            → 不启用工具调用
+      // 当前 ChatEngine 走纯文本聊天流程，不构造 OpenAI tools 数组，因此此处不向请求体注入 tools 字段；
+      // 仅在此处记录能力一致性判断结果，为后续接入 tools 字段预留正确的双条件判断点。
+      // 当用户开启 use_function_calling 但模型不支持时，应静默降级而非报错，保证聊天功能正常运行。
+      const toolCallingEnabled =
+        config.use_function_calling === true &&
+        config.capabilities?.supportsToolCalling === true;
+      // 注：toolCallingEnabled 当前不直接驱动请求体字段（纯文本聊天无 tools）；
+      // 若后续接入 tools 数组，必须在此处用同样的双条件守卫，未满足时跳过 tools 注入。
+      void toolCallingEnabled;
+
       // Stop sequences 防抢话（Spec: optimize-chat-ai-intelligence / Task 3.2 + 3.3）
       // 借鉴 SillyTavern names_as_stop_strings 机制，注入用户名变体停止序列，
       // 防止 AI 代替用户发言（生成 "\n用户: ..." 等下一条用户消息）。

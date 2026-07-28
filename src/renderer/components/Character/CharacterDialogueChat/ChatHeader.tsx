@@ -208,7 +208,7 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
           </Tooltip>
         )}
         {onOpenExpressionManager && (
-          <Tooltip title="表情管理">
+          <Tooltip title="素材管理">
             <Button
               type="text"
               icon={<SmileOutlined />}

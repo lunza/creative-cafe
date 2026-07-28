@@ -5,9 +5,13 @@ import {
   DeleteOutlined,
   PlusOutlined,
   CloseOutlined,
+  ThunderboltOutlined,
+  RobotOutlined,
 } from '@ant-design/icons';
 import { EMOTION_PRESETS } from './PromptBuilder';
 import ImageCropperModal from './ImageCropperModal';
+// Spec: add-ai-expression-generation / Task 5
+import ExpressionGenerateModal from './ExpressionGenerateModal';
 import { useExpressionStore } from '../../../stores/expressionStore';
 import type { CustomEmotion } from '../../../stores/expressionStore';
 
@@ -79,6 +83,12 @@ const ExpressionManagerModal: React.FC<ExpressionManagerModalProps> = ({
   const [newCustomKey, setNewCustomKey] = useState<string>('');
   const [newCustomLabel, setNewCustomLabel] = useState<string>('');
   const [addCustomLoading, setAddCustomLoading] = useState<boolean>(false);
+
+  // ====== AI 生成表情弹窗状态（Spec: add-ai-expression-generation / Task 5） ======
+  const [generateModalOpen, setGenerateModalOpen] = useState<boolean>(false);
+  const [generateMode, setGenerateMode] = useState<'batch' | 'single'>('batch');
+  const [generateTargetKey, setGenerateTargetKey] = useState<string | undefined>(undefined);
+  const [generateTargetLabel, setGenerateTargetLabel] = useState<string | undefined>(undefined);
 
   // 隐藏的 file input ref（用于触发文件选择对话框）
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -293,6 +303,50 @@ const ExpressionManagerModal: React.FC<ExpressionManagerModalProps> = ({
     }
   }, [newCustomKey, newCustomLabel, manifest, characterCardId, addCustomEmotion]);
 
+  // ====== AI 生成流程（Spec: add-ai-expression-generation / Task 5） ======
+
+  /**
+   * 打开「AI 生成全部表情」弹窗。
+   * 若已有任何表情图（manifest.expressions 非空），先弹出二次确认避免误覆盖。
+   */
+  const handleBatchGenerate = useCallback(() => {
+    const hasExisting =
+      !!manifest?.expressions && Object.keys(manifest.expressions).length > 0;
+    if (hasExisting) {
+      Modal.confirm({
+        title: '覆盖现有表情？',
+        content: '部分情绪已有表情图片，AI 生成将覆盖这些表情。是否继续？',
+        okText: '覆盖并生成',
+        cancelText: '取消',
+        onOk: () => {
+          setGenerateMode('batch');
+          setGenerateTargetKey(undefined);
+          setGenerateTargetLabel(undefined);
+          setGenerateModalOpen(true);
+        },
+      });
+    } else {
+      setGenerateMode('batch');
+      setGenerateTargetKey(undefined);
+      setGenerateTargetLabel(undefined);
+      setGenerateModalOpen(true);
+    }
+  }, [manifest]);
+
+  /**
+   * 打开「AI 生成单张表情」弹窗（针对某个具体情绪）。
+   * stopPropagation 由调用方在按钮 onClick 中处理，避免触发卡片父级事件。
+   */
+  const handleSingleGenerate = useCallback(
+    (emotionKey: string, label: string) => {
+      setGenerateMode('single');
+      setGenerateTargetKey(emotionKey);
+      setGenerateTargetLabel(label);
+      setGenerateModalOpen(true);
+    },
+    [],
+  );
+
   // ====== 渲染辅助 ======
 
   const customEmotions: CustomEmotion[] = manifest?.customEmotions ?? [];
@@ -476,6 +530,19 @@ const ExpressionManagerModal: React.FC<ExpressionManagerModalProps> = ({
                     style={{ color: 'var(--primary-color, #6366f1)' }}
                   />
                 </Tooltip>
+                {/* Spec: add-ai-expression-generation / Task 5 - 单张 AI 生成入口 */}
+                <Tooltip title="AI 生成">
+                  <Button
+                    size="small"
+                    type="text"
+                    icon={<RobotOutlined />}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSingleGenerate(emotionKey, label);
+                    }}
+                    style={{ color: 'var(--primary-color, #6366f1)' }}
+                  />
+                </Tooltip>
                 {hasImage && (
                   <Tooltip title="删除表情">
                     <Button
@@ -511,6 +578,7 @@ const ExpressionManagerModal: React.FC<ExpressionManagerModalProps> = ({
       handleUploadClick,
       handleDeleteImage,
       handleRemoveCustomEmotion,
+      handleSingleGenerate,
     ],
   );
 
@@ -611,6 +679,17 @@ const ExpressionManagerModal: React.FC<ExpressionManagerModalProps> = ({
           >
             添加自定义情绪
           </Button>
+
+          {/* Spec: add-ai-expression-generation / Task 5 - 批量 AI 生成入口 */}
+          <Button
+            type="primary"
+            icon={<ThunderboltOutlined />}
+            onClick={handleBatchGenerate}
+            disabled={!hasCharacter}
+            style={{ marginLeft: 8 }}
+          >
+            AI 生成全部表情
+          </Button>
         </div>
 
         {/* 错误横幅（store.error） */}
@@ -706,6 +785,22 @@ const ExpressionManagerModal: React.FC<ExpressionManagerModalProps> = ({
         imageSrc={cropperImageSrc}
         onConfirm={handleCropperConfirm}
         onCancel={handleCropperCancel}
+      />
+
+      {/* Spec: add-ai-expression-generation / Task 5 - AI 生成表情弹窗 */}
+      <ExpressionGenerateModal
+        open={generateModalOpen}
+        characterCardId={characterCardId}
+        characterName={characterName}
+        avatarPath={avatarPath}
+        mode={generateMode}
+        targetEmotionKey={generateTargetKey}
+        targetEmotionLabel={generateTargetLabel}
+        onClose={() => setGenerateModalOpen(false)}
+        onGenerated={() => {
+          // 生成完成后刷新 store，展示新生成的图片
+          loadExpressions(characterCardId);
+        }}
       />
 
       {/* 添加自定义情绪弹窗 */}

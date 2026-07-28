@@ -132,6 +132,9 @@ export class AIService {
     return `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 
+  // 【多模态兼容性审计】AIService 使用 AIChatMessage 类型（content: string，定义于 AIService.types.ts），
+  // 该类型 content 为纯字符串，不含多模态联合类型，不受 AIService.ts 主进程联合类型扩展影响。
+  // 适用于文本聊天等非视觉任务；多模态请求由调用方直接构造 body 经 ai:request 转发。
   private buildRequestBody(options: AIRequestOptions, stream: boolean = false): Record<string, any> {
     const body: Record<string, any> = {
       model: options.model,

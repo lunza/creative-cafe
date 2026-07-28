@@ -26,6 +26,7 @@ import type {
   GameLocalConfig,
   GameType
 } from '../../shared/types/game.types';
+import type { AIEngineCapabilities } from './setting';
 
 declare global {
   interface Window {
@@ -199,6 +200,52 @@ interface ElectronAPI {
       details?: string
     }>;
     listModels: (params: { apiUrl?: string; apiKey?: string; apiKeyTransmission?: string }) => Promise<{ success: boolean; models: string[]; error?: string }>;
+    /**
+     * AI 辅助角色特征生成（Spec: add-asset-and-trait-management / Task 12）
+     *
+     * 基于角色卡 description/personality/scenario 调用 LLM 提取视觉特征 tag 列表。
+     * 主进程内部复用 aiConfigProvider 读取激活 AI 引擎配置，
+     * 非流式调用 /v1/chat/completions，解析逗号分隔 tag 返回。
+     *
+     * 错误兜底（SubTask 12.4）：
+     * - AI 引擎未配置 / 调用失败 / 返回格式异常 → success=false，error 为友好信息（非堆栈）
+     * - traits 可能为空数组（LLM 未从描述中提取到任何视觉特征）
+     */
+    generateCharacterTraits: (args: {
+      characterCardId: string;
+      description: string;
+      personality?: string;
+      scenario?: string;
+      includeImage?: boolean;
+    }) => Promise<{
+      success: boolean;
+      traits?: string[];
+      appearanceDescription?: string;
+      error?: string;
+    }>;
+    /**
+     * AI 图片识别特征提取（Spec: add-model-capability-detection-and-image-recognition / Task 6）
+     *
+     * 通过多模态模型识别角色卡 PNG 图片，提取视觉特征 tag 列表。
+     * 主进程内部读取角色卡图片为 base64 data URI，构建多模态 messages
+     * （text + image_url），非流式调用 /v1/chat/completions，解析逗号分隔 tag 返回。
+     *
+     * 前置条件：当前 AI 引擎 supportsVision=true（由前端判断，主进程不重复检测）
+     *
+     * 错误兜底：
+     * - AI 引擎未配置 / 角色卡图片读取失败 / 调用失败 / 返回格式异常 → success=false
+     * - traits 可能为空数组（模型未从图片中提取到任何视觉特征）
+     */
+    recognizeImageTraits: (args: { characterCardPath: string; characterName?: string }) =>
+      Promise<{ success: boolean; traits?: string[]; appearanceDescription?: string; error?: string }>;
+    /**
+     * 探测 AI 模型能力（Spec: add-model-capability-detection-and-image-recognition / Task 3）
+     *
+     * 并行探测 vision / thinking / tool-calling 等能力，供前端在连通性测试后展示徽章。
+     * 主进程内部调用 aiService.probeAllCapabilities，探测失败时 success=false。
+     */
+    probeCapabilities: (args: { apiUrl: string; apiKey: string; apiKeyTransmission: string; modelName: string }) =>
+      Promise<{ success: boolean; capabilities?: AIEngineCapabilities; error?: string }>;
   };
   // 创意数据 API
   creative: {
@@ -453,6 +500,129 @@ interface ElectronAPI {
     getImagePath: (args: { characterCardId: string; emotionKey: string }) => Promise<{ success: boolean; imagePath: string | null; error?: string }>;
   };
 
+  // 角色特征管理 API（Spec: add-asset-and-trait-management / Task 2）
+  // 为每个角色卡持久化视觉特征 tag 数组，SD 生成素材时携带以保证角色一致性
+  // 存储路径：{userData}/data/character-traits/{sha256(characterCardId).slice(0,16)}/traits.json
+  characterTrait: {
+    /** 读取角色卡视觉特征 tag 数组；文件不存在或解析失败时返回 [] */
+    list: (characterCardId: string) => Promise<string[]>;
+    /** 覆盖保存角色卡视觉特征 tag 数组（自动创建目录，原子写入 traits.json，可附带外观描述） */
+    save: (args: { characterCardId: string; traits: string[]; appearanceDescription?: string }) => Promise<{ success: boolean; error?: string }>;
+    /** 读取角色卡外观描述（中文自然语言）；不存在时返回空串 */
+    loadDescription: (characterCardId: string) => Promise<string>;
+    /** 清除角色卡特征文件（删除 traits.json，文件不存在视为幂等成功） */
+    clear: (characterCardId: string) => Promise<{ success: boolean; error?: string }>;
+  };
+
+  // 素材管理 API（Spec: add-asset-and-trait-management / Task 7）
+  // 通用素材管理，支持 illustration / general / three-view 三种素材类型
+  // 表情类型（expression）继续走 expressionService.ts，不纳入本命名空间
+  // 存储路径：{userData}/data/character-assets/{sha256(characterCardId).slice(0,16)}/{assetType}/...
+  //
+  // 注意：assetType 在 preload 透传为 string（避免主进程 AssetType 类型泄露），
+  //       实际仅接受 'illustration' | 'general' | 'three-view'，
+  //       service 内部对 three-view 类型校验 assetId 是否在 front/side/back 白名单内
+  asset: {
+    /** 读取角色卡 × assetType 的素材包 manifest；不存在时返回默认空 manifest */
+    list: (args: { characterCardId: string; assetType: string }) => Promise<{
+      characterCardId: string;
+      version: 1;
+      assets: Record<string, {
+        id: string;
+        type: 'illustration' | 'general' | 'three-view';
+        slot?: 'front' | 'side' | 'back';
+        image: string;
+        createdAt: string;
+      }>;
+    }>;
+    /** 保存素材图像（base64，可含 data URI 前缀）并更新 manifest；返回图像绝对路径 */
+    save: (args: {
+      characterCardId: string;
+      assetType: string;
+      assetId: string;
+      imageBase64: string;
+      slot?: string;
+    }) => Promise<{ success: boolean; error?: string; imagePath?: string }>;
+    /** 删除指定素材的图像文件并从 manifest.assets 移除条目（幂等） */
+    delete: (args: { characterCardId: string; assetType: string; assetId: string }) => Promise<{ success: boolean; error?: string }>;
+    /**
+     * 获取指定素材的图像绝对路径；不存在时 imagePath=null，success=true
+     * 【重点标记 - CSP 兼容】返回的 imagePath 为磁盘绝对路径，
+     * 渲染进程应通过 file.readAsBase64 转 data URL 后再用于 <img src>
+     */
+    getImagePath: (args: { characterCardId: string; assetType: string; assetId: string }) => Promise<{ success: boolean; imagePath: string | null; error?: string }>;
+  };
+
+  // SD 表情生成 API（Spec: add-ai-expression-generation / Task 2 + integrate-nl-driven-sd-models / Task 5）
+  // 通过 SD WebUI img2img / txt2img 端点生成角色卡表情图片
+  // 注意：本命名空间合并了 Task 6 的 checkStatus / getModels，并由 Task 2 追加
+  //       generateExpression / generateAllExpressions / cancelGeneration 及事件监听器，
+  //       Task 5 追加 generateTxt2Img（NL 驱动模型文生图）。
+  // options 类型实际为 SDGenerationOptions（定义于 src/main/services/sdGenerationService.ts），
+  // 因主进程类型不可直接被渲染进程引用，此处使用 any 以匹配 preload 实现
+  sd: {
+    /** 检查 SD WebUI API 状态（GET /sdapi/v1/options + /sdapi/v1/script-info），返回当前模型 + ADetailer 可用性 */
+    checkStatus: (endpoint: string) => Promise<{
+      available: boolean;
+      currentModel?: string;
+      adetailerAvailable?: boolean;
+      error?: string;
+    }>;
+    /** 获取 SD WebUI 已加载的模型列表（GET /sdapi/v1/sd-models） */
+    getModels: (endpoint: string) => Promise<{
+      success: boolean;
+      models: Array<{ title: string; model_name: string; hash?: string }>;
+      error?: string;
+    }>;
+    /** 生成单个表情图片（内部先 extractBaseImage 再 generateExpression） */
+    generateExpression: (args: {
+      characterCardPath: string;
+      emotionKey: string;
+      prompt: string;
+      negativePrompt: string;
+      options?: any;
+    }) => Promise<{ success: boolean; imageBase64?: string; error?: string; warning?: string }>;
+    /** 文生图（txt2img），适用于 qwen-image / flux2 等 NL 驱动模型 */
+    generateTxt2Img: (args: {
+      endpoint: string;
+      prompt: string;
+      negativePrompt?: string;
+      options?: any;
+    }) => Promise<{ success: boolean; imageBase64?: string; error?: string; warning?: string }>;
+    /** 批量生成多个表情，通过 onGenerationProgress / onGenerationComplete 推送进度 */
+    generateAllExpressions: (args: {
+      characterCardPath: string;
+      emotions: Array<{ key: string; prompt: string; negativePrompt: string }>;
+      options?: any;
+    }) => Promise<{
+      success: boolean;
+      total: number;
+      successCount: number;
+      failedCount: number;
+      cancelledCount: number;
+    }>;
+    /** 取消正在进行的批量生成任务（设置模块级取消标志） */
+    cancelGeneration: () => Promise<{ success: boolean }>;
+    /** 监听单个表情生成进度事件 */
+    onGenerationProgress: (callback: (data: {
+      current: number;
+      total: number;
+      emotionKey: string;
+      status: 'success' | 'failed';
+      error?: string;
+      imageBase64?: string;
+    }) => void) => void;
+    /** 监听批量生成完成事件 */
+    onGenerationComplete: (callback: (data: {
+      total: number;
+      success: number;
+      failed: number;
+      cancelled: number;
+    }) => void) => void;
+    /** 移除所有进度监听器（组件卸载时调用） */
+    removeProgressListeners: () => void;
+  };
+
   // 游戏模式 API（Spec: add-game-mode-framework / Task 5 preload 契约）
   // 命名空间由 Task 5 在 preload.ts 中实现；此处类型声明由 Task 6 提前补全以解耦渲染进程开发
   game: {
@@ -508,6 +678,27 @@ interface ElectronAPI {
     onNarrativeComplete: (callback: (data: GameNarrativeComplete) => void) => () => void;
     onNarrativeError: (callback: (data: GameNarrativeError) => void) => () => void;
     onTableUpdated: (callback: (data: GameTableUpdated) => void) => () => void;
+  };
+
+  // LoRA 模型列表 API（Spec: add-lora-model-selection / Task 3）
+  // 通过 SD WebUI API 获取可用 LoRA 模型列表，含预览图 URL 和 JSON 元数据
+  lora: {
+    list: (endpoint: string) => Promise<{
+      success: boolean;
+      loras?: Array<{
+        name: string;
+        alias: string;
+        path: string;
+        previewUrl: string;
+        description: string;
+        activationText: string;
+        preferredWeight: number;
+        sdVersion: string;
+        notes: string;
+        category: string;
+      }>;
+      error?: string;
+    }>;
   };
 }
 

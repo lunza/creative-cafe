@@ -19,7 +19,20 @@
  * `Promise<{ success: boolean; imagePath: string | null; error?: string }>`。
  * 本 store 以实际实现为准（取 `.imagePath`），不以任务文档为准。
  *
+ * 【重点标记 - CSP 裂图 BUG 修复】
+ * 主进程 `expressionService.getImagePath / saveImage` 返回的是磁盘绝对路径（如
+ * `C:\Users\...\character-expressions\{hash}\joy.png`）。但 `src/main/index.ts` 中的
+ * CSP 限制 `img-src 'self' data: blob:`，渲染进程无法直接通过 `<img src="C:/...">`
+ * 加载本地文件，会导致「裂开图片」图标。
+ *
+ * 修复方案：imageCache 中**只存 data URL**，不存绝对路径：
+ * - `loadExpressions`：拿到绝对路径后，再调用 `window.electronAPI.file.readAsBase64`
+ *   读为 `data:image/png;base64,...` 存入 imageCache（与 `useCharacterSwitch` 加载头像一致）
+ * - `saveExpression`：入参 `imageDataUrl` 本身已是 data URL（裁剪/SD 生成的输出），
+ *   保存成功后直接存入 imageCache，无需读盘
+ *
  * 参考：src/renderer/stores/characterChatStore.ts（无 persist 的 IPC 适配 store 模式）
+ *      src/renderer/components/Character/CharacterDialogueChat/useCharacterSwitch.ts（头像 data URL 加载模式）
  */
 
 import { create } from 'zustand';
@@ -63,7 +76,8 @@ interface ExpressionState {
   currentCharacterCardId: string | null;
   /** 当前 manifest（含预置 + 自定义情绪清单与图像映射） */
   manifest: ExpressionManifest | null;
-  /** 图像路径缓存：emotionKey → 绝对图片路径（仅含已上传的表情） */
+  /** 图像缓存：emotionKey → data URL（仅含已上传的表情）。
+   * 【重点标记 - CSP 兼容】存 data URL 而非磁盘绝对路径，避免被 CSP 拦截导致裂图。 */
   imageCache: Record<string, string>;
   /** 加载中标志 */
   loading: boolean;
@@ -75,7 +89,7 @@ interface ExpressionState {
   /**
    * 加载指定角色卡的表情包。
    * - 拉取 manifest，构造空白默认值兜底
-   * - 逐个 emotionKey 调用 getImagePath 构建绝对路径缓存
+   * - 逐个 emotionKey 调用 getImagePath 拿磁盘绝对路径，再 readAsBase64 转为 data URL 存入缓存
    * - 预热浏览器图像缓存（fire-and-forget）
    */
   loadExpressions: (characterCardId: string) => Promise<void>;
@@ -209,7 +223,10 @@ export const useExpressionStore = create<ExpressionState>((set, get) => ({
         customEmotions: rawManifest?.customEmotions ?? [],
       };
 
-      // 构建 imageCache：逐个 emotionKey 调用 getImagePath 拿绝对路径
+      // 构建 imageCache：逐个 emotionKey 调用 getImagePath 拿磁盘绝对路径，
+      // 再通过 file.readAsBase64 转换为 data URL 存入缓存。
+      // 【重点标记 - CSP 裂图 BUG 修复】绝对路径无法直接用于 <img src>（CSP 拦截），
+      // 必须转为 data URL，与 useCharacterSwitch.ts 加载头像的方式保持一致。
       const imageCache: Record<string, string> = {};
       const emotionKeys = Object.keys(safeManifest.expressions);
       for (const emotionKey of emotionKeys) {
@@ -221,7 +238,16 @@ export const useExpressionStore = create<ExpressionState>((set, get) => ({
           // 【重点标记】实际返回签名：{ success, imagePath, error? }，
           // 不是任务文档描述的 Promise<string | null>。以 electron.d.ts 与 handler 实现为准。
           if (pathResult?.success && pathResult.imagePath) {
-            imageCache[emotionKey] = pathResult.imagePath;
+            // 将磁盘文件读为 data URL（data:image/png;base64,...）
+            const base64Result = await window.electronAPI.file.readAsBase64(pathResult.imagePath);
+            if (base64Result?.success && base64Result.data) {
+              imageCache[emotionKey] = base64Result.data;
+            } else {
+              console.warn(
+                `[expressionStore] readAsBase64 failed for ${emotionKey}:`,
+                base64Result?.error,
+              );
+            }
           }
         } catch (e) {
           console.warn(`[expressionStore] getImagePath failed for ${emotionKey}:`, e);
@@ -270,7 +296,21 @@ export const useExpressionStore = create<ExpressionState>((set, get) => ({
 
       if (result?.success && result.imagePath) {
         const imageFileName = `${emotionKey}.png`;
-        const imagePath = result.imagePath;
+
+        // 【重点标记 - CSP 裂图 BUG 修复】imageCache 只存 data URL，不存磁盘绝对路径。
+        // 入参 imageDataUrl 本身就是 data URL（来自裁剪组件 / SD 生成结果），
+        // 保存成功后直接复用即可，无需再从磁盘读回——既避免 CSP 拦截，又省一次 IO。
+        // 仅做容错：若调用方传入的不是 data URL（理论上不会发生），才回退读盘。
+        let imageSrcForCache: string;
+        if (imageDataUrl && imageDataUrl.startsWith('data:')) {
+          imageSrcForCache = imageDataUrl;
+        } else {
+          // 回退路径：从磁盘读取为 data URL
+          const base64Result = await window.electronAPI.file.readAsBase64(result.imagePath);
+          imageSrcForCache = base64Result?.success && base64Result.data
+            ? base64Result.data
+            : result.imagePath; // 最终兜底（虽会被 CSP 拦截，但 manifest 已写入，下次 loadExpressions 仍会失败）
+        }
 
         set((state) => {
           const prevManifest = state.manifest;
@@ -303,17 +343,17 @@ export const useExpressionStore = create<ExpressionState>((set, get) => ({
             }
           }
 
-          // 更新 imageCache
+          // 更新 imageCache（仅存 data URL，CSP 兼容）
           const nextImageCache = {
             ...state.imageCache,
-            [emotionKey]: imagePath,
+            [emotionKey]: imageSrcForCache,
           };
 
           return { manifest: nextManifest, imageCache: nextImageCache };
         });
 
         // 预加载新上传的图片到浏览器缓存
-        preloadImage(imagePath);
+        preloadImage(imageSrcForCache);
       }
 
       return { success: result?.success ?? false, error: result?.error };

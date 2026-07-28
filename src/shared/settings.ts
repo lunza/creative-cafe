@@ -25,6 +25,9 @@ export const AppSetting = {
           supportsStopArray: true,
           supportsRepPen: true,
           supportsDrySampler: true,
+          supportsVision: false,
+          supportsThinking: false,
+          supportsToolCalling: false,
         },
         prompt_template: '',
         stop_words: '',
@@ -182,6 +185,55 @@ export const AppSetting = {
       contextWindowTokens: 4096,
       autoVectorizeWorldBook: true,
       autoVectorizeKnowledge: true
+    },
+    // Spec: add-ai-expression-generation / Task 6
+    // Stable Diffusion WebUI 默认配置（角色卡 AI 表情生成 img2img 调用参数）
+    // 端点对应 Forge Neo 默认端口；model 留空表示使用 SD WebUI 当前已加载模型。
+    // denoisingStrength=0.55 / steps=28 / cfgScale=7 与 sdGenerationService 默认值一致。
+    // adetailerEnabled=true 默认开启面部一致性修复。
+    //
+    // 【重点标记 - ADetailer-Neo 兼容性 + 参数扩展（2026-07-27）】
+    // 新增 sampler 字段（早期版本缺失导致采样器固定无法更改）；
+    // 新增全套 ADetailer 高级参数（adModel/adConfidence/adDenoisingStrength 等），
+    // 字段名严格对齐 ADetailer-Neo 的 ADetailerArgs 定义，避免 pydantic extra="forbid" 报错。
+    // ADetailer 默认值与 sdGenerationService 中的 ADETAILER_* 常量保持一致。
+    sdWebui: {
+      endpoint: 'http://localhost:7860',
+      model: '',
+      denoisingStrength: 0.55,
+      steps: 28,
+      cfgScale: 7,
+      sampler: 'DPM++ 2M Karras',
+      adetailerEnabled: true,
+      // 【重点标记 - 特征携带机制（Spec: add-asset-and-trait-management / Task 5）】
+      // 默认模板含 {traits} 与 {emotion} 两个占位符：
+      // - {traits} 放在 portrait 之后，确保角色视觉特征（如 white fur, dog girl）优先注入
+      // - {emotion} 位置保留，由 PromptBuilder.buildExpressionGenerationPrompt 替换为情绪专用提示词
+      // 旧配置（仅含 {emotion}）由 PromptBuilder 兼容处理：特征 tag 会在 prompt 开头追加
+      positivePromptTemplate: 'portrait, {traits}, looking at viewer, simple background, {emotion}, high quality, best quality, masterpiece, detailed face',
+      customNegativePrompt: '',
+      // ADetailer 高级参数默认值（与 sdGenerationService ADETAILER_* 常量一致）
+      adModel: 'face_yolov8n.pt',
+      adConfidence: 0.3,
+      adDenoisingStrength: 0.4,
+      adMaskBlur: 4,
+      adDilateErode: 4,
+      adInpaintOnlyMasked: true,
+      adInpaintOnlyMaskedPadding: 32,
+      adUseInpaintWidthHeight: false,
+      adInpaintWidth: 512,
+      adInpaintHeight: 512,
+      adUseSteps: false,
+      adSteps: 20,
+      adUseCfgScale: false,
+      adCfgScale: 4.0,
+      adUseSampler: false,
+      adSampler: 'Use same sampler',
+      modelType: 'sdxl' as const,
+      nlPromptTemplate: 'A portrait of a character. {traits} The character has {emotion}, looking at the viewer. High quality, detailed.',
+      txt2imgWidth: 1024,
+      txt2imgHeight: 1024,
+      selectedLoras: [] as Array<{ name: string; weight: number }>,
     }
   }
 };

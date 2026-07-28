@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo } from 'react';
 import { Form, message } from 'antd';
 import { useSettingStore } from '../../../stores/settingStore';
 import { useLogStore } from '../../../stores/logStore';
-import { AIEngineSetting } from '../../../types/setting';
+import { AIEngineSetting, AIEngineCapabilities } from '../../../types/setting';
 import { AppSetting } from '../../../settings';
 
 export interface TestResult {
@@ -11,6 +11,11 @@ export interface TestResult {
   model?: string;
   error?: string;
   details?: string;
+  /**
+   * 探测到的模型能力（Spec: optimize-chat-ai-intelligence / Task 4 将填充）。
+   * Task 5.4 在测试结果展示区渲染对应徽章；缺省时不显示。
+   */
+  capabilities?: AIEngineCapabilities;
 }
 
 export interface UseAIEngineSettingsResult {
@@ -157,6 +162,9 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
               frequency_penalty: Number(values.frequency_penalty) || undefined,
               presence_penalty: Number(values.presence_penalty) || undefined,
               n: Number(values.n) || 1,
+              // Save capabilities from test result if available (Spec: Task 4.4);
+              // otherwise preserve existing engine.capabilities from spread above
+              ...(engineTestResult?.capabilities ? { capabilities: engineTestResult.capabilities } : {}),
             };
           }
           return engine;
@@ -182,6 +190,8 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
           presence_penalty: Number(values.presence_penalty) || undefined,
           n: Number(values.n) || 1,
           system_prompt: values.system_prompt || '',
+          // Save capabilities from test result if available (Spec: Task 4.4)
+          ...(engineTestResult?.capabilities ? { capabilities: engineTestResult.capabilities } : {}),
         } as unknown as AIEngineSetting;
         updatedEngines.push(newEngine);
       }
@@ -214,7 +224,7 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
       });
       message.error(`保存引擎失败: ${errorMessage}`);
     }
-  }, [setting, editingEngine, engineForm, saveSetting, addLog]);
+  }, [setting, editingEngine, engineForm, saveSetting, addLog, engineTestResult]);
 
   const handleDeleteEngine = useCallback((engineId: string) => {
     if (!setting) return;
@@ -384,7 +394,27 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
       const loadingMessage = message.loading('正在测试连通性...', 0);
       addLog('开始调用 testConnection 函数', 'debug');
       const result = await testConnection(testSetting as any);
-      setTestResult(result);
+
+      // After text test succeeds, probe capabilities (Spec: Task 4)
+      // Capability probing is additive — failure does not affect the overall test result
+      let capabilities: AIEngineCapabilities | undefined;
+      if (result.success) {
+        try {
+          const probeResult = await window.electronAPI.ai.probeCapabilities({
+            apiUrl: formValues.api_url,
+            apiKey: formValues.api_key,
+            apiKeyTransmission: formValues.api_key_transmission,
+            modelName: formValues.model_name,
+          });
+          if (probeResult?.success && probeResult.capabilities) {
+            capabilities = probeResult.capabilities;
+          }
+        } catch (e) {
+          console.warn('[useAIEngineSettings] Capability probing failed:', e);
+        }
+      }
+
+      setTestResult({ ...result, capabilities });
       addLog('testConnection 函数调用完成', 'debug', {
         context: { success: result.success, details: result.details },
       });
@@ -393,8 +423,38 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
       if (result.success) {
         addLog('AI 引擎连通性测试成功', 'info');
         message.success(`连接测试成功：${result.details || '成功'}`);
-        // 注意：测试连通性仅用于验证配置是否可用，不应修改已存储的引擎列表。
-        // 用户可通过"保存设置"按钮将表单中的配置持久化。
+
+        // 【重点标记 - 模型能力自动持久化】测试连通性并探测到模型能力后，
+        // 立即将能力写入当前活跃引擎的配置中并持久化到本地配置文件。
+        // 这样用户无需手动保存即可在 Header 等位置看到能力标识更新，
+        // 后续如果用户不修改引擎则默认此引擎拥有这些能力。
+        if (capabilities && setting?.activeEngineId && setting?.aiEngines) {
+          try {
+            const updatedEngines = setting.aiEngines.map(engine => {
+              if (engine.id === setting.activeEngineId) {
+                return {
+                  ...engine,
+                  capabilities: {
+                    ...engine.capabilities,
+                    ...capabilities,
+                  },
+                };
+              }
+              return engine;
+            });
+            await saveSetting({
+              ...setting,
+              aiEngines: updatedEngines,
+            });
+            addLog('模型能力已自动持久化到引擎配置', 'info', {
+              context: { engineId: setting.activeEngineId, capabilities },
+            });
+          } catch (saveError) {
+            // 持久化失败不影响测试结果展示，仅记录日志
+            console.warn('[useAIEngineSettings] 自动持久化模型能力失败:', saveError);
+            addLog('模型能力自动持久化失败（不影响测试结果）', 'warn');
+          }
+        }
       } else {
         addLog('AI 引擎连通性测试失败', 'error');
         message.error('连接测试失败');
@@ -443,7 +503,27 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
 
       const loadingMessage = message.loading('正在测试连通性...', 0);
       const result = await testConnection(testSetting as any);
-      setEngineTestResult(result);
+
+      // After text test succeeds, probe capabilities (Spec: Task 4)
+      // Capability probing is additive — failure does not affect the overall test result
+      let capabilities: AIEngineCapabilities | undefined;
+      if (result.success) {
+        try {
+          const probeResult = await window.electronAPI.ai.probeCapabilities({
+            apiUrl: values.api_url,
+            apiKey: values.api_key,
+            apiKeyTransmission: values.api_key_transmission,
+            modelName: values.model_name,
+          });
+          if (probeResult?.success && probeResult.capabilities) {
+            capabilities = probeResult.capabilities;
+          }
+        } catch (e) {
+          console.warn('[useAIEngineSettings] Capability probing failed:', e);
+        }
+      }
+
+      setEngineTestResult({ ...result, capabilities });
       loadingMessage();
 
       if (result.success) {

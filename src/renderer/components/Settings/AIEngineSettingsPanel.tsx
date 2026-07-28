@@ -1,9 +1,39 @@
 import React from 'react';
-import { Card, Form, Input, Select, Button, Space, Alert, AutoComplete, Modal, Table } from 'antd';
-import { SettingOutlined, SaveOutlined, PlusOutlined, EditOutlined, CopyOutlined, SearchOutlined, SyncOutlined } from '@ant-design/icons';
+import { Card, Form, Input, Select, Button, Space, Alert, AutoComplete, Modal, Table, Tag, Tooltip } from 'antd';
+import { SettingOutlined, SaveOutlined, PlusOutlined, EditOutlined, CopyOutlined, SearchOutlined, SyncOutlined, EyeOutlined, BulbOutlined, ToolOutlined } from '@ant-design/icons';
 import { useSettingStore } from '../../stores/settingStore';
 import { useAIEngineSettings } from './hooks/useAIEngineSettings';
-import { AIEngineSetting } from '../../types/setting';
+import { AIEngineSetting, AIEngineCapabilities } from '../../types/setting';
+
+/**
+ * 渲染引擎能力徽章（文本/视觉/思维链/工具调用）。
+ * Spec: add-model-capability-detection-and-image-recognition / Task 5.1
+ */
+const renderCapabilityBadges = (capabilities?: AIEngineCapabilities) => {
+  if (!capabilities) return null;
+  return (
+    <Space size={4}>
+      <Tooltip title="文本生成">
+        <Tag icon={<EditOutlined />} color="blue" style={{ margin: 0 }} />
+      </Tooltip>
+      {capabilities.supportsVision && (
+        <Tooltip title="视觉/图片识别">
+          <Tag icon={<EyeOutlined />} color="green" style={{ margin: 0 }} />
+        </Tooltip>
+      )}
+      {capabilities.supportsThinking && (
+        <Tooltip title="思维链/推理">
+          <Tag icon={<BulbOutlined />} color="purple" style={{ margin: 0 }} />
+        </Tooltip>
+      )}
+      {capabilities.supportsToolCalling && (
+        <Tooltip title="工具调用">
+          <Tag icon={<ToolOutlined />} color="orange" style={{ margin: 0 }} />
+        </Tooltip>
+      )}
+    </Space>
+  );
+};
 
 interface AIEngineSettingsPanelProps {
   form: ReturnType<typeof Form.useForm>[0];
@@ -66,7 +96,23 @@ const AIEngineSettingsPanel: React.FC<AIEngineSettingsPanelProps> = ({ form }) =
                 options={engines.map(engine => ({
                   label: engine.name,
                   value: engine.id,
+                  capabilities: engine.capabilities,
                 }))}
+                optionRender={(option) => (
+                  <Space size={6}>
+                    <span>{option.label}</span>
+                    {renderCapabilityBadges(option.data?.capabilities)}
+                  </Space>
+                )}
+                labelRender={(props) => {
+                  const engine = engines.find(e => e.id === props.value);
+                  return (
+                    <Space size={4}>
+                      <span>{props.label}</span>
+                      {renderCapabilityBadges(engine?.capabilities)}
+                    </Space>
+                  );
+                }}
                 placeholder="请选择 AI 引擎"
               />
               <Button
@@ -196,6 +242,9 @@ const AIEngineSettingsPanel: React.FC<AIEngineSettingsPanelProps> = ({ form }) =
                     <p><strong>模型名称:</strong> {testResult.model || activeEngine?.model_name || 'N/A'}</p>
                     <p><strong>响应时间:</strong> {testResult.responseTime ? `${testResult.responseTime}ms` : 'N/A'}</p>
                     <p><strong>详细信息:</strong> {testResult.details || '无'}</p>
+                    {testResult.capabilities && (
+                      <p><strong>模型能力:</strong> {renderCapabilityBadges(testResult.capabilities)}</p>
+                    )}
                     {testResult.error && <p style={{ color: 'red', marginTop: 8 }}><strong>错误:</strong> {testResult.error}</p>}
                   </div>
                 }
@@ -243,6 +292,12 @@ const AIEngineSettingsPanel: React.FC<AIEngineSettingsPanelProps> = ({ form }) =
                   title: '引擎名称',
                   dataIndex: 'name',
                   key: 'name',
+                  render: (name: string, record: AIEngineSetting) => (
+                    <div>
+                      <div>{name}</div>
+                      {renderCapabilityBadges(record.capabilities)}
+                    </div>
+                  ),
                 },
                 {
                   title: 'API地址',
@@ -411,6 +466,9 @@ const AIEngineSettingsPanel: React.FC<AIEngineSettingsPanelProps> = ({ form }) =
                       <p><strong>模型名称:</strong> {engineTestResult.model || engineForm.getFieldValue('model_name') || 'N/A'}</p>
                       <p><strong>响应时间:</strong> {engineTestResult.responseTime ? `${engineTestResult.responseTime}ms` : 'N/A'}</p>
                       <p><strong>详细信息:</strong> {engineTestResult.details || '无'}</p>
+                      {engineTestResult.capabilities && (
+                        <p><strong>模型能力:</strong> {renderCapabilityBadges(engineTestResult.capabilities)}</p>
+                      )}
                       {engineTestResult.error && <p style={{ color: 'red', marginTop: 8 }}><strong>错误:</strong> {engineTestResult.error}</p>}
                     </div>
                   }

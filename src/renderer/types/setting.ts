@@ -6,6 +6,106 @@ export interface AIEngineCapabilities {
   supportsStopArray?: boolean;
   supportsRepPen?: boolean;
   supportsDrySampler?: boolean;
+  supportsVision?: boolean;
+  supportsThinking?: boolean;
+  supportsToolCalling?: boolean;
+}
+
+/**
+ * Stable Diffusion WebUI 配置（Spec: add-ai-expression-generation / Task 6）
+ *
+ * 用于角色卡 AI 表情生成（img2img）的 SD WebUI 连接参数与生成参数。
+ * 配置由 Settings 页面 SDWebuiSettings 组件编辑，主进程 sdGenerationService 读取。
+ *
+ * 【重点标记 - ADetailer-Neo 兼容性 + 参数扩展（2026-07-27）】
+ * 早期版本仅暴露 endpoint/model/denoisingStrength/steps/cfgScale/adetailerEnabled，
+ * 缺少采样器选择与 ADetailer 高级参数，导致用户报告「步数/Sampling Method/cfg 固定无法更改」
+ * 且 ADetailer-Neo 因字段名错误（ad_inpaint_full_res / ad_dilation）抛 pydantic 校验异常。
+ * 本次扩展新增 sampler 字段与全套 ADetailer 高级参数，字段名严格对齐
+ * `extensions/ADetailer-Neo/lib_adetailer/args.py` 的 `ADetailerArgs` 定义。
+ */
+export interface SDWebuiConfig {
+  /** SD WebUI API 端点，默认 http://localhost:7860（Forge Neo 需以 --api 启动） */
+  endpoint: string;
+  /** 模型 checkpoint 标题；空字符串表示使用 SD WebUI 当前已加载模型 */
+  model: string;
+  /** 去噪强度（0=不变，1=完全重绘），默认 0.55 */
+  denoisingStrength: number;
+  /** 采样步数，默认 28（SDXL 推荐） */
+  steps: number;
+  /** 提示词遵循度（CFG Scale），默认 7 */
+  cfgScale: number;
+  /**
+   * 采样器名称，默认 "DPM++ 2M Karras"。
+   * 【重点标记 - 采样器可配置】早期版本 SDWebuiConfig 缺少此字段，UI 无采样器选择控件，
+   * 导致用户报告「Sampling Method 固定无法更改」。新增字段后用户可在设置页下拉选择
+   * 常用采样器或手动输入自定义采样器名。
+   */
+  sampler: string;
+  /** 是否启用 ADetailer 面部一致性修复，默认 true */
+  adetailerEnabled: boolean;
+  /**
+   * 正面提示词模板，支持 `{emotion}` 与 `{traits}` 两个占位符。
+   *
+   * 【重点标记 - 提示词可编辑】用户可在此输入角色外观 tag（如 "1girl, silver hair"），
+   * 不再自动注入角色卡 description 长文本（自然语言不适合 SD tag 格式）。
+   *
+   * 【重点标记 - 特征携带机制（Spec: add-asset-and-trait-management / Task 5）】
+   * - `{traits}` 占位符：由 `PromptBuilder.buildExpressionGenerationPrompt` 替换为角色视觉特征 tag 字符串
+   *   （来自 `characterTraitStore`，如 `white fur, dog girl`）；特征为空时替换为空字符串并清理多余逗号
+   * - `{emotion}` 占位符：替换为情绪专用提示词（来自 `EMOTION_PROMPT_MAP`）
+   * - 旧配置兼容：若用户模板不含 `{traits}` 占位符，特征 tag 会在 prompt 开头追加（不破坏旧模板）
+   *
+   * 默认值：'portrait, {traits}, looking at viewer, simple background, {emotion}, high quality, best quality, masterpiece, detailed face'
+   * （{traits} 放在 portrait 之后，确保角色特征优先；{emotion} 位置保留）
+   */
+  positivePromptTemplate: string;
+  /** 自定义负面提示词；空字符串表示使用 PromptBuilder 默认负面提示词 */
+  customNegativePrompt: string;
+
+  // ===== ADetailer 高级参数（2026-07-27 新增）=====
+  // 字段名与 ADetailer-Neo 的 ADetailerArgs 严格对齐，避免 pydantic extra="forbid" 报错。
+  /** ADetailer 检测模型，默认 "face_yolov8n.pt"（2D/真实人脸，速度快） */
+  adModel: string;
+  /** 检测置信度阈值（0.0-1.0），默认 0.3 */
+  adConfidence: number;
+  /** ADetailer 面部修复去噪强度（0.0-1.0），默认 0.4 */
+  adDenoisingStrength: number;
+  /** mask 边缘模糊（像素，0-20），默认 4 */
+  adMaskBlur: number;
+  /** mask 膨胀/腐蚀（像素，正值膨胀/负值腐蚀），默认 4 */
+  adDilateErode: number;
+  /** 仅修复 mask 区域（true=局部高分辨率修复，false=全图重绘），默认 true */
+  adInpaintOnlyMasked: boolean;
+  /** mask padding（像素，仅 adInpaintOnlyMasked=true 时生效），默认 32 */
+  adInpaintOnlyMaskedPadding: number;
+  /** 使用独立的修复尺寸（开启后 adInpaintWidth/adInpaintHeight 生效），默认 false */
+  adUseInpaintWidthHeight: boolean;
+  /** ADetailer 修复宽度（像素），默认 512 */
+  adInpaintWidth: number;
+  /** ADetailer 修复高度（像素），默认 512 */
+  adInpaintHeight: number;
+  /** 使用独立的步数（开启后 adSteps 生效），默认 false */
+  adUseSteps: boolean;
+  /** ADetailer 独立步数（1-150），默认 20 */
+  adSteps: number;
+  /** 使用独立的 CFG（开启后 adCfgScale 生效），默认 false */
+  adUseCfgScale: boolean;
+  /** ADetailer 独立 CFG（1.0-24.0），默认 4.0 */
+  adCfgScale: number;
+  /** 使用独立的采样器（开启后 adSampler 生效），默认 false */
+  adUseSampler: boolean;
+  /** ADetailer 独立采样器名称，默认 "Use same sampler"（沿用主采样器） */
+  adSampler: string;
+
+  // NL 模型相关
+  modelType: 'sdxl' | 'qwen-image' | 'qwen-image-edit' | 'flux2';
+  nlPromptTemplate: string;
+  txt2imgWidth: number;
+  txt2imgHeight: number;
+
+  /** 选中的 LoRA 模型列表（含名称和权重），生成时注入 <lora:name:weight> 到 prompt */
+  selectedLoras?: Array<{ name: string; weight: number }>;
 }
 
 /**
@@ -224,6 +324,10 @@ export interface AppSetting {
     minSimilarityScore?: number;
     autoVectorizeKnowledge?: boolean;
   };
+
+  // Stable Diffusion WebUI 设置（Spec: add-ai-expression-generation / Task 6）
+  // 用于角色卡 AI 表情生成（img2img），由主进程 sdGenerationService 读取
+  sdWebui?: SDWebuiConfig;
 }
 
 export type AIEngine = AIEngineSetting;

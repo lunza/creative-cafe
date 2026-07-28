@@ -15,6 +15,9 @@ export interface EngineCapabilities {
   supportsStopArray?: boolean;
   supportsRepPen?: boolean;
   supportsDrySampler?: boolean;
+  supportsVision?: boolean;
+  supportsThinking?: boolean;
+  supportsToolCalling?: boolean;
 }
 
 // AI引擎配置接口
@@ -48,6 +51,30 @@ export interface AIEngineConfig {
    * 后端能力探测结果，决定 stop 字段格式等行为。缺省时按"大多数后端兼容"取默认值。
    */
   capabilities?: EngineCapabilities;
+  /**
+   * 用户是否启用思维链/推理（来自 AIEngineSetting.enable_chain_of_thought）。
+   *
+   * Spec: upgrade-ai-handler-multimodal-compatibility / Task 3.2
+   * 能力感知逻辑：此开关仅在模型 `supportsThinking === true` 时才生效。
+   *   - enable_chain_of_thought=true  且 supportsThinking=true  → 注入思维链参数（enable_thinking: true）
+   *   - enable_chain_of_thought=true  但 supportsThinking!=true → 不注入（模型不支持，降级为纯文本聊天）
+   *   - enable_chain_of_thought!=true                              → 不注入（用户未启用）
+   * 触发条件：双条件判断（用户配置 + 模型能力），缺一不可。
+   * 兼容性考量：不支持的模型注入思维链参数可能导致 4xx 错误或被忽略，故必须由 capabilities 守卫。
+   */
+  enable_chain_of_thought?: boolean;
+  /**
+   * 用户是否启用函数/工具调用（来自 AIEngineSetting.use_function_calling）。
+   *
+   * Spec: upgrade-ai-handler-multimodal-compatibility / Task 3.4
+   * 一致性要求：此开关仅在模型 `supportsToolCalling === true` 时才生效。
+   *   - use_function_calling=true  且 supportsToolCalling=true  → 工具调用生效
+   *   - use_function_calling=true  但 supportsToolCalling!=true → 禁用工具调用（模型不支持，降级为纯文本聊天）
+   *   - use_function_calling!=true                              → 不启用工具调用
+   * 当前 ChatEngine 走纯文本聊天流程（不构造 tools 数组），此处仅做能力一致性守卫与注释，
+   * 为后续接入 tools 字段预留正确的双条件判断点。
+   */
+  use_function_calling?: boolean;
   /**
    * Repetition penalty（仅 supportsRepPen=true 后端生效）。
    *
@@ -138,7 +165,7 @@ export function getDefaultEngineCapabilities(apiMode?: string): EngineCapabiliti
   const isTextCompletion = apiMode === 'text_completion';
   const supportsRepPen = isTextCompletion;
   const supportsDrySampler = isTextCompletion;
-  return { supportsStopArray, supportsRepPen, supportsDrySampler };
+  return { supportsStopArray, supportsRepPen, supportsDrySampler, supportsVision: false, supportsThinking: false, supportsToolCalling: false };
 }
 
 /**

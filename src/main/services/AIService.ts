@@ -18,7 +18,10 @@ import { SSEStreamParser, type StreamChunkCallback } from './ai/SSEStreamParser'
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: string | Array<
+    | { type: 'text'; text: string }
+    | { type: 'image_url'; image_url: { url: string } }
+  >;
 }
 
 export interface AIConfig {
@@ -52,6 +55,16 @@ export interface StreamResponse {
   content: string;
   generationTime: number;
   model: string;
+}
+
+/**
+ * 模型能力探测请求配置（供 probeVisionCapability / probeToolCallingCapability / probeAllCapabilities 使用）
+ */
+export interface ProbeConfig {
+  baseUrl: string;
+  apiKey: string;
+  apiKeyTransmission: string;
+  modelName: string;
 }
 
 // Re-export 以保持向后兼容（其他模块从 AIService 导入 StreamChunkCallback 仍可工作）
@@ -256,6 +269,16 @@ export class AIService {
 
   /**
    * 将引擎系统提示词注入到 system message 中
+   *
+   * 【重点标记 - 多模态兼容】类型守卫说明：
+   * - 为何需要类型守卫：ChatMessage.content 已扩展为联合类型（string | 多模态数组），
+   *   多模态数组形如 [{ type: 'text', text }, { type: 'image_url', image_url: { url } }]。
+   *   若直接用 '+' 拼接数组 content，会得到 "[object Object]" 字符串，导致 prompt 损坏。
+   * - 字符串 content：正常拼接引擎 system prompt（现有行为），保持向后兼容。
+   * - 数组 content：保留不变，引擎 system prompt 的注入由调用方在构建 messages 时自行处理，
+   *   此处不做字符串拼接以避免产生 "[object Object]"。
+   * - 安全性说明：目前所有调用方（GameNarrativeService 等）的 system message 始终为字符串，
+   *   此守卫为防御性编程，防止未来多模态 system message 传入时静默出错。
    */
   enrichSystemPrompt(messages: ChatMessage[], engineSystemPrompt: string): ChatMessage[] {
     if (!engineSystemPrompt || !engineSystemPrompt.trim()) {
@@ -266,7 +289,10 @@ export class AIService {
       if (index === 0 && msg.role === 'system') {
         return {
           role: 'system' as const,
-          content: engineSystemPrompt.trim() + '\n\n' + msg.content
+          // 修复多模态兼容：content 可能为多模态数组，此时不做字符串拼接
+          content: typeof msg.content === 'string'
+            ? engineSystemPrompt.trim() + '\n\n' + msg.content
+            : msg.content
         };
       }
       return msg;
@@ -458,6 +484,146 @@ export class AIService {
 
   getStreamParser(): SSEStreamParser {
     return this.streamParser;
+  }
+
+  // ==================== Model Capability Probing ====================
+
+  /**
+   * 探测模型是否支持视觉输入（多模态）
+   * 发送含 1x1 透明 PNG 的多模态请求，HTTP 200 且无 error 则判定支持
+   */
+  async probeVisionCapability(config: {
+    baseUrl: string;
+    apiKey: string;
+    apiKeyTransmission: string;
+    modelName: string;
+  }): Promise<boolean> {
+    try {
+      // 1x1 透明 PNG base64
+      const TRANSPARENT_PNG_1X1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQAAAABJRf5Dg0EA';
+
+      const url = `${config.baseUrl.replace(/\/+$/, '')}/v1/chat/completions`;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (config.apiKeyTransmission !== 'body') {
+        headers['Authorization'] = `Bearer ${config.apiKey}`;
+      }
+      const body: Record<string, unknown> = {
+        model: config.modelName,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Describe this image in one word.' },
+            { type: 'image_url', image_url: { url: `data:image/png;base64,${TRANSPARENT_PNG_1X1}` } },
+          ],
+        }],
+        max_tokens: 5,
+      };
+      if (config.apiKeyTransmission === 'body') {
+        body['api_key'] = config.apiKey;
+      }
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 探测模型是否支持思维链（基于模型名关键词匹配）
+   */
+  probeThinkingCapability(modelName: string): boolean {
+    const lower = (modelName || '').toLowerCase();
+    const keywords = ['thinking', 'reasoning', 'r1', 'o1', 'o3', 'qwq'];
+    return keywords.some(kw => lower.includes(kw));
+  }
+
+  /**
+   * 探测模型是否支持工具调用（function calling）
+   * 发送含 tools 参数的最小请求，HTTP 200 且无 error 则判定支持
+   */
+  async probeToolCallingCapability(config: {
+    baseUrl: string;
+    apiKey: string;
+    apiKeyTransmission: string;
+    modelName: string;
+  }): Promise<boolean> {
+    try {
+      const url = `${config.baseUrl.replace(/\/+$/, '')}/v1/chat/completions`;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (config.apiKeyTransmission !== 'body') {
+        headers['Authorization'] = `Bearer ${config.apiKey}`;
+      }
+      const body: Record<string, unknown> = {
+        model: config.modelName,
+        messages: [{ role: 'user', content: 'test' }],
+        tools: [{
+          type: 'function',
+          function: {
+            name: 'test',
+            description: 'test',
+            parameters: { type: 'object', properties: {} },
+          },
+        }],
+        max_tokens: 1,
+      };
+      if (config.apiKeyTransmission === 'body') {
+        body['api_key'] = config.apiKey;
+      }
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 并行探测全部模型能力
+   */
+  async probeAllCapabilities(config: {
+    baseUrl: string;
+    apiKey: string;
+    apiKeyTransmission: string;
+    modelName: string;
+  }): Promise<{
+    supportsStopArray: boolean;
+    supportsRepPen: boolean;
+    supportsDrySampler: boolean;
+    supportsVision: boolean;
+    supportsThinking: boolean;
+    supportsToolCalling: boolean;
+  }> {
+    const [supportsVision, supportsThinking, supportsToolCalling] = await Promise.all([
+      this.probeVisionCapability(config),
+      Promise.resolve(this.probeThinkingCapability(config.modelName)),
+      this.probeToolCallingCapability(config),
+    ]);
+    return {
+      // Preserve existing defaults based on api_mode
+      supportsStopArray: true,
+      supportsRepPen: true,
+      supportsDrySampler: true,
+      supportsVision,
+      supportsThinking,
+      supportsToolCalling,
+    };
   }
 }
 

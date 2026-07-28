@@ -1,7 +1,8 @@
 import React from 'react';
-import { Layout, Button, Space, Badge } from 'antd';
-import { MoonOutlined, SunOutlined, ReloadOutlined } from '@ant-design/icons';
+import { Layout, Button, Space, Tooltip } from 'antd';
+import { MoonOutlined, SunOutlined, ReloadOutlined, EditOutlined, EyeOutlined, BulbOutlined, ToolOutlined } from '@ant-design/icons';
 import { useUIStore } from '../../stores/uiStore';
+import { useSettingStore } from '../../stores/settingStore';
 import './Header.css';
 
 const { Header: AntHeader } = Layout;
@@ -34,6 +35,13 @@ const AppLogo: React.FC = () => (
 
 const Header: React.FC = () => {
   const { theme, setTheme } = useUIStore();
+  const { setting } = useSettingStore();
+  const activeEngine = setting?.aiEngines?.find((e) => e.id === setting?.activeEngineId);
+  const capabilities = activeEngine?.capabilities;
+  const supportsVision = capabilities?.supportsVision === true;
+  const supportsThinking = capabilities?.supportsThinking === true;
+  const supportsToolCalling = capabilities?.supportsToolCalling === true;
+  const hasCapabilityData = capabilities !== undefined;
 
   const toggleTheme = () => {
     setTheme(theme === 'light' ? 'dark' : 'light');
@@ -47,6 +55,40 @@ const Header: React.FC = () => {
           <div className="title-container">
             <h1 className="app-title">创想咖啡厅</h1>
             <span className="app-subtitle">Creative Café</span>
+          </div>
+          {/*
+            模型能力标识 — 实时显示当前 AI 引擎的能力组合
+            ============================================================
+            数据来源：settingStore -> setting.activeEngineId -> setting.aiEngines.find(...) -> capabilities
+            4 种图标分别代表：
+              - EditOutlined  (铅笔)：文本生成能力，作为基础能力常驻显示
+              - EyeOutlined   (眼睛)：视觉/图片识别能力 (supportsVision=true 时显示)
+              - BulbOutlined  (灯泡)：思维链/推理能力   (supportsThinking=true 时显示)
+              - ToolOutlined  (工具)：工具调用能力      (supportsToolCalling=true 时显示)
+            触发条件：仅当对应能力 === true 时显示对应图标
+            未检测时的行为：capabilities 为 undefined（即用户尚未测试连通性）时，
+              仅显示编辑图标，鼠标悬停 Tooltip 提示「请先测试连通性以检测模型能力」。
+            图标尺寸统一 14px，使用内联样式与现有 header 风格保持一致。
+          */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 8 }}>
+            <Tooltip title={hasCapabilityData ? '文本生成' : '请先测试连通性以检测模型能力'}>
+              <EditOutlined style={{ fontSize: 14, color: 'var(--text-secondary, #94a3b8)' }} />
+            </Tooltip>
+            {supportsVision && (
+              <Tooltip title="视觉/图片识别">
+                <EyeOutlined style={{ fontSize: 14, color: '#52c41a' }} />
+              </Tooltip>
+            )}
+            {supportsThinking && (
+              <Tooltip title="思维链/推理">
+                <BulbOutlined style={{ fontSize: 14, color: '#722ed1' }} />
+              </Tooltip>
+            )}
+            {supportsToolCalling && (
+              <Tooltip title="工具调用">
+                <ToolOutlined style={{ fontSize: 14, color: '#fa8c16' }} />
+              </Tooltip>
+            )}
           </div>
         </div>
       </div>

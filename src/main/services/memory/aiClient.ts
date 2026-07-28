@@ -95,6 +95,10 @@ export function getEngineAIParams(): { temperature: number; max_tokens: number; 
 
 /**
  * 调用 AI API
+ *
+ * 【多模态兼容性审计】本模块 callAIAPI 使用内联 { role, content: string } 构造 messages，
+ * 不导入 AIService.ts 的联合类型 ChatMessage，不受多模态 content 扩展影响。
+ * 所有消息 content 均为纯文本字符串，适用于记忆整理等非视觉任务。
  */
 export async function callAIAPI(
   prompt: string,
