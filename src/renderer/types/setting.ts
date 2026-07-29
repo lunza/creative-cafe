@@ -42,6 +42,18 @@ export interface SDWebuiConfig {
    * 常用采样器或手动输入自定义采样器名。
    */
   sampler: string;
+  /**
+   * 调度器名称（2026-07-29 新增），默认 "Karras"。
+   * Forge Neo 将采样器与调度器分离，sampler_name 控制采样算法，
+   * scheduler 控制 sigma 调度曲线（Karras/Exponential/Auto 等）。
+   */
+  scheduler: string;
+  /**
+   * CLIP Skip 层数（2026-07-29 新增），默认 2。
+   * 通过 override_settings.CLIP_stop_at_last_layers 注入。
+   * SD1.5 推荐 2，SDXL 推荐 1~2。
+   */
+  clipSkip: number;
   /** 是否启用 ADetailer 面部一致性修复，默认 true */
   adetailerEnabled: boolean;
   /**
@@ -97,6 +109,18 @@ export interface SDWebuiConfig {
   adUseSampler: boolean;
   /** ADetailer 独立采样器名称，默认 "Use same sampler"（沿用主采样器） */
   adSampler: string;
+  /** ADetailer 独立调度器，默认 "Use same scheduler"（沿用主调度器） */
+  adScheduler: string;
+  /**
+   * ADetailer 独立负面提示词（2026-07-29 源码核验新增）。
+   * 空字符串=沿用主负面提示词。可针对性优化面部修复质量。
+   * 源码：ADetailer-Neo args.py:50 ad_negative_prompt
+   */
+  adNegativePrompt: string;
+  /** 是否启用 ADetailer 独立噪声倍率（2026-07-29 源码核验新增），默认 true */
+  adUseNoiseMultiplier: boolean;
+  /** ADetailer 独立噪声倍率（0.5-1.5），默认 1.0。源码：args.py:79 ad_noise_multiplier */
+  adNoiseMultiplier: number;
 
   // NL 模型相关
   modelType: 'sdxl' | 'qwen-image' | 'qwen-image-edit' | 'flux2';
@@ -106,6 +130,53 @@ export interface SDWebuiConfig {
 
   /** 选中的 LoRA 模型列表（含名称和权重），生成时注入 <lora:name:weight> 到 prompt */
   selectedLoras?: Array<{ name: string; weight: number }>;
+
+  // ===== Hires.fix 高分辨率修复参数（2026-07-29 新增）=====
+  // 【重点标记 - Hires.fix 修复与放大】默认开启，Upscaler=Latent，Hires steps=50，
+  // 其他参数沿用 webui-forge-neo 默认值。仅在 img2img（sdxl）和 txt2img 流程中生效。
+  /** 是否启用 Hires.fix 高分辨率修复，默认 true */
+  hrFixEnabled: boolean;
+  /** Hires.fix 放大器，默认 "Latent" */
+  hrUpscaler: string;
+  /** Hires.fix 步数，默认 50 */
+  hrSteps: number;
+  /** Hires.fix 放大倍数，默认 2.0 */
+  hrScale: number;
+  /** Hires.fix 去噪强度（0-1），默认 0.55 */
+  hrDenoisingStrength: number;
+  /** Hires.fix 第二轮提示词，默认空字符串表示沿用第一轮 prompt */
+  hrPrompt: string;
+  /** Hires.fix 第二轮负面提示词，默认空字符串表示沿用第一轮 */
+  hrNegativePrompt: string;
+  /**
+   * Hires.fix 第二轮 CFG（2026-07-29 新增），默认 5.0。
+   * 【重点标记 - hr_cfg 默认 1.0 陷阱】Forge Neo 的 hr_cfg 默认值为 1.0，
+   * 意味着 Hires 第二阶段不使用负提示，导致细节大幅丢失。
+   * 显式设为 5.0 恢复负提示引导，显著提升细节锐度。
+   */
+  hrCfg: number;
+  /** Hires.fix 独立采样器（2026-07-29 新增），默认 "DPM++ 2M SDE" */
+  hrSamplerName: string;
+  /** Hires.fix 独立调度器（2026-07-29 新增），默认 "Karras" */
+  hrScheduler: string;
+  /**
+   * img2img 额外噪声（2026-07-29 新增），默认 0.05。
+   * 通过 override_settings.img2img_extra_noise 注入。
+   * >0 在 img2img 降采样后添加微量噪声，增加细节丰富度。
+   */
+  img2imgExtraNoise: number;
+  /**
+   * img2img 初始噪声倍率（2026-07-29 新增），默认 1.0。
+   * 控制添加到 init_images 的噪声量（0~1.5），略 >1 可增加细节。
+   */
+  initialNoiseMultiplier: number;
+
+  // ===== img2img 高清模式（2026-07-29 新增）=====
+  // Forge Neo 的 img2img API 不支持 Hires.fix（StableDiffusionProcessingImg2Img 类
+  // 无 enable_hr 等字段），因此通过以下两种替代方案实现高清修复效果：
+  // - 'direct'：直接在目标分辨率（1024）下一步 img2img 生成，速度快
+  // - 'two-step'：先 768 生成 → 再 1024 低降噪放大修复，细节保留更好，接近 Hires.fix 效果
+  img2imgHiresMode: 'direct' | 'two-step';
 }
 
 /**
@@ -302,6 +373,14 @@ export interface AppSetting {
   
   // 调试模式设置
   debugMode: boolean;
+
+  /**
+   * Agent 模式全局开关（Spec: add-tool-calling-agent-engine / Task 4b）
+   *
+   * 默认关闭，确保现有功能零影响。开启后，当引擎 supportsToolCalling=true 时，
+   * AI 调用走工具调用智能体循环；supportsToolCalling=false 时自动降级为纯文本生成。
+   */
+  enableAgentMode: boolean;
 
   // 向量化设置
   vector?: {

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Card, Form, Input, Select, Button, Space, Alert, AutoComplete, Modal, Table, Tag, Tooltip } from 'antd';
+import { Card, Form, Input, Select, Button, Space, Alert, AutoComplete, Modal, Table, Tag, Tooltip, Switch } from 'antd';
 import { SettingOutlined, SaveOutlined, PlusOutlined, EditOutlined, CopyOutlined, SearchOutlined, SyncOutlined, EyeOutlined, BulbOutlined, ToolOutlined } from '@ant-design/icons';
 import { useSettingStore } from '../../stores/settingStore';
 import { useAIEngineSettings } from './hooks/useAIEngineSettings';
@@ -199,6 +199,16 @@ const AIEngineSettingsPanel: React.FC<AIEngineSettingsPanelProps> = ({ form }) =
 
           <Form.Item label="生成数量 (n)" name="n">
             <Input type="number" min={1} max={10} step={1} placeholder="范围: 1-10，例如: 1" />
+          </Form.Item>
+
+          <Form.Item
+            label="Agent 模式"
+            name="enableAgentMode"
+            valuePropName="checked"
+            initialValue={false}
+            extra={<span style={{ color: '#999', fontSize: 12 }}>启用 Agent 模式（需模型支持工具调用，否则自动降级为文本模式）</span>}
+          >
+            <Switch />
           </Form.Item>
 
           <Form.Item label="系统提示词 (system_prompt)" name="system_prompt">

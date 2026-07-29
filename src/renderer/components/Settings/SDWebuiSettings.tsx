@@ -1,5 +1,5 @@
 import { forwardRef, useImperativeHandle, useState, useEffect, useCallback } from 'react';
-import { Card, Form, Input, Select, AutoComplete, Button, Slider, InputNumber, Switch, Tooltip, Alert, Space, Collapse, message } from 'antd';
+import { Card, Form, Input, Select, AutoComplete, Button, Slider, InputNumber, Switch, Tooltip, Alert, Space, Collapse, Radio, message } from 'antd';
 import { ApiOutlined, SyncOutlined, QuestionCircleOutlined, SettingOutlined } from '@ant-design/icons';
 import { useSettingStore } from '../../stores/settingStore';
 import { SDWebuiConfig } from '../../types/setting';
@@ -25,35 +25,60 @@ const DEFAULT_SD_WEBUI_CONFIG: SDWebuiConfig = {
   denoisingStrength: 0.55,
   steps: 28,
   cfgScale: 7,
-  sampler: 'DPM++ 2M Karras',
+  sampler: 'DPM++ 3M SDE',
+  scheduler: 'Karras',
+  clipSkip: 2,
   adetailerEnabled: true,
   // 【重点标记 - 特征携带机制（Spec: add-asset-and-trait-management / Task 5）】
   // 默认模板含 {traits} 与 {emotion} 两个占位符；与 src/shared/settings.ts defaultSetting.sdWebui 保持一致
   positivePromptTemplate: 'portrait, {traits}, looking at viewer, simple background, {emotion}, high quality, best quality, masterpiece, detailed face',
   customNegativePrompt: '',
   // ADetailer 高级参数默认值（与 sdGenerationService ADETAILER_* 常量一致）
+  // 【重点标记 - ADetailer 参数优化（2026-07-29）】表情图模糊修复：
+  // 降低降噪强度、增大蒙版模糊/膨胀、提高修复分辨率
   adModel: 'face_yolov8n.pt',
   adConfidence: 0.3,
-  adDenoisingStrength: 0.4,
-  adMaskBlur: 4,
-  adDilateErode: 4,
+  adDenoisingStrength: 0.3,
+  adMaskBlur: 8,
+  adDilateErode: 8,
   adInpaintOnlyMasked: true,
-  adInpaintOnlyMaskedPadding: 32,
-  adUseInpaintWidthHeight: false,
-  adInpaintWidth: 512,
-  adInpaintHeight: 512,
-  adUseSteps: false,
-  adSteps: 20,
-  adUseCfgScale: false,
-  adCfgScale: 4.0,
-  adUseSampler: false,
-  adSampler: 'Use same sampler',
+  adInpaintOnlyMaskedPadding: 64,
+  adUseInpaintWidthHeight: true,
+  adInpaintWidth: 1024,
+  adInpaintHeight: 1024,
+  adUseSteps: true,
+  adSteps: 30,
+  adUseCfgScale: true,
+  adCfgScale: 5.0,
+  adUseSampler: true,
+  adSampler: 'DPM++ 2M SDE',
+  adScheduler: 'Use same scheduler',
+  // 【重点标记 - ADetailer 面部修复专用参数（2026-07-29 源码核验）】
+  adNegativePrompt: '',
+  adUseNoiseMultiplier: true,
+  adNoiseMultiplier: 1.0,
   // NL 模型相关（Spec: integrate-nl-driven-sd-models / Task 2）
   modelType: 'sdxl',
   nlPromptTemplate: 'A portrait of a character. {traits} The character has {emotion}, looking at the viewer. High quality, detailed.',
   txt2imgWidth: 1024,
   txt2imgHeight: 1024,
   selectedLoras: [],
+  // 【Hires.fix】默认开启修复与放大，4x-AnimeSharp 放大器
+  hrFixEnabled: true,
+  hrUpscaler: '4x-AnimeSharp',
+  hrSteps: 50,
+  hrScale: 2.0,
+  hrDenoisingStrength: 0.55,
+  hrPrompt: '',
+  hrNegativePrompt: '',
+  hrCfg: 5.0,
+  hrSamplerName: 'DPM++ 2M SDE',
+  hrScheduler: 'Karras',
+  img2imgExtraNoise: 0.05,
+  initialNoiseMultiplier: 1.0,
+  // 【重点标记 - img2img 高清模式（2026-07-29）】
+  // Forge Neo img2img 不支持 Hires.fix，通过两种替代方案实现高清修复
+  img2imgHiresMode: 'two-step',
 };
 
 /**
@@ -62,16 +87,30 @@ const DEFAULT_SD_WEBUI_CONFIG: SDWebuiConfig = {
  * 【重点标记 - 采样器可配置】早期版本无此下拉，导致 Sampling Method 固定无法更改。
  */
 const SAMPLER_OPTIONS = [
-  { label: 'DPM++ 2M Karras（SDXL 推荐）', value: 'DPM++ 2M Karras' },
-  { label: 'DPM++ 2M SDE Karras（SDXL 高质量）', value: 'DPM++ 2M SDE Karras' },
-  { label: 'DPM++ 3M SDE Karras（SDXL 精细）', value: 'DPM++ 3M SDE Karras' },
-  { label: 'DPM++ SDE Karras', value: 'DPM++ SDE Karras' },
-  { label: 'DPM++ 2M SDE Exponential', value: 'DPM++ 2M SDE Exponential' },
+  { label: 'DPM++ 3M SDE（SDXL 精细，默认）', value: 'DPM++ 3M SDE' },
+  { label: 'DPM++ 2M SDE（SDXL 高质量）', value: 'DPM++ 2M SDE' },
+  { label: 'DPM++ 2M（SDXL 通用）', value: 'DPM++ 2M' },
+  { label: 'DPM++ SDE', value: 'DPM++ SDE' },
   { label: 'Euler a', value: 'Euler a' },
   { label: 'Euler', value: 'Euler' },
   { label: 'DDIM', value: 'DDIM' },
   { label: 'UniPC', value: 'UniPC' },
   { label: 'LCM', value: 'LCM' },
+];
+
+/**
+ * Forge Neo 调度器预设列表（2026-07-29 新增）。
+ * Forge Neo 将采样器与调度器分离，scheduler 控制 sigma 调度曲线。
+ */
+const SCHEDULER_OPTIONS = [
+  { label: 'Karras（默认，适合大多数场景）', value: 'Karras' },
+  { label: 'Automatic（自动选择）', value: 'Automatic' },
+  { label: 'Exponential（更快，细节略少）', value: 'Exponential' },
+  { label: 'Normal', value: 'Normal' },
+  { label: 'Simple', value: 'Simple' },
+  { label: 'Uniform', value: 'Uniform' },
+  { label: 'Align Your Steps', value: 'Align Your Steps' },
+  { label: 'Beta', value: 'Beta' },
 ];
 
 /**
@@ -101,11 +140,11 @@ const ADETAILER_MODEL_OPTIONS = [
  * 与 src/main/services/sdGenerationService.ts 的 MODEL_TYPE_PRESETS 保持一致。
  * 为避免跨进程导入问题，在组件内内联定义。
  */
-const MODEL_TYPE_PRESETS: Record<string, { denoising: number; steps: number; cfgScale: number; sampler: string; adetailerEnabled: boolean; width: number; height: number }> = {
-  'sdxl': { denoising: 0.55, steps: 28, cfgScale: 7, sampler: 'DPM++ 2M Karras', adetailerEnabled: true, width: 512, height: 512 },
-  'qwen-image': { denoising: 1.0, steps: 28, cfgScale: 7, sampler: 'Euler', adetailerEnabled: false, width: 1024, height: 1024 },
-  'qwen-image-edit': { denoising: 0.95, steps: 28, cfgScale: 7, sampler: 'Euler', adetailerEnabled: false, width: 512, height: 512 },
-  'flux2': { denoising: 0.8, steps: 28, cfgScale: 7, sampler: 'Euler', adetailerEnabled: false, width: 1024, height: 1024 },
+const MODEL_TYPE_PRESETS: Record<string, { denoising: number; steps: number; cfgScale: number; sampler: string; scheduler: string; adetailerEnabled: boolean; width: number; height: number }> = {
+  'sdxl': { denoising: 0.55, steps: 28, cfgScale: 7, sampler: 'DPM++ 3M SDE', scheduler: 'Karras', adetailerEnabled: true, width: 512, height: 512 },
+  'qwen-image': { denoising: 1.0, steps: 28, cfgScale: 7, sampler: 'Euler', scheduler: 'Normal', adetailerEnabled: false, width: 1024, height: 1024 },
+  'qwen-image-edit': { denoising: 0.95, steps: 28, cfgScale: 7, sampler: 'Euler', scheduler: 'Normal', adetailerEnabled: false, width: 512, height: 512 },
+  'flux2': { denoising: 0.8, steps: 28, cfgScale: 7, sampler: 'Euler', scheduler: 'Beta', adetailerEnabled: false, width: 1024, height: 1024 },
 };
 
 /**
@@ -528,6 +567,30 @@ const SDWebuiSettings = forwardRef<SDWebuiSettingsRef>((_props, ref) => {
           />
         </Form.Item>
 
+        {/* 【重点标记 - 调度器 + CLIP Skip（2026-07-29）】 */}
+        <Space style={{ display: 'flex', marginBottom: 8 }} align="start">
+          <Form.Item
+            label="调度器"
+            name="scheduler"
+            tooltip="Forge Neo 将采样器与调度器分离。Karras 适合大多数场景，Exponential 更快但细节略少"
+            style={{ flex: 1, marginBottom: 0, minWidth: 200 }}
+          >
+            <AutoComplete
+              options={SCHEDULER_OPTIONS}
+              placeholder="选择调度器"
+              allowClear
+            />
+          </Form.Item>
+          <Form.Item
+            label="CLIP Skip"
+            name="clipSkip"
+            tooltip="CLIP 停止层数。SD1.5 推荐 2，SDXL 推荐 1~2。通过 override_settings 注入"
+            style={{ width: 120, marginBottom: 0 }}
+          >
+            <InputNumber min={1} max={12} style={{ width: '100%' }} />
+          </Form.Item>
+        </Space>
+
         {/* ADetailer 面部修复（仅 SDXL）/ NL 提示词模板（非 SDXL 模型）- Spec: integrate-nl-driven-sd-models / Task 2 */}
         {modelType === 'sdxl' ? (
           <Form.Item
@@ -865,12 +928,235 @@ const SDWebuiSettings = forwardRef<SDWebuiSettingsRef>((_props, ref) => {
                       allowClear
                     />
                   </Form.Item>
+
+                  {/* 【重点标记 - ADetailer 面部修复专用参数（2026-07-29 源码核验）】 */}
+                  {/* 源码：ADetailer-Neo args.py:50/78/79 */}
+                  <Form.Item
+                    label="ADetailer 独立负面提示词（ad_negative_prompt）"
+                    name="adNegativePrompt"
+                    tooltip="ADetailer 面部修复专用负面提示词。留空则沿用主负面提示词。可针对性优化面部，如 'deformed, distorted, disfigured, bad face, wrong anatomy'"
+                  >
+                    <Input.TextArea
+                      rows={2}
+                      placeholder="留空则沿用主负面提示词。例如：deformed, distorted, bad face, wrong anatomy"
+                    />
+                  </Form.Item>
+                  <Space style={{ display: 'flex', marginBottom: 8 }} align="start">
+                    <Form.Item
+                      label="启用独立噪声倍率"
+                      name="adUseNoiseMultiplier"
+                      valuePropName="checked"
+                      tooltip="开启后使用独立的 ADetailer 噪声倍率，控制面部修复细节丰富度"
+                      style={{ marginBottom: 0 }}
+                    >
+                      <Switch />
+                    </Form.Item>
+                    <Form.Item
+                      label="噪声倍率（ad_noise_multiplier）"
+                      name="adNoiseMultiplier"
+                      tooltip="0.5-1.5。增大可增加面部细节，但过高可能引入噪声。默认 1.0"
+                      style={{ flex: 1, marginBottom: 0, minWidth: 200 }}
+                    >
+                      <InputNumber min={0.5} max={1.5} step={0.05} style={{ width: '100%' }} />
+                    </Form.Item>
+                  </Space>
                 </>
               ),
             },
           ]}
         />
-        )}
+      )}
+
+        {/* ===== Hires.fix 高分辨率修复参数（2026-07-29 新增）===== */}
+        <Collapse
+          style={{ marginTop: 16 }}
+          items={[
+            {
+              key: 'hires-fix',
+              label: <span style={{ fontWeight: 500 }}>Hires.fix 修复与放大</span>,
+              children: (
+                <>
+                  <Alert
+                    type="info"
+                    showIcon
+                    style={{ marginBottom: 16 }}
+                    message="Hires.fix 高分辨率修复"
+                    description="启用后生成的图片会经过第二轮高分辨率放大修复，提升细节和画质。默认 Upscaler=Latent，Steps=50。其他参数沿用 webui-forge-neo 默认值。"
+                  />
+                  <Form.Item
+                    label="启用 Hires.fix"
+                    name="hrFixEnabled"
+                    valuePropName="checked"
+                    tooltip="默认开启。启用后生成的图片会经过第二轮高分辨率放大修复"
+                  >
+                    <Switch />
+                  </Form.Item>
+                  <Form.Item
+                    label="放大器（hr_upscaler）"
+                    name="hrUpscaler"
+                    tooltip="高分辨率修复使用的放大算法。Latent=在潜空间放大（推荐，细节更丰富）；其他如 Lanczos/ESRGAN_4x 等为像素空间放大"
+                  >
+                    <Select
+                      options={[
+                        { label: 'Latent（推荐）', value: 'Latent' },
+                        { label: 'Latent (antialiased)', value: 'Latent (antialiased)' },
+                        { label: 'None', value: 'None' },
+                        { label: 'Lanczos', value: 'Lanczos' },
+                        { label: 'Nearest', value: 'Nearest' },
+                        { label: 'ESRGAN_4x', value: 'ESRGAN_4x' },
+                        { label: 'R-ESRGAN 4x+', value: 'R-ESRGAN 4x+' },
+                        { label: 'R-ESRGAN 4x+ Anime6B', value: 'R-ESRGAN 4x+ Anime6B' },
+                        { label: 'SwinIR 4x', value: 'SwinIR 4x' },
+                      ]}
+                      placeholder="选择放大器"
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    label={
+                      <span>
+                        Hires Steps
+                        <Tooltip title="高分辨率修复的采样步数，默认 50。步数越高细节越丰富但生成越慢">
+                          <QuestionCircleOutlined style={{ marginLeft: 4 }} />
+                        </Tooltip>
+                      </span>
+                    }
+                    name="hrSteps"
+                  >
+                    <InputNumber min={1} max={150} style={{ width: '100%' }} placeholder="50" />
+                  </Form.Item>
+                  <Form.Item
+                    label={
+                      <span>
+                        放大倍数（hr_scale）
+                        <Tooltip title="图片放大倍数，默认 2.0。1.5=放大1.5倍，2.0=放大2倍">
+                          <QuestionCircleOutlined style={{ marginLeft: 4 }} />
+                        </Tooltip>
+                      </span>
+                    }
+                    name="hrScale"
+                  >
+                    <InputNumber min={1} max={4} step={0.1} style={{ width: '100%' }} placeholder="2.0" />
+                  </Form.Item>
+                  <Form.Item
+                    label={
+                      <span>
+                        去噪强度（hr_denoising_strength）
+                        <Tooltip title="高分辨率修复的去噪强度（0-1），默认 0.55。0=不改变原图，1=完全重绘">
+                          <QuestionCircleOutlined style={{ marginLeft: 4 }} />
+                        </Tooltip>
+                      </span>
+                    }
+                    name="hrDenoisingStrength"
+                  >
+                    <Slider min={0} max={1} step={0.05} />
+                  </Form.Item>
+                  <Form.Item
+                    label="Hires 提示词（可选）"
+                    name="hrPrompt"
+                    tooltip="高分辨率修复第二轮使用的提示词。留空则沿用第一轮 prompt"
+                  >
+                    <Input.TextArea
+                      rows={2}
+                      placeholder="留空则沿用第一轮提示词"
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    label="Hires 负面提示词（可选）"
+                    name="hrNegativePrompt"
+                    tooltip="高分辨率修复第二轮使用的负面提示词。留空则沿用第一轮"
+                  >
+                    <Input.TextArea
+                      rows={2}
+                      placeholder="留空则沿用第一轮负面提示词"
+                    />
+                  </Form.Item>
+                  {/* 【重点标记 - Hires 高质量参数（2026-07-29）】 */}
+                  <Space style={{ display: 'flex', marginBottom: 8 }} align="start">
+                    <Form.Item
+                      label="Hires CFG"
+                      name="hrCfg"
+                      tooltip="Hires 第二轮 CFG。Forge Neo 默认 1.0（不使用负提示），设为 5~7 显著提升细节"
+                      style={{ width: 120, marginBottom: 0 }}
+                    >
+                      <InputNumber min={1} max={30} step={0.5} style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item
+                      label="Hires 采样器"
+                      name="hrSamplerName"
+                      tooltip="Hires 第二轮独立采样器（默认 DPM++ 2M SDE）"
+                      style={{ flex: 1, marginBottom: 0, minWidth: 180 }}
+                    >
+                      <AutoComplete
+                        options={SAMPLER_OPTIONS}
+                        placeholder="Hires 采样器"
+                        allowClear
+                      />
+                    </Form.Item>
+                    <Form.Item
+                      label="Hires 调度器"
+                      name="hrScheduler"
+                      tooltip="Hires 第二轮独立调度器（默认 Karras）"
+                      style={{ width: 150, marginBottom: 0 }}
+                    >
+                      <AutoComplete
+                        options={SCHEDULER_OPTIONS}
+                        placeholder="Hires 调度器"
+                        allowClear
+                      />
+                    </Form.Item>
+                  </Space>
+                  {/* img2img 噪声参数 */}
+                  <Space style={{ display: 'flex', marginBottom: 8 }} align="start">
+                    <Form.Item
+                      label="img2img 额外噪声"
+                      name="img2imgExtraNoise"
+                      tooltip="img2img 降采样后添加的微量噪声（0~1），>0 增加细节丰富度"
+                      style={{ width: 160, marginBottom: 0 }}
+                    >
+                      <InputNumber min={0} max={1} step={0.01} style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item
+                      label="初始噪声倍率"
+                      name="initialNoiseMultiplier"
+                      tooltip="添加到 init_images 的噪声倍率（0~1.5），略 >1 可增加细节"
+                      style={{ width: 160, marginBottom: 0 }}
+                    >
+                      <InputNumber min={0} max={1.5} step={0.05} style={{ width: '100%' }} />
+                    </Form.Item>
+                  </Space>
+                </>
+              ),
+            },
+            {
+              key: 'img2img-hires-mode',
+              label: <span style={{ fontWeight: 500 }}>img2img 高清模式</span>,
+              children: (
+                <>
+                  <Alert
+                    type="info"
+                    showIcon
+                    style={{ marginBottom: 12 }}
+                    message="img2img 高清修复方案"
+                    description="Forge Neo 的 img2img 不支持 Hires.fix，通过以下两种替代方案实现高清修复效果。两种方案均启用 ADetailer 面部修复。"
+                  />
+                  <Form.Item label="高清模式" name="img2imgHiresMode">
+                    <Radio.Group>
+                      <Radio value="direct">直接高分辨率（1024 一步生成）</Radio>
+                      <Radio value="two-step">两步放大（768 生成 → 1024 修复）</Radio>
+                    </Radio.Group>
+                  </Form.Item>
+                  <Alert
+                    type="success"
+                    showIcon
+                    style={{ marginBottom: 12 }}
+                    message="参数已针对高性能显卡优化"
+                    description="直接模式：1024 分辨率 + 30 步 + ADetailer 1024×1024 面部修复。两步模式：第一步 768/30步 → 第二步 1024/20步低降噪放大 + ADetailer 1024×1024。"
+                  />
+                </>
+              ),
+            },
+          ]}
+        />
       </Form>
     </Card>
   );

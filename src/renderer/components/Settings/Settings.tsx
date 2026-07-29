@@ -138,6 +138,9 @@ const Settings: React.FC = () => {
 
       form.setFieldsValue({
         debugMode: setting.debugMode || false,
+        // Agent 模式全局开关（Spec: add-tool-calling-agent-engine / Task 4b）
+        // 旧配置无此字段时 ?? false 兜底，确保 Switch 不报 undefined
+        enableAgentMode: setting.enableAgentMode ?? false,
         logLevel: setting.logLevel || 'info',
         api_url: engine?.api_url || 'http://127.0.0.1:5000',
         api_key: engine?.api_key || '',
@@ -230,6 +233,9 @@ const Settings: React.FC = () => {
           logLevel: values.logLevel || 'info',
           dashboardBackgroundImage: dashboardBackgroundImage,
           debugMode: debugMode,
+          // Agent 模式全局开关（Spec: add-tool-calling-agent-engine / Task 4b）
+          // 旧配置无此字段时 ?? false 兜底；表单未触发变更时 initialValue=false
+          enableAgentMode: values.enableAgentMode ?? false,
           vector: vectorConfig,
           // 仅在 ref 成功取值时写入，避免覆盖已有配置
           ...(sdWebuiConfig ? { sdWebui: sdWebuiConfig } : {}),

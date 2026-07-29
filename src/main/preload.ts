@@ -217,7 +217,68 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 探测 AI 模型能力（Spec: add-model-capability-detection-and-image-recognition / Task 3）
     // 并行探测 vision / thinking / tool-calling，返回 { success, capabilities?, error? }
     probeCapabilities: (args: { apiUrl: string; apiKey: string; apiKeyTransmission: string; modelName: string }) =>
-      ipcRenderer.invoke('ai:probeCapabilities', args)
+      ipcRenderer.invoke('ai:probeCapabilities', args),
+    // ============================================================================
+    // 工具调用智能体引擎 API（方向 0 最后一层）
+    // ============================================================================
+    // 运行一轮工具调用智能体循环，返回 AgentLoopResult。
+    // handler 内部读取 enableAgentMode + 引擎 supportsToolCalling 计算 effectiveSupportsToolCalling，
+    // 开关关或模型不支持时自动降级为纯文本生成（agentLoop 内部处理降级）。
+    // options 不含 supportsToolCalling（由 handler 计算），也不含 abortSignal（暂未暴露取消通道）。
+    runAgentTurn: (params: {
+      messages: any[];
+      toolGroups: string[];
+      context?: Record<string, any>;
+      options: {
+        model: string;
+        temperature: number;
+        maxTokens: number;
+        maxIterations?: number;
+        tool_choice?: 'auto' | 'none' | { type: 'function'; function: { name: string } };
+        streamFinal?: boolean;
+      };
+    }) => ipcRenderer.invoke('ai:runAgentTurn', params),
+    // 订阅工具调用事件（agentLoop 在执行工具时推送，可观测性）
+    // 返回取消订阅函数（与 writing.onPolishChunk / game.onNarrativeChunk 模式一致）
+    onAgentToolCall: (callback: (event: any) => void) => {
+      const handler = (_event: unknown, data: any) => callback(data);
+      ipcRenderer.on('ai:agentToolCall', handler);
+      return () => ipcRenderer.removeListener('ai:agentToolCall', handler);
+    }
+  },
+  // ============================================================================
+  // Agent 技能库 / 长期记忆 / 自我学习 API（Spec: add-agent-skill-and-memory-foundation / Task 12）
+  // ============================================================================
+  // 命名空间隔离设计：使用独立前缀 agent-skill: / agent-memory: / agent-learning:
+  // 与现有 memory:* 旧聊天/表格记忆系统物理隔离，避免通道与命名冲突
+  // Agent 技能库 API
+  agentSkill: {
+    list: (params?: { category?: string; enabledOnly?: boolean }) => ipcRenderer.invoke('agent-skill:list', params),
+    get: (id: string) => ipcRenderer.invoke('agent-skill:get', { id }),
+    create: (manifest: any) => ipcRenderer.invoke('agent-skill:create', { manifest }),
+    update: (manifest: any) => ipcRenderer.invoke('agent-skill:update', { manifest }),
+    delete: (id: string) => ipcRenderer.invoke('agent-skill:delete', { id }),
+    invoke: (id: string, input: any, context?: any) => ipcRenderer.invoke('agent-skill:invoke', { id, input, context }),
+    discover: (query: string, category?: string) => ipcRenderer.invoke('agent-skill:discover', { query, category }),
+    history: (id: string) => ipcRenderer.invoke('agent-skill:history', { id }),
+    rollback: (id: string, version: string) => ipcRenderer.invoke('agent-skill:rollback', { id, version }),
+    import: (json: string) => ipcRenderer.invoke('agent-skill:import', { json }),
+    export: (id: string) => ipcRenderer.invoke('agent-skill:export', { id }),
+  },
+  // Agent 长期记忆 API
+  agentMemory: {
+    search: (query: string, type?: string, topK?: number) => ipcRenderer.invoke('agent-memory:search', { query, type, topK }),
+    query: (filter: any) => ipcRenderer.invoke('agent-memory:query', { filter }),
+    record: (content: string, type: string, metadata?: any) => ipcRenderer.invoke('agent-memory:record', { content, type, metadata }),
+    delete: (id: string) => ipcRenderer.invoke('agent-memory:delete', { id }),
+    getRelevant: (context: any, taskDescription: string, topK?: number) => ipcRenderer.invoke('agent-memory:getRelevant', { context, taskDescription, topK }),
+  },
+  // Agent 自我学习 API
+  agentLearning: {
+    consolidate: () => ipcRenderer.invoke('agent-learning:consolidate', {}),
+    optimize: (taskType: string, taskDescription: string, context?: any) => ipcRenderer.invoke('agent-learning:optimize', { taskType, taskDescription, context }),
+    feedback: (memoryId: string, feedback: any) => ipcRenderer.invoke('agent-learning:feedback', { memoryId, feedback }),
+    extractPatterns: (taskType?: string) => ipcRenderer.invoke('agent-learning:extractPatterns', { taskType }),
   },
   // 创意数据 API
   creative: {
@@ -697,6 +758,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 清除角色卡视觉特征文件（删除 traits.json，幂等）
     clear: (characterCardId: string) =>
       ipcRenderer.invoke('character-trait:clear', characterCardId)
+  },
+  // ============================================================================
+  // 角色卡 LoRA 管理 API（2026-07-29 bug 修复 - 按角色独立存储）
+  // ============================================================================
+  // 【重点标记】原实现将 LoRA 存在全局 AppSetting.sdWebui.selectedLoras 中，
+  // 导致 A 角色 LoRA 污染 B 角色。现改为按角色卡独立持久化。
+  // 存储路径：{userData}/data/character-loras/{sha256(characterCardId).slice(0,16)}/loras.json
+  characterLora: {
+    // 读取角色卡 LoRA 模型清单；文件不存在时返回 []（不抛异常）
+    list: (characterCardId: string) =>
+      ipcRenderer.invoke('character-lora:list', characterCardId),
+    // 覆盖保存角色卡 LoRA 模型清单
+    save: (args: { characterCardId: string; loras: Array<{ name: string; weight: number }> }) =>
+      ipcRenderer.invoke('character-lora:save', args),
   },
   // ============================================================================
   // 素材管理 API（Spec: add-asset-and-trait-management / Task 7）

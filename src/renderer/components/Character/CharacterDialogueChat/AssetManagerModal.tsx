@@ -35,16 +35,20 @@ import {
   RobotOutlined,
   SaveOutlined,
   EyeOutlined,
+  SwapOutlined,
 } from '@ant-design/icons';
 import { EMOTION_PRESETS } from './PromptBuilder';
 import ImageCropperModal from './ImageCropperModal';
 import AssetGenerateModal from './AssetGenerateModal';
+import LoraSelectModal from './LoraSelectModal';
 import { useExpressionStore } from '../../../stores/expressionStore';
 import { useSettingStore } from '../../../stores/settingStore';
 import type { CustomEmotion } from '../../../stores/expressionStore';
 import { useAssetStore } from '../../../stores/assetStore';
 import type { AssetType, ThreeViewSlot } from '../../../stores/assetStore';
 import { useCharacterTraitStore } from '../../../stores/characterTraitStore';
+import { useCharacterLoraStore } from '../../../stores/characterLoraStore';
+import { invalidateCharacterImageCache } from '../utils/characterThumbnailCache';
 
 // ==================== Props 接口 ====================
 
@@ -61,6 +65,25 @@ interface AssetManagerModalProps {
   /** 默认表情（角色卡 PNG）预览，用于 default 卡片 + 未上传情绪的占位 */
   avatarPath?: string;
   onClose: () => void;
+  /**
+   * 角色卡图片替换回调（Task 2）。
+   * 当用户在立绘 Tab 点击「设为角色卡图片」并确认后触发。
+   * 内联模式下由 CharacterEditModal 接收，更新 uploadedImage 预览 + 重置 imageChanged
+   * （因为 PNG 已在磁盘上重建，保存时仅需 write JSON，无需再次 createFromImage）。
+   * 弹窗模式下（CharacterDialogueChat）可不传。
+   */
+  onCardImageReplaced?: (newImageDataUrl: string) => void;
+  /**
+   * 内联渲染模式：为 true 时不渲染 Modal 外壳，直接输出 Tabs + AssetGenerateModal，
+   * 用于嵌入 CharacterEditModal 的「素材管理」Tab 页签，避免「点击按钮再打开弹窗」的二次跳转。
+   *
+   * - inline=false（默认）：渲染为独立 Modal（mask + footer + 定位），供 ChatHeader 按钮调用
+   * - inline=true：渲染为普通 div，内容随父容器流动；open prop 仅控制数据加载时机
+   *   （内部 useEffect 依赖 open && characterCardId 触发加载）
+   * - 内联模式下内部子弹窗（ImageCropperModal / AssetGenerateModal / LoraSelectModal）
+   *   仍各自 portal 到 document.body，不受内联影响
+   */
+  inline?: boolean;
 }
 
 // ==================== 常量 ====================
@@ -841,6 +864,13 @@ interface AssetGridTabContentProps {
   idPrefix: string;
   /** AI 生成入口（Task 11 接入 AssetGenerateModal） */
   onAIGenerate?: () => void;
+  /**
+   * 角色卡图片替换回调（仅 illustration Tab 使用）。
+   * 用户点击「设为角色卡图片」并确认后，通过此回调通知父组件（CharacterEditModal）
+   * 更新 uploadedImage 预览，避免编辑弹窗中显示旧图片。
+   * 参数为新图片的 data URL（含 data:image/png;base64, 前缀）。
+   */
+  onCardImageReplaced?: (newImageDataUrl: string) => void;
 }
 
 /**
@@ -863,6 +893,7 @@ const AssetGridTabContent: React.FC<AssetGridTabContentProps> = ({
   tabLabel,
   idPrefix,
   onAIGenerate,
+  onCardImageReplaced,
 }) => {
   const {
     manifests,
@@ -879,6 +910,12 @@ const AssetGridTabContent: React.FC<AssetGridTabContentProps> = ({
   // ====== 裁剪弹窗状态 ======
   const [cropperOpen, setCropperOpen] = useState<boolean>(false);
   const [cropperImageSrc, setCropperImageSrc] = useState<string | null>(null);
+
+  // ====== 全尺寸预览状态（Task 3：缩略图 hover 眼睛图标预览） ======
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+
+  // ====== 角色卡图片替换状态（Task 2：立绘替换角色卡原图） ======
+  const [replacingCardImage, setReplacingCardImage] = useState<boolean>(false);
 
   // 隐藏的 file input ref
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -973,6 +1010,78 @@ const AssetGridTabContent: React.FC<AssetGridTabContentProps> = ({
       });
     },
     [characterCardId, assetType, tabLabel, deleteAsset],
+  );
+
+  // ====== 全尺寸预览（Task 3：缩略图 hover 眼睛图标 → 点击打开预览 Modal） ======
+  const handlePreview = useCallback((dataUrl: string) => {
+    setPreviewImage(dataUrl);
+  }, []);
+
+  // ====== 角色卡图片替换（Task 2：立绘设为角色卡原图） ======
+  // 【重点标记 - 确认机制防误操作】
+  // 流程：Modal.confirm 警告 → 读取角色卡 JSON → 剥离 data URI 前缀 →
+  //       createFromImage 重建 PNG（新图 + 原 JSON）→ 失效缓存 → 回调父组件
+  const handleReplaceCardImage = useCallback(
+    (dataUrl: string) => {
+      if (!characterCardId) {
+        message.warning('未指定角色卡');
+        return;
+      }
+
+      Modal.confirm({
+        title: '设为角色卡图片',
+        content:
+          '将使用此立绘替换角色卡的原始图片（PNG 载体）。角色卡的角色数据（描述、个性等）会保留不变，仅替换基底图片。此操作不可撤销，确定继续？',
+        okText: '确认替换',
+        cancelText: '取消',
+        okButtonProps: { danger: true },
+        onOk: async () => {
+          setReplacingCardImage(true);
+          try {
+            // 1. 读取角色卡当前 JSON 内容（保留元数据，仅替换图片载体）
+            const content = await window.electronAPI.character.read(characterCardId);
+            if (!content) {
+              message.error('读取角色卡数据失败');
+              return;
+            }
+
+            // 2. 剥离 data URI 前缀，提取纯 base64
+            const commaIndex = dataUrl.indexOf(',');
+            if (commaIndex === -1) {
+              message.error('图片数据格式错误');
+              return;
+            }
+            const base64String = dataUrl.substring(commaIndex + 1);
+
+            // 3. 调用 createFromImage 重建 PNG（新图片 + 原 JSON 元数据）
+            const result = await window.electronAPI.character.createFromImage(
+              characterCardId,
+              base64String,
+              content,
+            );
+
+            if (!result?.success) {
+              message.error(result?.error || '替换角色卡图片失败');
+              return;
+            }
+
+            // 4. 失效缩略图/头像缓存，使各处显示新图片
+            invalidateCharacterImageCache(characterCardId);
+
+            // 5. 回调父组件更新预览（CharacterEditModal 的 uploadedImage）
+            onCardImageReplaced?.(dataUrl);
+
+            message.success('角色卡图片已替换');
+          } catch (e) {
+            console.error('[AssetGridTabContent] replaceCardImage error:', e);
+            message.error(e instanceof Error ? e.message : '替换角色卡图片失败');
+          } finally {
+            setReplacingCardImage(false);
+          }
+        },
+      });
+    },
+    [characterCardId, onCardImageReplaced],
   );
 
   // ====== AI 生成入口（Task 11 接入 AssetGenerateModal） ======
@@ -1115,8 +1224,10 @@ const AssetGridTabContent: React.FC<AssetGridTabContentProps> = ({
                   e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
                 }}
               >
+                {/* 缩略图容器（含 hover 预览眼睛图标 - Task 3） */}
                 <div
                   style={{
+                    position: 'relative',
                     width: '100%',
                     aspectRatio: '3 / 4',
                     borderRadius: 6,
@@ -1126,27 +1237,76 @@ const AssetGridTabContent: React.FC<AssetGridTabContentProps> = ({
                     alignItems: 'center',
                     justifyContent: 'center',
                   }}
+                  onMouseEnter={(e) => {
+                    // hover 时显示预览眼睛图标覆盖层
+                    const overlay = e.currentTarget.querySelector('.thumbnail-hover-overlay') as HTMLElement;
+                    if (overlay) overlay.style.opacity = '1';
+                  }}
+                  onMouseLeave={(e) => {
+                    const overlay = e.currentTarget.querySelector('.thumbnail-hover-overlay') as HTMLElement;
+                    if (overlay) overlay.style.opacity = '0';
+                  }}
                 >
                   {dataUrl ? (
-                    <img
-                      src={dataUrl}
-                      alt={assetId}
-                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                    />
+                    <>
+                      <img
+                        src={dataUrl}
+                        alt={assetId}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
+                      {/* hover 预览覆盖层（Task 3：眼睛图标平滑显示） */}
+                      <div
+                        className="thumbnail-hover-overlay"
+                        style={{
+                          position: 'absolute',
+                          inset: 0,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          background: 'rgba(0, 0, 0, 0.5)',
+                          opacity: 0,
+                          transition: 'opacity 0.25s ease',
+                          cursor: 'pointer',
+                        }}
+                        onClick={() => handlePreview(dataUrl)}
+                      >
+                        <Tooltip title="预览大图">
+                          <Button
+                            type="text"
+                            icon={<EyeOutlined style={{ fontSize: 22, color: '#fff' }} />}
+                            style={{ background: 'transparent' }}
+                          />
+                        </Tooltip>
+                      </div>
+                    </>
                   ) : (
                     <span style={{ color: 'var(--text-tertiary, #6b7280)', fontSize: 11 }}>
                       图片加载中
                     </span>
                   )}
                 </div>
+                {/* 操作按钮区（Task 2：立绘增加「设为角色卡图片」按钮） */}
                 <div
                   style={{
                     display: 'flex',
                     justifyContent: 'center',
                     alignItems: 'center',
+                    gap: 4,
                     minHeight: 24,
                   }}
                 >
+                  {assetType === 'illustration' && dataUrl && (
+                    <Tooltip title="设为角色卡图片">
+                      <Button
+                        size="small"
+                        type="text"
+                        icon={<SwapOutlined />}
+                        onClick={() => handleReplaceCardImage(dataUrl)}
+                        loading={replacingCardImage}
+                        style={{ color: 'var(--primary-color, #6366f1)' }}
+                      />
+                    </Tooltip>
+                  )}
                   <Tooltip title="删除">
                     <Button
                       size="small"
@@ -1179,6 +1339,36 @@ const AssetGridTabContent: React.FC<AssetGridTabContentProps> = ({
         onConfirm={handleCropperConfirm}
         onCancel={handleCropperCancel}
       />
+
+      {/* 全尺寸预览弹窗（Task 3：点击眼睛图标展示完整尺寸图片） */}
+      <Modal
+        open={previewImage !== null}
+        onCancel={() => setPreviewImage(null)}
+        footer={null}
+        title={null}
+        centered
+        width="auto"
+        style={{ maxWidth: '95vw', padding: 0 }}
+        styles={{
+          content: { padding: 0 },
+          body: { padding: 0 },
+        }}
+        closable
+        destroyOnClose
+      >
+        {previewImage && (
+          <img
+            src={previewImage}
+            alt="预览"
+            style={{
+              maxWidth: '90vw',
+              maxHeight: '85vh',
+              display: 'block',
+              borderRadius: 8,
+            }}
+          />
+        )}
+      </Modal>
     </>
   );
 };
@@ -1222,6 +1412,9 @@ const ThreeViewTabContent: React.FC<ThreeViewTabContentProps> = ({
   const [cropperImageSrc, setCropperImageSrc] = useState<string | null>(null);
   /** 当前正在上传的槽位 */
   const [cropperTargetSlot, setCropperTargetSlot] = useState<ThreeViewSlot | null>(null);
+
+  // ====== 全尺寸预览状态（Task 3：缩略图 hover 眼睛图标预览） ======
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   // 隐藏的 file input ref（共享，每次点击时记录目标 slot）
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1376,6 +1569,7 @@ const ThreeViewTabContent: React.FC<ThreeViewTabContentProps> = ({
 
         <div
           style={{
+            position: 'relative',
             width: '100%',
             aspectRatio: '3 / 4',
             borderRadius: 6,
@@ -1386,13 +1580,48 @@ const ThreeViewTabContent: React.FC<ThreeViewTabContentProps> = ({
             justifyContent: 'center',
             border: !hasImage ? '1px dashed rgba(255, 255, 255, 0.15)' : 'none',
           }}
+          onMouseEnter={(e) => {
+            // hover 时显示预览眼睛图标覆盖层（Task 3）
+            const overlay = e.currentTarget.querySelector('.thumbnail-hover-overlay') as HTMLElement;
+            if (overlay) overlay.style.opacity = '1';
+          }}
+          onMouseLeave={(e) => {
+            const overlay = e.currentTarget.querySelector('.thumbnail-hover-overlay') as HTMLElement;
+            if (overlay) overlay.style.opacity = '0';
+          }}
         >
           {hasImage && dataUrl ? (
-            <img
-              src={dataUrl}
-              alt={label}
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-            />
+            <>
+              <img
+                src={dataUrl}
+                alt={label}
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              />
+              {/* hover 预览覆盖层（Task 3：眼睛图标平滑显示） */}
+              <div
+                className="thumbnail-hover-overlay"
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: 'rgba(0, 0, 0, 0.5)',
+                  opacity: 0,
+                  transition: 'opacity 0.25s ease',
+                  cursor: 'pointer',
+                }}
+                onClick={() => setPreviewImage(dataUrl)}
+              >
+                <Tooltip title="预览大图">
+                  <Button
+                    type="text"
+                    icon={<EyeOutlined style={{ fontSize: 22, color: '#fff' }} />}
+                    style={{ background: 'transparent' }}
+                  />
+                </Tooltip>
+              </div>
+            </>
           ) : (
             <span style={{ color: 'var(--text-tertiary, #6b7280)', fontSize: 12 }}>
               未上传
@@ -1512,6 +1741,36 @@ const ThreeViewTabContent: React.FC<ThreeViewTabContentProps> = ({
         onConfirm={handleCropperConfirm}
         onCancel={handleCropperCancel}
       />
+
+      {/* 全尺寸预览弹窗（Task 3：点击眼睛图标展示完整尺寸图片） */}
+      <Modal
+        open={previewImage !== null}
+        onCancel={() => setPreviewImage(null)}
+        footer={null}
+        title={null}
+        centered
+        width="auto"
+        style={{ maxWidth: '95vw', padding: 0 }}
+        styles={{
+          content: { padding: 0 },
+          body: { padding: 0 },
+        }}
+        closable
+        destroyOnClose
+      >
+        {previewImage && (
+          <img
+            src={previewImage}
+            alt="预览"
+            style={{
+              maxWidth: '90vw',
+              maxHeight: '85vh',
+              display: 'block',
+              borderRadius: 8,
+            }}
+          />
+        )}
+      </Modal>
     </>
   );
 };
@@ -1558,6 +1817,9 @@ const CharacterTraitTabContent: React.FC<{
 
   // ====== 检测当前 AI 引擎是否支持视觉（图片识别） ======
   const { setting } = useSettingStore();
+  // 【重点标记 - 按角色独立存储 LoRA（2026-07-29 bug 修复）】
+  // 不再使用全局 setting.sdWebui.selectedLoras，改为按角色卡独立持久化
+  const { loras: characterLoras, loadLoras: loadCharacterLoras, saveLoras: saveCharacterLoras } = useCharacterLoraStore();
   const activeEngine = setting?.aiEngines?.find((e) => e.id === setting?.activeEngineId);
   const supportsVision = activeEngine?.capabilities?.supportsVision === true;
 
@@ -1571,6 +1833,8 @@ const CharacterTraitTabContent: React.FC<{
   const [aiGenerating, setAiGenerating] = useState<boolean>(false);
   /** 角色外观描述本地编辑态（与 store 同步） */
   const [editingDescription, setEditingDescription] = useState<string>('');
+  /** LoRA 选择弹窗开关 */
+  const [loraModalOpen, setLoraModalOpen] = useState<boolean>(false);
 
   // 当 store 中的外观描述变化时（加载完成 / AI 生成后），同步到本地编辑态
   useEffect(() => {
@@ -1580,12 +1844,13 @@ const CharacterTraitTabContent: React.FC<{
   // 编辑输入框 ref（用于聚焦）
   const editingInputRef = useRef<HTMLInputElement | null>(null);
 
-  // ====== 打开 Tab 时加载特征 ======
+  // ====== 打开 Tab 时加载特征 + LoRA ======
   useEffect(() => {
     if (characterCardId) {
       loadTraits(characterCardId);
+      loadCharacterLoras(characterCardId);
     }
-  }, [characterCardId, loadTraits]);
+  }, [characterCardId, loadTraits, loadCharacterLoras]);
 
   // ====== 添加特征 ======
   const handleAddTrait = useCallback(() => {
@@ -1975,6 +2240,60 @@ const CharacterTraitTabContent: React.FC<{
             />
           </div>
 
+          {/* LoRA 模型配置（与全局 SD WebUI 配置绑定，生成图片时自动应用） */}
+          <div
+            style={{
+              marginTop: 16,
+              padding: 12,
+              background: 'var(--chat-bubble-assistant-bg, rgba(30, 30, 46, 0.5))',
+              borderRadius: 8,
+              border: '1px solid rgba(99, 102, 241, 0.3)',
+            }}
+          >
+            <div style={{
+              color: 'var(--primary-color, #6366f1)',
+              fontSize: 14,
+              fontWeight: 600,
+              marginBottom: 4,
+            }}>
+              LoRA 模型配置（与此角色绑定）
+            </div>
+            <div style={{
+              color: 'var(--text-secondary, #94a3b8)',
+              fontSize: 12,
+              marginBottom: 8,
+            }}>
+              为当前角色选择 LoRA 模型，生成图片时自动应用。这些设置仅对当前角色生效。
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => setLoraModalOpen(true)}
+                style={{
+                  background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                  borderColor: 'transparent',
+                }}
+              >
+                选择 LoRA 模型
+              </Button>
+              {characterLoras.map((lora, index) => (
+                <Tag
+                  key={index}
+                  closable
+                  onClose={(e) => {
+                    e.preventDefault();
+                    const updated = characterLoras.filter((_, i) => i !== index);
+                    saveCharacterLoras(characterCardId, updated);
+                  }}
+                  style={{ background: 'var(--chat-bubble-assistant-bg, rgba(30, 30, 46, 0.8))', border: '1px solid var(--primary-color, #6366f1)', color: 'var(--text-primary, #e2e8f0)', padding: '2px 8px', borderRadius: 4, fontSize: 13 }}
+                >
+                  {lora.name} ({lora.weight})
+                </Tag>
+              ))}
+            </div>
+          </div>
+
           {/* 提示 */}
           <div
             style={{
@@ -1983,10 +2302,24 @@ const CharacterTraitTabContent: React.FC<{
               fontSize: 11,
             }}
           >
-            提示：点击 Tag 文字可编辑，回车保存；点击 X 可删除。修改后请点击顶部「保存」按钮持久化。
+            提示：LoRA 配置按角色独立存储，切换角色不会互相影响。点击 X 可删除。
           </div>
         </>
       )}
+
+      {/* LoRA 选择弹窗 */}
+      <LoraSelectModal
+        open={loraModalOpen}
+        endpoint={setting?.sdWebui?.endpoint || 'http://localhost:7860'}
+        selectedLoras={characterLoras}
+        onConfirm={(loras) => {
+          // 【重点标记 - 按角色独立存储 LoRA（2026-07-29 bug 修复）】
+          // 不再写入全局 AppSetting.sdWebui.selectedLoras，改为按角色卡持久化
+          saveCharacterLoras(characterCardId, loras);
+          setLoraModalOpen(false);
+        }}
+        onCancel={() => setLoraModalOpen(false)}
+      />
     </>
   );
 };
@@ -2013,6 +2346,8 @@ const AssetManagerModal: React.FC<AssetManagerModalProps> = ({
   characterScenario,
   avatarPath,
   onClose,
+  inline = false,
+  onCardImageReplaced,
 }) => {
   // ====== Stores（用于顶层统一加载） ======
   const loadExpressions = useExpressionStore((s) => s.loadExpressions);
@@ -2089,6 +2424,7 @@ const AssetManagerModal: React.FC<AssetManagerModalProps> = ({
           tabLabel="角色立绘"
           idPrefix="ill"
           onAIGenerate={() => openGenerateModal('illustration')}
+          onCardImageReplaced={onCardImageReplaced}
         />
       ),
     },
@@ -2129,6 +2465,50 @@ const AssetManagerModal: React.FC<AssetManagerModalProps> = ({
     },
   ];
 
+  // ====== 共享内容：Tabs + AssetGenerateModal（inline / Modal 两种模式复用，避免重复） ======
+  const tabsElement = (
+    <Tabs
+      defaultActiveKey="expression"
+      items={tabItems}
+      style={{ minHeight: 400 }}
+    />
+  );
+
+  // AssetGenerateModal（Task 11 接入，所有素材/表情 AI 生成入口共用）
+  // 无论 inline 与否都需要渲染：它自身是 Modal，会 portal 到 document.body，
+  // 由 generateModalOpen 控制显隐，放在哪个父容器都不影响其弹层定位。
+  const generateModalElement = (
+    <AssetGenerateModal
+      open={generateModalOpen}
+      characterCardId={characterCardId}
+      characterCardPath={characterCardId}
+      characterName={characterName}
+      mode={generateMode}
+      targetEmotionKey={generateTargetEmotionKey}
+      targetEmotionLabel={generateTargetEmotionLabel}
+      targetSlot={generateTargetSlot}
+      onClose={() => setGenerateModalOpen(false)}
+      onGenerated={() => {
+        // 生成完成后刷新对应 store（各 store 已在子组件中订阅，
+        // AssetGenerateModal 内部保存时已调用对应 store 的 save 方法，
+        // 这里无需额外操作；保留回调以备未来扩展）
+      }}
+    />
+  );
+
+  // ====== 内联模式：直接渲染 div + Tabs，无 Modal 外壳 ======
+  // 用于嵌入 CharacterEditModal 的「素材管理」Tab，内容随父 Modal body 流动并滚动。
+  // 不渲染标题（Tab label 已表明用途），与「角色信息」「对话与指令」等 Tab 风格一致。
+  if (inline) {
+    return (
+      <div style={{ width: '100%' }}>
+        {tabsElement}
+        {generateModalElement}
+      </div>
+    );
+  }
+
+  // ====== 弹窗模式：独立 Modal（供 ChatHeader 按钮调用） ======
   return (
     <Modal
       title={`素材与特征管理 - ${characterName}`}
@@ -2149,29 +2529,8 @@ const AssetManagerModal: React.FC<AssetManagerModalProps> = ({
         </Button>,
       ]}
     >
-      <Tabs
-        defaultActiveKey="expression"
-        items={tabItems}
-        style={{ minHeight: 400 }}
-      />
-
-      {/* AssetGenerateModal（Task 11 接入，所有素材/表情 AI 生成入口共用） */}
-      <AssetGenerateModal
-        open={generateModalOpen}
-        characterCardId={characterCardId}
-        characterCardPath={characterCardId}
-        characterName={characterName}
-        mode={generateMode}
-        targetEmotionKey={generateTargetEmotionKey}
-        targetEmotionLabel={generateTargetEmotionLabel}
-        targetSlot={generateTargetSlot}
-        onClose={() => setGenerateModalOpen(false)}
-        onGenerated={() => {
-          // 生成完成后刷新对应 store（各 store 已在子组件中订阅，
-          // AssetGenerateModal 内部保存时已调用对应 store 的 save 方法，
-          // 这里无需额外操作；保留回调以备未来扩展）
-        }}
-      />
+      {tabsElement}
+      {generateModalElement}
     </Modal>
   );
 };

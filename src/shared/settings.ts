@@ -171,6 +171,9 @@ export const AppSetting = {
     animationEnabled: true,
     compactMode: false,
     debugMode: false,
+    // Agent 模式全局开关（Spec: add-tool-calling-agent-engine / Task 4b）
+    // 默认关闭，确保现有功能零影响。开启后需模型支持工具调用才生效。
+    enableAgentMode: false,
     vector: {
       embeddingMode: 'remote' as EmbeddingMode,
       remoteModel: 'text-embedding-3-small',
@@ -203,7 +206,9 @@ export const AppSetting = {
       denoisingStrength: 0.55,
       steps: 28,
       cfgScale: 7,
-      sampler: 'DPM++ 2M Karras',
+      sampler: 'DPM++ 3M SDE',
+      scheduler: 'Karras',
+      clipSkip: 2,
       adetailerEnabled: true,
       // 【重点标记 - 特征携带机制（Spec: add-asset-and-trait-management / Task 5）】
       // 默认模板含 {traits} 与 {emotion} 两个占位符：
@@ -213,27 +218,51 @@ export const AppSetting = {
       positivePromptTemplate: 'portrait, {traits}, looking at viewer, simple background, {emotion}, high quality, best quality, masterpiece, detailed face',
       customNegativePrompt: '',
       // ADetailer 高级参数默认值（与 sdGenerationService ADETAILER_* 常量一致）
+      // 【重点标记 - ADetailer 参数优化（2026-07-29）】表情图模糊修复：
+      // 降低降噪强度、增大蒙版模糊/膨胀、提高修复分辨率
       adModel: 'face_yolov8n.pt',
       adConfidence: 0.3,
-      adDenoisingStrength: 0.4,
-      adMaskBlur: 4,
-      adDilateErode: 4,
+      adDenoisingStrength: 0.3,
+      adMaskBlur: 8,
+      adDilateErode: 8,
       adInpaintOnlyMasked: true,
-      adInpaintOnlyMaskedPadding: 32,
-      adUseInpaintWidthHeight: false,
-      adInpaintWidth: 512,
-      adInpaintHeight: 512,
-      adUseSteps: false,
-      adSteps: 20,
-      adUseCfgScale: false,
-      adCfgScale: 4.0,
-      adUseSampler: false,
-      adSampler: 'Use same sampler',
+      adInpaintOnlyMaskedPadding: 64,
+      adUseInpaintWidthHeight: true,
+      adInpaintWidth: 1024,
+      adInpaintHeight: 1024,
+      adUseSteps: true,
+      adSteps: 30,
+      adUseCfgScale: true,
+      adCfgScale: 5.0,
+      adUseSampler: true,
+      adSampler: 'DPM++ 2M SDE',
+      adScheduler: 'Use same scheduler',
+      // 【重点标记 - ADetailer 面部修复专用参数（2026-07-29 源码核验）】
+      // adNegativePrompt：ADetailer 独立负面提示词，空=沿用主负面提示词，可针对性优化面部
+      // adUseNoiseMultiplier/adNoiseMultiplier：独立噪声倍率（0.5-1.5），控制面部修复细节
+      adNegativePrompt: '',
+      adUseNoiseMultiplier: true,
+      adNoiseMultiplier: 1.0,
       modelType: 'sdxl' as const,
       nlPromptTemplate: 'A portrait of a character. {traits} The character has {emotion}, looking at the viewer. High quality, detailed.',
       txt2imgWidth: 1024,
       txt2imgHeight: 1024,
       selectedLoras: [] as Array<{ name: string; weight: number }>,
+      // 【Hires.fix】默认开启修复与放大，4x-AnimeSharp 放大器
+      hrFixEnabled: true,
+      hrUpscaler: '4x-AnimeSharp',
+      hrSteps: 50,
+      hrScale: 2.0,
+      hrDenoisingStrength: 0.55,
+      hrPrompt: '',
+      hrNegativePrompt: '',
+      hrCfg: 5.0,
+      hrSamplerName: 'DPM++ 2M SDE',
+      hrScheduler: 'Karras',
+      img2imgExtraNoise: 0.05,
+      initialNoiseMultiplier: 1.0,
+      // 【img2img 高清模式】默认两步放大（768→1024）
+      img2imgHiresMode: 'two-step',
     }
   }
 };

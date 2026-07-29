@@ -1,5 +1,208 @@
 # Changelog
 
+## [Unreleased] - 2026-07-30
+
+### Added
+- **Agent 技能库 / 长期记忆 / 自我学习 IPC + preload + 类型声明（Task 12）** 在 Tasks 3-10 已建好的 `skillService` / `memoryService` / `agentLearningService` 之上，补齐「主进程 → 渲染进程」的 IPC 暴露层，让前端能完整管理技能库（CRUD / 调用 / 发现 / 版本管理 / 导入导出）、记录与检索 Agent 长期记忆（语义检索 / 字段过滤 / 三类记忆分发记录 / RAG 召回）、触发自我学习闭环（整合 / 决策优化 / 反馈 / 模式提取）。
+  - **命名空间隔离设计（核心约束）**：为避免与现有 `memory:*` 旧聊天/表格记忆系统（`memoryHandlers.ts` + preload `memory:` 命名空间）产生任何通道与命名冲突，本次新增三类通道使用完全独立的前缀——`agent-skill:` / `agent-memory:` / `agent-learning:`，preload 命名空间使用 `agentSkill` / `agentMemory` / `agentLearning`（NOT `skill`/`memory`/`learning`）。`memoryService.searchMemories` 内部已路由到 `source='agent-memory'` 的 backend，与旧 `chatVector` / `chatHistory` 等向量源物理隔离。
+  - **`agentSkillHandlers.ts`（Task 12.1）**：导出 `registerAgentSkillHandlers()`，注册 11 个 `agent-skill:*` 通道——`list` / `get` / `create` / `update` / `delete` / `invoke` / `discover` / `history` / `rollback` / `import` / `export`。`create` 与 `update` 均委托 `skillService.registerSkill`（其内部处理更新语义：id 已存在则先 unregister 再 register）；`invoke` 返回 `SkillResult`（含 success/data/error/trace）；register 入口调用幂等的 `skillService.initialize()`。
+  - **`agentMemoryHandlers.ts`（Task 12.2）**：导出 `registerAgentMemoryHandlers()`，注册 5 个 `agent-memory:*` 通道——`search`（向量检索，可按 type 过滤）/ `query`（非向量字段过滤）/ `record`（按 type 分发到 `recordEpisodicMemory`/`recordSemanticMemory`/`recordProceduralMemory`）/ `delete` / `getRelevant`（RAG 召回）。`record` 分发逻辑：episodic 从 metadata 构造 `LearningEvent`（必填字段缺失时使用合理默认值）；semantic 调用 `recordSemanticMemory(content, metadata.pattern||'general', metadata.derivedFrom)`；procedural 调用 `recordProceduralMemory(metadata.skillId||'unknown', content)`。
+  - **`agentLearningHandlers.ts`（Task 12.3）**：导出 `registerAgentLearningHandlers()`，注册 4 个 `agent-learning:*` 通道——`consolidate`（触发记忆整合，返回 `ConsolidationStats`）/ `optimize`（决策优化，返回 `DecisionOptimization`）/ `feedback`（应用用户反馈，调整置信度/创建纠正/删除）/ `extractPatterns`（触发整合 + 返回语义记忆）。
+  - **错误兜底（与 `agentHandlers.ts` 风格一致）**：每个 handler try-catch 包裹，异常时返回 `{ success: false, error }` 结构化错误，渲染进程永不收到 reject。register 入口对 `skillService.initialize()` / `memoryService.initialize()` 使用 `.catch()` 兜底，避免初始化失败阻塞 IPC 注册。
+  - **preload / 类型声明**：`preload.ts` 在 `ai:` 命名空间后新增 `agentSkill` / `agentMemory` / `agentLearning` 三个命名空间（每个方法调用 `ipcRenderer.invoke('channel', ...args)`）；`electron.d.ts` 在 `ElectronAPI` 接口中对应位置新增三个类型声明块（复杂类型使用 `any` 保持与现有文件一致的实用风格）。
+  - **ipc/index.ts 注册**：在 `registerAgentHandlers()` 后追加 `registerAgentSkillHandlers()` / `registerAgentMemoryHandlers()` / `registerAgentLearningHandlers()` 三次调用，附中文注释说明命名空间隔离设计。
+  - **类型安全验证**：`npx tsc --noEmit --pretty false` 过滤 `agentSkillHandlers|agentMemoryHandlers|agentLearningHandlers|preload.ts|electron.d.ts|ipc/index` 后，新增文件 0 个错误（仅 `ipc/index.ts(1,1)` 与 `preload.ts(45,43)` 两个预存错误，经 `git stash` 验证为本次改动前已存在，非本次引入）。
+  - **涉及文件**：`src/main/ipc/handlers/agentSkillHandlers.ts`（新建）/ `src/main/ipc/handlers/agentMemoryHandlers.ts`（新建）/ `src/main/ipc/handlers/agentLearningHandlers.ts`（新建）/ `src/main/ipc/index.ts`（新增 3 个 import + 3 次注册调用）/ `src/main/preload.ts`（新增 3 个命名空间）/ `src/renderer/types/electron.d.ts`（新增 3 个类型声明块）
+- **Agent 技能库与记忆系统集成接入（Task 11）：foundation 工具组 + onTurnComplete 回调** 在 Tasks 3-10 已建好的 `skillService` / `memoryService` / `agentLearningService` 与方向 0 工具调用智能体引擎（§7.13）之间补齐集成层，让 Agent 在 agentLoop 运行时能自主调用技能（invokeSkill）、检索与记录长期记忆（searchMemories / recordMemory）、发现可用技能（discoverSkills），并在每轮结束时通过可选回调记录 episodic 经验供 consolidator 整合。
+  - **`AgentToolGroup` 新增 `'foundation'`**：在 `agentTypes.ts` 的工具组联合类型追加 `'foundation'` 值，对应一组基础能力工具（与 `dialogue` / `writing` / `worldbook` 业务工具组并列）。`enableAgentMode=false` 时 `effectiveSupportsToolCalling=false`，foundation 工具不被注入 agentLoop（由方向 0 降级机制保证）。
+  - **`AgentLoopCallbacks` 新增 `onTurnComplete?`**：可选回调 `(result, context?) => void`。`agentLoop.ts` 在全部 6 条返回路径（2 处降级 / aborted / completed / max_iterations / error）统一触发 `callbacks?.onTurnComplete?.(result, context)`。**可选回调，不传则零影响**——现有调用方（`agentHandlers.ts`）未传，行为与扩展前完全一致；未来 `agentLearningService.recordTurnExperience` 可作为该回调的消费者，记录 episodic 经验。
+  - **`tools/agentFoundationTools.ts`（新建）**：导出 `agentFoundationTools: AgentTool[]`，含 4 个工具，参数严格 JSONSchema、handler 全程 try-catch：
+    - `invokeSkill` → `skillService.invokeSkill(id, input, context)`：让 Agent 调用注册中心的任意技能（prompt / tool-sequence / composite 三类）
+    - `searchMemories` → `memoryService.searchMemories(query, type?, topK?)`：向量语义检索 Agent 长期记忆
+    - `recordMemory` → 按 `type` 分发 `recordEpisodic/Semantic/ProceduralMemory`（episodic 由 metadata 构建 `LearningEvent`）
+    - `discoverSkills` → `skillService.discoverSkills(query, category?)`：按 name/description/tags 模糊匹配返回 SkillSummary
+  - **`tools/index.ts` 注册**：`registerBuiltinTools()` 追加 `toolRegistry.registerGroup('foundation', agentFoundationTools)`，复用现有 module-level `registered` 标志保证幂等（一次性注册，重复调用安全）。
+  - **增量零影响核心保证**：① `onTurnComplete` 为可选回调，不传时 agentLoop 行为零变化；② foundation 工具组仅在 `enableAgentMode=true` 且模型支持工具调用时才被注入 agentLoop（方向 0 降级检查接管）；③ 新 `agent/memory/` 模块与现有 `services/memory/`（聊天/表格记忆）物理隔离，不互相 import；④ preload 使用 `agentSkill` / `agentMemory` / `agentLearning` 命名空间（非 `skill` / `memory` / `learning`），与现有 `memory:` 命名空间零冲突。
+  - **类型安全验证**：`npx tsc --noEmit --pretty false` 确认 `agentTypes.ts` / `agentLoop.ts` / `agentFoundationTools.ts` / `tools/index.ts` 0 个新增错误（baseline 预存错误均不在本次改动文件内）。
+  - **涉及文件**：`src/main/services/ai/agent/agentTypes.ts`（AgentToolGroup 追加 `'foundation'` + AgentLoopCallbacks 追加 `onTurnComplete?`）/ `src/main/services/ai/agent/agentLoop.ts`（6 条返回路径触发 `onTurnComplete`）/ `src/main/services/ai/agent/tools/agentFoundationTools.ts`（新建，4 工具）/ `src/main/services/ai/agent/tools/index.ts`（`registerBuiltinTools` 追加 foundation 组注册）
+- **Agent 长期记忆与学习系统（Tasks 8-10）：记忆服务 + 整合器 + 自我学习编排** 在 `memoryTypes.ts` 类型地基与 `vectorConfig.ts` 的 `AGENT_MEMORY` 枚举之上，落地 Agent 的「长期记忆 + 自我学习」闭环，使 Agent 能够记录每轮执行经验、从经验中提炼重复模式、在决策前召回相关历史经验（RAG 注入）、并根据用户反馈调整记忆置信度。对标具备长期学习特性的 Agent 架构，采用认知科学三分类：episodic（情景）/ semantic（语义）/ procedural（程序）。
+  - **`memoryService.ts`（Task 8）—— 记忆服务单例**：`MemoryService` 类提供三类记忆的记录（`recordEpisodicMemory` / `recordSemanticMemory` / `recordProceduralMemory`）+ 向量语义检索（`searchMemories`，复用 `embeddingService` + `vectorStoreService`，传 `{sourceType:'agent-memory'}` 路由）+ 非向量字段过滤查询（`queryMemories`，按 type/tags/taskType/characterId/projectId）+ 上下文 RAG 召回（`getRelevantMemories`，由 Agent 决策点调用）+ 删除（`deleteMemory`，同步清理向量 + 注册表 + 索引）+ `initialize`（建索引/加载 `userData/agent-memory/index.json`，幂等）+ `persist`（暴露给 consolidator 落盘原地修改）。
+    - **索引轻量化**：index.json 只存元数据，向量数据由 VectorStoreService 独立管理；序列化时显式剔除 `vector` 字段；加载时防御式清理可能残留的 vector 字段。
+    - **向量路由约定**：所有 Agent 记忆向量统一存入 `source='agent-memory'` / `sourceId='agent-memory'` 的 backend（与 `SourceTypeSearchStrategy.searchSource(sourceType, sourceType, ...)` 对齐），注册为单一 `VectorRegistryEntry`（`vectorFileId='agent-memory-singleton'`），所有记忆共享一份 backend 文件，避免注册表膨胀。
+    - **增量零影响**：向量化失败 / 向量存储不可用时，记忆元数据仍写入 index.json，记忆功能（非语义检索部分）继续可用；所有 best-effort 路径 try-catch 不抛错。
+  - **`memoryConsolidator.ts`（Task 9）—— 记忆整合器单例**：`MemoryConsolidator.consolidate()` 从 episodic 记忆中提取重复模式沉淀为 semantic/procedural：
+    - **成功共性规则**：同 taskType + 同 leadingTool 的 `outcome='success'` episodic ≥2 条 → 创建 procedural 记忆（`skillId='procedural:{taskType}:{toolName}'`，content「执行X时优先调用Y效果较好」），同 (taskType, leadingTool) 模式只创建一条，重复触发时合并（supportCount + 1, confidence +0.05 cap 0.95）
+    - **失败模式规则**：同 taskType + 同 failing tool 的 `outcome='failure'` episodic ≥2 条 → 创建 semantic 记忆（`pattern='avoid'`，content「执行X时调用Y常失败，建议改用其他方式」，confidence 0.6），同 pattern + content 子串匹配的存在则合并
+    - **衰减机制**：已被整合的 episodic `relevance *= 0.7`（cap at 0），更新 updatedAt；用户偏好模式不在此处提取（无用户反馈信号，由 `applyFeedback` 处理）
+    - **防御式分组**：每个 (taskType, pattern) 分组独立 try-catch，单个分组异常不影响其他分组；末尾统一调用 `memoryService.persist()` 落盘原地修改
+    - **规则驱动确定性**：不依赖外部 AI 调用（避免网络抖动与不确定性），保证整合结果可复现、可调试
+  - **`agentLearningService.ts`（Task 10）—— 自我学习编排单例**：`AgentLearningService` 编排完整的「执行 → 记录 → 反思 → 优化」学习飞轮：
+    - `recordTurnExperience(result, event)`：作为 `agentLoop.onTurnComplete` 回调入口，用 `result.stoppedReason` 推断 outcome（`completed`→success / `max_iterations`→partial / `error`/`aborted`→failure），用 `result.toolCallHistory` 填充 toolCalls，用 `result.finalContent.length` 填充 finalContentLength，然后委托 `memoryService.recordEpisodicMemory`。全程 try-catch，作为后台 hook 调用时绝不抛错。
+    - `extractPatterns(taskType?)`：触发 consolidator.consolidate() 后查询 semantic 记忆（taskType 过滤宽松匹配 metadata.taskType 或 content 包含）
+    - `optimizeDecision(taskType, taskDescription, context?)`：RAG 检索相关记忆（`memoryService.getRelevantMemories` topK=5）+ 从 procedural 记忆中按 content 包含 taskType 收集 skillId 作为建议技能 + 计算置信度（base 0.5 + 每条相关记忆 0.1 cap 0.9 − 命中 pattern='avoid' 0.1），返回 `DecisionOptimization`
+    - `applyFeedback(memoryId, feedback)`：correct=true → confidence +0.1 / supportCount + 1；correct=false + correction → 原记忆 confidence ×0.5 + 创建新 semantic 记忆（pattern='user-correction'）；correct=false 无 correction → 删除记忆
+    - `consolidate()`：暴露给外部定时任务/手动调用，委托给 consolidator
+  - **物理隔离（增量零影响核心保证）**：新 `agent/memory/` 模块完全独立于现有 `services/memory/`（聊天/表格记忆）模块，不互相 import；仅通过 `EmbeddingService` / `VectorStoreService` / `VectorRegistryService` 共用底层基础设施。所有导入路径严格遵守：`../../../EmbeddingService` / `../../../VectorStoreService` / `../../../VectorRegistryService` / `../../../../types/vectorConfig` / `../../../logger`，不引用 `../../memory/` 或 `../../../memory/`。
+  - **类型安全验证**：`npx tsc --noEmit --pretty false` 确认 `agent/memory/` 目录下 0 个错误（全库预存错误均不在 memory 文件内）。无任何对 `memoryTypes.ts` / `agentTypes.ts` 或 `agent/memory/` 目录外文件的修改。
+  - **涉及文件**：`src/main/services/ai/agent/memory/memoryService.ts`（新建）/ `src/main/services/ai/agent/memory/memoryConsolidator.ts`（新建）/ `src/main/services/ai/agent/memory/agentLearningService.ts`（新建）
+- **工具调用智能体引擎（方向 0）—— 三模式智能体化共享底座** 完成「方向 0」全链路落地，为后续对话（方向 A）/ 写作（方向 B）/ 世界书（方向 C）智能体提供统一的工具调用底座。本任务在 §14.38-14.40（类型地基 / 协议适配 / 验证工具）之上补齐核心循环、IPC 层与全局开关，实现端到端可用且对现有功能零影响。
+  - **核心循环 `agentLoop.ts`**：`runAgentLoop` 实现「模型决策 → 工具执行 → 结果回填 → 再决策」多轮循环；`maxIterations` 默认 8；同工具+同参数去重缓存（`${toolName}:${JSON.stringify(args)}`）；`Promise.all` 并行执行 tool_calls，每个 handler 独立 try-catch 不崩循环；每轮检查 `abortSignal`；最终回复经 `streamChatAPI` 重新流式输出（`streamFinal !== false` 时）
+  - **降级机制（增量零影响的核心保证）**：两道降级检查——① `supportsToolCalling=false/undefined` ② 工具集为空，二者命中任一即走 `runPlainTextFallback` 直接调用 `streamChatAPI`（不带 tools），返回 `{toolCallHistory:[], iterations:0, stoppedReason:'completed'}`，与扩展前纯文本生成行为完全等价
+  - **IPC 层 `agentHandlers.ts`**：注册 `ai:runAgentTurn`（`ipcMain.handle`，返回 `AgentLoopResult`）+ `ai:agentToolCall`（事件推送，`onToolCall` 回调内 `event.sender.send`）；handler 计算 `effectiveSupportsToolCalling = enableAgentMode && supportsToolCalling` 传入循环；异常兜底返回 `stoppedReason:'error'`，渲染进程永不收到 reject
+  - **Agent 模式全局开关 `enableAgentMode`**：`shared/settings.ts` 默认 `false`（确保现有功能零影响）；`renderer/types/setting.ts` 类型声明；`AIEngineSettingsPanel.tsx` 新增「Agent 模式」Switch（extra 提示「需模型支持工具调用，否则自动降级为文本模式」）；`Settings.tsx` 加载/保存时 `?? false` 兜底
+  - **Preload / 类型 / 注册接线**：`preload.ts` 暴露 `ai.runAgentTurn` / `ai.onAgentToolCall`（含 unsubscribe 返回值）；`electron.d.ts` 补充 `AgentLoopParams` / `ToolCallEvent` 等类型声明；`ipc/index.ts` 调用 `registerAgentHandlers()`
+  - **可观测性**：`onToolCall` / `onFinalChunk` / `onIteration` 三类回调；`agentLoop` / `agent-handler` / `agent-registry` 三个 logger 命名空间；前端可通过 `onAgentToolCall` 订阅工具调用事件做 UI 展示
+  - **【重点标记 - worldbookTools 导出 Bug 修复】** 初版 `worldbookTools.ts` 按函数模式导出（`registerWorldbookTools()`），而 `tools/index.ts` 改为按数组导入并调用 `toolRegistry.registerGroup('worldbook', worldbookTools)`，导致导入失败（`worldbookTools` 不是数组）。修复方式：将 `worldbookTools.ts` 改为导出 `AgentTool[]` 数组（`export const worldbookTools: AgentTool[] = [searchEntriesTool]`），dialogueTools / writingTools 同步保持数组导出。详见 §14.41.5
+  - **涉及文件**：`src/main/services/ai/agent/agentLoop.ts`（新建）/ `src/main/services/ai/agent/toolRegistry.ts`（新建，单例 + 防重复注册 + 多组去重查询）/ `src/main/ipc/handlers/agentHandlers.ts`（新建）/ `src/main/preload.ts`（暴露 ai.runAgentTurn / ai.onAgentToolCall）/ `src/renderer/types/electron.d.ts`（类型声明）/ `src/main/ipc/index.ts`（注册 handler）/ `src/shared/settings.ts`（enableAgentMode 默认 false）/ `src/renderer/types/setting.ts`（类型）/ `src/renderer/components/Settings/AIEngineSettingsPanel.tsx`（Switch UI）/ `src/renderer/components/Settings/Settings.tsx`（加载/保存）
+
+- **向量源类型枚举扩展：新增 `agent-memory`** 为 `VectorSourceType` 枚举新增 `AGENT_MEMORY = 'agent-memory'` 值，作为 Agent 记忆系统复用向量基础设施（vecstore / VectorRepository / VectorStoreService）的前提。本次仅扩展枚举与配套映射，不接入任何现有处理逻辑——只有后续新建的 memoryService 会使用此 sourceType，确保对现有 chat/worldbook/knowledge 等向量处理零影响。
+  - **同步补充的强类型映射**（`Record<VectorSourceType, ...>` 类型要求所有枚举值都有对应条目，否则 TS2741 报错）：
+    1. `VectorSourceTypeLabel`：`[AGENT_MEMORY]: 'Agent 长期记忆'`
+    2. `VectorSourceTypeDescription`：`[AGENT_MEMORY]: 'Agent 记忆系统长期记忆条目向量化数据'`
+    3. `VectorSourceTypeStorageConfig`：`{ storageDir: 'agent-memory', perEntrySubdir: true, filePrefix: 'mem' }`（存储目录 `vectors/agent-memory/`，文件前缀 `mem`）
+  - **向后兼容性**：全代码库审计确认——除 `vectorConfig.ts` 内部 3 个 `Record<VectorSourceType, ...>` 强类型映射外，其他文件（`VecstoreVectorStore.ts` / `VectorRepository.ts` / `VectorStoreService.ts` / `worldBookService.ts` / `PromptBuilder.ts` 等）均以字符串字面量处理 sourceType，不依赖枚举穷尽性检查（无 `switch (sourceType) { case VectorSourceType.X }` 模式）。新增枚举值不会触发 TS2381 穷尽性检查错误，现有 sourceType 行为完全不变。
+  - **类型安全验证**：`npx tsc --noEmit` 确认 `vectorConfig.ts` 无任何新增错误（baseline 1012 行预存错误 → 改动后 1006 行，差异为 tsc 非确定性输出，与本次改动无关；0 个错误涉及 vectorConfig.ts 或 VectorSourceType）
+  - **涉及文件**：`src/main/types/vectorConfig.ts`（仅此一个文件）
+
+- **Agent 技能库系统（Tasks 3-6）：注册中心 + 执行器 + 服务层 + 内置样例** 在 `skillTypes.ts` 类型地基之上，落地技能库的内存注册、按类型执行调度、文件持久化与版本管理，并提供 3 个内置技能样例验证端到端可用。技能是高于工具（AgentTool）一层的结构化可复用能力单元——工具是单函数调用，技能可组合多工具 + 提示词模板 + 执行逻辑，且支持描述、发现、版本化、回滚。
+  - **`skillRegistry.ts`（Task 3）—— 内存注册中心**：`SkillRegistry` 类提供 `register/unregister/get/has/list/discover/clear`。同 id 防重复（与 toolRegistry 一致抛错，让调用方尽早发现问题）；`list(category?, enabledOnly?)` 支持按分类与启用状态过滤；`discover(query, category?)` 大小写不敏感子串匹配 name/description/tags，仅返回 enabled 技能的 `SkillSummary` 摘要（供 Agent 决策）。不负责文件持久化（那是 skillService 的职责），导出单例 `skillRegistry`。
+  - **`skillExecutor.ts`（Task 4）—— 执行调度核心**：`SkillExecutor.invoke(manifest, input, context)` 按 `manifest.type` 分发：
+    - `prompt`：渲染 `implementation.prompt.systemPrompt`（`{{var}}` / `{{input.xxx}}` 插值），返回 `{success, data:{systemPrompt, userPrompt?}}`
+    - `tool-sequence`：按 `implementation.steps` 顺序执行——渲染 `step.argsTemplate`（支持 `{{input.xxx}}` / `{{resultKey}}` / `{{resultKey.data.field}}` 引用前序步骤结果）→ JSON.parse 为参数对象 → `toolRegistry.getTool(step.toolName)` 获取工具 → 调用 `tool.handler(args, context)` → 结果存入 `results[resultKey]`。非可选步骤（`optional !== true`）失败立即中止；每步记录耗时构建 `trace` 数组；返回 `{success, data: results, trace}`
+    - `composite`：按 `implementation.handlerRef` 查 `compositeHandlers` Map 调用代码 handler（通过 `registerCompositeHandler` 注册，实现清单数据与代码逻辑解耦）
+    - 全路径防御式：工具未注册返回 `工具「name」未注册`（与 agentLoop 风格一致），handler 抛错捕获为结构化失败结果，模板缺失键替换为空字符串不抛错
+  - **`skillService.ts`（Task 5）—— 公共服务层**：组合 registry + executor + 文件持久化，对外提供 `registerSkill/unregisterSkill/getSkill/listSkills/discoverSkills/invokeSkill/loadFromDirectory/saveToDirectory/getSkillHistory/rollbackSkill/exportSkill/importSkill/initialize`。存储布局：`userData/skills/{builtin|custom|agent}/*.json`（author 'system'→builtin / 'user'→custom / 'agent'→agent）+ `userData/skills/versions/<id>/<version>.json`（版本历史）。`registerSkill` 支持「更新」语义（已存在则先 unregister 再 register，绕开 registry 的同 id 防重复校验）；`loadFromDirectory` 防御式加载（坏 JSON → 记日志 + 跳过，不抛错）；`initialize` 幂等（`initialized` 标志）；`rollbackSkill` 读取版本历史条目重新注册。使用 `fs/promises` 异步 IO（与 VectorRegistryService 一致），导出单例 `skillService`。
+  - **`builtinSkills/*.json`（Task 6）—— 3 个内置技能样例**：
+    1. `character-setting-check.json`（dialogue / tool-sequence）：角色设定核查——`searchWorldbook` → `searchChatHistory`，组合检索世界书与历史对话供一致性比对
+    2. `worldbook-dedup-suggest.json`（worldbook / prompt）：世界书去重建议——基于 `{{topic}}` 主题生成去重排查清单的提示词模板
+    3. `writing-outline-recall.json`（writing / tool-sequence）：写作大纲召回——调用 `readOutline` 读取大纲（占位，方向 B 对接）
+    - 每个 manifest 字段完整（id/name/description/category/version/author/tags/enabled/inputSchema/type/implementation/requiredTools/examples/createdAt/updatedAt），`requiredTools` 引用已注册真实工具
+  - **类型安全验证**：`npx tsc --noEmit` 确认 `agent/skill/` 目录下 0 个错误（baseline 全库 778 个预存错误均不在 skill 文件内）。初版 `renderTemplate` 的 regex replace 回调首参 `match` 未使用触发 TS6133，已改为 `_match` 下划线前缀标记未使用（标准 TS 惯例）。
+  - **涉及文件**：`src/main/services/ai/agent/skill/skillRegistry.ts`（新建）/ `src/main/services/ai/agent/skill/skillExecutor.ts`（新建）/ `src/main/services/ai/agent/skill/skillService.ts`（新建）/ `src/main/services/ai/agent/skill/builtinSkills/character-setting-check.json`（新建）/ `src/main/services/ai/agent/skill/builtinSkills/worldbook-dedup-suggest.json`（新建）/ `src/main/services/ai/agent/skill/builtinSkills/writing-outline-recall.json`（新建）
+
+### Fixed
+- **图片预览弹窗样式优化**：修复素材管理中图片全尺寸预览 Modal 大小与图片本身比例不匹配、视觉不协调的问题。
+  - **根因**：`<img>` 标签设置了多余的 `objectFit: 'contain'`（在 `maxWidth/maxHeight` 约束下浏览器已自动保持原始比例，`objectFit` 反而可能导致图片比预期小）；Modal 缺少 `centered` 属性导致顶部对齐；缺少 `title={null}` 可能残留标题栏空间；`styles.content` 未显式设置 `padding: 0` 可能导致 Modal content 大于图片
+  - **修复**：移除多余的 `objectFit: 'contain'`；添加 `centered` 使 Modal 垂直居中；添加 `title={null}` 明确移除标题栏；`styles` 中新增 `content: { padding: 0 }` 确保 Modal content 紧贴图片无多余空白；图片添加 `borderRadius: 8` 匹配 Modal 圆角
+  - **涉及文件**：`src/renderer/components/Character/CharacterDialogueChat/AssetManagerModal.tsx`（AssetGridTabContent + ThreeViewTabContent 两个预览 Modal 同步修改）
+
+## [Unreleased] - 2026-07-29
+
+### Added
+- **图片生成自定义尺寸选择功能（2026-07-29 新增）** 为所有图片生成弹窗（AssetGenerateModal / ExpressionGenerateModal）添加用户自定义输出尺寸选择能力，支持文生图和图生图两种路径。
+  - **新建 SizeSelector 组件**：预设尺寸下拉（6 种常用分辨率 + 自定义），每项标注适用场景（头像/表情 512×512、全身立绘 512×768、竖版高清 768×1024、方图高清 1024×1024、竖版超清 1024×1536、横版高清 1536×1024）；自定义模式提供宽高 InputNumber（64-2048，步进 64），实时校验超范围
+  - **每次生成独立应用**：尺寸存储在弹窗本地 state（`selectedSize`），不写入全局设置；弹窗打开时从 `sdConfig.txt2imgWidth/Height` 初始化默认值（1024×1024），关闭时重置
+  - **txt2img 路径**：`buildSdOptions` 传递 `txt2imgWidth/Height: selectedSize.width/height`
+  - **img2img 路径**：`buildSdOptions` 新增传递 `width/height: selectedSize.width/height`，覆盖 `calculateImg2ImgDimensions` 的宽高比推导
+  - **后端两步模式缩放**：修改 `sdGenerationService.calculateImg2ImgDimensions`，当用户指定尺寸时按 `longSideTarget/1024` 比例缩放 two-step 模式的 pass 1（768→scale=0.75），保留"低分辨率生成→高分辨率放大"的质量优势
+  - **涉及文件**：`src/renderer/components/Character/CharacterDialogueChat/SizeSelector.tsx`（新建）/ `AssetGenerateModal.tsx` / `ExpressionGenerateModal.tsx` / `src/main/services/sdGenerationService.ts`
+
+### Fixed
+- **【重点标记 - LoRA 跨角色污染 Bug 修复（2026-07-29，用户反复提示后修复）】** 修复 A 角色通过 LoRA 生成图片后，切换到 B 角色生成时 A 角色的 LoRA 被自动带入的问题。该问题违反「每个角色使用单独 LoRA」的设计预期。
+  - **根因**：原实现将 LoRA 选择存储在全局 `AppSetting.sdWebui.selectedLoras` 中。A 角色在素材管理中选择 LoRA 后通过 `setSdConfig((prev) => ({ ...prev, selectedLoras: loras }))` 写入本地 state，而生成弹窗初始化时从 `setting.load()` 读取全局配置，导致 A 角色的 LoRA 配置残留并污染 B 角色的生成。
+  - **修复方案**：实现按角色卡独立存储 LoRA 模型的完整链路，替代全局 `setting.sdWebui.selectedLoras`：
+    1. **主进程**：新建 `characterLoraService.ts`（参考 `characterTraitService` 按角色存储模式），通过 SHA-256 哈希角色卡 ID 生成独立存储路径 `{userData}/data/character-loras/{hash}/loras.json`，提供 `loadLoras` / `saveLoras` 方法
+    2. **IPC 通道**：新建 `characterLoraHandlers.ts`，注册 `character-lora:list` / `character-lora:save` 两个通道，在 `ipc/index.ts` 中注册
+    3. **Preload 暴露**：在 `preload.ts` 的 `electronAPI` 中新增 `characterLora.{list, save}` 方法
+    4. **类型声明**：在 `electron.d.ts` 的 `ElectronAPI` 接口中新增 `characterLora` 字段类型定义
+    5. **渲染进程 Store**：新建 `characterLoraStore.ts`（Zustand），封装 IPC 调用，提供 `loadLoras` / `saveLoras`（乐观更新 + 失败回滚）/ `setLoras` / `clear` 方法
+    6. **UI 改造**：`AssetManagerModal.tsx` / `AssetGenerateModal.tsx` / `ExpressionGenerateModal.tsx` 三个组件均改为从 `useCharacterLoraStore` 读取 LoRA 列表，`LoraSelectModal` 的 `onConfirm` 回调改为调用 `saveCharacterLoras(characterCardId, loras)` 写入角色卡专属存储，`buildSdOptions` 中 `selectedLoras` 改用 `characterLoras`（角色专属），彻底杜绝跨角色污染
+  - **涉及文件**：`src/main/services/characterLoraService.ts`（新建）/ `src/main/ipc/handlers/characterLoraHandlers.ts`（新建）/ `src/renderer/stores/characterLoraStore.ts`（新建）/ `src/main/preload.ts`（新增 characterLora API）/ `src/renderer/types/electron.d.ts`（新增类型）/ `src/main/ipc/index.ts`（注册 handler）/ `src/renderer/components/Character/CharacterDialogueChat/AssetManagerModal.tsx` / `src/renderer/components/Character/CharacterDialogueChat/AssetGenerateModal.tsx` / `src/renderer/components/Character/CharacterDialogueChat/ExpressionGenerateModal.tsx`
+
+- **【重点标记 - 角色特征缓存 Bug 修复（2026-07-29，用户反复提示后修复）】** 修复用户在素材管理「角色特征」Tab 中补充 tag 后，打开图片生成弹窗时 tag 未更新的问题。同时修复 ExpressionGenerateModal 中 `characterTraits` 始终为 `undefined`（遗留 TODO）导致表情生成不携带角色特征的问题。
+  - **根因（两个层面）**：
+    1. **AssetGenerateModal**：原实现通过 `window.electronAPI.characterTrait.list()` 直接 IPC 读取磁盘数据。用户在特征 Tab 中 `addTrait` / `removeTrait` / `updateTrait` 后仅更新 `characterTraitStore` 本地 state（未持久化到磁盘），生成弹窗读取到的仍是磁盘旧数据，导致新补充的 tag 不可见
+    2. **ExpressionGenerateModal**：`characterTraits` 变量始终传 `undefined`（遗留 TODO），表情生成的提示词构建中 `{traits}` 占位符替换为空字符串，导致表情生成完全不携带角色特征
+  - **修复方案**：两个弹窗均改为订阅 `useCharacterTraitStore`，与 `AssetManagerModal` 特征 Tab 共享同一 store state，实时同步未保存的修改：
+    - **AssetGenerateModal**：移除直接 IPC 读取，改用 store 订阅；init useEffect 中仅当 store 的 `currentCharacterCardId` 与当前角色不一致时才 `loadTraits`，避免覆盖 `AssetManagerModal` 中已加载（可能含未保存修改）的 traits；`handleImageRecognize` 的识别结果改为通过 `setStoreTraits` 写入 store（与特征 Tab 共享）
+    - **ExpressionGenerateModal**：订阅 store 获取 `characterTraits`，`buildSdOptions` 和提示词构建（`buildEmotionPrompt` / 单个模式 useEffect）中传入实际特征数组，替代原 `undefined`
+    - **依赖数组同步**：`buildSdOptions` / `buildEmotionPrompt` / 提示词预览 useEffect 的依赖数组均新增 `characterTraits`，确保特征变化时重新构建提示词
+  - **缓存问题排查结论**：全量检查图片生成相关组件（AssetManagerModal / ExpressionManagerModal / CharacterEditModal），确认无其他类似缓存问题——所有特征/LoRA 读取均已改用 Zustand store 订阅模式，不再直接通过 IPC 读取磁盘数据
+  - **附带修复**：移除 `ExpressionGenerateModal.tsx` 中预先存在的未使用变量 `singlePromptPreview`（TS6133 错误），该状态仅被 setter 调用但从未被读取
+  - **涉及文件**：`src/renderer/components/Character/CharacterDialogueChat/AssetGenerateModal.tsx`（store 订阅 + init 逻辑 + handleImageRecognize）/ `src/renderer/components/Character/CharacterDialogueChat/ExpressionGenerateModal.tsx`（store 订阅 + buildSdOptions + buildEmotionPrompt + 提示词预览 useEffect + 移除 singlePromptPreview）
+
+### Added
+- **【重点标记 - img2img 高清模式切换（2026-07-29）】** 新增 img2img 高清修复两种方案切换功能。Forge Neo 的 img2img API 不支持 Hires.fix（`StableDiffusionProcessingImg2Img` 类无 `enable_hr` 等字段），通过两种替代方案实现高清修复：
+  1. **direct 模式**：直接在 1024 分辨率下一步 img2img 生成，速度快
+  2. **two-step 模式**（默认）：先 768 生成 → 再 1024 低降噪（0.35）放大修复，细节保留更好，接近 Hires.fix 效果
+  - 用户可在 SD WebUI 设置面板的「img2img 高清模式」折叠面板中通过 Radio 切换
+  - 参数针对 NVIDIA RTX PRO 6000 Blackwell（96GB 显存）优化：ADetailer 面部修复分辨率从 768 提升至 1024×1024
+  - 移除 img2img 路径中被忽略的 Hires.fix 参数注入（`enable_hr` / `hr_upscaler` 等），替换为有效的两种方案
+  - **涉及文件**：`src/renderer/types/setting.ts`（新增 `img2imgHiresMode` 字段）/ `src/main/services/sdGenerationService.ts`（重构 `generateExpression` + 新增 `calculateImg2ImgDimensions` / `executeImg2ImgPass` 私有方法）/ `src/renderer/components/Settings/SDWebuiSettings.tsx`（Radio 切换 UI）/ `src/shared/settings.ts` / `src/renderer/components/Character/CharacterDialogueChat/AssetGenerateModal.tsx` / `src/renderer/components/Character/CharacterDialogueChat/ExpressionGenerateModal.tsx`
+
+- **【重点标记 - 生成弹窗质量参数扩展（2026-07-29）】** 对 `AssetGenerateModal.tsx` 与 `ExpressionGenerateModal.tsx` 两个生成弹窗的 `DEFAULT_SD_CONFIG` 默认值与 `buildSdOptions` 透传字段进行扩展，补全采样器调度器、CLIP skip、ADetailer 独立采样器/调度器、Hires.fix 高级参数等质量字段：
+  - **采样器升级**：`sampler` 从 `'DPM++ 2M Karras'` 改为 `'DPM++ 3M SDE'`；新增 `scheduler: 'Karras'` 与 `clipSkip: 2`
+  - **ADetailer 默认值优化**：`adInpaintOnlyMaskedPadding` 32→64、`adInpaintWidth/Height` 768→1024、`adUseSteps/adUseCfgScale/adUseSampler` 全部 false→true、`adSteps` 20→30、`adCfgScale` 4.0→5.0、`adSampler` 改为 `'DPM++ 2M SDE'`；新增 `adScheduler: 'Use same scheduler'`
+  - **Hires.fix 高级参数**：在 `hrNegativePrompt` 后新增 `hrCfg: 5.0` / `hrSamplerName: 'DPM++ 2M SDE'` / `hrScheduler: 'Karras'` / `img2imgExtraNoise: 0.05` / `initialNoiseMultiplier: 1.0`
+  - **buildSdOptions 透传**：在返回对象中新增 `scheduler` / `clipSkip`（sampler 后）、`adScheduler`（adSampler 后）、`hrCfg` / `hrSamplerName` / `hrScheduler` / `img2imgExtraNoise` / `initialNoiseMultiplier`（hrNegativePrompt 后）
+  - **涉及文件**：`src/renderer/components/Character/CharacterDialogueChat/AssetGenerateModal.tsx` / `src/renderer/components/Character/CharacterDialogueChat/ExpressionGenerateModal.tsx`
+
+- **【重点标记 - ADetailer 面部修复专用参数（2026-07-29 源码核验）】** 通过核验 `G:\AI\sd-webui-forge-neo` 源码（`extensions/ADetailer-Neo/lib_adetailer/args.py:43-85` `ADetailerArgs` 完整字段定义），发现两项未被利用的高价值参数并实施改进：
+  1. **ADetailer 独立负面提示词**（`ad_negative_prompt`，args.py:50）：原先 `ad_negative_prompt` 直接复用主 `negativePrompt`，现支持用户在 SD WebUI 设置面板配置独立的面部修复专用负面提示词（如 "deformed, distorted, disfigured, bad face, wrong anatomy"），未配置（空字符串）时回退到主负面提示词。可针对性优化面部修复质量，避免面部崩坏
+  2. **ADetailer 独立噪声倍率**（`ad_use_noise_multiplier` / `ad_noise_multiplier`，args.py:78-79，范围 0.5-1.5）：控制面部修复时的噪声注入量，增大可增加面部细节丰富度但过高可能引入噪声，默认启用并设为 1.0（标准）
+  - **源码核验结论（重点标记）**：同时确认 `StableDiffusionProcessingImg2Img`（`modules/processing.py:1655-1677`）的字段定义中**无** `enable_hr` / `hr_*` 系列字段（仅 `StableDiffusionProcessingTxt2Img` 1211-1227 行才有），证实 img2img 确实不支持 Hires.fix，前述 two-step 替代方案是唯一可行路径
+  - **涉及文件**：`src/main/services/sdGenerationService.ts`（`SDGenerationOptions` 接口新增 `adNegativePrompt` / `adUseNoiseMultiplier` / `adNoiseMultiplier` 字段 + `executeImg2ImgPass` 的 ADetailer 构建逻辑修改）/ `src/renderer/types/setting.ts`（`SDWebuiConfig` 新增 3 个类型字段）/ `src/shared/settings.ts`（默认值）/ `src/renderer/components/Settings/SDWebuiSettings.tsx`（默认值 + UI 控件：TextArea + Switch + InputNumber）/ `src/renderer/components/Character/CharacterDialogueChat/AssetGenerateModal.tsx`（默认值 + `buildSdOptions` 透传）/ `src/renderer/components/Character/CharacterDialogueChat/ExpressionGenerateModal.tsx`（默认值 + `buildSdOptions` 透传）
+
+### Changed
+- **img2img 生成步数严格遵循用户配置**：【重点标记 - 步数参数优化】在 `generateExpression`（img2img 路径）的请求体中添加 `override_settings: { img2img_fix_steps: false }`，禁用 Forge Neo 的步数放大行为。Forge Neo 的 `img2img_fix_steps` 选项（`shared_options.py:298`，默认 `False`）当为 `True` 时，`setup_img2img_steps`（`sd_samplers_common.py:42-51`）会按 `steps = int(requested_steps / denoising_strength)` 放大步数（如 28/0.5=56），导致进度条显示步数与用户配置不符。通过 `override_settings` 强制设为 `false`，确保 API 调用时步数严格遵循用户在设置界面配置的 `steps` 值，不受 Forge Neo UI 设置影响。
+  - **涉及文件**：`src/main/services/sdGenerationService.ts`（`generateExpression` img2img 请求体添加 `override_settings`）
+
+- **img2img 表情图片模糊修复**：【重点标记 - 图像质量提升】通过四项优化解决 img2img 生成表情图片高概率模糊问题：
+  1. **img2img 目标分辨率提升**：`calculateAspectRatioDimensions` 的长边目标从 512 提升至 768（新增常量 `IMG2IMG_LONG_SIDE_TARGET = 768`），在 SDXL 模型下生成更清晰的面部细节
+  2. **ADetailer 面部修复分辨率提升**：`ad_inpaint_width/height` 默认值从 512 提升至 768，并强制启用 `ad_use_inpaint_width_height = true`（原先为可选），确保 ADetailer 面部 inpaint 在高分辨率下进行而非主图分辨率
+  3. **ADetailer 降噪强度降低**：`ad_denoising_strength` 从 0.4 降至 0.3，保留更多原图面部细节，避免过度重绘导致模糊
+  4. **ADetailer 蒙版参数优化**：`ad_mask_blur` 从 4 提至 8（增大蒙版边缘模糊，使修复区域与原图过渡更自然），`ad_dilate_erode` 从 4 提至 8（增大蒙版膨胀范围，确保面部特征完整覆盖）
+  - **同步更新**：4 个文件的 `DEFAULT_SD_CONFIG` / `DEFAULT_SD_WEBUI_CONFIG` 中的 ADetailer 默认值同步更新
+  - **涉及文件**：`src/main/services/sdGenerationService.ts`（常量 + `generateExpression` 分辨率 + ADetailer 参数）/ `src/shared/settings.ts` / `src/renderer/components/Settings/SDWebuiSettings.tsx` / `src/renderer/components/Character/CharacterDialogueChat/AssetGenerateModal.tsx` / `src/renderer/components/Character/CharacterDialogueChat/ExpressionGenerateModal.tsx`
+
+### Fixed
+- **【重点标记 - Forge Neo Hires.fix NoneType 迭代错误】** 立绘生成（txt2img）启用 Hires.fix 时，Forge Neo 端报错 `TypeError: argument of type 'NoneType' is not iterable`（`processing.py:1405`）。
+  - **根因**：Forge Neo `processing.py:1221` 将 `hr_additional_modules: list = field(default=None)` 默认值设为 `None`（而非空列表），而 `processing.py:1405` 的 `sample` 方法中 `"Use same choices" not in self.hr_additional_modules` 仅检查 `hasattr` 未检查 `None`，当 `enable_hr=true` 但未传入 `hr_additional_modules` 时触发 TypeError
+  - **修复**：在 `generateTxt2Img` 与 `generateExpression`（img2img 路径）的 Hires.fix 参数注入中，显式设置 `body.hr_additional_modules = ['Use same choices']`。这使 Forge Neo 在 `processing.py:1405` 的 `"Use same choices" not in [...]` 返回 `False`（跳过该 if 块），既绕过 None bug，又确保 Hires.fix 阶段复用主生成的 LoRA 模块（保持角色一致性）
+  - **验证方式**：通过阅读 Forge Neo 源码（`modules/processing.py` + `modules/api/models.py`）确认 `hr_additional_modules` 可通过 API 请求体传入（`PydanticModelGenerator` 反射 `StableDiffusionProcessingTxt2Img` 字段生成 API 模型）
+  - **涉及文件**：`src/main/services/sdGenerationService.ts`（`generateTxt2Img` + `generateExpression` 两处 Hires.fix 参数注入均添加 `hr_additional_modules`）
+
+- **【重点标记 - Forge Neo Hires.fix 参数名错误导致 denoising_strength 为 None】** 修复 `hr_additional_modules` bug 后，Hires.fix 仍报错 `TypeError: '>' not supported between instances of 'NoneType' and 'int'`（`sd_samplers_common.py:46`）。
+  - **根因（两个参数名错误）**：
+    1. `hr_denoising_strength` 在整个 Forge Neo `modules/` 目录中**不存在**——txt2img 的 Hires.fix 第二阶段直接读取 `p.denoising_strength`（`processing.py:1212` 子类默认 0.75），而非独立的 `hr_denoising_strength`。但 `PydanticModelGenerator.merge_class_params` 的 MRO 遍历顺序使基类 `StableDiffusionProcessing` 的 `denoising_strength=None`（`processing.py:174`）覆盖了子类默认值 0.75，当 API 请求体未传 `denoising_strength` 时，`p.denoising_strength` 为 None，导致 `setup_img2img_steps` 中 `p.denoising_strength > 0` 抛 TypeError
+    2. `hr_steps` 不是有效字段名——Forge Neo `processing.py:1217` 的正确字段名为 `hr_second_pass_steps`，传 `hr_steps` 会被忽略
+  - **修复**：
+    - `generateTxt2Img`：将 `body.hr_denoising_strength` 改为 `body.denoising_strength`（txt2img 的 denoising_strength 专供 Hires.fix 使用）；将 `body.hr_steps` 改为 `body.hr_second_pass_steps`
+    - `generateExpression`（img2img）：移除无效的 `hr_denoising_strength`（img2img 已在请求体中设置 `denoising_strength`，Hires.fix 复用该值）；将 `hr_steps` 改为 `hr_second_pass_steps`
+  - **涉及文件**：`src/main/services/sdGenerationService.ts`（`generateTxt2Img` + `generateExpression` 两处 Hires.fix 参数注入）
+
+### Added
+- **立绘缩略图全尺寸预览（Task 3）**：为素材管理中所有图片缩略图（角色立绘 / 一般图像 / 三视图）添加 hover 触发的预览功能。鼠标悬停在缩略图上时，半透明遮罩层平滑淡入（`opacity 0→1, transition 0.25s`），中央显示 `EyeOutlined` 眼睛图标按钮；点击图标后以 `Modal` 展示完整尺寸图片（`maxWidth: 90vw, maxHeight: 85vh, objectFit: contain`），保留原始分辨率与细节。实现采用 `querySelector('.thumbnail-hover-overlay')` + `style.opacity` 直接操控 DOM 的方式（与现有卡片 border-color hover 模式一致），避免额外 React state 渲染开销。
+  - **涉及文件**：`AssetManagerModal.tsx`（AssetGridTabContent + ThreeViewTabContent 均添加 hover 覆盖层 + 预览 Modal + `previewImage` state）
+
+### Changed
+- **立绘生成重构为强制 txt2img 路径（Task 1）**：【重点标记 - 明确禁用 img2img】立绘生成（`AssetGenerateModal` illustration 模式）从原 `sd.generateExpression`（内部按 modelType 分流，sdxl 走 img2img）改为直接调用 `sd.generateTxt2Img`，强制走文生图路径，不依赖基底图片。
+  - **sdGenerationService.ts 重构**：提取 `{traits}` 占位符替换 + LoRA 标签注入逻辑为独立私有方法 `applyTraitsAndLora(prompt, options): string`，供 `generateExpression`（img2img 路径）与 `generateTxt2Img`（txt2img 路径）复用。`generateTxt2Img` 内部新增 `applyTraitsAndLora` 调用使其自包含——前端直接调用 `sd.generateTxt2Img` 时也能准确应用角色特征 tag 和 LoRA 模型。同时调整 `generateExpression` 中的调用顺序：将 `applyTraitsAndLora` 移至 txt2img 分支之后（仅服务 img2img 路径），避免当 `generateExpression` 分流到 `generateTxt2Img` 时双重注入 LoRA 标签。
+  - **AssetGenerateModal.tsx 改动**：`handleSingleGenerate` 中 `mode === 'illustration'` 分支改为调用 `window.electronAPI.sd.generateTxt2Img({ endpoint, prompt, negativePrompt, options })`；其他模式（single-expression / general / three-view）仍走 `sd.generateExpression`。依赖数组新增 `sdConfig.endpoint`。
+  - **涉及文件**：`src/main/services/sdGenerationService.ts`（`applyTraitsAndLora` 提取 + `generateTxt2Img` 自包含 + `generateExpression` 调用顺序调整）/ `src/renderer/components/Character/CharacterDialogueChat/AssetGenerateModal.tsx`（illustration 分流到 txt2img）
+
+### Added
+- **立绘替换角色卡图片功能（Task 2）**：在素材管理的「角色立绘」Tab 中，每张立绘缩略图新增 `SwapOutlined`「设为角色卡图片」按钮（仅 `assetType === 'illustration'` 时显示）。
+  - **确认机制**：点击后弹出 `Modal.confirm` 警告框，明确告知「将替换角色卡原始图片，角色数据保留不变，操作不可撤销」，`okButtonProps: { danger: true }`，需用户主动确认
+  - **替换流程**：确认后 → `character.read(cardPath)` 读取当前 JSON 元数据 → 剥离 data URI 前缀提取 base64 → `character.createFromImage(cardPath, base64, content)` 重建 PNG（新图片 + 原 JSON）→ `invalidateCharacterImageCache(cardPath)` 失效缩略图/头像缓存 → `onCardImageReplaced` 回调通知父组件
+  - **CharacterEditModal 联动**：新增 `onCardImageReplaced` prop（`AssetManagerModalProps` + `AssetGridTabContentProps`），内联模式下由 `CharacterEditModal` 接收 `handleCardImageReplaced` 回调——更新 `uploadedImage` 预览为新图片 + 重置 `imageChanged = false`（PNG 已在磁盘重建，保存时仅需 `character.write` 写 JSON，无需再次 `createFromImage`）
+  - **涉及文件**：`AssetManagerModal.tsx`（`AssetGridTabContent` 替换按钮 + `handleReplaceCardImage` + `replacingCardImage` loading state + `onCardImageReplaced` prop 透传）/ `CharacterEditModal.tsx`（`handleCardImageReplaced` 回调 + prop 传递）/ `characterThumbnailCache.tsx` 导入 `invalidateCharacterImageCache`
+
+## [Unreleased] - 2026-07-29
+
+### Changed
+- **素材管理页签内联渲染优化**：解决角色卡编辑弹窗（`CharacterEditModal`）中「素材管理」Tab 内容单薄、需点击「打开表情管理」按钮才能进入管理面板、与其他三个 Tab（角色信息/对话与指令/世界书关联）功能复杂度不成正比的体验问题。
+  - **AssetManagerModal 新增 `inline` 属性**（`src/renderer/components/Character/CharacterDialogueChat/AssetManagerModal.tsx`）：`inline?: boolean`（默认 `false`）。采用条件渲染方案——`inline=true` 时不渲染 Modal 外壳，直接返回 `<div>{tabsElement}{generateModalElement}</div>`，内容随父容器流动；`inline=false`（默认）保持原独立 Modal 行为（mask + footer + 定位），供 `ChatHeader` 按钮调用。共享内容（`Tabs` + `AssetGenerateModal`）提取为 `tabsElement` / `generateModalElement` 变量避免重复。内部子弹窗（`ImageCropperModal` / `AssetGenerateModal` / `LoraSelectModal` / `Modal.confirm`）仍各自 portal 到 document.body，不受内联模式影响。
+  - **CharacterEditModal 素材管理 Tab 改为内联渲染**（`src/renderer/components/Character/CharacterEditModal.tsx`）：
+    - 移除 `expressionModalOpen` / `setExpressionModalOpen` state（不再需要弹窗开关）
+    - Tab children 由原 `Alert + Button(打开表情管理)` 替换为 `<AssetManagerModal open={open} inline={true} ... onClose={() => {}} />`，`open` 透传父 Modal 的可见状态以控制数据加载时机
+    - 移除文件底部独立的 `<AssetManagerModal open={expressionModalOpen} ... />` 渲染（原作为二次弹窗）
+    - 新建角色卡（`editingItem?.path` 为空）时仍展示 `Alert` 警告「请先保存角色卡」
+  - **向后兼容**：`inline` 为可选属性默认 `false`，`CharacterDialogueChat.tsx`（ChatHeader 入口）未传 `inline`，行为不变
+  - **涉及文件**：`src/renderer/components/Character/CharacterDialogueChat/AssetManagerModal.tsx`（`inline` prop + 条件渲染）/ `src/renderer/components/Character/CharacterEditModal.tsx`（Tab 内联渲染 + state 清理）
+  - **tsc 验证**：`npx tsc --noEmit` 无本次改动相关的新增 TypeScript 错误（`CharacterEditModal.tsx` L237 `getCharacterDir` 为预存错误，与本次无关）
+  - **文档同步**：`CODE_WIKI.md` 新增 §14.30「AssetManagerModal 内联渲染模式」；`docs/PROJECT_DOCUMENTATION_NEW.md` 素材管理章节补充内联说明
+
 ## [Unreleased] - 2026-07-28
 
 ### Added

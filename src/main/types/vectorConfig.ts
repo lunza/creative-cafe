@@ -14,6 +14,8 @@ export enum VectorSourceType {
   MANUAL_KNOWLEDGE = 'manual_knowledge',
   /** 角色卡聊天记录（预留接口） */
   CHARACTER_CHAT = 'character_chat',
+  /** Agent 长期记忆（复用向量基础设施存储记忆条目） */
+  AGENT_MEMORY = 'agent-memory',
 }
 
 /** 源类型中文标签字典 */
@@ -22,6 +24,7 @@ export const VectorSourceTypeLabel: Record<VectorSourceType, string> = {
   [VectorSourceType.KNOWLEDGE]: '知识库文档',
   [VectorSourceType.MANUAL_KNOWLEDGE]: '手动知识',
   [VectorSourceType.CHARACTER_CHAT]: '角色聊天记录',
+  [VectorSourceType.AGENT_MEMORY]: 'Agent 长期记忆',
 };
 
 /** 源类型描述字典 */
@@ -30,6 +33,7 @@ export const VectorSourceTypeDescription: Record<VectorSourceType, string> = {
   [VectorSourceType.KNOWLEDGE]: '通过文档上传功能处理的 PDF/Word/Excel/TXT/MD 文件向量化数据',
   [VectorSourceType.MANUAL_KNOWLEDGE]: '用户手动创建的知识条目向量化数据，存储于 default 目录',
   [VectorSourceType.CHARACTER_CHAT]: '角色卡聊天记录向量化数据',
+  [VectorSourceType.AGENT_MEMORY]: 'Agent 记忆系统长期记忆条目向量化数据',
 };
 
 /**
@@ -83,6 +87,11 @@ export const VectorSourceTypeStorageConfig: Record<VectorSourceType, SourceTypeS
     storageDir: 'character_chat',
     perEntrySubdir: true,
     filePrefix: 'chat',
+  },
+  [VectorSourceType.AGENT_MEMORY]: {
+    storageDir: 'agent-memory',
+    perEntrySubdir: true,
+    filePrefix: 'mem',
   },
 };
 

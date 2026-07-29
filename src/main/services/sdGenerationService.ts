@@ -117,8 +117,12 @@ export interface SDGenerationOptions {
   txt2imgWidth?: number;
   /** txt2img 输出高度，默认 1024（Spec: integrate-nl-driven-sd-models / Task 3） */
   txt2imgHeight?: number;
-  /** 采样器名称，默认 "DPM++ 2M Karras" */
+  /** 采样器名称，默认 "DPM++ 3M SDE" */
   sampler?: string;
+  /** 调度器名称，默认 "Karras"（Forge Neo 将采样器与调度器分离） */
+  scheduler?: string;
+  /** CLIP Skip 层数（1-12），默认 2，通过 override_settings 注入 */
+  clipSkip?: number;
   /** 是否启用 ADetailer 面部修复，默认 true */
   adetailerEnabled?: boolean;
   /** 负面提示词，默认空字符串 */
@@ -188,9 +192,71 @@ export interface SDGenerationOptions {
   adUseSampler?: boolean;
   /** ADetailer 独立采样器名称，默认 "Use same sampler"（沿用主采样器） */
   adSampler?: string;
+  /** ADetailer 独立调度器，默认 "Use same scheduler" */
+  adScheduler?: string;
+  /**
+   * ADetailer 独立负面提示词（2026-07-29 源码核验新增）。
+   *
+   * 【重点标记 - 面部修复专用负面提示词】
+   * 源码位置：extensions/ADetailer-Neo/lib_adetailer/args.py:50 `ad_negative_prompt: str = ""`。
+   * 为空时回退到主 negativePrompt；配置后可针对性优化面部修复质量，
+   * 例如 "deformed, distorted, disfigured, bad face, wrong anatomy, cross-eyed"。
+   */
+  adNegativePrompt?: string;
+  /**
+   * 是否启用 ADetailer 独立噪声倍率（2026-07-29 源码核验新增），默认 true。
+   * 源码位置：args.py:78 `ad_use_noise_multiplier: bool = False`。
+   */
+  adUseNoiseMultiplier?: boolean;
+  /**
+   * ADetailer 独立噪声倍率（0.5-1.5），默认 1.0。
+   * 源码位置：args.py:79 `ad_noise_multiplier: float = Field(default=1.0, ge=0.5, le=1.5)`。
+   * 增大可增加面部修复细节丰富度，但过高可能引入噪声。
+   */
+  adNoiseMultiplier?: number;
 
   /** 选中的 LoRA 模型列表，生成时注入 <lora:name:weight> 到 prompt 前部 */
   selectedLoras?: Array<{ name: string; weight: number }>;
+
+  // ===== Hires.fix 高分辨率修复参数（2026-07-29 新增）=====
+  // 【重点标记 - Hires.fix 修复与放大】在 img2img/txt2img 请求体中注入 enable_hr=true，
+  // 由 SD WebUI 自动执行第二轮高分辨率修复。
+  /** 是否启用 Hires.fix，默认 false（由 SDWebuiConfig 层面默认 true 覆盖） */
+  hrFixEnabled?: boolean;
+  /** Hires.fix 放大器，默认 "Latent" */
+  hrUpscaler?: string;
+  /** Hires.fix 步数，默认 50 */
+  hrSteps?: number;
+  /** Hires.fix 放大倍数，默认 2.0 */
+  hrScale?: number;
+  /** Hires.fix 去噪强度（0-1），默认 0.55 */
+  hrDenoisingStrength?: number;
+  /** Hires.fix 第二轮提示词（空字符串=沿用第一轮） */
+  hrPrompt?: string;
+  /** Hires.fix 第二轮负面提示词（空字符串=沿用第一轮） */
+  hrNegativePrompt?: string;
+  /** Hires.fix 第二轮 CFG，默认 5.0（Forge Neo 默认 1.0 不使用负提示，需显式设高） */
+  hrCfg?: number;
+  /** Hires.fix 独立采样器，默认 "DPM++ 2M SDE" */
+  hrSamplerName?: string;
+  /** Hires.fix 独立调度器，默认 "Karras" */
+  hrScheduler?: string;
+  /** img2img 额外噪声（0-1），默认 0.05，>0 增加细节丰富度 */
+  img2imgExtraNoise?: number;
+  /** img2img 初始噪声倍率（0-1.5），默认 1.0 */
+  initialNoiseMultiplier?: number;
+
+  /**
+   * img2img 高清模式（2026-07-29 新增）。
+   *
+   * Forge Neo 的 img2img API 不支持 Hires.fix（StableDiffusionProcessingImg2Img
+   * 类无 enable_hr 等字段），通过以下替代方案实现高清修复：
+   * - 'direct'：直接在 1024 分辨率下一步 img2img 生成
+   * - 'two-step'：先 768 生成 → 再 1024 低降噪放大修复
+   *
+   * 仅在 img2img（sdxl）路径生效。默认 'two-step'。
+   */
+  img2imgHiresMode?: 'direct' | 'two-step';
 }
 
 /**
@@ -274,7 +340,30 @@ const DEFAULT_STEPS = 28;
 const DEFAULT_CFG_SCALE = 7;
 const DEFAULT_WIDTH = 512;
 const DEFAULT_HEIGHT = 512;
-const DEFAULT_SAMPLER = 'DPM++ 2M Karras';
+const DEFAULT_SAMPLER = 'DPM++ 3M SDE';
+const DEFAULT_SCHEDULER = 'Karras';
+const DEFAULT_CLIP_SKIP = 2;
+
+/**
+ * 【重点标记 - img2img 高清模式（2026-07-29）】
+ * Forge Neo 的 img2img API 不支持 Hires.fix（StableDiffusionProcessingImg2Img 类
+ * 无 enable_hr 等字段），通过两种替代方案实现高清修复：
+ *
+ * - direct 模式：直接在 IMG2IMG_DIRECT_TARGET 分辨率下一步生成
+ * - two-step 模式：先在 IMG2IMG_TWO_STEP_FIRST_TARGET 生成，
+ *   再放大到 IMG2IMG_TWO_STEP_SECOND_TARGET 用低降噪修复
+ *
+ * 参数已针对 NVIDIA RTX PRO 6000 Blackwell（96GB 显存）优化，
+ * 可支撑 1024 分辨率 + ADetailer 1024×1024 面部修复。
+ */
+const IMG2IMG_DIRECT_TARGET = 1024;
+const IMG2IMG_TWO_STEP_FIRST_TARGET = 768;
+const IMG2IMG_TWO_STEP_SECOND_TARGET = 1024;
+
+/** two-step 第二步降噪强度（较低，保留第一步细节） */
+const TWO_STEP_SECOND_DENOISING = 0.35;
+/** two-step 第二步步数（较少，放大修复不需要太多步） */
+const TWO_STEP_SECOND_STEPS = 20;
 
 /** img2img 请求超时（毫秒），SDXL + ADetailer 较慢，给足 120 秒 */
 const GENERATION_TIMEOUT_MS = 120_000;
@@ -282,14 +371,49 @@ const GENERATION_TIMEOUT_MS = 120_000;
 /** 普通状态/模型查询请求超时（毫秒） */
 const SHORT_TIMEOUT_MS = 10_000;
 
-/** ADetailer 默认配置（与 ADetailer-Neo `ADetailerArgs` 默认值对齐）*/
+/**
+ * ADetailer 默认配置（与 ADetailer-Neo `ADetailerArgs` 默认值对齐）。
+ *
+ * 【重点标记 - ADetailer 参数优化（2026-07-29）】表情图模糊修复：
+ * - ad_denoising_strength 从 0.4 降至 0.3：保留更多原图面部细节，避免过度重绘导致模糊
+ * - ad_mask_blur 从 4 提至 8：增大蒙版边缘模糊，使修复区域与原图过渡更自然
+ * - ad_dilate_erode 从 4 提至 8：增大蒙版膨胀范围，确保面部特征完整覆盖
+ * - ADETAILER_INPAINT_WIDTH/HEIGHT = 1024：面部修复在 1024 高分辨率下进行
+ *   （针对 RTX PRO 6000 Blackwell 96GB 显存优化，原 768 提升至 1024）
+ */
 const ADETAILER_MODEL = 'face_yolov8n.pt';
 const ADETAILER_CONFIDENCE = 0.3;
-const ADETAILER_DENOISING_STRENGTH = 0.4;
-const ADETAILER_MASK_BLUR = 4;
-const ADETAILER_DILATE_ERODE = 4;
+const ADETAILER_DENOISING_STRENGTH = 0.3;
+const ADETAILER_MASK_BLUR = 8;
+const ADETAILER_DILATE_ERODE = 8;
 const ADETAILER_INPAINT_ONLY_MASKED = true;
 const ADETAILER_INPAINT_ONLY_MASKED_PADDING = 32;
+const ADETAILER_INPAINT_WIDTH = 1024;
+const ADETAILER_INPAINT_HEIGHT = 1024;
+
+/**
+ * 【重点标记 - 硬件优化 override_settings（2026-07-29）】
+ * 针对 NVIDIA RTX PRO 6000 Blackwell（96GB 显存）的硬件级优化参数。
+ * 通过 override_settings 注入，临时覆盖 Forge Neo 全局选项，不影响 UI 设置。
+ *
+ * - CLIP_stop_at_last_layers: 2（SDXL 动漫模型推荐 2）
+ * - sd_vae_encode/decode_method: Full（非 TAESD，质量最高）
+ * - ESRGAN_tile: 512（最大切块，96GB 显存无压力）
+ * - ESRGAN_tile_overlap: 64（最大重叠，消除接缝）
+ * - composite_tiles_on_gpu: true（GPU 合成切块，提速）
+ * - prefer_fp16_upscalers: false（fp32 质量最高，96GB 不需要 fp16）
+ * - forge_unet_storage_dtype: Automatic（不量化，质量最高）
+ */
+const HARDWARE_OVERRIDE_SETTINGS: Record<string, unknown> = {
+  CLIP_stop_at_last_layers: DEFAULT_CLIP_SKIP,
+  sd_vae_encode_method: 'Full',
+  sd_vae_decode_method: 'Full',
+  ESRGAN_tile: 512,
+  ESRGAN_tile_overlap: 64,
+  composite_tiles_on_gpu: true,
+  prefer_fp16_upscalers: false,
+  forge_unet_storage_dtype: 'Automatic',
+};
 
 // ==================== Service ====================
 
@@ -583,6 +707,67 @@ class SDGenerationService {
   }
 
   /**
+   * 将角色视觉特征 tag 与 LoRA 模型标签注入到 SD 提示词中。
+   *
+   * 【重点标记 - txt2img 立绘生成强制携带特征】
+   * 本方法原为 `generateExpression` 内联逻辑，现提取为独立私有方法，供
+   * `generateTxt2Img` 复用。这确保立绘生成（强制 txt2img 路径，不走 img2img）
+   * 也能准确应用角色特征 tag 和 LoRA 模型，与表情/素材生成保持一致的角色一致性。
+   *
+   * 处理流程：
+   * 1. 读取 options.characterTraits，过滤空字符串，拼接为逗号分隔字符串
+   * 2. 替换 prompt 中所有 {traits} 占位符（使用函数形式避免 $ 特殊字符干扰）
+   * 3. 若 traits 为空，{traits} 替换为空字符串
+   * 4. 清理替换后可能产生的多余逗号与空格（连续逗号 / 开头结尾逗号 / 多余空格）
+   * 5. 将 options.selectedLoras 转为 <lora:name:weight> 标签，注入到 prompt 前部
+   *    （Forge Neo 的 prompt parser 自动解析 <lora:...> 标签并加载对应 LoRA 文件）
+   *
+   * @param prompt 原始提示词（可能含 {traits} 占位符）
+   * @param options SD 生成选项（读取 characterTraits 与 selectedLoras）
+   * @returns 处理后的提示词（已替换 {traits} + 注入 LoRA 标签）
+   */
+  private applyTraitsAndLora(
+    prompt: string,
+    options: SDGenerationOptions,
+  ): string {
+    let result = prompt;
+
+    // ===== {traits} 占位符替换 =====
+    const traitsRaw = options.characterTraits || [];
+    const traitsStr = traitsRaw
+      .map((t) => (typeof t === 'string' ? t.trim() : ''))
+      .filter((t) => t.length > 0)
+      .join(', ');
+    result = result.replace(/\{traits\}/g, () => traitsStr);
+
+    // 清理 {traits} 替换后可能产生的多余逗号与空格
+    // 场景：模板 `portrait, {traits}, looking at viewer` + 空 traits → `portrait, , looking at viewer`
+    let prevPrompt: string;
+    do {
+      prevPrompt = result;
+      result = result.replace(/,\s*,/g, ',');
+    } while (result !== prevPrompt);
+    result = result.replace(/^\s*,\s*/, ''); // 清理开头逗号
+    result = result.replace(/\s*,\s*$/, ''); // 清理结尾逗号
+    result = result.replace(/\s{2,}/g, ' '); // 清理多余空格
+    result = result.trim();
+
+    // ===== LoRA 模型标签注入 =====
+    const selectedLoras = options.selectedLoras;
+    if (selectedLoras && selectedLoras.length > 0) {
+      const loraTags = selectedLoras
+        .map((l) => `<lora:${l.name}:${l.weight}>`)
+        .join(' ');
+      if (loraTags) {
+        result = `${loraTags} ${result}`;
+        console.log('[sdGenerationService] Injected LoRA tags:', loraTags);
+      }
+    }
+
+    return result;
+  }
+
+  /**
    * 切换 SD WebUI 当前模型。
    * 内部辅助方法，仅在 `options.model` 提供时调用。
    *
@@ -652,52 +837,10 @@ class SDGenerationService {
       // 【Spec: integrate-nl-driven-sd-models / Task 3】模型类型分流
       const modelType = options.modelType ?? 'sdxl';
 
-      // 【重点标记 - 特征携带机制（Spec: add-asset-and-trait-management / Task 4）】
-      // 读取角色视觉特征 tag，替换提示词模板中的 {traits} 占位符。
-      // {emotion} 占位符已在上游 PromptBuilder.buildExpressionGenerationPrompt 中替换，
-      // 此处仅处理 {traits}，保证角色一致性特征（如 "white fur, dog girl"）注入到所有 SD 生成。
-      //
-      // 处理流程：
-      // 1. 读取 options.characterTraits，过滤空字符串，拼接为逗号分隔字符串
-      // 2. 替换 prompt 中所有 {traits} 占位符（使用函数形式避免 $ 特殊字符干扰）
-      // 3. 若 traits 为空，{traits} 替换为空字符串
-      // 4. 清理替换后可能产生的多余逗号与空格（连续逗号 / 开头结尾逗号 / 多余空格）
-      const traitsRaw = options.characterTraits || [];
-      const traitsStr = traitsRaw
-        .map((t) => (typeof t === 'string' ? t.trim() : ''))
-        .filter((t) => t.length > 0)
-        .join(', ');
-      prompt = prompt.replace(/\{traits\}/g, () => traitsStr);
-
-      // 清理 {traits} 替换后可能产生的多余逗号与空格
-      // 场景：模板 `portrait, {traits}, looking at viewer` + 空 traits → `portrait, , looking at viewer`
-      // 循环处理连续逗号（如 `a, , , b` 需多次匹配才能完全收敛）
-      let prevPrompt: string;
-      do {
-        prevPrompt = prompt;
-        prompt = prompt.replace(/,\s*,/g, ',');
-      } while (prompt !== prevPrompt);
-      prompt = prompt.replace(/^\s*,\s*/, ''); // 清理开头逗号
-      prompt = prompt.replace(/\s*,\s*$/, ''); // 清理结尾逗号
-      prompt = prompt.replace(/\s{2,}/g, ' '); // 清理多余空格
-      prompt = prompt.trim();
-
-      // 【LoRA 模型标签注入】将选中的 LoRA 模型转为 <lora:name:weight> 标签，注入到 prompt 前部
-      // Forge Neo 的 prompt parser 自动解析 <lora:...> 标签并加载对应 LoRA 文件
-      const selectedLoras = options.selectedLoras;
-      if (selectedLoras && selectedLoras.length > 0) {
-        const loraTags = selectedLoras
-          .map(l => `<lora:${l.name}:${l.weight}>`)
-          .join(' ');
-        if (loraTags) {
-          prompt = `${loraTags} ${prompt}`;
-          console.log('[sdGenerationService] Injected LoRA tags:', loraTags);
-        }
-      }
-
       // 【Spec: integrate-nl-driven-sd-models / Task 3】模型类型分流
-      // 在 traits 替换之后分流，保证所有模型类型都携带角色特征
       // qwen-image 走 txt2img；flux2 无基底图片时也走 txt2img
+      // 注意：txt2img 分支在 applyTraitsAndLora 之前，因为 generateTxt2Img 内部会
+      // 自行调用 applyTraitsAndLora 处理 {traits} + LoRA，避免双重注入。
       if (modelType === 'qwen-image' || (modelType === 'flux2' && !baseImageBase64)) {
         return this.generateTxt2Img({
           endpoint,
@@ -706,6 +849,10 @@ class SDGenerationService {
           options,
         });
       }
+
+      // 【重点标记 - 特征携带机制（Spec: add-asset-and-trait-management / Task 4）】
+      // 仅 img2img 路径在此处处理 {traits} + LoRA（txt2img 路径由 generateTxt2Img 内部处理）
+      prompt = this.applyTraitsAndLora(prompt, options);
 
       // 参数校验（仅 img2img 模型需要基底图片）
       if (!baseImageBase64) {
@@ -733,134 +880,24 @@ class SDGenerationService {
       const samplerName = options.sampler ?? DEFAULT_SAMPLER;
       const negativePromptValue = options.negativePrompt ?? negativePrompt ?? '';
 
-      // 【重点标记 - 图片变扁修复】
-      // 解析原图尺寸，按宽高比计算目标尺寸（长边 512，短边对齐到 64 的倍数）。
-      // 若用户显式指定了 width/height 则覆盖；否则保持原图宽高比。
-      // 若 PNG 解析失败（非 PNG 或数据损坏），回退到 512×512。
-      let targetWidth = options.width ?? DEFAULT_WIDTH;
-      let targetHeight = options.height ?? DEFAULT_HEIGHT;
-      if (!options.width && !options.height) {
-        const originalDims = this.getPngDimensionsFromBase64(baseImageBase64);
-        if (originalDims) {
-          const calculated = this.calculateAspectRatioDimensions(
-            originalDims.width,
-            originalDims.height
-          );
-          targetWidth = calculated.width;
-          targetHeight = calculated.height;
-          console.log(
-            '[SDGenerationService] generateExpression: original dims =',
-            originalDims,
-            '→ target dims =',
-            { width: targetWidth, height: targetHeight },
-            '(aspect ratio preserved)'
-          );
-        }
-      }
-
-      // 构建请求体
-      const requestBody: Record<string, unknown> = {
-        init_images: [baseImageBase64],
-        prompt,
-        negative_prompt: negativePromptValue,
-        denoising_strength: denoisingStrength,
-        steps,
-        cfg_scale: cfgScale,
-        width: targetWidth,
-        height: targetHeight,
-        sampler_name: samplerName,
-        batch_size: 1,
-        n_iter: 1,
-      };
-
-      // 【重点标记 - ADetailer-Neo 兼容性修复（2026-07-27）】
-      // ADetailer 通过 alwayson_scripts 触发，args[0] 必须为 true（启用标志），
-      // args[1] 为参数 dict，会被 `ADetailerArgs(**arg)` 解包验证。
-      //
-      // ADetailer-Neo 的 `ADetailerArgs` pydantic 模型使用 `ConfigDict(extra="forbid")`，
-      // 禁止任何未定义字段。早期实现错误使用了 `ad_inpaint_full_res`（Neo 已移除）和
-      // `ad_dilation`（正确字段名为 `ad_dilate_erode`），导致：
-      //   pydantic_core._pydantic_core.ValidationError: Extra inputs are not permitted
-      //   ad_inpaint_full_res / ad_dilation
-      //
-      // 修复要点：
-      // 1. 移除 `ad_inpaint_full_res`（Neo 用 `ad_use_inpaint_width_height` + `ad_inpaint_width/height` 替代）
-      // 2. `ad_dilation` → `ad_dilate_erode`（正确字段名）
-      // 3. 添加 `ad_inpaint_only_masked_padding`（Neo 支持，原代码漏了）
-      // 4. 字段名严格对齐 `extensions/ADetailer-Neo/lib_adetailer/args.py` 的 `ADetailerArgs`
-      //
-      // 参考：用户报错堆栈 `scripts/adetailer.py line 154 is_ad_enabled → ADetailerArgs(**arg)`
-      // 【Spec: integrate-nl-driven-sd-models / Task 3】仅 SDXL 模型使用 ADetailer，
-      // NL 驱动模型（qwen-image-edit / flux2）不需要
+      // 【重点标记 - img2img 高清模式（2026-07-29）】
+      // Forge Neo 的 img2img API 不支持 Hires.fix（StableDiffusionProcessingImg2Img 类
+      // 无 enable_hr 等字段，之前注入的 Hires.fix 参数被静默忽略）。
+      // 现通过两种替代方案实现高清修复，由设置界面的 img2imgHiresMode 切换：
+      // - 'direct'：直接在 1024 分辨率下一步 img2img 生成
+      // - 'two-step'：先 768 生成 → 再 1024 低降噪放大修复
+      const hiresMode = options.img2imgHiresMode ?? 'two-step';
       const useAdetailer = modelType === 'sdxl' && options.adetailerEnabled !== false;
-      if (useAdetailer) {
-        // 读取 ADetailer 高级参数（带默认值兜底）
-        const adModel = options.adModel || ADETAILER_MODEL;
-        const adConfidence = options.adConfidence ?? ADETAILER_CONFIDENCE;
-        const adDenoisingStrength = options.adDenoisingStrength ?? ADETAILER_DENOISING_STRENGTH;
-        const adMaskBlur = options.adMaskBlur ?? ADETAILER_MASK_BLUR;
-        const adDilateErode = options.adDilateErode ?? ADETAILER_DILATE_ERODE;
-        const adInpaintOnlyMasked = options.adInpaintOnlyMasked ?? ADETAILER_INPAINT_ONLY_MASKED;
-        const adInpaintOnlyMaskedPadding =
-          options.adInpaintOnlyMaskedPadding ?? ADETAILER_INPAINT_ONLY_MASKED_PADDING;
 
-        // 构建 ADetailer args dict（字段名严格对齐 ADetailer-Neo 的 ADetailerArgs）
-        const adArgs: Record<string, unknown> = {
-          ad_model: adModel,
-          // 【重点标记 - 特征携带机制】ad_prompt 使用已注入 {traits} 的最终 prompt，
-          // 保证 ADetailer 面部修复时也携带角色特征（与主 prompt 完全一致）
-          ad_prompt: prompt,
-          ad_negative_prompt: negativePromptValue,
-          ad_confidence: adConfidence,
-          ad_denoising_strength: adDenoisingStrength,
-          ad_mask_blur: adMaskBlur,
-          ad_dilate_erode: adDilateErode,
-          ad_inpaint_only_masked: adInpaintOnlyMasked,
-          ad_inpaint_only_masked_padding: adInpaintOnlyMaskedPadding,
-        };
-
-        // 可选：独立修复尺寸（ad_use_inpaint_width_height=true 时 ad_inpaint_width/height 生效）
-        if (options.adUseInpaintWidthHeight) {
-          adArgs.ad_use_inpaint_width_height = true;
-          adArgs.ad_inpaint_width = options.adInpaintWidth ?? 512;
-          adArgs.ad_inpaint_height = options.adInpaintHeight ?? 512;
-        }
-        // 可选：独立步数
-        if (options.adUseSteps) {
-          adArgs.ad_use_steps = true;
-          adArgs.ad_steps = options.adSteps ?? 20;
-        }
-        // 可选：独立 CFG
-        if (options.adUseCfgScale) {
-          adArgs.ad_use_cfg_scale = true;
-          adArgs.ad_cfg_scale = options.adCfgScale ?? 4.0;
-        }
-        // 可选：独立采样器
-        if (options.adUseSampler && options.adSampler && options.adSampler !== 'Use same sampler') {
-          adArgs.ad_use_sampler = true;
-          adArgs.ad_sampler = options.adSampler;
-        }
-
-        requestBody.alwayson_scripts = {
-          ADetailer: {
-            args: [
-              true, // args[0]: enable = true
-              adArgs,
-            ],
-          },
-        };
-      }
-
-      // 【Spec: integrate-nl-driven-sd-models / Task 3】qwen-image-edit 低去噪警告
+      // qwen-image-edit 低去噪警告
       let warning: string | undefined;
       if (modelType === 'qwen-image-edit' && denoisingStrength < 0.9) {
         warning = 'qwen-image-edit 模型推荐 denoising ≥ 0.9，当前值可能导致编辑效果不佳';
       }
 
-      const url = `${endpoint}/sdapi/v1/img2img`;
       console.log(
-        '[SDGenerationService] generateExpression: POST',
-        url,
+        '[SDGenerationService] generateExpression: mode=',
+        hiresMode,
         'steps=',
         steps,
         'denoising=',
@@ -869,54 +906,287 @@ class SDGenerationService {
         useAdetailer
       );
 
-      const response = await this.fetchWithTimeout(
-        url,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody),
-        },
-        GENERATION_TIMEOUT_MS
-      );
+      if (hiresMode === 'direct') {
+        // ===== 直接高分辨率模式：1024 一步生成 =====
+        const dims = this.calculateImg2ImgDimensions(
+          baseImageBase64, options, IMG2IMG_DIRECT_TARGET
+        );
+        return await this.executeImg2ImgPass(
+          endpoint, baseImageBase64, prompt, negativePromptValue,
+          dims.width, dims.height, denoisingStrength, steps,
+          cfgScale, samplerName, options, useAdetailer, warning, 'direct'
+        );
+      } else {
+        // ===== 两步放大模式：768 生成 → 1024 修复 =====
+        // 第一步：768 分辨率正常生成
+        const dims1 = this.calculateImg2ImgDimensions(
+          baseImageBase64, options, IMG2IMG_TWO_STEP_FIRST_TARGET
+        );
+        const pass1 = await this.executeImg2ImgPass(
+          endpoint, baseImageBase64, prompt, negativePromptValue,
+          dims1.width, dims1.height, denoisingStrength, steps,
+          cfgScale, samplerName, options, useAdetailer, warning, 'two-step-1'
+        );
+        if (!pass1.success || !pass1.imageBase64) {
+          return pass1;
+        }
 
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => '');
-        return {
-          success: false,
-          error: this.formatHttpError(response, errorText),
-        };
+        // 第二步：1024 分辨率低降噪放大修复
+        // 使用第一步结果作为 init_images，降噪 0.35 保留细节，步数 20 加快速度
+        const dims2 = this.calculateImg2ImgDimensions(
+          pass1.imageBase64, options, IMG2IMG_TWO_STEP_SECOND_TARGET
+        );
+        console.log('[SDGenerationService] two-step pass 2: upscaling to', dims2);
+        return await this.executeImg2ImgPass(
+          endpoint, pass1.imageBase64, prompt, negativePromptValue,
+          dims2.width, dims2.height, TWO_STEP_SECOND_DENOISING, TWO_STEP_SECOND_STEPS,
+          cfgScale, samplerName, options, useAdetailer, warning, 'two-step-2'
+        );
       }
-
-      const data = (await response.json()) as { images?: unknown };
-      const images = data?.images;
-
-      // 响应体为空 / images 字段缺失 / 非数组 / 空数组
-      if (!Array.isArray(images) || images.length === 0) {
-        return {
-          success: false,
-          error: 'SD WebUI 返回的 images 为空，生成失败',
-        };
-      }
-
-      const firstImage = images[0];
-      if (typeof firstImage !== 'string' || !firstImage) {
-        return {
-          success: false,
-          error: 'SD WebUI 返回的图像格式无效（期望 base64 字符串）',
-        };
-      }
-
-      // SD WebUI 返回的 base64 不含 data: 前缀，直接返回
-      console.log(
-        '[SDGenerationService] generateExpression: success, imageBase64 length=',
-        firstImage.length
-      );
-      return { success: true, imageBase64: firstImage, warning };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error('[SDGenerationService] generateExpression failed:', message);
       return { success: false, error: message };
     }
+  }
+
+  /**
+   * 计算 img2img 目标尺寸（保持宽高比，长边对齐到 longSideTarget）。
+   *
+   * 若用户显式指定了 options.width/height，则按 longSideTarget 比例缩放后使用：
+   * - direct 模式（longSideTarget=1024）：scale=1.0，直接使用用户尺寸
+   * - two-step pass 1（longSideTarget=768）：scale=0.75，缩小到 75% 生成
+   * - two-step pass 2（longSideTarget=1024）：scale=1.0，使用完整尺寸放大修复
+   * 这样保留了两步模式"低分辨率生成→高分辨率放大"的质量优势。
+   *
+   * 若未指定 options.width/height，则从 initImage 的 PNG IHDR 解析原始尺寸，
+   * 按宽高比计算目标尺寸。若 PNG 解析失败，回退到 DEFAULT_WIDTH × DEFAULT_HEIGHT。
+   */
+  private calculateImg2ImgDimensions(
+    initImageBase64: string,
+    options: SDGenerationOptions,
+    longSideTarget: number,
+  ): { width: number; height: number } {
+    if (options.width && options.height) {
+      // 【2026-07-29 新增 - 用户自定义尺寸的两步缩放】
+      // two-step 模式 pass 1 (768) 按比例缩小，pass 2 (1024) 使用完整尺寸，
+      // 保留"低分辨率生成→高分辨率放大"的质量优势。
+      // direct 模式 (1024) scale=1.0，不受影响。
+      const REFERENCE_TARGET = 1024;
+      const scale = longSideTarget / REFERENCE_TARGET;
+      if (scale < 1) {
+        const scaledWidth = Math.max(64, Math.round(options.width * scale));
+        const scaledHeight = Math.max(64, Math.round(options.height * scale));
+        console.log(
+          '[SDGenerationService] calculateImg2ImgDimensions: user-specified =',
+          `${options.width}x${options.height}`,
+          '→ scaled =',
+          `${scaledWidth}x${scaledHeight}`,
+          `(scale=${scale.toFixed(2)}, longSide=${longSideTarget})`,
+        );
+        return { width: scaledWidth, height: scaledHeight };
+      }
+      return { width: options.width, height: options.height };
+    }
+    const originalDims = this.getPngDimensionsFromBase64(initImageBase64);
+    if (originalDims) {
+      const calculated = this.calculateAspectRatioDimensions(
+        originalDims.width,
+        originalDims.height,
+        longSideTarget,
+      );
+      console.log(
+        '[SDGenerationService] calculateImg2ImgDimensions: original =',
+        originalDims,
+        '→ target =',
+        calculated,
+        `(longSide=${longSideTarget})`,
+      );
+      return calculated;
+    }
+    return { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT };
+  }
+
+  /**
+   * 执行单次 img2img 请求（构建请求体 + ADetailer + 发送 + 解析响应）。
+   *
+   * 【重点标记 - img2img 高清模式核心方法（2026-07-29）】
+   * 由 generateExpression 根据高清模式调用一次（direct）或两次（two-step）。
+   * two-step 模式第二步将第一步的生成结果作为 init_images 传入。
+   *
+   * ADetailer 配置与之前一致（ADetailer-Neo 兼容，字段名严格对齐），
+   * 面部修复分辨率提升至 1024×1024（针对 RTX PRO 6000 Blackwell 优化）。
+   */
+  private async executeImg2ImgPass(
+    endpoint: string,
+    initImageBase64: string,
+    prompt: string,
+    negativePrompt: string,
+    targetWidth: number,
+    targetHeight: number,
+    denoisingStrength: number,
+    steps: number,
+    cfgScale: number,
+    samplerName: string,
+    options: SDGenerationOptions,
+    useAdetailer: boolean,
+    warning: string | undefined,
+    passLabel: string,
+  ): Promise<SDGenerationResult> {
+    // 构建请求体
+    const requestBody: Record<string, unknown> = {
+      init_images: [initImageBase64],
+      prompt,
+      negative_prompt: negativePrompt,
+      denoising_strength: denoisingStrength,
+      steps,
+      cfg_scale: cfgScale,
+      width: targetWidth,
+      height: targetHeight,
+      sampler_name: samplerName,
+      // 【重点标记 - 调度器分离（2026-07-29）】Forge Neo 将采样器与调度器分离
+      scheduler: options.scheduler ?? DEFAULT_SCHEDULER,
+      // 【重点标记 - img2img 初始噪声倍率（2026-07-29）】控制添加到 init_images 的噪声量
+      initial_noise_multiplier: options.initialNoiseMultiplier ?? 1.0,
+      batch_size: 1,
+      n_iter: 1,
+      // 【重点标记 - 硬件优化 + img2img 参数 override_settings（2026-07-29）】
+      // 合并硬件优化参数（ESRGAN/VAE/CLIP Skip）+ img2img 专用参数：
+      // - img2img_fix_steps: false（步数严格遵循用户配置，不按 denoising 放大）
+      // - img2img_extra_noise: 0.05（微量噪声增加细节丰富度）
+      override_settings: {
+        ...HARDWARE_OVERRIDE_SETTINGS,
+        CLIP_stop_at_last_layers: options.clipSkip ?? DEFAULT_CLIP_SKIP,
+        img2img_fix_steps: false,
+        img2img_extra_noise: options.img2imgExtraNoise ?? 0.05,
+      },
+    };
+
+    // ADetailer 面部修复
+    if (useAdetailer) {
+      const adModel = options.adModel || ADETAILER_MODEL;
+      const adConfidence = options.adConfidence ?? ADETAILER_CONFIDENCE;
+      const adDenoisingStrength = options.adDenoisingStrength ?? ADETAILER_DENOISING_STRENGTH;
+      const adMaskBlur = options.adMaskBlur ?? ADETAILER_MASK_BLUR;
+      const adDilateErode = options.adDilateErode ?? ADETAILER_DILATE_ERODE;
+      const adInpaintOnlyMasked = options.adInpaintOnlyMasked ?? ADETAILER_INPAINT_ONLY_MASKED;
+      const adInpaintOnlyMaskedPadding =
+        options.adInpaintOnlyMaskedPadding ?? ADETAILER_INPAINT_ONLY_MASKED_PADDING;
+
+      // 【重点标记 - ADetailer 独立负面提示词（2026-07-29 源码核验）】
+      // 优先使用 ADetailer 专用负面提示词（可针对性优化面部，如 "deformed, bad face"），
+      // 未配置时回退到主负面提示词。源码：ADetailer-Neo args.py:50 ad_negative_prompt。
+      const adNegativePromptValue =
+        options.adNegativePrompt && options.adNegativePrompt.trim()
+          ? options.adNegativePrompt
+          : negativePrompt;
+
+      const adArgs: Record<string, unknown> = {
+        ad_model: adModel,
+        ad_prompt: prompt,
+        ad_negative_prompt: adNegativePromptValue,
+        ad_confidence: adConfidence,
+        ad_denoising_strength: adDenoisingStrength,
+        ad_mask_blur: adMaskBlur,
+        ad_dilate_erode: adDilateErode,
+        ad_inpaint_only_masked: adInpaintOnlyMasked,
+        ad_inpaint_only_masked_padding: adInpaintOnlyMaskedPadding,
+      };
+
+      // 强制启用独立修复尺寸，面部 inpaint 在 1024×1024 高分辨率下进行
+      adArgs.ad_use_inpaint_width_height = true;
+      adArgs.ad_inpaint_width = Math.max(options.adInpaintWidth ?? ADETAILER_INPAINT_WIDTH, 512);
+      adArgs.ad_inpaint_height = Math.max(options.adInpaintHeight ?? ADETAILER_INPAINT_HEIGHT, 512);
+
+      // 【重点标记 - ADetailer 独立高质量参数（2026-07-29）】
+      // 强制启用独立步数/CFG/采样器，面部修复使用高质量参数：
+      // - ad_steps: 30（比主生成更多步数，面部细节更丰富）
+      // - ad_cfg_scale: 5.0（强引导，面部特征更准确）
+      // - ad_sampler: DPM++ 2M SDE + Karras（高质量二阶采样器）
+      adArgs.ad_use_steps = true;
+      adArgs.ad_steps = options.adSteps ?? 30;
+
+      adArgs.ad_use_cfg_scale = true;
+      adArgs.ad_cfg_scale = options.adCfgScale ?? 5.0;
+
+      const adSamplerName = options.adSampler && options.adSampler !== 'Use same sampler'
+        ? options.adSampler
+        : 'DPM++ 2M SDE';
+      adArgs.ad_use_sampler = true;
+      adArgs.ad_sampler = adSamplerName;
+
+      const adSchedulerName = options.adScheduler && options.adScheduler !== 'Use same scheduler'
+        ? options.adScheduler
+        : 'Karras';
+      adArgs.ad_scheduler = adSchedulerName;
+
+      // 【重点标记 - ADetailer 独立噪声倍率（2026-07-29 源码核验）】
+      // 源码：ADetailer-Neo args.py:78-79 ad_use_noise_multiplier / ad_noise_multiplier（0.5-1.5）。
+      // 增大倍率可增加面部修复细节丰富度，但过高可能引入噪声。默认 1.0（标准）。
+      adArgs.ad_use_noise_multiplier = options.adUseNoiseMultiplier ?? true;
+      adArgs.ad_noise_multiplier = options.adNoiseMultiplier ?? 1.0;
+
+      requestBody.alwayson_scripts = {
+        ADetailer: {
+          args: [true, adArgs],
+        },
+      };
+    }
+
+    const url = `${endpoint}/sdapi/v1/img2img`;
+    console.log(
+      `[SDGenerationService] executeImg2ImgPass [${passLabel}]: POST`,
+      url,
+      `${targetWidth}×${targetHeight}`,
+      'steps=',
+      steps,
+      'denoising=',
+      denoisingStrength,
+      'adetailer=',
+      useAdetailer,
+    );
+
+    const response = await this.fetchWithTimeout(
+      url,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+      },
+      GENERATION_TIMEOUT_MS,
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      return {
+        success: false,
+        error: this.formatHttpError(response, errorText),
+      };
+    }
+
+    const data = (await response.json()) as { images?: unknown };
+    const images = data?.images;
+
+    if (!Array.isArray(images) || images.length === 0) {
+      return {
+        success: false,
+        error: 'SD WebUI 返回的 images 为空，生成失败',
+      };
+    }
+
+    const firstImage = images[0];
+    if (typeof firstImage !== 'string' || !firstImage) {
+      return {
+        success: false,
+        error: 'SD WebUI 返回的图像格式无效（期望 base64 字符串）',
+      };
+    }
+
+    console.log(
+      `[SDGenerationService] executeImg2ImgPass [${passLabel}]: success, imageBase64 length=`,
+      firstImage.length,
+    );
+    return { success: true, imageBase64: firstImage, warning };
   }
 
   /**
@@ -926,7 +1196,18 @@ class SDGenerationService {
    * POST `${endpoint}/sdapi/v1/txt2img`，请求体包含 prompt / negative_prompt / 采样参数，
    * 不包含 init_images / denoising_strength / alwayson_scripts。
    *
+   * 【重点标记 - txt2img 自包含特征+LoRA 注入】
+   * 本方法内部调用 applyTraitsAndLora 处理 {traits} 占位符替换与 LoRA 标签注入，
+   * 使其不再依赖 generateExpression 预处理。立绘生成（AssetGenerateModal illustration
+   * 模式）直接调用本方法，强制走 txt2img 路径，明确禁用 img2img，同时确保角色特征
+   * tag 和 LoRA 模型被准确应用。
+   *
+   * 当由 generateExpression 内部分流调用时（qwen-image / flux2 无基底图），prompt
+   * 尚未经过 applyTraitsAndLora 处理，此处统一处理，避免双重注入（generateExpression
+   * 已将 applyTraitsAndLora 调用移至 txt2img 分支之后，仅服务 img2img 路径）。
+   *
    * 行为说明：
+   * - 先调用 applyTraitsAndLora 处理 prompt（{traits} 替换 + LoRA 标签注入）
    * - 若 `options.model` 提供，先调用 `/sdapi/v1/options` 切换模型；切换失败则直接返回错误
    * - 单次请求超时 120 秒
    * - 成功时返回 `images[0]`（base64，不含 data: 前缀）
@@ -939,6 +1220,10 @@ class SDGenerationService {
     const normalizedEndpoint = this.normalizeEndpoint(endpoint);
 
     try {
+      // 【重点标记 - txt2img 自包含特征+LoRA 注入】
+      // 处理 {traits} 占位符替换 + LoRA 标签注入，使 txt2img 路径独立可用
+      const processedPrompt = this.applyTraitsAndLora(prompt, options);
+
       // 可选模型切换
       if (options.model) {
         const switchResult = await this.switchModel(normalizedEndpoint, options.model);
@@ -947,17 +1232,67 @@ class SDGenerationService {
         }
       }
 
+      const samplerName = options.sampler ?? DEFAULT_SAMPLER;
+      const schedulerName = options.scheduler ?? DEFAULT_SCHEDULER;
+
       const body: Record<string, unknown> = {
-        prompt,
+        prompt: processedPrompt,
         negative_prompt: negativePrompt || '',
         steps: options.steps ?? 28,
         cfg_scale: options.cfgScale ?? 7,
         width: options.txt2imgWidth ?? 1024,
         height: options.txt2imgHeight ?? 1024,
-        sampler_name: options.sampler ?? 'Euler',
+        sampler_name: samplerName,
+        scheduler: schedulerName,
         batch_size: 1,
         n_iter: 1,
+        // 【重点标记 - 硬件优化 + CLIP Skip override_settings（2026-07-29）】
+        // 注入硬件级优化参数（ESRGAN 切块/GPU 合成/VAE Full/不量化）+
+        // CLIP_stop_at_last_layers（SDXL 动漫模型推荐 2）。
+        // clipSkip 可由用户在设置界面配置，覆盖默认值 2。
+        override_settings: {
+          ...HARDWARE_OVERRIDE_SETTINGS,
+          CLIP_stop_at_last_layers: options.clipSkip ?? DEFAULT_CLIP_SKIP,
+        },
       };
+
+      // 【Hires.fix 修复与放大】注入高分辨率修复参数
+      if (options.hrFixEnabled) {
+        body.enable_hr = true;
+        // 【重点标记 - ESRGAN 放大器升级（2026-07-29）】
+        // 从 Latent 改为 4x-AnimeSharp（动漫模型最佳放大器），细节锐利度显著提升。
+        // 用户也可在设置中选择 BSRGAN / ESRGAN_4x 等。
+        body.hr_upscaler = options.hrUpscaler || '4x-AnimeSharp';
+        body.hr_second_pass_steps = options.hrSteps ?? 50;
+        body.hr_scale = options.hrScale ?? 2.0;
+        body.denoising_strength = options.hrDenoisingStrength ?? 0.55;
+
+        // 【重点标记 - hr_cfg 默认 1.0 陷阱修复（2026-07-29）】
+        // Forge Neo 的 hr_cfg 默认值为 1.0，意味着 Hires 第二阶段不使用负提示，
+        // 导致细节大幅丢失。显式设为 5.0 恢复负提示引导。
+        body.hr_cfg = options.hrCfg ?? 5.0;
+
+        // 【重点标记 - Hires 独立采样器/调度器（2026-07-29）】
+        // Hires 第二阶段使用独立的高质量采样器（默认 DPM++ 2M SDE + Karras）
+        body.hr_sampler_name = options.hrSamplerName || 'DPM++ 2M SDE';
+        body.hr_scheduler = options.hrScheduler || 'Karras';
+
+        if (options.hrPrompt) body.hr_prompt = options.hrPrompt;
+        if (options.hrNegativePrompt) body.hr_negative_prompt = options.hrNegativePrompt;
+
+        // 【重点标记 - hr_additional_modules None bug 修复】
+        body.hr_additional_modules = ['Use same choices'];
+
+        console.log('[SDGenerationService] Hires.fix enabled (txt2img):', {
+          upscaler: body.hr_upscaler,
+          hr_second_pass_steps: body.hr_second_pass_steps,
+          scale: body.hr_scale,
+          denoising_strength: body.denoising_strength,
+          hr_cfg: body.hr_cfg,
+          hr_sampler: body.hr_sampler_name,
+          hr_scheduler: body.hr_scheduler,
+        });
+      }
 
       const response = await this.fetchWithTimeout(
         `${normalizedEndpoint}/sdapi/v1/txt2img`,

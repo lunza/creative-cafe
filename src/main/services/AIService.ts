@@ -17,11 +17,19 @@ import { SSEStreamParser, type StreamChunkCallback } from './ai/SSEStreamParser'
 // ==================== Types ====================
 
 export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'tool';
   content: string | Array<
     | { type: 'text'; text: string }
     | { type: 'image_url'; image_url: { url: string } }
   >;
+  // 工具调用协议字段（可选，仅 tool calling 使用）
+  tool_calls?: Array<{
+    id: string;
+    type: 'function';
+    function: { name: string; arguments: string };
+  }>;
+  tool_call_id?: string; // role:'tool' 时必填，用于关联对应的 tool_call
+  name?: string;          // role:'tool' 时工具名
 }
 
 export interface AIConfig {
@@ -232,6 +240,11 @@ export class AIService {
 
   /**
    * 构建请求头和请求体
+   *
+   * 工具调用扩展（向后兼容）：
+   * - `tools` / `tool_choice` 均为可选字段，不传入时请求体中不会出现对应字段，
+   *   与扩展前行为完全一致。
+   * - 仅在显式传入时才写入 `requestBody.tools` / `requestBody.tool_choice`。
    */
   buildRequest(options: {
     messages: ChatMessage[];
@@ -240,8 +253,12 @@ export class AIService {
     maxTokens: number;
     stream: boolean;
     config: AIConfig;
+    /** 工具定义（可选，传入时启用 function calling） */
+    tools?: any[];
+    /** 工具调用策略（可选，'auto' | 'none' | 指定函数） */
+    tool_choice?: 'auto' | 'none' | { type: 'function'; function: { name: string } };
   }): { headers: Record<string, string>; requestBody: Record<string, any> } {
-    const { messages, model, temperature, maxTokens, stream, config } = options;
+    const { messages, model, temperature, maxTokens, stream, config, tools, tool_choice } = options;
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -262,6 +279,14 @@ export class AIService {
       } else {
         requestBody.api_key = config.apiKey;
       }
+    }
+
+    // 工具调用字段：仅在显式传入时加入请求体，保持向后兼容
+    if (tools !== undefined) {
+      requestBody.tools = tools;
+    }
+    if (tool_choice !== undefined) {
+      requestBody.tool_choice = tool_choice;
     }
 
     return { headers, requestBody };
@@ -360,6 +385,146 @@ export class AIService {
     } finally {
       if (timeoutId !== null) clearTimeout(timeoutId);
     }
+  }
+
+  // ==================== Non-Stream Call with Tools ====================
+
+  /**
+   * 执行带工具调用的非流式 AI 调用
+   *
+   * 与 `callChatAPI` 的差异：
+   * - 接受 `tools` / `tool_choice` 参数，透传至请求体以启用 function calling
+   * - 返回完整 message 结构（含 `tool_calls`），而非仅 content 字符串
+   * - `content` 可能为 null（模型只返回 tool_calls 无文本时），此时规范化为 `''`
+   * - 保留与 `streamChatAPI` 一致的指数退避重试逻辑（`maxRetries` 默认 2）
+   *
+   * 响应处理：
+   * - HTTP 非 2xx：抛错（含状态码与响应文本）
+   * - 响应体含 `error` 字段（部分 OpenAI 兼容代理在 200 下返回错误）：抛错
+   * - 正常响应：提取 `choices[0].message`，返回 content / tool_calls / finish_reason / model
+   *
+   * 超时与取消：
+   * - `timeoutMs`（来自 CallOptions）：单次尝试的超时
+   * - `abortSignal`（来自 CallOptions）：外部取消信号，触发后立即中止并不再重试
+   * - 两者均通过本地 controller 联动到 fetch signal
+   */
+  async callChatWithTools(
+    messages: ChatMessage[],
+    tools: any[],
+    options: CallOptions & {
+      model: string;
+      temperature: number;
+      maxTokens: number;
+      tool_choice?: 'auto' | 'none' | { type: 'function'; function: { name: string } };
+    }
+  ): Promise<{ content: string; tool_calls?: any[]; finish_reason: string; model: string }> {
+    const config = await this.getConfig();
+    const { model, temperature, maxTokens, tool_choice, timeoutMs, abortSignal, maxRetries = 2 } = options;
+
+    if (!config.baseUrl) {
+      throw new Error('未配置 AI 服务地址，请在设置中配置');
+    }
+
+    const { headers, requestBody } = this.buildRequest({
+      messages,
+      model,
+      temperature,
+      maxTokens,
+      stream: false,
+      config,
+      tools,
+      ...(tool_choice !== undefined ? { tool_choice } : {})
+    });
+
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      if (attempt > 0) {
+        // 指数退避：1s, 2s, 4s ...
+        const backoffMs = Math.pow(2, attempt - 1) * 1000;
+        await new Promise<void>(resolve => setTimeout(resolve, backoffMs));
+
+        if (abortSignal?.aborted) {
+          throw new Error('操作已被取消');
+        }
+      }
+
+      // 每次尝试独立 controller，避免重试间信号串扰
+      const controller = new AbortController();
+      const timeoutId = timeoutMs && timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null;
+
+      // 外部 abortSignal 联动：触发时立即中止当前 fetch
+      const onExternalAbort = () => controller.abort();
+      if (abortSignal) {
+        if (abortSignal.aborted) {
+          controller.abort();
+        } else {
+          abortSignal.addEventListener('abort', onExternalAbort, { once: true });
+        }
+      }
+
+      try {
+        const response = await fetch(`${config.baseUrl}/v1/chat/completions`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(requestBody),
+          signal: controller.signal
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`AI 请求失败: ${response.status} ${response.statusText} - ${errorText}`);
+        }
+
+        const data = await response.json();
+
+        // 部分 API 在 HTTP 200 下仍返回 error 字段（如 OpenAI 兼容代理）
+        if (data?.error) {
+          throw new Error(`AI 返回错误: ${typeof data.error === 'string' ? data.error : JSON.stringify(data.error)}`);
+        }
+
+        const choice = data.choices?.[0];
+        const message = choice?.message;
+        // content 可能为 null（模型只返回 tool_calls 无文本时），规范化为 ''
+        const content = message?.content ?? '';
+        const tool_calls = message?.tool_calls;
+        const finish_reason = choice?.finish_reason ?? 'stop';
+
+        return {
+          content,
+          tool_calls,
+          finish_reason,
+          model: data.model || model
+        };
+      } catch (error) {
+        lastError = error as Error;
+
+        // 中止错误：不重试，直接抛出
+        const isAbortError = (error instanceof DOMException && error.name === 'AbortError')
+          || (typeof (error as Error).message === 'string' && (error as Error).message.toLowerCase().includes('abort'));
+
+        if (isAbortError) {
+          // 区分外部取消与超时
+          if (abortSignal?.aborted) {
+            throw new Error('操作已被取消');
+          }
+          throw new Error(`AI 请求超时（${(timeoutMs || 0) / 1000}秒），请稍后重试`);
+        }
+
+        // 非瞬时错误或已达最大重试次数：抛出
+        const isTransient = this.isTransientError(error as Error);
+        if (!isTransient || attempt === maxRetries) {
+          throw error;
+        }
+      } finally {
+        if (timeoutId !== null) clearTimeout(timeoutId);
+        if (abortSignal) {
+          abortSignal.removeEventListener('abort', onExternalAbort);
+        }
+      }
+    }
+
+    throw new Error(`AI 工具调用请求最终失败: ${lastError?.message ?? '未知错误'}`);
   }
 
   // ==================== Stream Call ====================

@@ -30,8 +30,11 @@ import {
 import { useExpressionStore } from '../../../stores/expressionStore';
 import { useAssetStore } from '../../../stores/assetStore';
 import { useSettingStore } from '../../../stores/settingStore';
+import { useCharacterLoraStore } from '../../../stores/characterLoraStore';
+import { useCharacterTraitStore } from '../../../stores/characterTraitStore';
 import type { SDWebuiConfig } from '../../../types/setting';
 import LoraSelectModal from './LoraSelectModal';
+import SizeSelector from './SizeSelector';
 
 /**
  * AI 素材生成弹窗（Spec: add-asset-and-trait-management / Task 10）
@@ -150,28 +153,37 @@ const DEFAULT_SD_CONFIG: SDWebuiConfig = {
   denoisingStrength: 0.55,
   steps: 28,
   cfgScale: 7,
-  sampler: 'DPM++ 2M Karras',
+  sampler: 'DPM++ 3M SDE',
+  scheduler: 'Karras',
+  clipSkip: 2,
   adetailerEnabled: true,
   positivePromptTemplate:
     'portrait, {traits}, looking at viewer, simple background, {emotion}, high quality, best quality, masterpiece, detailed face',
   customNegativePrompt: '',
   // ADetailer 高级参数默认值
+  // 【重点标记 - ADetailer 参数优化（2026-07-29）】表情图模糊修复：
+  // 降低降噪强度、增大蒙版模糊/膨胀、提高修复分辨率
   adModel: 'face_yolov8n.pt',
   adConfidence: 0.3,
-  adDenoisingStrength: 0.4,
-  adMaskBlur: 4,
-  adDilateErode: 4,
+  adDenoisingStrength: 0.3,
+  adMaskBlur: 8,
+  adDilateErode: 8,
   adInpaintOnlyMasked: true,
-  adInpaintOnlyMaskedPadding: 32,
-  adUseInpaintWidthHeight: false,
-  adInpaintWidth: 512,
-  adInpaintHeight: 512,
-  adUseSteps: false,
-  adSteps: 20,
-  adUseCfgScale: false,
-  adCfgScale: 4.0,
-  adUseSampler: false,
-  adSampler: 'Use same sampler',
+  adInpaintOnlyMaskedPadding: 64,
+  adUseInpaintWidthHeight: true,
+  adInpaintWidth: 1024,
+  adInpaintHeight: 1024,
+  adUseSteps: true,
+  adSteps: 30,
+  adUseCfgScale: true,
+  adCfgScale: 5.0,
+  adUseSampler: true,
+  adSampler: 'DPM++ 2M SDE',
+  adScheduler: 'Use same scheduler',
+  // 【重点标记 - ADetailer 面部修复专用参数（2026-07-29 源码核验）】
+  adNegativePrompt: '',
+  adUseNoiseMultiplier: true,
+  adNoiseMultiplier: 1.0,
   // NL 模型相关
   modelType: 'sdxl',
   nlPromptTemplate:
@@ -180,6 +192,21 @@ const DEFAULT_SD_CONFIG: SDWebuiConfig = {
   txt2imgHeight: 1024,
   // LoRA 模型选择（Spec: add-lora-model-selection / Task 5）
   selectedLoras: [],
+  // 【Hires.fix】默认开启修复与放大，Upscaler=Latent，steps=50
+  hrFixEnabled: true,
+  hrUpscaler: '4x-AnimeSharp',
+  hrSteps: 50,
+  hrScale: 2.0,
+  hrDenoisingStrength: 0.55,
+  hrPrompt: '',
+  hrNegativePrompt: '',
+  hrCfg: 5.0,
+  hrSamplerName: 'DPM++ 2M SDE',
+  hrScheduler: 'Karras',
+  img2imgExtraNoise: 0.05,
+  initialNoiseMultiplier: 1.0,
+  // 【img2img 高清模式】默认两步放大（768→1024），细节保留更好
+  img2imgHiresMode: 'two-step',
 };
 
 /** data URI 前缀（用于在浏览器中展示 base64 图片） */
@@ -272,6 +299,29 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
   );
   const supportsVision = activeEngine?.capabilities?.supportsVision === true;
 
+  // 【重点标记 - 按角色独立存储 LoRA（2026-07-29 bug 修复）】
+  // LoRA 配置不再从全局 setting.sdWebui.selectedLoras 读取，而是按角色卡独立存储，
+  // 避免 A 角色选择的 LoRA 污染 B 角色的生成。
+  const {
+    loras: characterLoras,
+    loadLoras: loadCharacterLoras,
+    saveLoras: saveCharacterLoras,
+  } = useCharacterLoraStore();
+
+  // 【重点标记 - 角色特征缓存 Bug 修复（2026-07-29）】
+  // 原实现通过 window.electronAPI.characterTrait.list() 直接 IPC 读取（从磁盘），
+  // 导致用户在特征 Tab 中 addTrait/removeTrait/updateTrait 后（仅更新 store 未持久化），
+  // 生成弹窗读取到的仍是磁盘旧数据。现改为订阅 characterTraitStore，
+  // 与 AssetManagerModal 特征 Tab 共享同一 store state，实时同步未保存的修改。
+  // init useEffect 中仅当 store 的 currentCharacterCardId 与当前角色不一致时才 loadTraits，
+  // 避免覆盖 AssetManagerModal 中已加载（可能含未保存修改）的 traits。
+  const {
+    traits: characterTraits,
+    currentCharacterCardId: traitStoreCardId,
+    loadTraits: loadStoreTraits,
+    setTraits: setStoreTraits,
+  } = useCharacterTraitStore();
+
   // ====== 基础状态 ======
   /** SD WebUI 配置（来自 setting.load()） */
   const [sdConfig, setSdConfig] = useState<SDWebuiConfig>(DEFAULT_SD_CONFIG);
@@ -286,10 +336,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
   /** 初始化加载中（读取设置 / 读取特征 / 检测 SD） */
   const [initializing, setInitializing] = useState<boolean>(false);
 
-  // ====== 角色特征状态 ======
-  /** 角色视觉特征 tag 数组（从 characterTrait.list 读取） */
-  const [characterTraits, setCharacterTraits] = useState<string[]>([]);
-  /** 特征读取错误信息（null 表示无错误） */
+  /** 特征读取错误信息（null 表示无错误）— 仅记录 init 阶段的加载错误 */
   const [traitsError, setTraitsError] = useState<string | null>(null);
   // 【Spec: add-model-capability-detection-and-image-recognition / Task 7】
   // AI 图片识别进行中标记，控制按钮 loading 状态
@@ -330,6 +377,18 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
   /** LoRA 选择弹窗开关（Spec: add-lora-model-selection / Task 5） */
   const [loraModalOpen, setLoraModalOpen] = useState(false);
 
+  /**
+   * 用户自定义输出尺寸（2026-07-29 新增）
+   *
+   * 每次生成独立应用，不写入全局设置。初始值从 sdConfig.txt2imgWidth/Height 读取（默认 1024×1024），
+   * 弹窗关闭时重置为默认值。buildSdOptions 时同时传递 txt2imgWidth/Height（txt2img 路径）
+   * 和 width/height（img2img 路径覆盖宽高比推导）。
+   */
+  const [selectedSize, setSelectedSize] = useState<{ width: number; height: number }>({
+    width: 1024,
+    height: 1024,
+  });
+
   // ====== 初始化加载（open 时拉取 SD 配置 / 读取特征 / 检测 SD 状态） ======
   useEffect(() => {
     if (!open || !characterCardId) return;
@@ -359,21 +418,38 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
         if (cancelled) return;
         setSdConfig(config);
 
+        // 初始化用户自定义尺寸：从设置默认值读取（2026-07-29 新增）
+        setSelectedSize({
+          width: config.txt2imgWidth ?? 1024,
+          height: config.txt2imgHeight ?? 1024,
+        });
+
         // 2. 读取角色特征（Spec: add-asset-and-trait-management / Task 10）
-        // 通过 IPC 直接读取，不依赖 characterTraitStore（避免父组件未 loadTraits 时取不到值）
+        // 【重点标记 - 角色特征缓存 Bug 修复（2026-07-29）】
+        // 改为订阅 characterTraitStore（与 AssetManagerModal 特征 Tab 共享 state），
+        // 仅当 store 未加载当前角色的 traits 时才从磁盘读取，
+        // 避免覆盖 AssetManagerModal 中已加载（可能含未保存修改）的 traits。
         try {
-          const traits = await window.electronAPI.characterTrait.list(
-            characterCardId,
-          );
+          if (traitStoreCardId !== characterCardId) {
+            await loadStoreTraits(characterCardId);
+          }
           if (cancelled) return;
-          setCharacterTraits(Array.isArray(traits) ? traits : []);
+          setTraitsError(null);
         } catch (e) {
           if (cancelled) return;
           console.warn('[AssetGenerateModal] 读取角色特征失败:', e);
-          setCharacterTraits([]);
           setTraitsError(
             e instanceof Error ? e.message : '读取角色特征失败',
           );
+        }
+
+        // 【重点标记 - 按角色独立存储 LoRA（2026-07-29 bug 修复）】
+        // 读取当前角色卡专属的 LoRA 配置，替代全局 setting.sdWebui.selectedLoras。
+        // 这是修复"A角色LoRA污染B角色"bug 的关键：每个角色维护独立的 LoRA 列表。
+        try {
+          await loadCharacterLoras(characterCardId);
+        } catch (e) {
+          console.warn('[AssetGenerateModal] 读取角色 LoRA 失败:', e);
         }
 
         // 3. 检测 SD WebUI 状态（含 ADetailer 可用性检测）
@@ -402,7 +478,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [open, characterCardId]);
+  }, [open, characterCardId, loadCharacterLoras, traitStoreCardId, loadStoreTraits]);
 
   // ====== 初始化时构建提示词预览 + 可编辑提示词（非 batch 模式） ======
   useEffect(() => {
@@ -496,10 +572,13 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
       setPositivePrompt('');
       setNegativePrompt('');
       setUserScene('');
-      setCharacterTraits([]);
+      // 【角色特征缓存 Bug 修复】不再 reset characterTraits — 改为订阅 characterTraitStore，
+      // store state 由 AssetManagerModal 管理，此处不应清空（避免影响其他订阅者）
       setTraitsError(null);
       setAdetailerAvailable(null);
       setImageRecognizing(false);
+      // 重置自定义尺寸为默认值（2026-07-29 新增）
+      setSelectedSize({ width: 1024, height: 1024 });
     }
   }, [open]);
 
@@ -550,6 +629,8 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
       steps: sdConfig.steps,
       cfgScale: sdConfig.cfgScale,
       sampler: sdConfig.sampler,
+      scheduler: sdConfig.scheduler,
+      clipSkip: sdConfig.clipSkip,
       adetailerEnabled: sdConfig.adetailerEnabled,
       model: sdConfig.model || undefined,
       // 【重点标记 - 特征携带机制】注入角色特征 tag 数组
@@ -571,14 +652,41 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
       adCfgScale: sdConfig.adCfgScale,
       adUseSampler: sdConfig.adUseSampler,
       adSampler: sdConfig.adSampler,
+      adScheduler: sdConfig.adScheduler,
+      adNegativePrompt: sdConfig.adNegativePrompt,
+      adUseNoiseMultiplier: sdConfig.adUseNoiseMultiplier,
+      adNoiseMultiplier: sdConfig.adNoiseMultiplier,
       // NL 模型相关（Spec: integrate-nl-driven-sd-models）
       modelType: sdConfig.modelType,
-      txt2imgWidth: sdConfig.txt2imgWidth,
-      txt2imgHeight: sdConfig.txt2imgHeight,
-      // LoRA 模型选择（Spec: add-lora-model-selection / Task 5）
-      selectedLoras: sdConfig.selectedLoras,
+      // 【2026-07-29 新增 - 用户自定义尺寸】使用弹窗内 SizeSelector 选择的尺寸，
+      // 替代全局 sdConfig.txt2imgWidth/Height。每次生成独立应用，不写入全局设置。
+      txt2imgWidth: selectedSize.width,
+      txt2imgHeight: selectedSize.height,
+      // img2img 路径尺寸覆盖：传入 width/height 后 calculateImg2ImgDimensions
+      // 将跳过宽高比推导，直接使用用户指定尺寸（two-step 模式按比例缩放中间步骤）
+      width: selectedSize.width,
+      height: selectedSize.height,
+      // 【重点标记 - 按角色独立存储 LoRA（2026-07-29 bug 修复）】
+      // 使用角色卡专属的 LoRA 列表，而非全局 setting.sdWebui.selectedLoras，
+      // 确保每个角色使用各自的 LoRA 模型，杜绝跨角色污染。
+      selectedLoras: characterLoras,
+      // 【Hires.fix 修复与放大】透传高分辨率修复参数
+      hrFixEnabled: sdConfig.hrFixEnabled,
+      hrUpscaler: sdConfig.hrUpscaler,
+      hrSteps: sdConfig.hrSteps,
+      hrScale: sdConfig.hrScale,
+      hrDenoisingStrength: sdConfig.hrDenoisingStrength,
+      hrPrompt: sdConfig.hrPrompt,
+      hrNegativePrompt: sdConfig.hrNegativePrompt,
+      hrCfg: sdConfig.hrCfg,
+      hrSamplerName: sdConfig.hrSamplerName,
+      hrScheduler: sdConfig.hrScheduler,
+      img2imgExtraNoise: sdConfig.img2imgExtraNoise,
+      initialNoiseMultiplier: sdConfig.initialNoiseMultiplier,
+      // 【img2img 高清模式】透传模式选择（direct / two-step）
+      img2imgHiresMode: sdConfig.img2imgHiresMode,
     };
-  }, [sdConfig, characterTraits]);
+  }, [sdConfig, characterTraits, characterLoras, selectedSize]);
 
   // ====== 保存生成的素材（非表情模式） ======
   // 【重点标记 - assetId 生成规则】
@@ -788,34 +896,46 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
 
     try {
       // 根据模式确定 emotionKey（仅用于日志，实际生成由 prompt 控制）
-      // 【重点标记 - 复用 sd.generateExpression IPC】
-      // 非 single-expression 模式下 emotionKey 传占位值，prompt 由本组件构建的模板控制
-      let emotionKeyForLog: string;
       let promptToUse: string;
       let negativePromptToUse: string;
 
       if (mode === 'single-expression' && targetEmotionKey) {
-        // 表情模式：emotionKey 用真实值，prompt 复用 buildEmotionPrompt（或用户编辑后的）
-        emotionKeyForLog = targetEmotionKey;
+        // 表情模式：prompt 复用 buildEmotionPrompt（或用户编辑后的）
         const preset = EMOTION_PRESETS.find((e) => e.key === targetEmotionKey);
         const customLabel = targetEmotionLabel || preset?.label;
         const built = buildEmotionPrompt(targetEmotionKey, customLabel);
         promptToUse = positivePrompt.trim() || built.prompt;
         negativePromptToUse = negativePrompt;
       } else {
-        // 素材模式（illustration / general / three-view）：emotionKey 占位，使用用户可编辑的提示词
-        emotionKeyForLog = mode; // 'illustration' | 'general' | 'three-view'（仅用于日志识别）
+        // 素材模式（illustration / general / three-view）：使用用户可编辑的提示词
         promptToUse = positivePrompt;
         negativePromptToUse = negativePrompt;
       }
 
-      const result = await window.electronAPI.sd.generateExpression({
-        characterCardPath,
-        emotionKey: emotionKeyForLog,
-        prompt: promptToUse,
-        negativePrompt: negativePromptToUse,
-        options: buildSdOptions(),
-      });
+      // 【重点标记 - 立绘生成强制 txt2img】
+      // illustration 模式直接调用 sd.generateTxt2Img，明确禁用 img2img 技术路径。
+      // sdGenerationService.generateTxt2Img 内部调用 applyTraitsAndLora 处理
+      // {traits} 占位符替换 + LoRA 标签注入，确保角色特征 tag 和 LoRA 被准确应用。
+      // 其他模式（single-expression / general / three-view）仍走 sd.generateExpression，
+      // 由其内部按 modelType 分流到 txt2img 或 img2img。
+      let result: { success: boolean; imageBase64?: string; error?: string; warning?: string };
+
+      if (mode === 'illustration') {
+        result = await window.electronAPI.sd.generateTxt2Img({
+          endpoint: sdConfig.endpoint,
+          prompt: promptToUse,
+          negativePrompt: negativePromptToUse,
+          options: buildSdOptions(),
+        });
+      } else {
+        result = await window.electronAPI.sd.generateExpression({
+          characterCardPath,
+          emotionKey: mode, // 仅用于日志识别
+          prompt: promptToUse,
+          negativePrompt: negativePromptToUse,
+          options: buildSdOptions(),
+        });
+      }
 
       if (result?.success && result.imageBase64) {
         const dataUrl = result.imageBase64.startsWith(PNG_DATA_URI_PREFIX)
@@ -828,7 +948,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
         setSingleStage('failed');
       }
     } catch (e) {
-      console.error('[AssetGenerateModal] generateExpression 异常:', e);
+      console.error('[AssetGenerateModal] generateExpression/txt2Img 异常:', e);
       setSingleError(e instanceof Error ? e.message : String(e));
       setSingleStage('failed');
     }
@@ -841,6 +961,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
     targetSlot,
     userScene,
     sdStatus,
+    sdConfig.endpoint,
     positivePrompt,
     negativePrompt,
     buildEmotionPrompt,
@@ -982,7 +1103,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
           (t) => !existing.has(t.toLowerCase()),
         );
         const updated = [...characterTraits, ...newTraits];
-        setCharacterTraits(updated);
+        setStoreTraits(updated);
         message.success(
           `识别到 ${newTraits.length} 个新特征标签（共 ${result.traits.length} 个）`,
         );
@@ -996,7 +1117,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
     } finally {
       setImageRecognizing(false);
     }
-  }, [characterCardId, characterName, characterTraits]);
+  }, [characterCardId, characterName, characterTraits, setStoreTraits]);
 
   // ====== 渲染辅助 ======
 
@@ -1304,6 +1425,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
         <Tag>CFG：{sdConfig.cfgScale}</Tag>
         <Tag>采样器：{sdConfig.sampler || 'DPM++ 2M Karras'}</Tag>
         <Tag>去噪：{sdConfig.denoisingStrength}</Tag>
+        <Tag color="geekblue">尺寸：{selectedSize.width}×{selectedSize.height}</Tag>
         <Tag
           color={
             !sdConfig.adetailerEnabled
@@ -1325,7 +1447,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
           style={{ cursor: 'pointer' }}
           onClick={() => setLoraModalOpen(true)}
         >
-          LoRA：{sdConfig.selectedLoras?.length || 0} 个
+          LoRA：{characterLoras.length} 个
         </Tag>
         {sdConfig.model && <Tag>模型：{sdConfig.model}</Tag>}
       </Space>
@@ -1827,6 +1949,12 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
         <>
           {renderHeader()}
           {renderTraitsPanel()}
+          {/* 2026-07-29 新增 - 用户自定义输出尺寸选择器（所有生成模式可见） */}
+          <SizeSelector
+            width={selectedSize.width}
+            height={selectedSize.height}
+            onChange={(w, h) => setSelectedSize({ width: w, height: h })}
+          />
           {renderSdUnavailableAlert()}
           {renderAdetailerWarning()}
           {mode === 'batch-expression'
@@ -1836,12 +1964,15 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
       )}
 
       {/* LoRA 模型选择弹窗（Spec: add-lora-model-selection / Task 5） */}
+      {/* 【重点标记 - 按角色独立存储 LoRA（2026-07-29 bug 修复）】
+          选择结果保存到当前角色卡专属存储，而非全局 setting.sdWebui.selectedLoras，
+          确保不同角色使用各自的 LoRA 模型。 */}
       <LoraSelectModal
         open={loraModalOpen}
         endpoint={sdConfig.endpoint}
-        selectedLoras={sdConfig.selectedLoras || []}
+        selectedLoras={characterLoras}
         onConfirm={(loras) => {
-          setSdConfig((prev) => ({ ...prev, selectedLoras: loras }));
+          saveCharacterLoras(characterCardId, loras);
           setLoraModalOpen(false);
         }}
         onCancel={() => setLoraModalOpen(false)}

@@ -27,6 +27,15 @@ import type {
   GameType
 } from '../../shared/types/game.types';
 import type { AIEngineCapabilities } from './setting';
+// 工具调用智能体引擎类型（方向 0）
+// 主进程类型仅用于类型检查（type-only import，编译时擦除，不影响 renderer 打包）
+import type {
+  AgentLoopResult,
+  AgentToolGroup,
+  AgentToolContext,
+  ToolCallEvent,
+} from '../../main/services/ai/agent/agentTypes';
+import type { ChatMessage } from '../../main/services/AIService';
 
 declare global {
   interface Window {
@@ -246,6 +255,72 @@ interface ElectronAPI {
      */
     probeCapabilities: (args: { apiUrl: string; apiKey: string; apiKeyTransmission: string; modelName: string }) =>
       Promise<{ success: boolean; capabilities?: AIEngineCapabilities; error?: string }>;
+    /**
+     * 运行一轮工具调用智能体循环（方向 0 最后一层）
+     *
+     * handler 内部读取全局 enableAgentMode 设置 + 当前引擎 capabilities.supportsToolCalling，
+     * 计算 effectiveSupportsToolCalling = enableAgentMode && supportsToolCalling 传入 runAgentLoop。
+     * 开关关或模型不支持 → 自动降级为纯文本生成（agentLoop 内部已处理降级）。
+     *
+     * options 不含 supportsToolCalling（由 handler 计算），也不含 abortSignal（暂未暴露取消通道）。
+     * 工具调用事件通过 onAgentToolCall 订阅（handler 在执行工具时主动推送）。
+     *
+     * 错误兜底：handler try-catch 包裹，异常时返回 stoppedReason='error' 的 AgentLoopResult，
+     * 渲染进程永不收到 reject。
+     */
+    runAgentTurn: (params: {
+      messages: ChatMessage[];
+      toolGroups: AgentToolGroup[];
+      context?: AgentToolContext;
+      options: {
+        model: string;
+        temperature: number;
+        maxTokens: number;
+        maxIterations?: number;
+        tool_choice?: 'auto' | 'none' | { type: 'function'; function: { name: string } };
+        streamFinal?: boolean;
+      };
+    }) => Promise<AgentLoopResult>;
+    /**
+     * 订阅工具调用事件（agentLoop 在执行工具时推送，可观测性）
+     * @param callback 接收 ToolCallEvent（含工具名、参数、结果、耗时、迭代序号）
+     * @returns unsubscribe 函数（与 writing.onPolishChunk / game.onNarrativeChunk 模式一致）
+     */
+    onAgentToolCall: (callback: (event: ToolCallEvent) => void) => () => void;
+  };
+  // ============================================================================
+  // Agent 技能库 / 长期记忆 / 自我学习 API（Spec: add-agent-skill-and-memory-foundation / Task 12）
+  // ============================================================================
+  // 命名空间隔离设计：使用独立前缀 agent-skill: / agent-memory: / agent-learning:
+  // 与现有 memory:* 旧聊天/表格记忆系统物理隔离，避免通道与命名冲突
+  // Agent 技能库 API
+  agentSkill: {
+    list: (params?: { category?: string; enabledOnly?: boolean }) => Promise<any[]>;
+    get: (id: string) => Promise<any | undefined>;
+    create: (manifest: any) => Promise<void>;
+    update: (manifest: any) => Promise<void>;
+    delete: (id: string) => Promise<void>;
+    invoke: (id: string, input: any, context?: any) => Promise<any>;
+    discover: (query: string, category?: string) => Promise<any[]>;
+    history: (id: string) => Promise<any[]>;
+    rollback: (id: string, version: string) => Promise<void>;
+    import: (json: string) => Promise<void>;
+    export: (id: string) => Promise<string>;
+  };
+  // Agent 长期记忆 API
+  agentMemory: {
+    search: (query: string, type?: string, topK?: number) => Promise<any[]>;
+    query: (filter: any) => Promise<any[]>;
+    record: (content: string, type: string, metadata?: any) => Promise<any>;
+    delete: (id: string) => Promise<void>;
+    getRelevant: (context: any, taskDescription: string, topK?: number) => Promise<any[]>;
+  };
+  // Agent 自我学习 API
+  agentLearning: {
+    consolidate: () => Promise<any>;
+    optimize: (taskType: string, taskDescription: string, context?: any) => Promise<any>;
+    feedback: (memoryId: string, feedback: any) => Promise<void>;
+    extractPatterns: (taskType?: string) => Promise<any[]>;
   };
   // 创意数据 API
   creative: {
@@ -512,6 +587,19 @@ interface ElectronAPI {
     loadDescription: (characterCardId: string) => Promise<string>;
     /** 清除角色卡特征文件（删除 traits.json，文件不存在视为幂等成功） */
     clear: (characterCardId: string) => Promise<{ success: boolean; error?: string }>;
+  };
+
+  // 角色卡 LoRA 管理 API（2026-07-29 bug 修复 - 按角色独立存储）
+  // 【重点标记】原实现将 LoRA 存在全局设置中导致角色间污染，现改为按角色卡独立持久化
+  // 存储路径：{userData}/data/character-loras/{sha256(characterCardId).slice(0,16)}/loras.json
+  characterLora: {
+    /** 读取角色卡 LoRA 模型清单；文件不存在或解析失败时返回 [] */
+    list: (characterCardId: string) => Promise<Array<{ name: string; weight: number }>>;
+    /** 覆盖保存角色卡 LoRA 模型清单（自动创建目录，原子写入 loras.json） */
+    save: (args: {
+      characterCardId: string;
+      loras: Array<{ name: string; weight: number }>;
+    }) => Promise<{ success: boolean; error?: string }>;
   };
 
   // 素材管理 API（Spec: add-asset-and-trait-management / Task 7）

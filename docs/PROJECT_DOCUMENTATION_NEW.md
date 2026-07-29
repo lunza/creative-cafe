@@ -1278,6 +1278,13 @@ buildExpressionGenerationPrompt(charDescription, emotionKey, customLabel?): { pr
 
 **【重点标记 - ADetailer-Neo 兼容性修复（2026-07-27）】** 早期实现错误使用了 `ad_inpaint_full_res`（Neo 已移除）和 `ad_dilation`（正确字段名为 `ad_dilate_erode`），导致 SD WebUI 控制台报 `pydantic_core._pydantic_core.ValidationError: Extra inputs are not permitted`。修复方案：直接读取用户本地 `extensions/ADetailer-Neo/lib_adetailer/args.py` 确认 `ADetailerArgs` 字段定义，移除非法字段、修正字段名、补全 `ad_inpaint_only_masked_padding` 等缺失字段，并扩展设置 UI 暴露全套高级参数。**核心教训**：集成 SD WebUI 扩展时必须直接读取本地扩展源码确认 pydantic 模型的 `extra` 策略与字段名，不能依赖网络搜索到的「原版」参数文档。
 
+**【重点标记 - ADetailer 面部修复专用参数（2026-07-29 源码核验）】** 通过直接核验 `G:\AI\sd-webui-forge-neo` 源码（`extensions/ADetailer-Neo/lib_adetailer/args.py:43-85`），发现 `ADetailerArgs` 尚有未被利用的高价值参数，新增 3 个字段（ADetailer 高级参数从 16 个扩展至 19 个）：
+- `adNegativePrompt`（`ad_negative_prompt`，args.py:50）：ADetailer 独立负面提示词，空=沿用主负面提示词，可配置如 "deformed, distorted, bad face, wrong anatomy" 专用于面部修复
+- `adUseNoiseMultiplier`（`ad_use_noise_multiplier`，args.py:78）：是否启用独立噪声倍率，默认 true
+- `adNoiseMultiplier`（`ad_noise_multiplier`，args.py:79）：噪声倍率（0.5-1.5），默认 1.0，增大可增加面部细节
+- **源码核验结论**：同时确认 `StableDiffusionProcessingImg2Img`（processing.py:1655-1677）无 `enable_hr` / `hr_*` 字段（仅 `StableDiffusionProcessingTxt2Img` 1211-1227 行有），证实 img2img 不支持 Hires.fix，two-step 替代方案是唯一路径
+- 详见 CODE_WIKI.md §14.35
+
 #### IPC 通道（命名空间 `sd`）
 
 | 通道 | 调用签名 | 返回值 | 说明 |
@@ -1596,9 +1603,51 @@ buildExpressionGenerationPrompt(charDescription, emotionKey, customLabel?): { pr
 - **【重点标记 - 三视图槽位约束】** `three-view` 类型仅允许 `front` / `side` / `back` 三个 `assetId`
 - **【重点标记 - setTraits 本地批量替换】** 为 Task 13 AI 特征生成新增的 local-only action，AI 返回后用户可编辑后再 `saveTraits` 持久化，避免直接覆盖持久化数据
 
+> 增量更新（2026-07-29 / 体验优化）：`AssetManagerModal` 新增 `inline?: boolean` 属性（默认 `false`）。`CharacterEditModal` 的「素材管理」Tab 改为 `inline={true}` 内联渲染——不再展示 `Alert` + 「打开表情管理」按钮再二次弹窗，而是直接在 Tab 内呈现完整的 5 个子 Tab（表情/立绘/一般图像/三视图/角色特征），与其他三个 Tab（角色信息/对话与指令/世界书关联）的体验一致。实现采用条件渲染（`inline=true` 时返回普通 `<div>` 而非 `<Modal>`），避免 Modal CSS hack 在嵌套场景的定位冲突；内部子弹窗仍各自 portal 到 document.body 不受影响。`CharacterDialogueChat.tsx`（ChatHeader 入口）未传 `inline`，保持原弹窗行为不变。详见 `CODE_WIKI.md` §14.30。
+
+> 增量更新（2026-07-29 / 立绘工作流三项改动）：针对立绘生成→预览→应用的完整工作流进行三项联动优化。详见 `CODE_WIKI.md` §14.31。
+>
+> **1. 立绘生成强制 txt2img 路径（明确禁用 img2img）**
+> - **改动**：`AssetGenerateModal` 的 illustration 模式从原 `sd.generateExpression`（内部按 modelType 分流，sdxl 走 img2img）改为直接调用 `sd.generateTxt2Img`，强制走文生图路径，不依赖基底图片，完全由角色特征 tag + LoRA 驱动生成
+> - **sdGenerationService.ts 重构**：提取 `{traits}` 占位符替换 + LoRA 标签注入逻辑为独立私有方法 `applyTraitsAndLora(prompt, options): string`，供 `generateExpression`（img2img 路径）与 `generateTxt2Img`（txt2img 路径）复用。`generateTxt2Img` 内部新增 `applyTraitsAndLora` 调用使其自包含。同时调整 `generateExpression` 中的调用顺序：将 `applyTraitsAndLora` 移至 txt2img 分支之后（仅服务 img2img 路径），避免当 `generateExpression` 分流到 `generateTxt2Img` 时双重注入 LoRA 标签
+> - **涉及文件**：`src/main/services/sdGenerationService.ts` / `src/renderer/components/Character/CharacterDialogueChat/AssetGenerateModal.tsx`
+>
+> **2. 立绘替换角色卡图片（含确认机制防误操作）**
+> - **能力**：「角色立绘」Tab 中每张立绘缩略图新增 `SwapOutlined`「设为角色卡图片」按钮（仅 `assetType === 'illustration'` 时显示）
+> - **确认机制**：点击后弹出 `Modal.confirm` 警告框，明确告知「将替换角色卡原始图片，角色数据保留不变，操作不可撤销」，`okButtonProps: { danger: true }`，需用户主动确认
+> - **替换流程**：确认后 → `character.read(cardPath)` 读取当前 JSON 元数据 → 剥离 data URI 前缀提取 base64 → `character.createFromImage(cardPath, base64, content)` 重建 PNG（新图片 + 原 JSON）→ `invalidateCharacterImageCache(cardPath)` 失效缩略图/头像缓存 → `onCardImageReplaced` 回调通知父组件
+> - **CharacterEditModal 联动**：新增 `onCardImageReplaced` prop，内联模式下由 `CharacterEditModal` 接收 `handleCardImageReplaced` 回调——更新 `uploadedImage` 预览为新图片 + 重置 `imageChanged = false`（PNG 已在磁盘重建，保存时仅需 `character.write` 写 JSON，无需再次 `createFromImage`）
+> - **涉及文件**：`AssetManagerModal.tsx`（替换按钮 + `handleReplaceCardImage` + `onCardImageReplaced` prop 透传）/ `CharacterEditModal.tsx`（`handleCardImageReplaced` 回调）/ `characterThumbnailCache.tsx`（`invalidateCharacterImageCache`）
+>
+> **3. 缩略图全尺寸预览（hover 眼睛图标）**
+> - **能力**：为素材管理中所有图片缩略图（角色立绘 / 一般图像 / 三视图）添加 hover 触发的预览功能。鼠标悬停时半透明遮罩层平滑淡入（`opacity 0→1, transition 0.25s`），中央显示 `EyeOutlined` 眼睛图标按钮；点击后以 `Modal` 展示完整尺寸图片（`maxWidth: 90vw, maxHeight: 85vh, objectFit: contain`），保留原始分辨率与细节
+> - **实现**：采用 `querySelector('.thumbnail-hover-overlay')` + `style.opacity` 直接操控 DOM（与现有卡片 border-color hover 模式一致），避免额外 React state 渲染开销。预览 Modal 使用 `footer={null}` + `destroyOnClose`（关闭时释放大图内存）
+> - **涉及文件**：`AssetManagerModal.tsx`（`AssetGridTabContent` + `ThreeViewTabContent` 均添加 hover 覆盖层 + 预览 Modal + `previewImage` state）
+
 ### 7.3.4 自然语言驱动 SD 模型集成（Spec: integrate-nl-driven-sd-models）
 
 > 增量更新（2026-07-28）：在原 SDXL img2img + ADetailer 表情生成管线（§7.3.2）基础上，新增对自然语言（NL）驱动 SD 模型的多模型分支支持，覆盖 qwen-image / qwen-image-edit / flux2 三种新模型类型。所有模型均使用 sd-webui-forge-neo 的标准 `/sdapi/v1/txt2img` 与 `/sdapi/v1/img2img` 端点，无需自定义路由。
+
+> 增量更新（2026-07-29 / img2img 步数优化 + 表情图模糊修复）：针对 img2img 表情生成进行两项优化。详见 `CODE_WIKI.md` §14.32。
+>
+> **1. 步数严格遵循用户配置**
+> - 在 `generateExpression`（img2img 路径）请求体中添加 `override_settings: { img2img_fix_steps: false }`，禁用 Forge Neo 的步数放大行为。Forge Neo 的 `img2img_fix_steps` 选项（`shared_options.py:298`）当为 `True` 时，`setup_img2img_steps`（`sd_samplers_common.py:42`）会按 `steps = int(requested_steps / denoising_strength)` 放大步数（如 28/0.5=56），导致进度条显示步数与用户配置不符。通过 `override_settings` 强制设为 `false`，确保 API 调用时步数严格遵循用户配置值
+>
+> **2. 表情图模糊修复（四项优化）**
+> - **img2img 目标分辨率提升**：`calculateAspectRatioDimensions` 长边从 512 提升至 768（新增常量 `IMG2IMG_LONG_SIDE_TARGET`）
+> - **ADetailer 面部修复分辨率提升**：`ad_inpaint_width/height` 从 512 提升至 768，强制启用 `ad_use_inpaint_width_height = true`
+> - **ADetailer 降噪强度降低**：`ad_denoising_strength` 从 0.4 降至 0.3，保留更多原图面部细节
+> - **ADetailer 蒙版参数优化**：`ad_mask_blur` 从 4 提至 8，`ad_dilate_erode` 从 4 提至 8，使修复区域过渡更自然
+> - **同步更新**：5 个文件的 `DEFAULT_SD_CONFIG` / `DEFAULT_SD_WEBUI_CONFIG` 中的 ADetailer 默认值同步更新
+
+> 增量更新（2026-07-29 / img2img 高清模式切换）：Forge Neo 的 img2img API 不支持 Hires.fix（`StableDiffusionProcessingImg2Img` 类无 `enable_hr` 等字段）。新增两种替代方案供用户切换。详见 `CODE_WIKI.md` §14.33。
+>
+> **1. direct 模式**：直接在 1024 分辨率下一步 img2img 生成，速度快
+> **2. two-step 模式（默认）**：先 768 生成 → 再 1024 低降噪（0.35）放大修复，细节保留更好
+> - 用户可在 SD WebUI 设置面板的「img2img 高清模式」折叠面板中通过 Radio 切换
+> - 参数针对 NVIDIA RTX PRO 6000 Blackwell（96GB 显存）优化：ADetailer 面部修复分辨率从 768 提升至 1024×1024
+> - 移除 img2img 路径中被忽略的 Hires.fix 参数注入，替换为有效的两种方案
+> - 重构 `generateExpression`：提取 `calculateImg2ImgDimensions` / `executeImg2ImgPass` 私有方法，根据模式调用一次或两次
 
 #### 概述
 
@@ -1975,6 +2024,8 @@ Preload 暴露：`window.electronAPI.ai.probeCapabilities(args)` / `window.elect
 
 > 增量更新（2026-07-28）：在 SD 表情/素材生成流程（§7.3.2 / §7.3.3）中新增 LoRA 模型选择能力。用户可在生成前从 SD WebUI 拉取可用 LoRA 列表，多选并调整权重（0-1，步进 0.05，默认 0.7），生成时自动注入 `<lora:name:weight>` 标签到 prompt 前部。LoRA 选择持久化到 `AppSetting.sdWebui.selectedLoras`，跨会话保留。
 
+> **【重点标记 - 增量更新（2026-07-29 Bug 修复，用户反复提示后修复）】** 修复 LoRA 跨角色污染 Bug：原实现将 LoRA 存储在全局 `AppSetting.sdWebui.selectedLoras`，导致 A 角色选择的 LoRA 残留并污染 B 角色生成。现改为**按角色卡独立存储**——新建 `characterLoraService.ts` / `characterLoraHandlers.ts` / `characterLoraStore.ts`，通过 SHA-256 哈希角色卡 ID 生成独立存储路径 `{userData}/data/character-loras/{hash}/loras.json`。`AssetManagerModal` / `AssetGenerateModal` / `ExpressionGenerateModal` 三个组件均改为从 `useCharacterLoraStore` 读取 LoRA 列表，`buildSdOptions` 中 `selectedLoras` 改用 `characterLoras`（角色专属），`LoraSelectModal` 的 `onConfirm` 改为调用 `saveCharacterLoras(characterCardId, loras)`。全局 `sdWebui.selectedLoras` 字段保留但不再被生成弹窗读取。详见 CODE_WIKI §14.36。
+
 #### 数据流
 
 ```
@@ -1990,8 +2041,9 @@ Preload 暴露：`window.electronAPI.ai.probeCapabilities(args)` / `window.elect
       ←─ 返回 LoraModel[]（含 name / previewUrl / description / category 等 10 字段）
 
 用户多选 LoRA + 调整权重 → 点击确认
-  └─> onConfirm(localSelected) → 写入 sdConfig.selectedLoras
-       └─> buildSdOptions() 透传 selectedLoras 到 options
+  └─> onConfirm(localSelected) → saveCharacterLoras(characterCardId, loras)
+       └─> IPC character-lora:save → characterLoraService.saveLoras → 写入 loras.json（角色专属）
+       └─> buildSdOptions() 透传 selectedLoras: characterLoras 到 options（角色专属，无跨角色污染）
             └─> sdGenerationService.generateExpression()
                  ├─> 替换 {traits} 占位符（§7.3.3 特征携带机制）
                  ├─> 将 selectedLoras 转为 <lora:name:weight> 标签注入 prompt 前部
@@ -2064,12 +2116,17 @@ Preload 暴露：`window.electronAPI.ai.probeCapabilities(args)` / `window.elect
 
 `ExpressionGenerateModal` 与 `AssetGenerateModal` 均新增：
 - LoRA 入口 Tag（青色 `color="cyan"`，显示已选数量，点击打开 Modal）
-- `buildSdOptions()` 透传 `selectedLoras: sdConfig.selectedLoras`
-- `LoraSelectModal` 组件渲染，确认后写入 `sdConfig.selectedLoras`
+- `buildSdOptions()` 透传 `selectedLoras: characterLoras`（**2026-07-29 改为角色专属**，原 `sdConfig.selectedLoras` 已弃用）
+- `LoraSelectModal` 组件渲染，确认后调用 `saveCharacterLoras(characterCardId, loras)` 写入角色卡专属存储（**2026-07-29 改为角色专属**，原 `setSdConfig` 写入全局 state 已弃用）
+- 初始化时调用 `loadCharacterLoras(characterCardId)` 加载当前角色的 LoRA 配置
 
 #### 持久化
 
-`SDWebuiConfig.selectedLoras` 持久化到 `AppSetting.sdWebui.selectedLoras`。`SDWebuiSettings.getFormValues()` 中 `selectedLoras` 不在表单中编辑（由 LoRA 选择 Modal 设置），`form.getFieldsValue(true)` 可能不返回此字段。因此在 `getFormValues` 返回值中显式从 `setting.sdWebui.selectedLoras` 合并，合并顺序：`DEFAULT_SD_WEBUI_CONFIG` → `selectedLoras`（来自 setting）→ `values`（来自表单），确保表单值优先级最高且已持久化的 LoRA 选择不丢失。
+**【重点标记 - 2026-07-29 Bug 修复：改为按角色独立存储】** LoRA 配置不再持久化到全局 `AppSetting.sdWebui.selectedLoras`，改为按角色卡独立存储到 `{userData}/data/character-loras/{sha256(characterCardId).slice(0,16)}/loras.json`。
+
+- **原方案（已弃用）**：`SDWebuiConfig.selectedLoras` 持久化到 `AppSetting.sdWebui.selectedLoras`，所有角色共享同一份 LoRA 配置，导致 A 角色 LoRA 污染 B 角色
+- **新方案**：`characterLoraService` 按角色卡 ID 哈希生成独立目录，每个角色维护独立的 `loras.json`；`characterLoraStore`（Zustand）封装 IPC 调用，提供 `loadLoras` / `saveLoras`（乐观更新 + 失败回滚）
+- 全局 `SDWebuiConfig.selectedLoras` 字段保留（类型兼容），但生成弹窗不再读取该字段
 
 #### 关键文件清单
 
@@ -2087,6 +2144,77 @@ Preload 暴露：`window.electronAPI.ai.probeCapabilities(args)` / `window.elect
 | `src/renderer/components/Character/CharacterDialogueChat/ExpressionGenerateModal.tsx` | 修改：LoRA 入口 + `buildSdOptions` 透传 + Modal 渲染 |
 | `src/renderer/components/Character/CharacterDialogueChat/AssetGenerateModal.tsx` | 修改：同上 |
 | `src/main/services/sdGenerationService.ts` | 修改：`SDGenerationOptions.selectedLoras` + `<lora:name:weight>` 标签注入逻辑 |
+| `src/main/services/characterLoraService.ts` | **新建（2026-07-29）**：按角色卡独立存储 LoRA 的主进程服务（loadLoras / saveLoras，SHA-256 哈希角色卡 ID 生成存储路径） |
+| `src/main/ipc/handlers/characterLoraHandlers.ts` | **新建（2026-07-29）**：`character-lora:list` / `character-lora:save` IPC 通道注册 |
+| `src/renderer/stores/characterLoraStore.ts` | **新建（2026-07-29）**：Zustand store，封装角色 LoRA IPC 调用（loadLoras / saveLoras 乐观更新+回滚 / setLoras / clear） |
+| `src/main/preload.ts` | **修改（2026-07-29）**：暴露 `characterLora.{list, save}` 方法 |
+| `src/renderer/types/electron.d.ts` | **修改（2026-07-29）**：`characterLora` 命名空间类型声明 |
+| `src/main/ipc/index.ts` | **修改（2026-07-29）**：注册 `registerCharacterLoraHandlers()` |
+| `src/renderer/components/Character/CharacterDialogueChat/AssetManagerModal.tsx` | **修改（2026-07-29）**：LoRA 管理改为角色专属存储（useCharacterLoraStore 替代 settingStore） |
+| `src/renderer/components/Character/CharacterDialogueChat/AssetGenerateModal.tsx` | **修改（2026-07-29）**：`buildSdOptions` 的 `selectedLoras` 改用 `characterLoras`；`LoraSelectModal.onConfirm` 改为 `saveCharacterLoras`；初始化加载角色 LoRA |
+| `src/renderer/components/Character/CharacterDialogueChat/ExpressionGenerateModal.tsx` | **修改（2026-07-29）**：同 `AssetGenerateModal`，全面替换为角色专属 LoRA 存储 |
+
+### 7.3.8 图片生成自定义尺寸选择（2026-07-29 新增）
+
+> 增量更新（2026-07-29）：为所有 SD 图片生成弹窗（AssetGenerateModal / ExpressionGenerateModal）添加用户自定义输出尺寸选择能力。用户可在每次生成时从预设尺寸下拉或自定义宽高输入中选择输出分辨率（64-2048），尺寸独立应用于每次生成操作，不写入全局设置。
+
+#### 预设尺寸
+
+| 预设 | 尺寸 | 适用场景 |
+|------|------|---------|
+| 头像/表情 | 512×512 | 适合头像和表情图片 |
+| 全身立绘 | 512×768 | 适合全身立绘场景 |
+| 竖版高清 | 768×1024 | 适合高清立绘/半身像 |
+| 方图高清 | 1024×1024 | 适合高质量方图（默认） |
+| 竖版超清 | 1024×1536 | 适合超清全身立绘 |
+| 横版高清 | 1536×1024 | 适合横构图/宽幅场景 |
+| 自定义 | 用户输入 | 手动输入宽高（64-2048，步进 64） |
+
+#### 组件：SizeSelector
+
+`src/renderer/components/Character/CharacterDialogueChat/SizeSelector.tsx` 为可复用尺寸选择组件（暗色主题 inline styles）。
+
+- **Props**：`{ width: number, height: number, onChange: (width, height) => void }`
+- **交互**：Select 选择预设即时 `onChange`；选择"自定义"展示两个 InputNumber（实时校验 64-2048 范围，超范围显示红色边框 + 错误文案）；无确认按钮，所有变更即时生效
+- **当前尺寸 Tag**：始终显示当前宽×高，超范围时变红
+
+#### 集成方式
+
+`AssetGenerateModal`（§7.3.3）与 `ExpressionGenerateModal`（§7.3.2）均采用相同模式：
+
+1. 新增 `selectedSize` 本地 state（`{ width: 1024, height: 1024 }`）
+2. 弹窗打开时从 `sdConfig.txt2imgWidth/Height` 初始化（全局设置默认值 1024×1024）
+3. 弹窗关闭时重置为默认值
+4. `<SizeSelector>` 渲染在 `renderHeader()` 之后、所有生成模式（batch / single）均可见
+5. `buildSdOptions()` 传递：
+   - `txt2imgWidth: selectedSize.width` / `txt2imgHeight: selectedSize.height`（txt2img 路径）
+   - `width: selectedSize.width` / `height: selectedSize.height`（img2img 路径覆盖宽高比推导）
+6. 参数概览新增 `<Tag color="geekblue">尺寸：W×H</Tag>`
+
+#### 后端：img2img 两步模式缩放
+
+修改 `sdGenerationService.calculateImg2ImgDimensions`，当 `options.width/height` 已设置时，按 `longSideTarget / 1024` 比例缩放：
+
+- direct 模式（1024）：scale=1.0，直接使用用户尺寸
+- two-step pass 1（768）：scale=0.75，缩小到 75% 生成
+- two-step pass 2（1024）：scale=1.0，完整尺寸放大修复
+
+保留 two-step 模式"低分辨率生成→高分辨率放大"的质量优势，最小尺寸兜底 64 像素。
+
+#### 与全局设置的关系
+
+- 全局设置 `sdWebui.txt2imgWidth/txt2imgHeight`（SDWebuiSettings.tsx 中的 InputNumber）保留不变，作为 SizeSelector 初始默认值来源
+- SizeSelector 选择不回写全局设置，每次打开弹窗从全局默认值重新初始化
+- 满足"每次生成独立应用，而非全局统一设置"的设计要求
+
+#### 涉及文件
+
+| 文件 | 说明 |
+|------|------|
+| `src/renderer/components/Character/CharacterDialogueChat/SizeSelector.tsx` | **新建（2026-07-29）**：可复用尺寸选择组件（预设下拉 + 自定义输入 + 64-2048 校验） |
+| `src/renderer/components/Character/CharacterDialogueChat/AssetGenerateModal.tsx` | **修改（2026-07-29）**：新增 `selectedSize` state + SizeSelector 渲染 + `buildSdOptions` 传递 `txt2imgWidth/Height` 和 `width/height` |
+| `src/renderer/components/Character/CharacterDialogueChat/ExpressionGenerateModal.tsx` | **修改（2026-07-29）**：同 AssetGenerateModal |
+| `src/main/services/sdGenerationService.ts` | **修改（2026-07-29）**：`calculateImg2ImgDimensions` 用户指定尺寸时按 `longSideTarget/1024` 比例缩放 two-step 中间步骤 |
 
 ### 7.4 世界书管理 (World Book)
 - 世界书及条目的 CRUD
@@ -2152,6 +2280,171 @@ Preload 暴露：`window.electronAPI.ai.probeCapabilities(args)` / `window.elect
 - **ContextManager**: 对话上下文检索、相关性排序、压缩、注入
 - **DocumentProcessorService**: 文档解析 → 分块 → 向量化 → 入库的完整管线
 - **ChatVectorizationService**: 对话消息的向量化和语义搜索
+
+### 7.13 工具调用智能体引擎（方向 0）
+
+> 增量更新（2026-07-29）：新增「工具调用智能体引擎」（方向 0）核心基础设施。引擎位于 `src/main/services/ai/agent/`，目标是让 AI 在对话/写作/世界书场景中通过统一的工具调用协议（function calling）自主调用主进程能力，实现多轮工具调用循环（agentLoop）。本节先落地类型层（`agentTypes.ts`）与工具注册中心（`toolRegistry.ts`）；后续 `toolProtocolAdapter`（统一不同引擎的工具调用格式）与 `agentLoop`（多轮调用循环）由后续任务完成。
+>
+> 增量更新（2026-07-30）：方向 0 全链路落地完成。补齐 `toolProtocolAdapter.ts`（协议适配）/ `agentLoop.ts`（核心循环）/ 验证用工具集（`tools/`）/ IPC 层（`agentHandlers.ts`）/ `enableAgentMode` 全局开关 / preload 与类型接线。引擎端到端可用，且对现有功能零影响（开关默认关 + 模型不支持时自动降级为纯文本生成）。详见下方各小节。
+
+#### 整体架构（方向 0 组件分工）
+
+```
+渲染进程 (Renderer)
+  window.electronAPI.ai.runAgentTurn(params)  ──►  ai:runAgentTurn (ipcMain.handle)
+  window.electronAPI.ai.onAgentToolCall(cb)   ◄──  ai:agentToolCall (event.sender.send)
+        │
+        ▼
+主进程 agentHandlers.ts
+  1. registerBuiltinTools()              ◄── tools/index.ts（幂等，仅注册一次）
+  2. computeEffectiveSupportsToolCalling()
+       = enableAgentMode && engine.capabilities.supportsToolCalling
+  3. runAgentLoop({ messages, toolGroups, context, options:{...,supportsToolCalling}, callbacks })
+        │
+        ▼
+agentLoop.ts  runAgentLoop()
+  ├─ 降级检查 1：supportsToolCalling=false/undefined  ─► runPlainTextFallback → streamChatAPI（零行为变更）
+  ├─ 降级检查 2：toolRegistry.getTools(toolGroups) 为空 ─► runPlainTextFallback
+  ├─ toolProtocolAdapter.buildToolsParam(tools)
+  └─ 迭代循环（maxIterations 默认 8）：
+       1. aiService.callChatWithTools(messages, toolsParam, opts)
+       2. toolProtocolAdapter.parseToolCalls(wrappedResponse)
+       3. 无 tool_calls → streamChatAPI 流式生成最终回复 → 返回 completed
+       4. 有 tool_calls → 追加 assistant 消息 → Promise.all 并行执行（去重缓存 + try-catch）
+          → toolProtocolAdapter.buildToolResultMessage 回填 → 触发 onToolCall 回调 → 下一轮
+```
+
+| 组件 | 文件 | 职责 | 状态 |
+|------|------|------|------|
+| 类型定义 | `agentTypes.ts` | `AgentTool` / `AgentToolGroup` / `AgentToolContext` / `ToolCallResult` / `AgentLoopParams` 等引擎共用类型 | ✅ 已落地 |
+| 工具注册中心 | `toolRegistry.ts` | 按组注册/查询工具定义，防重复注册，保持注册顺序，多组去重查询 | ✅ 已落地 |
+| 协议适配器 | `toolProtocolAdapter.ts` | 将内部 `AgentTool` 转换为 OpenAI 兼容 tools 参数格式；解析模型返回的 `tool_calls`（兼容旧版 `function_call`）；构造 `role:'tool'` 结果消息；`safeParseArguments` 容错不抛错 | ✅ 已落地 |
+| 调用循环 | `agentLoop.ts` | 多轮「模型决策 → 工具执行 → 结果回填 → 再决策」循环；降级路径；去重缓存；并行 handler + try-catch；abortSignal；streamFinal 流式最终回复 | ✅ 已落地 |
+| 验证用工具集 | `tools/` | dialogue / worldbook / writing 三组共 4 个工具（含 1 占位），`registerBuiltinTools()` 幂等批量注册 | ✅ 已落地 |
+| IPC 层 | `agentHandlers.ts` | `ai:runAgentTurn` + `ai:agentToolCall`；`effectiveSupportsToolCalling` 计算（`enableAgentMode && supportsToolCalling`） | ✅ 已落地 |
+| 全局开关 | `enableAgentMode` | `shared/settings.ts` 默认 `false`；`AIEngineSettingsPanel.tsx` Switch UI；`Settings.tsx` 加载/保存 `?? false` 兜底 | ✅ 已落地 |
+
+#### 工具组（AgentToolGroup）
+
+工具按业务模式分组，`agentLoop` 运行时按 `toolGroups` 参数拉取对应组的工具注入模型。当前定义三类：
+
+| 组名 | 适用场景 |
+|------|---------|
+| `dialogue` | 角色对话模式（读取/写入角色卡状态、世界书条目等） |
+| `writing` | 创意写作模式（章节编辑、大纲操作等） |
+| `worldbook` | 世界书管理（条目增删改查、向量检索等） |
+
+#### ToolRegistry 设计要点
+
+`toolRegistry.ts` 导出单例 `toolRegistry`，内部维护三张 Map：
+
+| Map | 键 | 值 | 用途 |
+|-----|----|----|------|
+| `tools` | 工具名 `string` | `AgentTool` | 工具名 → 工具定义（含 handler） |
+| `toolGroups` | 工具名 `string` | `AgentToolGroup` | 工具名 → 所属组 |
+| `groupTools` | `AgentToolGroup` | `string[]` | 组名 → 工具名列表（保持注册顺序） |
+
+关键方法：
+
+| 方法 | 说明 |
+|------|------|
+| `register(group, tool)` | 注册单个工具到指定组；**同名工具重复注册时抛错**（`工具「{name}」已注册，不可重复注册`），让调用方尽早发现冲突 |
+| `registerGroup(group, tools)` | 批量注册，内部循环调用 `register` |
+| `getTool(name)` | 按名取单个工具定义，不存在返回 `undefined` |
+| `hasTool(name)` | 判断工具是否已注册 |
+| `getTools(groups)` | 按组取工具列表；多组查询时按组顺序合并并**去重**（同一工具名只出现一次），保持注册顺序 |
+| `listAll()` | 列出全部已注册工具（调试用），返回 `{ tool, group }[]` |
+| `clear()` | 清空所有注册（主要供测试用） |
+
+- 日志：使用 `createLogger('agent-registry')`（来自 `../../logger`），与项目其他服务一致，每次 `register` 输出 `已注册工具: {name} (组: {group})` info 日志
+- 防重复注册策略采用「抛错」而非「静默覆盖」，原因是工具名是 `agentLoop` 解析工具调用的唯一键，重复注册会导致执行器不确定，必须在注册期暴露问题
+
+#### 关键文件清单
+
+| 文件 | 说明 |
+|------|------|
+| `src/main/services/ai/agent/agentTypes.ts` | 引擎核心类型定义（`AgentTool` / `AgentToolGroup` / `AgentToolContext` / `ToolCallResult` / `ToolCallRequest` / `ToolCallEvent` / `AgentLoopResult` / `AgentLoopOptions` / `AgentLoopParams` / `AgentLoopCallbacks` 等） |
+| `src/main/services/ai/agent/toolRegistry.ts` | 工具注册中心单例 `toolRegistry`，按组管理工具定义，防重复注册 + 顺序保持 + 多组去重查询 |
+| `src/main/services/ai/agent/toolProtocolAdapter.ts` | 协议适配层（`buildToolsParam` / `parseToolCalls` / `buildToolResultMessage` + `safeParseArguments` 容错）；兼容 OpenAI `tool_calls` 数组与旧版 `function_call` |
+| `src/main/services/ai/agent/agentLoop.ts` | 核心循环 `runAgentLoop` + 降级路径 `runPlainTextFallback`（详见下方「核心循环」） |
+| `src/main/services/ai/agent/tools/dialogueTools.ts` | dialogue 组：`searchWorldbook`（关键词匹配，复用 `worldBookService.matchKeywords`）/ `searchChatHistory`（向量检索，复用 `chatVectorizationService.retrieveChatHistory`） |
+| `src/main/services/ai/agent/tools/worldbookTools.ts` | worldbook 组：`searchEntries`（语义检索，复用 `worldBookService.searchWorldBookEntriesByVector`） |
+| `src/main/services/ai/agent/tools/writingTools.ts` | writing 组：`readOutline`（占位，方向 B 完善） |
+| `src/main/services/ai/agent/tools/index.ts` | `registerBuiltinTools()` 幂等聚合入口，按组 `registerGroup` 批量注册 |
+| `src/main/ipc/handlers/agentHandlers.ts` | IPC 处理器：`ai:runAgentTurn`（handle）+ `ai:agentToolCall`（事件推送）；`computeEffectiveSupportsToolCalling()` |
+| `src/main/preload.ts` | 暴露 `ai.runAgentTurn` / `ai.onAgentToolCall`（含 unsubscribe） |
+| `src/renderer/types/electron.d.ts` | `ElectronAPI.ai` 接口 `runAgentTurn` / `onAgentToolCall` 类型声明 |
+| `src/main/ipc/index.ts` | 导入并调用 `registerAgentHandlers()` |
+| `src/shared/settings.ts` | `enableAgentMode` 默认 `false` |
+| `src/renderer/types/setting.ts` | `enableAgentMode: boolean` 类型字段 |
+| `src/renderer/components/Settings/AIEngineSettingsPanel.tsx` | 「Agent 模式」Switch UI |
+| `src/renderer/components/Settings/Settings.tsx` | 加载/保存 `enableAgentMode ?? false` 兜底 |
+
+#### 核心循环 agentLoop.ts
+
+`runAgentLoop(params: AgentLoopParams): Promise<AgentLoopResult>` 是引擎心脏，实现「模型决策 → 工具执行 → 结果回填 → 再决策」多轮循环。核心机制：
+
+| 机制 | 实现 |
+|------|------|
+| 迭代上限 | `maxIterations` 默认 8；达到上限返回 `stoppedReason:'max_iterations'`，`finalContent` 取最后一次响应内容 |
+| 去重缓存 | `dedupCache`，key = `${toolName}:${JSON.stringify(args)}`；同工具+同参数命中缓存直接复用，仅更新 iteration 标记 |
+| 并行执行 | `Promise.all` 并行执行所有 tool_calls；每个 handler 独立 try-catch，失败回填 `{success:false, error}` 给模型，循环继续；handler 抛错不崩循环 |
+| 未注册工具 | `toolRegistry.getTool(name)` 返回 `undefined` 时回填 `{success:false, error:'工具「{name}」未注册'}`，不崩循环 |
+| 取消支持 | 每轮迭代开始前检查 `abortSignal?.aborted`，透传至 `callChatWithTools` / `streamChatAPI` |
+| 流式最终回复 | 无 tool_calls 时，`streamFinal !== false`（默认 true）→ `streamChatAPI` 重新流式生成并通过 `onFinalChunk` 推送；`streamFinal === false` → 直接用已返回 content，省一次调用 |
+| 消息不可变 | `workingMessages = [...messages]` 副本循环追加，避免修改入参 |
+| 整体 try-catch | 任何未预期错误统一返回 `stoppedReason:'error'` + `error` 字段，不向调用方抛出 |
+
+#### 降级策略（增量零影响的核心保证）
+
+方向 0 必须不破坏现有功能，靠两道降级检查 + 一个全局开关实现：
+
+1. **降级检查 1（引擎/模型不支持）**：`options.supportsToolCalling` 为 falsy 时直接走 `runPlainTextFallback` → `aiService.streamChatAPI`（不带 tools），返回 `{toolCallHistory:[], iterations:0, stoppedReason:'completed'}`，与扩展前纯文本生成完全等价。
+2. **降级检查 2（工具集为空）**：`toolRegistry.getTools(toolGroups)` 返回空数组时同样降级，避免带空 tools 数组请求模型。
+3. **全局开关 `enableAgentMode`**：默认 `false`。`agentHandlers.ts` 计算 `effectiveSupportsToolCalling = enableAgentMode && supportsToolCalling`；开关关闭时 `effectiveSupportsToolCalling=false`，由降级检查 1 接管，行为与升级前完全一致。`supportsToolCalling` 由 handler 计算（不由前端传入），前端无法绕过开关强制启用工具调用。
+
+#### Agent 模式开关 enableAgentMode
+
+| 文件 | 改动 |
+|------|------|
+| `src/shared/settings.ts` | 默认值 `enableAgentMode: false`（确保现有功能零影响） |
+| `src/renderer/types/setting.ts` | `AppSettings` 接口新增 `enableAgentMode: boolean` |
+| `src/renderer/components/Settings/AIEngineSettingsPanel.tsx` | 「Agent 模式」`Form.Item` + `<Switch />`，extra 提示「启用 Agent 模式（需模型支持工具调用，否则自动降级为文本模式）」 |
+| `src/renderer/components/Settings/Settings.tsx` | 加载/保存均 `?? false` 兜底防止 undefined |
+
+#### IPC 层与可观测性
+
+`agentHandlers.ts` 注册两个通道，由 `ipc/index.ts` 的 `setupIpcHandlers()` 调用 `registerAgentHandlers()`：
+
+| 通道 | 类型 | 说明 |
+|------|------|------|
+| `ai:runAgentTurn` | `ipcMain.handle` | 运行一轮智能体循环，返回 `AgentLoopResult`。handler 内 `registerBuiltinTools()`（幂等）→ 计算 `effectiveSupportsToolCalling` → 调用 `runAgentLoop`；外层 try-catch 兜底，异常返回 `stoppedReason:'error'`，渲染进程永不收到 reject |
+| `ai:agentToolCall` | 事件推送 | `onToolCall` 回调内 `event.sender.send('ai:agentToolCall', event)`；`event.sender.isDestroyed()` 检查避免渲染进程已销毁时抛错 |
+
+可观测性：
+
+- **三类回调**（`AgentLoopCallbacks`）：`onToolCall(event)` / `onFinalChunk(chunk)` / `onIteration(n)`
+- **三个 logger 命名空间**：`agent-loop` / `agent-handler` / `agent-registry`
+- **前端订阅**：`window.electronAPI.ai.onAgentToolCall(cb)` 订阅工具调用事件（含迭代序号 / 工具名 / 参数 / 结果 / 耗时 `durationMs`），可在 UI 展示工具调用过程
+
+#### 【重点标记 - worldbookTools 导出 Bug 修复】
+
+> 本 Bug 在实现过程中被发现并修复，按用户规则重点标记。
+
+- **现象**：`tools/index.ts` 导入 `worldbookTools` 并调用 `toolRegistry.registerGroup('worldbook', worldbookTools)` 时失败。`registerGroup` 期望第二个参数是 `AgentTool[]` 数组，但初版 `worldbookTools.ts` 按函数模式导出（`export function registerWorldbookTools()`），`worldbookTools` 是函数而非数组，注册链路断裂。
+- **根因**：初版设计为「每个工具文件导出 `registerXxxTools()` 函数」的函数注册模式；后续为简洁性与 `registerGroup` 批量注册能力，将 `tools/index.ts` 改为「按数组导入 + `registerGroup`」，但 `worldbookTools.ts` 未同步改为数组导出，产生模式不一致。
+- **修复**：将 `worldbookTools.ts` 改为导出数组 `export const worldbookTools: AgentTool[] = [searchEntriesTool]`；dialogueTools / writingTools 同步保持数组导出。`registerBuiltinTools()` 内通过 module-level `registered` 标志保证幂等。
+- **教训**：注册机制变更需同步所有工具文件的导出风格；函数模式与数组模式不可混用。`registerGroup` + 数组导出最终被采纳为方向 0 的统一注册模式。
+
+#### 后续方向 A/B/C 衔接点
+
+方向 0 作为共享底座，后续三个方向在其上扩展：
+
+| 方向 | 衔接点 | 当前状态 |
+|------|--------|---------|
+| **方向 A（对话智能体）** | 角色对话流程调用 `ai.runAgentTurn`，启用 `dialogue` + `worldbook` 工具组；`searchWorldbook` / `searchChatHistory` 已就绪 | 工具就绪，对话流程接入待方向 A |
+| **方向 B（写作智能体）** | 写作模式调用 `ai.runAgentTurn`，启用 `writing` 工具组；`readOutline` 当前为占位（返回 `{success:false, error}`），需接入 `WritingProjectRepository` / `outlineService` | 占位待完善 |
+| **方向 C（世界书智能体）** | 世界书管理调用 `ai.runAgentTurn`，启用 `worldbook` 工具组；`searchEntries` 已就绪 | 工具就绪，管理流程接入待方向 C |
 
 ---
 

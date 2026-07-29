@@ -21,6 +21,11 @@ import { registerAssetHandlers } from './handlers/assetHandlers';
 import { registerSdGenerationHandlers } from './handlers/sdGenerationHandlers';
 import { registerCharacterTraitAIHandlers } from './handlers/characterTraitAIHandlers';
 import { registerLoraHandlers } from './handlers/loraHandlers';
+import { registerCharacterLoraHandlers } from './handlers/characterLoraHandlers';
+import { registerAgentHandlers } from './handlers/agentHandlers';
+import { registerAgentSkillHandlers } from './handlers/agentSkillHandlers';
+import { registerAgentMemoryHandlers } from './handlers/agentMemoryHandlers';
+import { registerAgentLearningHandlers } from './handlers/agentLearningHandlers';
 import './handlers/aiHandlers';
 import { getStorageService } from '../services/storageService';
 import { embeddingService } from '../services/EmbeddingService';
@@ -73,6 +78,20 @@ export function setupIpcHandlers() {
   // LoRA 模型列表获取 IPC（Spec: add-lora-model-selection / Task 3）
   // 暴露 lora:list 通道，调用 loraService.fetchLoraList 获取可用 LoRA 列表
   registerLoraHandlers();
+  // 角色卡 LoRA 管理 IPC（2026-07-29 bug 修复 - 按角色独立存储）
+  // 【重点标记】暴露 character-lora:list / save 通道，按角色卡独立持久化 LoRA 配置
+  registerCharacterLoraHandlers();
+  // 工具调用智能体引擎 IPC（方向 0 最后一层）
+  // 暴露 ai:runAgentTurn 通道 + ai:agentToolCall 事件推送，
+  // 让前端能调用智能体并订阅工具调用事件。
+  // handler 内部读取 enableAgentMode + 引擎 capabilities.supportsToolCalling 计算降级标志。
+  registerAgentHandlers();
+  // Agent 技能库与长期记忆系统 IPC（Spec: add-agent-skill-and-memory-foundation / Task 12）
+  // 暴露 agent-skill:* / agent-memory:* / agent-learning:* 通道（与现有 memory:* 旧记忆系统物理隔离）
+  // 命名空间隔离设计：使用独立前缀避免与旧 memory:* / ai:* 通道冲突
+  registerAgentSkillHandlers();
+  registerAgentMemoryHandlers();
+  registerAgentLearningHandlers();
 
   embeddingService.initialize();
   embeddingService.registerIpcHandlers();

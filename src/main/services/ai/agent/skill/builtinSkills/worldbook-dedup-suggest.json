@@ -1,0 +1,57 @@
+{
+  "id": "worldbook-dedup-suggest",
+  "name": "世界书去重建议",
+  "description": "世界书条目去重建议——基于主题生成去重排查清单。当世界书条目过多、怀疑存在重复或语义相似条目时调用。返回结构化的提示词，指导模型按主题逐项排查可能的重复条目。",
+  "category": "worldbook",
+  "version": "1.0.0",
+  "author": "system",
+  "tags": ["世界书", "去重", "清理", "排查", "worldbook", "prompt"],
+  "enabled": true,
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "topic": {
+        "type": "string",
+        "description": "待排查去重的主题（如「角色设定」「地点」「物品」等）"
+      },
+      "scope": {
+        "type": "string",
+        "description": "排查范围描述（可选，如「全部世界书」或「指定角色卡」）"
+      }
+    },
+    "required": ["topic"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "systemPrompt": {
+        "type": "string",
+        "description": "渲染后的系统提示词，含去重排查清单生成指令"
+      },
+      "userPrompt": {
+        "type": "string",
+        "description": "渲染后的用户提示词，含具体主题"
+      }
+    }
+  },
+  "type": "prompt",
+  "implementation": {
+    "prompt": {
+      "systemPrompt": "你是世界书条目去重分析专家。任务：围绕主题「{{topic}}」，生成一份结构化的去重排查清单。\n\n排查清单应包含：\n1. 该主题下可能出现的重复类型（如完全重复、语义相似、关键词重叠、内容互补可合并）\n2. 每种重复类型的识别特征与判定标准\n3. 推荐的处理策略（保留最新 / 合并内容 / 标记删除）\n4. 优先排查的关键词组合（按主题推导）\n\n输出格式：Markdown 列表，每个排查项含「重复类型 / 识别特征 / 处理策略」三要素。\n注意：仅生成排查清单，不执行实际删除操作；实际去重需人工确认。",
+      "userPromptTemplate": "请针对主题「{{topic}}」生成去重排查清单。{{#if scope}}排查范围：{{scope}}{{/if}}\n\n要求：\n- 列出该主题下最可能出现的 3-5 类重复模式\n- 每类给出可操作的识别规则\n- 标注建议的处理优先级（高/中/低）"
+    }
+  },
+  "requiredTools": [],
+  "examples": [
+    {
+      "input": { "topic": "角色设定", "scope": "全部世界书" },
+      "output": {
+        "systemPrompt": "你是世界书条目去重分析专家。任务：围绕主题「角色设定」，生成一份结构化的去重排查清单...",
+        "userPrompt": "请针对主题「角色设定」生成去重排查清单。排查范围：全部世界书\n\n要求：..."
+      },
+      "description": "围绕「角色设定」主题生成去重排查清单，识别可能的重复角色条目"
+    }
+  ],
+  "createdAt": "2026-07-30T00:00:00.000Z",
+  "updatedAt": "2026-07-30T00:00:00.000Z"
+}

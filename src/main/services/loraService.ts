@@ -2,16 +2,18 @@
  * LoRA 模型服务（主进程）
  *
  * 通过 SD WebUI API 获取可用 LoRA 模型列表，
- * 并读取本地预览图 URL 和 JSON 元数据文件。
+ * 并直接从文件系统读取预览图（转为 base64 data URI）和 JSON 元数据文件。
  *
  * 数据源：
  *  - GET {endpoint}/sdapi/v1/loras — 返回 [{name, alias, path, metadata}]
- *  - 预览图 URL：{endpoint}/sd_extra_networks/thumb?filename={encodeURIComponent(path)}
+ *  - 预览图：直接读取本地文件 {path_without_extension}.{png|jpg|jpeg|webp|preview.png|preview.jpg}，
+ *    转为 `data:image/...;base64,...` 返回（避免 Electron renderer CSP 阻止加载外部 HTTP 图片）
  *  - JSON 元数据：{path_without_extension}.json（本地文件，含 description/activation text 等）
  *  - 分类：从 path 的子目录名提取（如 "画风"/"身体、状态"/"风景"）
  */
 
 import * as fs from 'fs/promises';
+import * as fsSync from 'fs';
 
 /**
  * LoRA 模型信息（经过服务层加工后的完整模型）
@@ -23,7 +25,7 @@ export interface LoraModel {
   alias: string;
   /** LoRA 文件绝对路径 */
   path: string;
-  /** 预览图 URL（通过 SD WebUI thumb 端点获取） */
+  /** 预览图（base64 data URI，如 `data:image/png;base64,...`；无预览图时为空字符串） */
   previewUrl: string;
   /** 描述（来自 JSON 元数据文件） */
   description: string;
@@ -55,7 +57,7 @@ class LoraService {
    *
    * 流程：
    *  1. 调用 GET {endpoint}/sdapi/v1/loras 获取原始列表
-   *  2. 为每个 LoRA 构建预览图 URL
+   *  2. 为每个 LoRA 从文件系统读取预览图并转为 base64 data URI
    *  3. 读取本地 JSON 元数据文件
    *  4. 从 path 提取分类（子目录名）
    *  5. 返回完整的 LoraModel[]
@@ -126,9 +128,10 @@ class LoraService {
   /**
    * 将 API 原始数据构建为完整的 LoraModel
    */
-  private async buildLoraModel(item: ForgeLoraApiResponse, baseEndpoint: string): Promise<LoraModel> {
-    // 构建预览图 URL（Forge Neo 的 thumb 端点）
-    const previewUrl = `${baseEndpoint}/sd_extra_networks/thumb?filename=${encodeURIComponent(item.path)}`;
+  private async buildLoraModel(item: ForgeLoraApiResponse, _baseEndpoint: string): Promise<LoraModel> {
+    // 【重点标记 - 预览图读取】直接从文件系统读取预览图转为 base64 data URI，
+    // 避免 Electron CSP 阻止加载外部 HTTP 图片
+    const previewUrl = await this.readPreviewImage(item.path);
 
     // 从 path 提取分类（子目录名）
     const pathParts = item.path.replace(/\\/g, '/').split('/');
@@ -150,6 +153,40 @@ class LoraService {
       notes,
       category,
     };
+  }
+
+  /**
+   * 读取 LoRA 预览图并转为 base64 data URI
+   *
+   * 按 Forge Neo 的 `find_preview` 命名规则依次尝试以下扩展名：
+   *  `.png` / `.jpg` / `.jpeg` / `.webp` / `.preview.png` / `.preview.jpg`
+   * 命中第一个存在的文件即读取并返回 `data:{mime};base64,...`；
+   * 全部不存在则返回空字符串。
+   */
+  private async readPreviewImage(loraPath: string): Promise<string> {
+    const pathWithoutExt = loraPath.replace(/\.[^.]+$/, '');
+    const candidates = [
+      { ext: '.png', mime: 'image/png' },
+      { ext: '.jpg', mime: 'image/jpeg' },
+      { ext: '.jpeg', mime: 'image/jpeg' },
+      { ext: '.webp', mime: 'image/webp' },
+      { ext: '.preview.png', mime: 'image/png' },
+      { ext: '.preview.jpg', mime: 'image/jpeg' },
+    ];
+
+    for (const { ext, mime } of candidates) {
+      const candidatePath = pathWithoutExt + ext;
+      if (fsSync.existsSync(candidatePath)) {
+        try {
+          const buffer = await fs.readFile(candidatePath);
+          const base64 = buffer.toString('base64');
+          return `data:${mime};base64,${base64}`;
+        } catch {
+          // Continue to next candidate
+        }
+      }
+    }
+    return '';
   }
 
   /**
