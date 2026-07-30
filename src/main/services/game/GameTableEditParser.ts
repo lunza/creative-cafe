@@ -1,7 +1,13 @@
 /**
- * 游戏模式 tableEdit 命令解析器
+ * 游戏模式 tableEdit 命令解析器（适配层）
  *
- * 解析 AI 回复末尾的 <tableEdit> 标签，提取表格编辑命令。
+ * 重构说明（spec §一 F3 + F4）：
+ *  - 公共解析逻辑（数据对象 JSON 容错、命令分派、索引校验）已抽取到
+ *    `src/main/services/memory/tableEditParserBase.ts` 的 `TableEditParserBase`。
+ *  - 本文件保留为薄适配层，对外 API 签名（`GameTableEditParser.parse`、
+ *    `GameTableEditParser.stripTableEditTags`、`gameTableEditParser` 单例）完全不变。
+ *  - F3 越界校验：sheetIndex/rowIndex 非正整数时跳过整条命令并警告
+ *    （由 Base.tryParseLine 统一实现）。
  *
  * 协议（与对话模式/写作模式对齐，参考
  *  `src/renderer/components/Character/CharacterDialogueChat/PromptBuilder.ts`
@@ -27,15 +33,15 @@
  * - `deleteRow(sheetIndex, rowIndex)`
  *
  * 索引规则（**全部 1-based**，由 GameTableRepository.applyTableEdits 在应用时
- * 转换为 0-based）：
+ * 转换为 0-based；parser 阶段不转换）：
  * - sheetIndex：从 1 开始，对应 schema.sheets 的顺序
  * - rowIndex：从 1 开始，对应当前 sheet 中的行号
  * - colIndex：从 1 开始，对应当前 sheet headers 的字段索引（key 为字符串形式的数字）
  *
  * 设计说明：
- * - 参考既有 `src/main/services/memory/tableEditParser.ts` 的正则与容错策略，
- *   但不直接 import，避免跨模块耦合（游戏模块独立维护）。
- * - 解析失败的命令记入 errors 数组返回，不抛异常，确保流式叙事不被中断。
+ *  - 索引保持 1-based（不转换），字段索引同样保持原样（不转换），
+ *    以保证对外行为完全不变。
+ *  - 解析失败的命令记入 errors 数组返回，不抛异常，确保流式叙事不被中断。
  */
 
 import {
@@ -43,6 +49,12 @@ import {
   GameTableEditCommandType,
   GameTableEditParseResult
 } from '../../../shared/types/game.types';
+import {
+  TableEditParserBase,
+  CommandRegexSpec,
+  ParsedCommandCore,
+  ParseLineOptions
+} from '../memory/tableEditParserBase';
 
 // ==================== 正则常量 ====================
 
@@ -73,16 +85,36 @@ const INSERT_ROW_REGEX = /^insertRow\s*\(\s*(\d+)\s*,\s*(\{[\s\S]+\})\s*\)$/i;
 const UPDATE_ROW_REGEX = /^updateRow\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\{[\s\S]+\})\s*\)$/i;
 const DELETE_ROW_REGEX = /^deleteRow\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)$/i;
 
+/**
+ * game 适配层命令正则规格（anchored + i 标志，保持原有风格）
+ */
+const GAME_REGEX_SPEC: CommandRegexSpec = {
+  insertRow: INSERT_ROW_REGEX,
+  updateRow: UPDATE_ROW_REGEX,
+  deleteRow: DELETE_ROW_REGEX
+};
+
+/**
+ * game 适配层解析选项：
+ *  - 索引保持 1-based（不转换，由 GameTableRepository.applyTableEdits 转换）
+ *  - 字段索引保持原样（不转换）
+ *  - maxColumnIndex 不提供：parser 阶段不知道列数
+ */
+const GAME_PARSE_OPTS: ParseLineOptions = {
+  convertIndicesToZeroBased: false,
+  convertFieldIndices: false,
+  logPrefix: 'GameTableEditParser'
+};
+
 // ==================== 解析器实现 ====================
 
-export class GameTableEditParser {
+export class GameTableEditParser extends TableEditParserBase {
   /**
    * 从 AI 回复文本中解析 <tableEdit> 标签
    *
    * 解析流程：
    * 1. 用 HTML 注释正则提取所有 `<!-- <tableEdit>...</tableEdit> -->` 块
-   * 2. 用裸标签正则提取所有 `<tableEdit>...</tableEdit>` 块（在原文本中
-   *    去掉已匹配的注释块后扫描，避免重复）
+   * 2. 在原文本中剔除已匹配的注释块后，扫描裸标签块（容错）
    * 3. 对每个块按行解析命令
    * 4. 收集所有 commands 与 errors
    *
@@ -97,14 +129,12 @@ export class GameTableEditParser {
       return result;
     }
 
-    // 1. 提取 HTML 注释包裹的 tableEdit 块
-    const commentBlocks = this.extractBlocks(text, TABLE_EDIT_COMMENT_REGEX);
+    // 1 + 2. 提取 HTML 注释包裹块 + 裸标签块（Base.extractBlocks 已自动去重）
+    const allBlocks = this.extractBlocks(text, [
+      TABLE_EDIT_COMMENT_REGEX,
+      TABLE_EDIT_BARE_REGEX
+    ]);
 
-    // 2. 在原文本中剔除已匹配的注释块后，扫描裸标签块（容错）
-    const stripped = text.replace(TABLE_EDIT_COMMENT_REGEX, '');
-    const bareBlocks = this.extractBlocks(stripped, TABLE_EDIT_BARE_REGEX);
-
-    const allBlocks = [...commentBlocks, ...bareBlocks];
     if (allBlocks.length === 0) {
       // 无 tableEdit 标签：返回空结果（不视为错误，AI 可能只是叙事无变更）
       return result;
@@ -145,24 +175,6 @@ export class GameTableEditParser {
   // ==================== 内部方法 ====================
 
   /**
-   * 用指定正则提取所有匹配块的内容（捕获组 1）
-   */
-  private extractBlocks(text: string, regex: RegExp): string[] {
-    const blocks: string[] = [];
-    // 必须重新构造 RegExp 实例，因为带 g 标志的正则在 exec/test 时
-    // 会维护 lastIndex 状态，全局复用会导致漏匹配
-    const re = new RegExp(regex.source, regex.flags);
-    let match: RegExpExecArray | null;
-    while ((match = re.exec(text)) !== null) {
-      const content = match[1];
-      if (content && content.trim().length > 0) {
-        blocks.push(content);
-      }
-    }
-    return blocks;
-  }
-
-  /**
    * 解析单个 tableEdit 块的内容
    *
    * 按行分割，对每个非空行尝试解析为命令。无法识别的行记入 errors。
@@ -191,197 +203,31 @@ export class GameTableEditParser {
   }
 
   /**
-   * 尝试用三种命令正则匹配单行
+   * 尝试用三种命令正则匹配单行（委托给 Base.tryParseLine）
    */
   private parseSingleCommand(line: string): GameTableEditCommand | null {
-    // 顺序：insertRow / updateRow / deleteRow
-    // 注意：必须先匹配 updateRow（参数最多），否则 insertRow 的 (\{...\})
-    // 可能误匹配 updateRow 的部分内容（虽然 anchored ^...$ 通常能区分）
-    const updateMatch = UPDATE_ROW_REGEX.exec(line);
-    if (updateMatch) {
-      return this.buildUpdateCommand(updateMatch, line);
-    }
-
-    const insertMatch = INSERT_ROW_REGEX.exec(line);
-    if (insertMatch) {
-      return this.buildInsertCommand(insertMatch, line);
-    }
-
-    const deleteMatch = DELETE_ROW_REGEX.exec(line);
-    if (deleteMatch) {
-      return this.buildDeleteCommand(deleteMatch, line);
-    }
-
-    return null;
-  }
-
-  private buildInsertCommand(
-    match: RegExpExecArray,
-    raw: string
-  ): GameTableEditCommand | null {
-    const sheetIndex = parseInt(match[1], 10);
-    const dataStr = match[2];
-
-    if (isNaN(sheetIndex) || sheetIndex < 1) {
-      return null;
-    }
-
-    const rowData = this.parseDataObject(dataStr);
-    if (rowData === null) {
-      return null;
-    }
-
-    return {
-      type: GameTableEditCommandType.INSERT_ROW,
-      sheetIndex,
-      rowData,
-      raw
-    };
-  }
-
-  private buildUpdateCommand(
-    match: RegExpExecArray,
-    raw: string
-  ): GameTableEditCommand | null {
-    const sheetIndex = parseInt(match[1], 10);
-    const rowIndex = parseInt(match[2], 10);
-    const dataStr = match[3];
-
-    if (isNaN(sheetIndex) || sheetIndex < 1 || isNaN(rowIndex) || rowIndex < 1) {
-      return null;
-    }
-
-    const rowData = this.parseDataObject(dataStr);
-    if (rowData === null) {
-      return null;
-    }
-
-    return {
-      type: GameTableEditCommandType.UPDATE_ROW,
-      sheetIndex,
-      rowIndex,
-      rowData,
-      raw
-    };
-  }
-
-  private buildDeleteCommand(
-    match: RegExpExecArray,
-    raw: string
-  ): GameTableEditCommand | null {
-    const sheetIndex = parseInt(match[1], 10);
-    const rowIndex = parseInt(match[2], 10);
-
-    if (isNaN(sheetIndex) || sheetIndex < 1 || isNaN(rowIndex) || rowIndex < 1) {
-      return null;
-    }
-
-    return {
-      type: GameTableEditCommandType.DELETE_ROW,
-      sheetIndex,
-      rowIndex,
-      raw
-    };
+    const core = this.tryParseLine(line, GAME_REGEX_SPEC, GAME_PARSE_OPTS);
+    if (!core) return null;
+    return this.toGameTableEditCommand(core);
   }
 
   /**
-   * 解析 JSON 数据对象
-   *
-   * 容错策略（与既有 tableEditParser.ts 对齐）：
-   * 1. 清理内嵌的 HTML 注释（如 `"朱迪<!-- 药 -->"` → `"朱迪"`）
-   * 2. 尝试直接 JSON.parse
-   * 3. 失败则规范化（给未加引号的键名加引号、单引号转双引号、清理尾逗号）后重试
-   * 4. 仍失败则返回 null（调用方记入 errors）
-   *
-   * @returns 解析后的键值对象（值为字符串），失败返回 null
+   * 将 Base 的中间结构 ParsedCommandCore 转换为对外 GameTableEditCommand
    */
-  private parseDataObject(dataStr: string): Record<string, string> | null {
-    // 1. 清理嵌套 HTML 注释
-    const cleaned = dataStr.replace(/<!--[\s\S]*?-->/g, '');
+  private toGameTableEditCommand(core: ParsedCommandCore): GameTableEditCommand {
+    const typeMap: Record<ParsedCommandCore['kind'], GameTableEditCommandType> = {
+      insertRow: GameTableEditCommandType.INSERT_ROW,
+      updateRow: GameTableEditCommandType.UPDATE_ROW,
+      deleteRow: GameTableEditCommandType.DELETE_ROW
+    };
 
-    // 2. 直接解析
-    try {
-      const parsed = JSON.parse(cleaned);
-      if (this.isPlainObject(parsed)) {
-        return this.toStringValueMap(parsed);
-      }
-    } catch {
-      // 进入规范化重试路径
-    }
-
-    // 3. 规范化后重试
-    try {
-      const normalized = this.normalizeJsonObject(cleaned);
-      const parsed = JSON.parse(normalized);
-      if (this.isPlainObject(parsed)) {
-        return this.toStringValueMap(parsed);
-      }
-    } catch {
-      // 解析彻底失败
-    }
-
-    return null;
-  }
-
-  /**
-   * 规范化 JSON 字符串（处理 AI 可能输出的非标准格式）
-   *
-   * 处理顺序（重要）：
-   * 1. 未加引号的键名 → 加双引号
-   * 2. 单引号键名 → 双引号
-   * 3. 单引号字符串值 → 双引号
-   * 4. 清理尾逗号
-   *
-   * 注意：此方法可能破坏已包含冒号的合法 JSON 值（如 "00:00"），
-   * 因此仅在直接 JSON.parse 失败时作为兜底使用。
-   */
-  private normalizeJsonObject(str: string): string {
-    let normalized = str.trim();
-
-    // 1. 给未加引号的键名加双引号（如 {key: "value"} → {"key": "value"}）
-    normalized = normalized.replace(/(\{|,)\s*(\w+)\s*:/g, '$1"$2":');
-    // 处理开头未加引号的键名
-    normalized = normalized.replace(/^\s*(\w+)\s*:/, '"$1":');
-
-    // 2. 单引号键名转双引号（如 {'key': ...} → {"key": ...}）
-    //    必须在单引号值转换之前执行，避免误吞键名末尾的冒号
-    normalized = normalized.replace(/(\{|,)\s*'([^']+?)'\s*:/g, '$1"$2":');
-
-    // 3. 单引号字符串值转双引号
-    normalized = normalized.replace(/:\s*'([^']*)'/g, ':"$1"');
-
-    // 4. 清理尾逗号
-    normalized = normalized.replace(/,\s*}/g, '}');
-    normalized = normalized.replace(/,\s*]/g, ']');
-
-    return normalized;
-  }
-
-  private isPlainObject(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
-  }
-
-  /**
-   * 将对象的所有值转换为字符串（数字/布尔等也转字符串）
-   * 与既有 parser 行为对齐，统一 rowData 的值类型。
-   */
-  private toStringValueMap(obj: Record<string, unknown>): Record<string, string> {
-    const result: Record<string, string> = {};
-    for (const [key, value] of Object.entries(obj)) {
-      if (value === null || value === undefined) {
-        result[key] = '';
-      } else if (typeof value === 'object') {
-        // 嵌套对象/数组：序列化为 JSON 字符串（罕见但需容错）
-        try {
-          result[key] = JSON.stringify(value);
-        } catch {
-          result[key] = String(value);
-        }
-      } else {
-        result[key] = String(value);
-      }
-    }
-    return result;
+    return {
+      type: typeMap[core.kind],
+      sheetIndex: core.sheetIndex,
+      rowIndex: core.rowIndex,
+      rowData: core.data,
+      raw: core.raw
+    };
   }
 }
 

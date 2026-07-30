@@ -68,7 +68,7 @@ export function getTempPath(): string {
 /**
  * 获取项目根目录
  * 优先使用 Electron 的 app.getAppPath()（开发环境返回项目根，含 package.json 的目录），
- * 失败时降级到 process.cwd()（与 fileService / pluginService 等模块一致）。
+ * 失败时降级到 process.cwd()（与 fileService 等模块一致）。
  */
 export function getProjectRoot(): string {
   try {

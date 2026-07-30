@@ -1,9 +1,27 @@
 /**
- * TableEdit 命令解析器
- * 负责解析 HTML 注释格式中的表格编辑命令
+ * TableEdit 命令解析器（对话/记忆/写作模式适配层）
+ *
+ * 重构说明（spec §一 F3 + F4）：
+ *  - 公共解析逻辑（数据对象 JSON 容错、命令分派、字段索引转换、F3 越界校验）
+ *    已抽取到 `tableEditParserBase.ts` 的 `TableEditParserBase`。
+ *  - 本文件保留为薄适配层，对外 API 签名（`tableEditParser.parse`、`TableEditCommand`、
+ *    `ParseResult`）完全不变，所有调用点无需改动。
+ *  - F3 越界校验：sheetIndex/rowIndex 非正整数时跳过整条命令并警告；
+ *    字段索引 1→0 转换后 < 0 时跳过该字段并警告。
+ *
+ * 索引协议（与既有行为一致）：
+ *  - sheetIndex / rowIndex：AI 输出 1-based，parser 阶段转换为 0-based
+ *  - 字段索引（data 的键）：AI 输出 1-based 数字字符串，parser 阶段转换为 0-based
+ *  - 命名键（非数字字符串）保持原样
  */
 
 import { createLogger } from '../logger';
+import {
+  TableEditParserBase,
+  CommandRegexSpec,
+  ParsedCommandCore,
+  ParseLineOptions
+} from './tableEditParserBase';
 
 const logger = createLogger('writing');
 
@@ -38,12 +56,29 @@ export interface ParseResult {
   errors: string[];
 }
 
-class TableEditParser {
+/**
+ * memory 适配层命令正则规格（保持原有非 anchored 风格，对外行为不变）
+ */
+const MEMORY_REGEX_SPEC: CommandRegexSpec = {
+  insertRow: /insertRow\((\d+),\s*(\{[\s\S]+\})\)/,
+  updateRow: /updateRow\((\d+),\s*(\d+),\s*(\{[\s\S]+\})\)/,
+  deleteRow: /deleteRow\((\d+),\s*(\d+)\)/
+};
+
+/**
+ * memory 适配层解析选项：
+ *  - 索引 1-based → 0-based（在 parser 阶段转换）
+ *  - 字段索引同样转换
+ *  - maxColumnIndex 不提供：parser 阶段不知道列数，列范围校验留给 executor
+ */
+const MEMORY_PARSE_OPTS: ParseLineOptions = {
+  convertIndicesToZeroBased: true,
+  convertFieldIndices: true,
+  logPrefix: 'TableEditParser'
+};
+
+class TableEditParser extends TableEditParserBase {
   private readonly TABLE_EDIT_TAG_REGEX = /<tableEdit[^>]*>([\s\S]*?)<\/tableEdit>/gi;
-  private readonly HTML_COMMENT_REGEX = /<!--([\s\S]*?)-->/g;
-  private readonly INSERT_ROW_REGEX = /insertRow\((\d+),\s*(\{[\s\S]+\})\)/;
-  private readonly UPDATE_ROW_REGEX = /updateRow\((\d+),\s*(\d+),\s*(\{[\s\S]+\})\)/;
-  private readonly DELETE_ROW_REGEX = /deleteRow\((\d+),\s*(\d+)\)/;
 
   /**
    * 解析响应内容中的 tableEdit 命令
@@ -66,7 +101,7 @@ class TableEditParser {
 
     try {
       const tableEditContents = this.extractTableEditContents(response);
-      
+
       if (tableEditContents.length === 0) {
         result.errors.push('未找到 <tableEdit> 标签或内容为空');
         addLog('TableEditParser: 未找到 <tableEdit> 标签', 'warn');
@@ -99,19 +134,8 @@ class TableEditParser {
    * 提取 <tableEdit> 标签内的内容
    */
   private extractTableEditContents(response: string): string[] {
-    const contents: string[] = [];
-    const regex = new RegExp(this.TABLE_EDIT_TAG_REGEX.source, this.TABLE_EDIT_TAG_REGEX.flags);
-    let match;
-
-    while ((match = regex.exec(response)) !== null) {
-      const content = match[1]?.trim();
-      if (content) {
-        contents.push(content);
-        addLog('TableEditParser: 提取 tableEdit 标签内容成功', 'debug');
-      }
-    }
-
-    return contents;
+    // 复用 Base 的 extractBlocks（单正则场景等价于原实现）
+    return this.extractBlocks(response, [this.TABLE_EDIT_TAG_REGEX]);
   }
 
   /**
@@ -149,196 +173,25 @@ class TableEditParser {
   }
 
   /**
-   * 提取 HTML 注释内容
-   */
-  private extractCommentText(content: string): string | null {
-    const regex = new RegExp(this.HTML_COMMENT_REGEX.source, this.HTML_COMMENT_REGEX.flags);
-    let match;
-    const comments: string[] = [];
-
-    while ((match = regex.exec(content)) !== null) {
-      if (match[1]?.trim()) {
-        comments.push(match[1].trim());
-      }
-    }
-
-    return comments.length > 0 ? comments.join('\n') : null;
-  }
-
-  /**
-   * 解析单个命令
+   * 解析单个命令（委托给 Base 的 tryParseLine，再转换为对外 TableEditCommand 结构）
    */
   private parseSingleCommand(line: string): TableEditCommand | null {
-    let command = this.parseInsertRow(line);
-    if (command) return command;
-
-    command = this.parseUpdateRow(line);
-    if (command) return command;
-
-    command = this.parseDeleteRow(line);
-    if (command) return command;
-
-    return null;
+    const core = this.tryParseLine(line, MEMORY_REGEX_SPEC, MEMORY_PARSE_OPTS);
+    if (!core) return null;
+    return this.toTableEditCommand(core);
   }
 
   /**
-   * 解析 insertRow 命令
+   * 将 Base 的中间结构 ParsedCommandCore 转换为对外 TableEditCommand
    */
-  private parseInsertRow(line: string): TableEditCommand | null {
-    const regex = new RegExp(this.INSERT_ROW_REGEX.source);
-    const match = regex.exec(line);
-
-    if (!match) return null;
-
-    const tableIndex = parseInt(match[1], 10);
-    const dataStr = match[2];
-
-    const data = this.parseDataObject(dataStr);
-    if (!data) {
-      addLog(`TableEditParser: insertRow 数据解析失败: ${dataStr}`, 'error');
-      return null;
-    }
-
-    // 将字段索引从 1-based 转换为 0-based
-    const convertedData: Record<string, string> = {};
-    for (const [key, value] of Object.entries(data)) {
-      const numericKey = parseInt(key, 10);
-      if (!isNaN(numericKey)) {
-        convertedData[String(numericKey - 1)] = value;
-      } else {
-        convertedData[key] = value;
-      }
-    }
-
+  private toTableEditCommand(core: ParsedCommandCore): TableEditCommand {
     return {
-      type: 'insertRow',
-      tableIndex: tableIndex - 1,
-      data: convertedData,
-      rawCommand: line
+      type: core.kind,
+      tableIndex: core.sheetIndex,
+      rowIndex: core.rowIndex,
+      data: core.data,
+      rawCommand: core.raw
     };
-  }
-
-  /**
-   * 解析 updateRow 命令
-   */
-  private parseUpdateRow(line: string): TableEditCommand | null {
-    const regex = new RegExp(this.UPDATE_ROW_REGEX.source);
-    const match = regex.exec(line);
-
-    if (!match) return null;
-
-    const tableIndex = parseInt(match[1], 10);
-    const rowIndex = parseInt(match[2], 10);
-    const dataStr = match[3];
-
-    const data = this.parseDataObject(dataStr);
-    if (!data) {
-      addLog(`TableEditParser: updateRow 数据解析失败: ${dataStr}`, 'error');
-      return null;
-    }
-
-    // 将字段索引从 1-based 转换为 0-based
-    const convertedData: Record<string, string> = {};
-    for (const [key, value] of Object.entries(data)) {
-      const numericKey = parseInt(key, 10);
-      if (!isNaN(numericKey)) {
-        convertedData[String(numericKey - 1)] = value;
-      } else {
-        convertedData[key] = value;
-      }
-    }
-
-    return {
-      type: 'updateRow',
-      tableIndex: tableIndex - 1,
-      rowIndex: rowIndex - 1,
-      data: convertedData,
-      rawCommand: line
-    };
-  }
-
-  /**
-   * 解析 deleteRow 命令
-   */
-  private parseDeleteRow(line: string): TableEditCommand | null {
-    const regex = new RegExp(this.DELETE_ROW_REGEX.source);
-    const match = regex.exec(line);
-
-    if (!match) return null;
-
-    const tableIndex = parseInt(match[1], 10);
-    const rowIndex = parseInt(match[2], 10);
-
-    return {
-      type: 'deleteRow',
-      tableIndex: tableIndex - 1,
-      rowIndex: rowIndex - 1,
-      rawCommand: line
-    };
-  }
-
-  /**
-   * 解析数据对象（处理引号和非引号键）
-   */
-  private parseDataObject(dataStr: string): Record<string, string> | null {
-    // 清理 JSON 字符串中的嵌套 HTML 注释（如 "朱迪<!-- 药 -->" → "朱迪"）
-    const cleanedStr = dataStr.replace(/<!--[\s\S]*?-->/g, '');
-
-    try {
-      // 首先尝试直接解析清理后的 JSON（AI 返回的标准 JSON）
-      try {
-        const parsed = JSON.parse(cleanedStr);
-        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-          const result: Record<string, string> = {};
-          for (const [key, value] of Object.entries(parsed)) {
-            result[key] = String(value);
-          }
-          return result;
-        }
-      } catch {
-        // 直接解析失败，尝试规范化后解析
-      }
-
-      // 规范化后重试
-      const normalizedStr = this.normalizeJsonObject(cleanedStr);
-      const parsed = JSON.parse(normalizedStr);
-
-      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-        addLog(`TableEditParser: 数据对象格式无效: ${dataStr}`, 'error');
-        return null;
-      }
-
-      const result: Record<string, string> = {};
-      for (const [key, value] of Object.entries(parsed)) {
-        result[key] = String(value);
-      }
-
-      return result;
-    } catch (error) {
-      addLog(`TableEditParser: JSON 解析失败: ${dataStr}, 错误: ${error}`, 'error');
-      return null;
-    }
-  }
-
-  /**
-   * 规范化 JSON 对象字符串（处理非标准格式）
-   * 注意：此方法可能破坏已包含冒号的合法 JSON 值（如 "00:00"）
-   * 因此 parseDataObject 应优先直接解析
-   */
-  private normalizeJsonObject(str: string): string {
-    let normalized = str.trim();
-
-    // 仅对未加引号的键名添加引号
-    normalized = normalized.replace(/(\{|\,)\s*(\w+)\s*:/g, '$1"$2":');
-    // 处理开头的键名
-    normalized = normalized.replace(/^\s*(\w+)\s*:/, '"$1":');
-
-    normalized = normalized.replace(/:\s*'([^']*)'/g, ':"$1"');
-
-    normalized = normalized.replace(/,\s*}/g, '}');
-    normalized = normalized.replace(/,\s*]/g, ']');
-
-    return normalized;
   }
 }
 

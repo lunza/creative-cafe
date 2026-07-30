@@ -8,7 +8,6 @@ export interface PathState {
   avatarPath: string;
   creativePath: string;
   memoryPath: string;
-  pluginPath: string;
 }
 
 export type PathField = keyof PathState;
@@ -24,7 +23,6 @@ const DEFAULT_PATHS: Record<PathField, string> = {
   avatarPath: '__USER_DATA__/data/avatars',
   creativePath: '__USER_DATA__/data/creatives',
   memoryPath: '__USER_DATA__/data/memories',
-  pluginPath: '__USER_DATA__/data/plugins',
 };
 
 const PATH_LABELS: Record<PathField, string> = {
@@ -33,7 +31,6 @@ const PATH_LABELS: Record<PathField, string> = {
   avatarPath: '用户人设存储',
   creativePath: '创意存储',
   memoryPath: '记忆存储',
-  pluginPath: '插件存储',
 };
 
 export interface UsePathSettingsResult {
@@ -70,7 +67,6 @@ export function usePathSettings(
     avatarPath: '',
     creativePath: '',
     memoryPath: '',
-    pluginPath: '',
     ...initialPaths,
   });
   const [pathValidation, setPathValidation] = useState<Record<string, PathValidation>>({});

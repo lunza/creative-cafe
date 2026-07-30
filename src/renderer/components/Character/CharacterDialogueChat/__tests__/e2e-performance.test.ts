@@ -68,6 +68,16 @@ vi.mock('../../../../../main/services/VectorRegistryService', () => ({
   vectorRegistryService: mocks.vectorRegistryService,
 }));
 
+// ⚠️ Bug修复（测试隔离缺陷）：原测试未 mock vectorConfigManager，导致 retrieveChatHistory
+// 读取真实磁盘 settings.json 的 vector.embeddingMode。当用户在本机应用中禁用向量化
+// （embeddingMode='disabled'）时，服务短路返回 []，性能测试断言失败。
+// 现固定 mock 为 'remote' 模式，使测试与机器配置解耦（hermetic）。
+vi.mock('../../../../../main/services/VectorConfigManager', () => ({
+  vectorConfigManager: {
+    loadVectorConfig: vi.fn(() => ({ embeddingMode: 'remote' as const })),
+  },
+}));
+
 // 静音 console.* 保持测试输出整洁（ChatVectorizationService 内部有大量 console.log）
 const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);

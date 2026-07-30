@@ -20,13 +20,12 @@ const PATH_FIELDS: PathField[] = [
   'avatarPath',
   'creativePath',
   'memoryPath',
-  'pluginPath',
 ];
 
 /**
  * 路径设置面板（展示组件）
  *
- * 从 Settings.tsx 提取，负责渲染 6 个目录路径的输入、浏览、重置、验证 UI。
+ * 从 Settings.tsx 提取，负责渲染 5 个目录路径的输入、浏览、重置、验证 UI。
  * 路径状态和操作由父组件通过 usePathSettings Hook 提供。
  */
 const PathSettingsPanel: React.FC<PathSettingsPanelProps> = ({

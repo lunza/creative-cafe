@@ -33,9 +33,9 @@ describe('PromptTemplateService', () => {
 
   // ========== 1. 默认模板测试 ==========
   describe('Default templates', () => {
-    it('getAllTemplates() should return 20 templates (3 character-card + 13 world-book + 4 creative-chat)', () => {
+    it('getAllTemplates() should return 21 templates (3 character-card + 14 world-book + 4 creative-chat)', () => {
       const templates = service.getAllTemplates();
-      expect(templates).toHaveLength(20);
+      expect(templates).toHaveLength(21);
     });
 
     it('each default template should have correct moduleId, name, framework', () => {
@@ -116,7 +116,7 @@ describe('PromptTemplateService', () => {
     it('world-book templates should all exist with correct moduleId prefix', () => {
       const templates = service.getAllTemplates();
       const worldBookTemplates = templates.filter((t: any) => t.moduleId.startsWith('world-book.'));
-      expect(worldBookTemplates).toHaveLength(13);
+      expect(worldBookTemplates).toHaveLength(14);
 
       const expectedModuleIds = [
         'world-book.translate',
@@ -130,6 +130,7 @@ describe('PromptTemplateService', () => {
         'world-book.generate-from-template',
         'world-book.expand-keywords',
         'world-book.generate-description',
+        'world-book.generate-world-description',
         'world-book.generate-new-entries',
         'world-book.generate-from-characters',
       ];

@@ -48,12 +48,47 @@ export class ChatEngine implements IChatEngine {
     this.cleanupListeners();
 
     try {
-      const chatHistory = messages
-        .filter(msg => msg.role !== 'system')
-        .map(msg => ({
-          role: msg.role,
-          content: String(msg.content),
-        }));
+      // 【F2 修复 - 消息序号/完整性校验】
+      // 原实现仅过滤 system 角色，未校验内容完整性、状态与角色合法性，
+      // 导致 error 状态消息、空内容消息、非法 role 会被一并送入后端，
+      // 引发 4xx 或模型行为漂移。此处统一清洗：
+      //   1. 剔除 system（systemPrompt 单独注入，不进 chatHistory）
+      //   2. 剔除 status='error' 的失败消息（避免把错误内容回灌给模型）
+      //   3. 剔除空内容（trim 后为空）的消息
+      //   4. 仅保留 role ∈ {user, assistant}，其余角色跳过并警告
+      //   5. content 强制 String 化，防止 undefined/null/对象传入后端
+      const chatHistory = this.sanitizeChatHistory(messages);
+
+      // ============================================================
+      // Task 16.2: 智能体模式（useAgent）灰度开关
+      // ============================================================
+      // 当 useAgent=true && supportsToolCalling=true 时，对话走 AgentCore.run()
+      // （通过 agent:run IPC），AI 可自主调用对话组工具：
+      //   - searchWorldbook：向量检索世界书
+      //   - searchHistory：搜索对话历史
+      //   - updateStateTable：更新状态表
+      //   - addMemoryNote：记录记忆笔记
+      //
+      // 降级保护：
+      //   1. useAgent 未启用 → 旧路径（streamChatAPI）
+      //   2. supportsToolCalling !== true → 旧路径（模型不支持工具调用）
+      //   3. AgentCore 异常 → 自动回退旧路径（catch 中继续执行旧逻辑）
+      const useAgentEnabled =
+        config.useAgent === true &&
+        config.capabilities?.supportsToolCalling === true;
+
+      if (useAgentEnabled) {
+        try {
+          await this.runViaAgentCore(chatHistory, systemPrompt, config);
+          return; // AgentCore 路径成功完成，直接返回
+        } catch (agentErr) {
+          // 降级：AgentCore 失败时回退到旧 streamChatAPI 路径
+          const agentErrMsg = agentErr instanceof Error ? agentErr.message : String(agentErr);
+          console.warn('[ChatEngine] Agent mode failed, falling back to direct streamChatAPI:', agentErrMsg);
+          if (this.isCancelled) return;
+          // 继续执行下方的旧路径（不 return）
+        }
+      }
 
       // 内联 URL 构造（原 buildApiUrl 方法，已删除以消除与 AIService.tsx 的重复）
       const baseUrl = config.api_url.trim().replace(/\/+$/, '');
@@ -155,15 +190,30 @@ export class ChatEngine implements IChatEngine {
       //   - use_function_calling=true 且 supportsToolCalling=true  → 工具调用生效
       //   - use_function_calling=true 但 supportsToolCalling!==true → 禁用工具调用（模型不支持，降级为纯文本聊天）
       //   - use_function_calling 未启用                            → 不启用工具调用
-      // 当前 ChatEngine 走纯文本聊天流程，不构造 OpenAI tools 数组，因此此处不向请求体注入 tools 字段；
-      // 仅在此处记录能力一致性判断结果，为后续接入 tools 字段预留正确的双条件判断点。
       // 当用户开启 use_function_calling 但模型不支持时，应静默降级而非报错，保证聊天功能正常运行。
       const toolCallingEnabled =
         config.use_function_calling === true &&
         config.capabilities?.supportsToolCalling === true;
-      // 注：toolCallingEnabled 当前不直接驱动请求体字段（纯文本聊天无 tools）；
-      // 若后续接入 tools 数组，必须在此处用同样的双条件守卫，未满足时跳过 tools 注入。
-      void toolCallingEnabled;
+
+      // 【F1 修复 - 工具调用全链路注入】
+      // toolCallingEnabled 现已真正驱动 tools 字段注入。三条件守卫：
+      //   1. toolCallingEnabled（use_function_calling && supportsToolCalling）
+      //   2. config.tools 为非空数组
+      // 满足时注入 tools / tool_choice='auto' / parallel_tool_calls=false（默认禁用并行，
+      // 简化后续 agentLoop 处理）。任一条件不满足则跳过，请求体与修复前完全一致（降级保护）。
+      //
+      // 当前阶段工具集来源：config.tools 由调用方（CharacterDialogueChat.hooks）透传，
+      // 底座尚未落地时为 undefined → 跳过注入，保持纯文本聊天。
+      // 后续 agent 底座接入时只需在调用方填充 config.tools 即可打通完整链路：
+      //   supportsToolCalling 探测 → toolCallingEnabled 判定 → tools 注入请求体
+      //   → 流式响应 tool_calls 解析 → handleComplete 回传 toolCalls → agentLoop 执行
+      const availableTools = Array.isArray(config.tools) ? config.tools : [];
+      if (toolCallingEnabled && availableTools.length > 0) {
+        requestBody.tools = availableTools;
+        requestBody.tool_choice = 'auto';
+        // 默认禁用并行工具调用：简化后续 agentLoop 顺序执行，避免并发状态同步问题
+        requestBody.parallel_tool_calls = false;
+      }
 
       // Stop sequences 防抢话（Spec: optimize-chat-ai-intelligence / Task 3.2 + 3.3）
       // 借鉴 SillyTavern names_as_stop_strings 机制，注入用户名变体停止序列，
@@ -226,18 +276,193 @@ export class ChatEngine implements IChatEngine {
     this.isCancelled = true;
     this.cleanupListeners();
 
-    // 调用主进程的取消请求 API，真正中止 fetch 请求
-    if (window.electronAPI?.ai?.cancel) {
-      window.electronAPI.ai.cancel().catch(() => {
-        // 忽略取消请求的错误
+    // 【F6 修复 - 取消失败时回传前端错误】
+    // 原实现 .catch(() => {}) 静默吞掉取消失败，导致前端无法感知
+    // "取消操作本身失败"的异常（如主进程 IPC 通道断开），用户会以为
+    // 已取消但请求仍在后台跑。现改为：取消失败时通过 errorCallback 回传，
+    // 让 UI 能提示"取消失败，请稍后重试或检查应用状态"。
+    // 注：electronAPI.ai 类型未声明 cancel（动态注入），用 as any 绕过类型检查，
+    // 运行时守卫 window.electronAPI?.ai?.cancel 已保证安全。
+    const aiCancel = (window as any).electronAPI?.ai?.cancel;
+    if (aiCancel) {
+      Promise.resolve(aiCancel()).catch((cancelErr: unknown) => {
+        const errMsg = cancelErr instanceof Error ? cancelErr.message : String(cancelErr);
+        console.warn('[ChatEngine] Cancel request failed:', errMsg);
+        this.errorCallback?.({
+          message: `取消请求失败: ${errMsg}`,
+          type: 'network',
+        });
       });
     }
+
+    // Task 16.2: 智能体模式取消（agent:cancel IPC）
+    const agentCancel = (window as any).electronAPI?.agent?.cancel;
+    if (agentCancel) {
+      Promise.resolve(agentCancel()).catch((cancelErr: unknown) => {
+        const errMsg = cancelErr instanceof Error ? cancelErr.message : String(cancelErr);
+        console.warn('[ChatEngine] Agent cancel failed:', errMsg);
+      });
+    }
+  }
+
+  // ============================================================
+  // Task 16.2: 智能体模式（AgentCore）路径
+  // ============================================================
+
+  /** agent:token 事件取消订阅函数 */
+  private removeAgentTokenListener: (() => void) | null = null;
+  /** agent:done 事件取消订阅函数 */
+  private removeAgentDoneListener: (() => void) | null = null;
+
+  /**
+   * 通过 AgentCore 运行对话（智能体模式）。
+   *
+   * 流程：
+   *  1. 订阅 agent:token / agent:done 事件
+   *  2. 调用 agent:run IPC（传入 systemPrompt + messages + context）
+   *  3. agent:token 事件 → streamCallback（边生成边推送 UI）
+   *  4. agent:run 返回 → completeCallback（最终结果）
+   *
+   * 降级保护：此方法抛出的异常由调用方（sendMessage）捕获并回退旧路径。
+   */
+  private async runViaAgentCore(
+    chatHistory: Array<{ role: string; content: string }>,
+    systemPrompt: string,
+    config: AIEngineConfig
+  ): Promise<void> {
+    const electronAPI = (window as any).electronAPI;
+    if (!electronAPI?.agent?.run) {
+      throw new Error('Agent API not available in electronAPI');
+    }
+
+    // 构建对话上下文（供工具使用）
+    const context = {
+      mode: 'dialogue' as const,
+      characterId: (config as any).characterId,
+      sessionId: (config as any).sessionId,
+    };
+
+    // 订阅 token 流
+    let accumulatedContent = '';
+    this.removeAgentTokenListener = electronAPI.agent.onToken(
+      (data: { chunk: string; timestamp: number }) => {
+        if (this.isCancelled) return;
+        accumulatedContent += data.chunk;
+        this.streamCallback?.(data.chunk, false);
+      }
+    );
+
+    // 订阅完成事件（用于日志与异常检测，主要完成逻辑在 agent:run 返回后处理）
+    this.removeAgentDoneListener = electronAPI.agent.onDone(
+      (data: { finishReason: string; iterations: number; error?: string; timestamp: number }) => {
+        if (data.error) {
+          console.warn('[ChatEngine] Agent done with error:', data.error);
+        }
+      }
+    );
+
+    try {
+      // 调用 agent:run
+      const result = await electronAPI.agent.run({
+        systemPrompt,
+        messages: chatHistory.map(msg => ({
+          role: msg.role as 'user' | 'assistant',
+          content: msg.content,
+        })),
+        context,
+        maxIterations: 8,
+        timeoutMs: 300000,
+      });
+
+      if (this.isCancelled) return;
+
+      if (!result.success) {
+        throw new Error(result.error || 'Agent run failed');
+      }
+
+      // 推送最终内容（若 token 流未完整覆盖）
+      const finalContent = result.result?.content || accumulatedContent;
+      if (finalContent && !accumulatedContent) {
+        // token 流为空时直接推送完整内容（非流式降级）
+        this.streamCallback?.(finalContent, false);
+      }
+
+      // 回调完成
+      this.completeCallback?.({
+        content: finalContent,
+        finishReason: result.result?.finishReason || 'stop',
+        usage: result.result?.usage as any,
+        id: `agent-${Date.now()}`,
+        toolCalls: undefined, // agent 模式工具调用已在主进程执行，无需回传
+      });
+    } finally {
+      // 清理事件订阅
+      this.removeAgentTokenListener?.();
+      this.removeAgentDoneListener?.();
+      this.removeAgentTokenListener = null;
+      this.removeAgentDoneListener = null;
+    }
+  }
+
+  /**
+   * 清洗对话历史，剔除非法/不完整消息（F2 修复）。
+   *
+   * 校验规则：
+   *  1. 剔除 system 角色（systemPrompt 单独注入请求体）
+   *  2. 剔除 status='error' 的失败消息（避免错误内容污染模型上下文）
+   *  3. 剔除空内容（trim 后为空）的消息
+   *  4. 仅保留 role ∈ {user, assistant}，其余角色跳过并警告
+   *  5. content 强制 String 化
+   *
+   * @param messages 原始消息数组
+   * @returns 清洗后的 chatHistory（{role, content}）
+   */
+  private sanitizeChatHistory(
+    messages: ChatMessage[]
+  ): Array<{ role: string; content: string }> {
+    const history: Array<{ role: string; content: string }> = [];
+
+    for (const msg of messages) {
+      // 1. 剔除 system
+      if (msg.role === 'system') continue;
+
+      // 2. 剔除 error 状态消息
+      if (msg.status === 'error') {
+        console.warn('[ChatEngine] F2: Dropping message with error status:', msg.id);
+        continue;
+      }
+
+      // 3. 剔除空内容
+      const content = String(msg.content ?? '');
+      if (content.trim().length === 0) {
+        console.warn('[ChatEngine] F2: Dropping message with empty content:', msg.id);
+        continue;
+      }
+
+      // 4. 仅保留 user / assistant
+      if (msg.role !== 'user' && msg.role !== 'assistant') {
+        console.warn(`[ChatEngine] F2: Dropping message with invalid role '${msg.role}':`, msg.id);
+        continue;
+      }
+
+      // 5. 加入清洗后历史
+      history.push({ role: msg.role, content });
+    }
+
+    return history;
   }
 
   private setupEventListeners(): void {
     let tempContent = '';
     let lastProcessedLineCount = 0;
     let lastAccumulatedData = '';
+    // 【F1 修复 - 工具调用全链路注入】
+    // 累积流式 tool_calls delta 分片。OpenAI 协议中 tool_calls 跨多个 chunk 到达：
+    //   - 首个分片含 id / type / function.name，arguments 为空串或起始片段
+    //   - 后续分片仅含 function.arguments 字符串片段（按 index 对齐）
+    //   - 末尾分片可能伴随 finish_reason='tool_calls'
+    // 由 mergeToolCallDelta 按 index 合并，handleComplete 时回传到 AIResponse.toolCalls。
+    const accumulatedToolCalls: any[] = [];
 
     const handleStream = (data: any) => {
       if (this.isCancelled) return;
@@ -245,21 +470,26 @@ export class ChatEngine implements IChatEngine {
       if (data.accumulatedData) {
         lastAccumulatedData = data.accumulatedData;
         // 从完整累积数据中只解析新增的 SSE 行
-        const lines = data.accumulatedData.split('\n');
-        const dataLines = lines.filter(line => line.trim().startsWith('data: ') && line.trim().substring(6).trim() !== '[DONE]');
-        
+        const lines: string[] = String(data.accumulatedData).split('\n');
+        const dataLines = lines.filter((line: string) => line.trim().startsWith('data: ') && line.trim().substring(6).trim() !== '[DONE]');
+
         // 只处理新增的行
         const newLines = dataLines.slice(lastProcessedLineCount);
         lastProcessedLineCount = dataLines.length;
-        
+
         let extractedFromBatch = '';
         for (const line of newLines) {
           const content = this.parseSSEChunk(line);
           if (content) {
             extractedFromBatch += content;
           }
+          // 【F1 修复】累积 tool_calls delta（与 content 解析并行，互不影响）
+          const toolCallsDelta = this.parseSSELineToolCalls(line);
+          if (toolCallsDelta) {
+            this.mergeToolCallDelta(accumulatedToolCalls, toolCallsDelta);
+          }
         }
-        
+
         if (extractedFromBatch) {
           tempContent += extractedFromBatch;
           this.streamCallback?.(extractedFromBatch, false);
@@ -270,6 +500,11 @@ export class ChatEngine implements IChatEngine {
         if (extractedContent) {
           tempContent += extractedContent;
           this.streamCallback?.(extractedContent, false);
+        }
+        // 【F1 修复】旧格式 chunk 也需累积 tool_calls
+        const toolCallsDelta = this.parseSSELineToolCalls(data.chunk);
+        if (toolCallsDelta) {
+          this.mergeToolCallDelta(accumulatedToolCalls, toolCallsDelta);
         }
       }
     };
@@ -303,11 +538,27 @@ export class ChatEngine implements IChatEngine {
         console.warn('[ChatEngine] handleComplete: finalContent is empty, calling completeCallback with empty content to prevent UI stuck');
       }
 
+      // 【F1 修复 - 工具调用全链路注入】
+      // 回传累积的 tool_calls 到 AIResponse。当 finishReason='tool_calls' 时调用方应消费此字段。
+      // 当前阶段仅记录日志，不执行工具（执行循环是后续 agentLoop 的事，见 spec 阶段 5）。
+      // 优先取流式累积结果；若流式未捕获到但最终 data.data 含 message.tool_calls（部分后端
+      // 在非流式回包中提供完整 tool_calls），则回退到 data.data。
+      const finalToolCalls = accumulatedToolCalls.length > 0
+        ? accumulatedToolCalls
+        : (data.data?.choices?.[0]?.message?.tool_calls ?? undefined);
+      if (finalToolCalls && finalToolCalls.length > 0) {
+        console.info(
+          '[ChatEngine] Received tool_calls (execution deferred to agentLoop):',
+          JSON.stringify(finalToolCalls, null, 2)
+        );
+      }
+
       const response: AIResponse = {
         content: finalContent || '',
         finishReason: data.data?.choices?.[0]?.finish_reason || 'stop',
         usage: data.data?.usage,
         id: data.data?.id || '',
+        toolCalls: finalToolCalls,
       };
       this.completeCallback?.(response);
 
@@ -382,6 +633,86 @@ export class ChatEngine implements IChatEngine {
     }
   }
 
+  /**
+   * 解析 SSE 单行数据，提取 tool_calls delta 数组。
+   *
+   * 【F1 修复 - 工具调用全链路注入】
+   * parseSSEChunk 仅返回 content 字符串，无法承载 tool_calls。本方法为 tool_calls 专用解析，
+   * 与 parseSSEChunk 并行调用（接受同一 SSE 行）。每个 delta 形如：
+   *   { index: 0, id?: 'call_xxx', type?: 'function', function: { name?: 'foo', arguments?: '{"a":' } }
+   *
+   * @param line 单行 SSE 数据或原始 chunk
+   * @returns tool_calls delta 数组；非 data 行 / 无 tool_calls / 解析失败返回 null
+   */
+  private parseSSELineToolCalls(line: string): any[] | null {
+    if (!line || line.trim().length === 0) return null;
+    try {
+      // 复用 parseSSEChunk 的 data: 行提取逻辑，但解析目标为 tool_calls
+      const dataLineRegex = /^data:\s+(.+)$/gm;
+      let match;
+      let accumulated: any[] | null = null;
+      const regex = new RegExp(dataLineRegex);
+
+      while ((match = regex.exec(line)) !== null) {
+        const jsonStr = match[1].trim();
+        if (!jsonStr || jsonStr === '[DONE]') continue;
+        try {
+          const parsed = JSON.parse(jsonStr);
+          const delta = parsed.choices?.[0]?.delta?.tool_calls;
+          if (delta && Array.isArray(delta)) {
+            accumulated = accumulated ? accumulated.concat(delta) : delta.slice();
+          }
+        } catch {
+          // 忽略单行 JSON 解析错误
+        }
+      }
+
+      if (accumulated) return accumulated;
+
+      // Fallback: 直接 JSON 解析（非 SSE 格式的 chunk）
+      try {
+        const parsed = JSON.parse(line);
+        const delta = parsed.choices?.[0]?.delta?.tool_calls;
+        if (delta && Array.isArray(delta)) return delta;
+      } catch {
+        // 非 JSON，忽略
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 将 tool_calls delta 分片合并到累积数组中（按 index 对齐）。
+   *
+   * 【F1 修复 - 工具调用全链路注入】
+   * OpenAI 流式协议中 tool_calls 跨多个 chunk 到达，需按 delta.index 累积：
+   *   - id / type / function.name 取首个非空值（通常在第一个分片到达）
+   *   - function.arguments 字符串拼接（分片逐步到达，最终为完整 JSON 字符串）
+   * 完成后累积数组结构：[{ id, type: 'function', function: { name, arguments } }]
+   *
+   * @param accumulator 累积数组（按 delta.index 对齐）
+   * @param delta 当前分片的 tool_calls 数组
+   */
+  private mergeToolCallDelta(accumulator: any[], delta: any[]): void {
+    for (const tc of delta) {
+      const idx = typeof tc.index === 'number' ? tc.index : accumulator.length;
+      if (!accumulator[idx]) {
+        accumulator[idx] = {
+          id: '',
+          type: tc.type || 'function',
+          function: { name: '', arguments: '' },
+        };
+      }
+      if (tc.id) accumulator[idx].id = tc.id;
+      if (tc.type) accumulator[idx].type = tc.type;
+      if (tc.function?.name) accumulator[idx].function.name += tc.function.name;
+      if (tc.function?.arguments) accumulator[idx].function.arguments += tc.function.arguments;
+    }
+  }
+
   private classifyError(message: string): 'network' | 'server' | 'api' | 'validation' | 'unknown' {
     const lowerMessage = message.toLowerCase();
     if (lowerMessage.includes('fetch') || lowerMessage.includes('network') || lowerMessage.includes('connect')) {
@@ -411,6 +742,15 @@ export class ChatEngine implements IChatEngine {
     if (this.removeErrorListener) {
       try { this.removeErrorListener(); } catch {}
       this.removeErrorListener = null;
+    }
+    // Task 16.2: 清理 agent 模式事件订阅
+    if (this.removeAgentTokenListener) {
+      try { this.removeAgentTokenListener(); } catch {}
+      this.removeAgentTokenListener = null;
+    }
+    if (this.removeAgentDoneListener) {
+      try { this.removeAgentDoneListener(); } catch {}
+      this.removeAgentDoneListener = null;
     }
   }
 }

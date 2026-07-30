@@ -2,9 +2,13 @@ import { ipcMain } from 'electron';
 import { getStorageService } from './storageService';
 import { VectorConfig, EmbeddingResult, BatchEmbeddingResult, ConnectionTestResult, ModeInfo, ModeSetResult } from '../types/vectorConfig';
 import { embeddingWorkerService } from './EmbeddingWorkerService';
+import { getEmbeddingCache, SqliteEmbeddingCachePersistence } from './EmbeddingCache';
+import { initAgentBackendIfNeeded } from './agent/memory/sqliteBackend';
 
 export class EmbeddingService {
   private vectorConfig: VectorConfig | null = null;
+  /** Embedding 缓存（P1 性能修复：content-hash → vector LRU + SQLite 持久化） */
+  private embeddingCache = getEmbeddingCache({ maxSize: 2000 });
 
   async initialize(): Promise<void> {
     try {
@@ -17,6 +21,51 @@ export class EmbeddingService {
     } catch (error) {
       console.error('[EmbeddingService] 初始化失败:', error);
     }
+
+    // 【SubTask 10.2】接入 SQLite 持久化缓存（跨重启复用 embedding）
+    // 初始化 agent 后端（幂等）；成功则注入持久化实现，失败则保持仅内存模式（降级）
+    this.initPersistence().catch((err) => {
+      // fire-and-forget：持久化不可用不影响 EmbeddingService 主流程
+      console.warn('[EmbeddingService] Embedding cache persistence init failed (degrading to in-memory):', err instanceof Error ? err.message : err);
+    });
+  }
+
+  /**
+   * 初始化 Embedding 缓存的 SQLite 持久化层。
+   *
+   * 依赖 agent SQLite 后端（共享 WAL 连接 + embedding_cache 表）。
+   * 后端不可用（如 better-sqlite3 未安装）时静默降级为仅内存缓存。
+   */
+  private async initPersistence(): Promise<void> {
+    try {
+      const backend = await initAgentBackendIfNeeded();
+      if (backend) {
+        this.embeddingCache.attachPersistence(new SqliteEmbeddingCachePersistence(backend));
+        console.log('[EmbeddingService] Embedding cache persistence enabled (SQLite)');
+      } else {
+        console.warn('[EmbeddingService] Agent backend unavailable, embedding cache runs in memory-only mode');
+      }
+    } catch (err) {
+      console.warn('[EmbeddingService] Persistence attach skipped:', err instanceof Error ? err.message : err);
+    }
+  }
+
+  /**
+   * 缓存成功的 embedding 结果（内存 + SQLite 双写）。
+   *
+   * 仅在 result.success 且含 vector 时写入；失败结果不缓存。
+   * SQLite 写失败由 EmbeddingCache 内部捕获并降级，不抛错。
+   */
+  private cacheEmbeddingResult(text: string, modelName: string, result: EmbeddingResult): void {
+    if (!result.success || !result.vector) {
+      return;
+    }
+    this.embeddingCache.set(text, modelName, {
+      vector: result.vector,
+      dimension: result.dimension ?? result.vector.length,
+      model: result.model || modelName,
+      mode: result.mode as 'local' | 'remote',
+    });
   }
 
   async generateEmbedding(text: string): Promise<EmbeddingResult> {
@@ -24,6 +73,25 @@ export class EmbeddingService {
       await this.ensureConfigLoaded();
 
       const mode = this.vectorConfig?.embeddingMode || 'remote';
+
+      // 【P1 性能修复】content-hash → vector LRU 缓存
+      // 查询缓存：命中则直接返回，避免重复调用远程 API / 本地模型
+      // 【重点标记·bug修复】原代码误用 localModelName（VectorConfig 无此字段，恒为 undefined），
+      // 导致本地模式缓存键始终为 'local-default'，切换本地模型后命中错误向量。
+      // 修正为 localModel（与 EmbeddingWorkerService 一致），保证按模型隔离缓存。
+      const modelName = mode === 'local'
+        ? (this.vectorConfig?.localModel || 'local-default')
+        : (this.vectorConfig?.remoteModel || 'text-embedding-3-small');
+      const cached = this.embeddingCache.get(text, modelName);
+      if (cached) {
+        return {
+          success: true,
+          vector: cached.vector,
+          dimension: cached.dimension,
+          model: cached.model,
+          mode: cached.mode,
+        };
+      }
 
       if (mode === 'disabled') {
         console.log('[EmbeddingService] 向量化已禁用，跳过 generateEmbedding');
@@ -33,7 +101,10 @@ export class EmbeddingService {
       if (mode === 'local') {
         // Facade: 委托给 EmbeddingWorkerService（主进程内加载本地 ONNX 模型并生成 embedding）
         const localResult = await this.generateLocalEmbeddingFacade(text);
-        return this.validateDimension(localResult);
+        const validated = this.validateDimension(localResult);
+        // 【P1 性能修复】缓存成功的 embedding 结果
+        this.cacheEmbeddingResult(text, modelName, validated);
+        return validated;
       }
 
       if (!this.vectorConfig?.remoteApiUrl) {
@@ -93,13 +164,16 @@ export class EmbeddingService {
         const magnitude = Math.sqrt(vector.reduce((sum: number, v: number) => sum + v * v, 0));
         console.log(`[EmbeddingService] Remote vector normalized, magnitude: ${magnitude.toFixed(6)}, dim: ${vector.length}`);
 
-        return this.validateDimension({
+        const validated = this.validateDimension({
           success: true,
           vector,
           dimension: vector.length,
           model: data.model || this.vectorConfig.remoteModel,
           mode: 'remote'
         });
+        // 【P1 性能修复】缓存成功的 embedding 结果
+        this.cacheEmbeddingResult(text, modelName, validated);
+        return validated;
       }
 
       return { success: false, error: 'API 响应格式不正确' };
@@ -152,7 +226,8 @@ export class EmbeddingService {
    */
   private normalizeVector(vector: number[]): number[] {
     const magnitude = Math.sqrt(vector.reduce((sum: number, v: number) => sum + v * v, 0));
-    if (magnitude === 0 || !isFinite(magnitude)) {
+    if (magnitude === 0) {
+      // 零向量无法归一化，原样返回以避免 NaN
       return vector;
     }
     return vector.map(v => v / magnitude);
@@ -514,8 +589,9 @@ export const embeddingServiceInstance = new EmbeddingService();
 export const embeddingService = embeddingServiceInstance;
 
 export const getEmbeddingService = (): EmbeddingService => {
-  if (!global._embeddingService) {
-    global._embeddingService = embeddingServiceInstance;
+  const g = globalThis as unknown as { _embeddingService?: EmbeddingService };
+  if (!g._embeddingService) {
+    g._embeddingService = embeddingServiceInstance;
   }
-  return global._embeddingService;
+  return g._embeddingService;
 };

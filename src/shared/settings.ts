@@ -148,6 +148,7 @@ export const AppSetting = {
         frequency_penalty: undefined,
         presence_penalty: undefined,
         use_function_calling: false,
+        useAgent: false,
         auto_connect: true,
         skip_status_check: false,
         use_proxy: false,
@@ -171,9 +172,6 @@ export const AppSetting = {
     animationEnabled: true,
     compactMode: false,
     debugMode: false,
-    // Agent 模式全局开关（Spec: add-tool-calling-agent-engine / Task 4b）
-    // 默认关闭，确保现有功能零影响。开启后需模型支持工具调用才生效。
-    enableAgentMode: false,
     vector: {
       embeddingMode: 'remote' as EmbeddingMode,
       remoteModel: 'text-embedding-3-small',

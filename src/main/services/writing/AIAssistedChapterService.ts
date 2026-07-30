@@ -14,6 +14,14 @@ import { outlineGenerator } from './OutlineGenerator';
 import { addLog } from '../memory/chatLogService';
 import { aiConfigProvider } from '../ai/AIConfigProvider';
 import { getStorageService } from '../storageService';
+// F5 修复：接入 agent infra/retry + errors，对 transient 错误（网络/超时/5xx/429）自动重试，
+// 对 permanent 错误（配置缺失/4xx/空响应）保持原语义直接抛出。
+import { retryAsync } from '../agent/infra/retry';
+import {
+  AgentError,
+  fromHttpStatusCode,
+  getDefaultRetryable
+} from '../agent/infra/errors';
 
 // 【多模态兼容性审计】本服务使用本地 ChatMessage 类型（content: string），
 // 不导入 AIService.ts 的联合类型 ChatMessage，不受多模态 content 扩展影响。
@@ -318,6 +326,19 @@ ${chaptersInfo}
     }
   }
 
+  /**
+   * 执行 AI 服务调用（含 F5 重试逻辑）。
+   *
+   * 重试策略（接入 agent infra/retry）：
+   *  - transient 错误（网络中断 / 超时 / HTTP 5xx / 429 / 空响应）自动重试，最多 3 次，
+   *    指数退避（300ms / 600ms / 1200ms + 抖动），上限 10s
+   *  - permanent 错误（配置缺失 / HTTP 4xx 非 429 / 客户端错误）直接抛出，不重试
+   *  - 保留原 WritingError 契约（AI_SERVICE_UNAVAILABLE / CONTENT_GENERATION_FAILED / TIMEOUT）
+   *
+   * @param messages 消息列表
+   * @param modelConfig 模型配置
+   * @param timeoutMs 单次请求超时（ms）
+   */
   private async callAIService(
     messages: ChatMessage[],
     modelConfig: ModelConfig,
@@ -325,6 +346,7 @@ ${chaptersInfo}
   ): Promise<string> {
     const config = await this.getConfig();
 
+    // 配置缺失：permanent 错误，不进入重试循环，直接抛出原 WritingError
     if (!config.baseUrl) {
       throw this.createError(WritingErrorCode.AI_SERVICE_UNAVAILABLE, '未配置 AI 服务地址，请在设置中配置');
     }
@@ -350,47 +372,148 @@ ${chaptersInfo}
       }
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    // 单次请求执行器：抛出 AgentError（携带 category / retryable）供 retryAsync 决策
+    const attemptOnce = async (): Promise<string> => {
+      // 每次重试都需新建 AbortController，避免复用已 abort 的 signal
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+      try {
+        const response = await fetch(`${config.baseUrl}/v1/chat/completions`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(requestBody),
+          signal: controller.signal
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => '');
+          const category = fromHttpStatusCode(response.status);
+          // HTTP 错误统一包装为 AgentError，retryable 由 category 决定（5xx/429=true，4xx=false）
+          throw new AgentError(
+            `AI 请求失败: ${response.status} ${response.statusText}`,
+            {
+              category,
+              statusCode: response.status,
+              context: { errorText: errorText.substring(0, 500) }
+            }
+          );
+        }
+
+        const data = await response.json();
+        const content = data.choices?.[0]?.message?.content;
+
+        if (!content) {
+          // 空响应视为 transient（可能是模型截断/限流后空回），允许重试
+          throw new AgentError('AI 返回内容为空', {
+            category: 'server',
+            context: { reason: 'empty_content' }
+          });
+        }
+
+        return content;
+      } catch (error) {
+        // AbortError（超时）→ transient
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw new AgentError(`AI 请求超时（${timeoutMs / 1000}秒）`, {
+            category: 'timeout',
+            context: { timeoutMs }
+          });
+        }
+        // 网络错误（fetch 抛 TypeError）→ transient
+        if (error instanceof TypeError && /fetch|network|Failed to fetch/i.test(error.message)) {
+          throw new AgentError(`AI 网络请求失败: ${error.message}`, {
+            category: 'network',
+            cause: error
+          });
+        }
+        // AgentError 原样透传（保留 category / retryable）
+        if (error instanceof AgentError) {
+          throw error;
+        }
+        // 其他未知错误 → 默认按 category 推断 retryable
+        throw new AgentError(
+          error instanceof Error ? error.message : String(error),
+          { category: 'unknown', cause: error }
+        );
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    };
+
+    // 重试决策：依据 AgentError.retryable（由 category 决定）
+    const shouldRetry = (err: unknown): boolean => {
+      if (err instanceof AgentError) return err.retryable;
+      // 兜底：按 message 启发式分类后取默认值
+      const message = err instanceof Error ? err.message : String(err);
+      const category = fromHttpStatusCode(
+        parseInt(message.match(/\b(\d{3})\b/)?.[1] ?? '0', 10) || 0
+      );
+      return getDefaultRetryable(category);
+    };
 
     try {
-      const response = await fetch(`${config.baseUrl}/v1/chat/completions`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(requestBody),
-        signal: controller.signal
+      const result = await retryAsync(attemptOnce, {
+        attempts: 3,
+        minDelayMs: 300,
+        maxDelayMs: 10_000,
+        jitter: 0.2,
+        shouldRetry,
+        onRetry: (info) => {
+          const errLabel = info.err instanceof AgentError
+            ? `${info.err.category}(${info.err.statusCode ?? '-'})`
+            : (info.err instanceof Error ? info.err.name : typeof info.err);
+          addLog(
+            `【AI拆分合并】请求失败，准备重试：attempt=${info.attempt}/${info.maxAttempts}, delayMs=${info.delayMs}, error=${errLabel}`,
+            'warn'
+          );
+        }
       });
+      return result;
+    } catch (err) {
+      // 重试耗尽或不可重试：将 AgentError 映射回原 WritingError 契约，保持对外错误码不变
+      const agentErr = err instanceof AgentError ? err : null;
+      const message = err instanceof Error ? err.message : String(err);
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw this.createError(
-          WritingErrorCode.CONTENT_GENERATION_FAILED,
-          `AI 请求失败: ${response.status} ${response.statusText}`,
-          errorText
-        );
-      }
-
-      const data = await response.json();
-      const content = data.choices?.[0]?.message?.content;
-
-      if (!content) {
-        throw this.createError(
-          WritingErrorCode.CONTENT_GENERATION_FAILED,
-          'AI 返回内容为空'
-        );
-      }
-
-      return content;
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') {
+      if (agentErr?.category === 'timeout') {
         throw this.createError(
           WritingErrorCode.TIMEOUT,
           `AI 请求超时（${timeoutMs / 1000}秒），请稍后重试`
         );
       }
-      throw error;
-    } finally {
-      clearTimeout(timeoutId);
+      if (agentErr?.category === 'api') {
+        // 4xx 认证/鉴权错误
+        throw this.createError(
+          WritingErrorCode.CONTENT_GENERATION_FAILED,
+          `AI 请求失败: ${agentErr.statusCode ?? ''} ${message}`.trim(),
+          agentErr.context?.errorText as string | undefined
+        );
+      }
+      if (agentErr?.statusCode && agentErr.statusCode >= 400) {
+        // 其他 HTTP 错误（5xx 已重试耗尽、4xx 非 429）
+        throw this.createError(
+          WritingErrorCode.CONTENT_GENERATION_FAILED,
+          `AI 请求失败: ${agentErr.statusCode} ${message}`.trim(),
+          agentErr.context?.errorText as string | undefined
+        );
+      }
+      if (agentErr?.category === 'network') {
+        throw this.createError(
+          WritingErrorCode.AI_SERVICE_UNAVAILABLE,
+          `AI 网络请求失败: ${message}`
+        );
+      }
+      if (agentErr?.context?.reason === 'empty_content') {
+        throw this.createError(
+          WritingErrorCode.CONTENT_GENERATION_FAILED,
+          'AI 返回内容为空'
+        );
+      }
+      // 兜底：未知错误保持原 message 抛出
+      throw this.createError(
+        WritingErrorCode.CONTENT_GENERATION_FAILED,
+        message
+      );
     }
   }
 

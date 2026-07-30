@@ -17,19 +17,11 @@ import { SSEStreamParser, type StreamChunkCallback } from './ai/SSEStreamParser'
 // ==================== Types ====================
 
 export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool';
+  role: 'system' | 'user' | 'assistant';
   content: string | Array<
     | { type: 'text'; text: string }
     | { type: 'image_url'; image_url: { url: string } }
   >;
-  // 工具调用协议字段（可选，仅 tool calling 使用）
-  tool_calls?: Array<{
-    id: string;
-    type: 'function';
-    function: { name: string; arguments: string };
-  }>;
-  tool_call_id?: string; // role:'tool' 时必填，用于关联对应的 tool_call
-  name?: string;          // role:'tool' 时工具名
 }
 
 export interface AIConfig {
@@ -63,6 +55,40 @@ export interface StreamResponse {
   content: string;
   generationTime: number;
   model: string;
+  /**
+   * 完成原因（'stop' | 'tool_calls' | 'length' | ...）。
+   *
+   * 【F1 修复 - 工具调用全链路注入】
+   * 当模型返回 tool_calls 时为 'tool_calls'，调用方据此进入工具执行循环。
+   * 无 tools 请求时与修复前行为一致（后端通常返回 'stop' 或 undefined）。
+   */
+  finishReason?: string;
+  /**
+   * 累积的 tool_calls（仅当请求包含 tools 且模型返回 tool_calls 时非空）。
+   *
+   * 【F1 修复 - 工具调用全链路注入】
+   * 结构：[{ id, type: 'function', function: { name, arguments } }]
+   * 调用方应在 finishReason='tool_calls' 时消费此字段，执行工具后把结果以
+   * role='tool' 消息回灌到 messages，再次调用 streamChatAPI（agentLoop 循环）。
+   */
+  toolCalls?: any[];
+}
+
+/**
+ * OpenAI function-calling 工具定义（最小 schema）。
+ *
+ * 【F1 修复 - 工具调用全链路注入】
+ * 用于 streamChatAPI 的 tools 参数。结构遵循 OpenAI tools 规范：
+ *   { type: 'function', function: { name, description, parameters } }
+ * parameters 为 JSON Schema 对象，描述函数参数。
+ */
+export interface ToolDefinition {
+  type: 'function';
+  function: {
+    name: string;
+    description?: string;
+    parameters?: Record<string, any>;
+  };
 }
 
 /**
@@ -241,10 +267,11 @@ export class AIService {
   /**
    * 构建请求头和请求体
    *
-   * 工具调用扩展（向后兼容）：
-   * - `tools` / `tool_choice` 均为可选字段，不传入时请求体中不会出现对应字段，
-   *   与扩展前行为完全一致。
-   * - 仅在显式传入时才写入 `requestBody.tools` / `requestBody.tool_choice`。
+   * 【F1 修复 - 工具调用全链路注入】
+   * 新增可选参数 tools / parallelToolCalls / supportsToolCalling：
+   *   - 仅当 tools 非空且 supportsToolCalling=true 时才注入 tools / tool_choice / parallel_tool_calls
+   *   - tools 为空或 supportsToolCalling=false 时请求体与原行为完全一致（降级保护）
+   *   - tool_choice 默认 'auto'（模型自行决定是否调用工具）
    */
   buildRequest(options: {
     messages: ChatMessage[];
@@ -253,12 +280,11 @@ export class AIService {
     maxTokens: number;
     stream: boolean;
     config: AIConfig;
-    /** 工具定义（可选，传入时启用 function calling） */
     tools?: any[];
-    /** 工具调用策略（可选，'auto' | 'none' | 指定函数） */
-    tool_choice?: 'auto' | 'none' | { type: 'function'; function: { name: string } };
+    parallelToolCalls?: boolean;
+    supportsToolCalling?: boolean;
   }): { headers: Record<string, string>; requestBody: Record<string, any> } {
-    const { messages, model, temperature, maxTokens, stream, config, tools, tool_choice } = options;
+    const { messages, model, temperature, maxTokens, stream, config, tools, parallelToolCalls, supportsToolCalling } = options;
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -281,12 +307,14 @@ export class AIService {
       }
     }
 
-    // 工具调用字段：仅在显式传入时加入请求体，保持向后兼容
-    if (tools !== undefined) {
+    // 【F1 修复】工具调用注入：双条件守卫（tools 非空 + supportsToolCalling=true）
+    // supportsToolCalling=false 或 tools 为空时跳过，请求体与修复前完全一致
+    if (tools && tools.length > 0 && supportsToolCalling === true) {
       requestBody.tools = tools;
-    }
-    if (tool_choice !== undefined) {
-      requestBody.tool_choice = tool_choice;
+      requestBody.tool_choice = 'auto';
+      if (parallelToolCalls !== undefined) {
+        requestBody.parallel_tool_calls = parallelToolCalls;
+      }
     }
 
     return { headers, requestBody };
@@ -387,150 +415,22 @@ export class AIService {
     }
   }
 
-  // ==================== Non-Stream Call with Tools ====================
-
-  /**
-   * 执行带工具调用的非流式 AI 调用
-   *
-   * 与 `callChatAPI` 的差异：
-   * - 接受 `tools` / `tool_choice` 参数，透传至请求体以启用 function calling
-   * - 返回完整 message 结构（含 `tool_calls`），而非仅 content 字符串
-   * - `content` 可能为 null（模型只返回 tool_calls 无文本时），此时规范化为 `''`
-   * - 保留与 `streamChatAPI` 一致的指数退避重试逻辑（`maxRetries` 默认 2）
-   *
-   * 响应处理：
-   * - HTTP 非 2xx：抛错（含状态码与响应文本）
-   * - 响应体含 `error` 字段（部分 OpenAI 兼容代理在 200 下返回错误）：抛错
-   * - 正常响应：提取 `choices[0].message`，返回 content / tool_calls / finish_reason / model
-   *
-   * 超时与取消：
-   * - `timeoutMs`（来自 CallOptions）：单次尝试的超时
-   * - `abortSignal`（来自 CallOptions）：外部取消信号，触发后立即中止并不再重试
-   * - 两者均通过本地 controller 联动到 fetch signal
-   */
-  async callChatWithTools(
-    messages: ChatMessage[],
-    tools: any[],
-    options: CallOptions & {
-      model: string;
-      temperature: number;
-      maxTokens: number;
-      tool_choice?: 'auto' | 'none' | { type: 'function'; function: { name: string } };
-    }
-  ): Promise<{ content: string; tool_calls?: any[]; finish_reason: string; model: string }> {
-    const config = await this.getConfig();
-    const { model, temperature, maxTokens, tool_choice, timeoutMs, abortSignal, maxRetries = 2 } = options;
-
-    if (!config.baseUrl) {
-      throw new Error('未配置 AI 服务地址，请在设置中配置');
-    }
-
-    const { headers, requestBody } = this.buildRequest({
-      messages,
-      model,
-      temperature,
-      maxTokens,
-      stream: false,
-      config,
-      tools,
-      ...(tool_choice !== undefined ? { tool_choice } : {})
-    });
-
-    let lastError: Error | null = null;
-
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      if (attempt > 0) {
-        // 指数退避：1s, 2s, 4s ...
-        const backoffMs = Math.pow(2, attempt - 1) * 1000;
-        await new Promise<void>(resolve => setTimeout(resolve, backoffMs));
-
-        if (abortSignal?.aborted) {
-          throw new Error('操作已被取消');
-        }
-      }
-
-      // 每次尝试独立 controller，避免重试间信号串扰
-      const controller = new AbortController();
-      const timeoutId = timeoutMs && timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null;
-
-      // 外部 abortSignal 联动：触发时立即中止当前 fetch
-      const onExternalAbort = () => controller.abort();
-      if (abortSignal) {
-        if (abortSignal.aborted) {
-          controller.abort();
-        } else {
-          abortSignal.addEventListener('abort', onExternalAbort, { once: true });
-        }
-      }
-
-      try {
-        const response = await fetch(`${config.baseUrl}/v1/chat/completions`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(requestBody),
-          signal: controller.signal
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`AI 请求失败: ${response.status} ${response.statusText} - ${errorText}`);
-        }
-
-        const data = await response.json();
-
-        // 部分 API 在 HTTP 200 下仍返回 error 字段（如 OpenAI 兼容代理）
-        if (data?.error) {
-          throw new Error(`AI 返回错误: ${typeof data.error === 'string' ? data.error : JSON.stringify(data.error)}`);
-        }
-
-        const choice = data.choices?.[0];
-        const message = choice?.message;
-        // content 可能为 null（模型只返回 tool_calls 无文本时），规范化为 ''
-        const content = message?.content ?? '';
-        const tool_calls = message?.tool_calls;
-        const finish_reason = choice?.finish_reason ?? 'stop';
-
-        return {
-          content,
-          tool_calls,
-          finish_reason,
-          model: data.model || model
-        };
-      } catch (error) {
-        lastError = error as Error;
-
-        // 中止错误：不重试，直接抛出
-        const isAbortError = (error instanceof DOMException && error.name === 'AbortError')
-          || (typeof (error as Error).message === 'string' && (error as Error).message.toLowerCase().includes('abort'));
-
-        if (isAbortError) {
-          // 区分外部取消与超时
-          if (abortSignal?.aborted) {
-            throw new Error('操作已被取消');
-          }
-          throw new Error(`AI 请求超时（${(timeoutMs || 0) / 1000}秒），请稍后重试`);
-        }
-
-        // 非瞬时错误或已达最大重试次数：抛出
-        const isTransient = this.isTransientError(error as Error);
-        if (!isTransient || attempt === maxRetries) {
-          throw error;
-        }
-      } finally {
-        if (timeoutId !== null) clearTimeout(timeoutId);
-        if (abortSignal) {
-          abortSignal.removeEventListener('abort', onExternalAbort);
-        }
-      }
-    }
-
-    throw new Error(`AI 工具调用请求最终失败: ${lastError?.message ?? '未知错误'}`);
-  }
-
   // ==================== Stream Call ====================
 
   /**
    * 执行流式 AI 调用
+   *
+   * 【F1 修复 - 工具调用全链路注入】
+   * 新增可选参数：
+   *   - tools: OpenAI function-calling 工具定义数组
+   *   - parallelToolCalls: 是否允许并行工具调用
+   *   - supportsToolCalling: 模型是否支持工具调用（由调用方通过 probeAllCapabilities 探测后传入）
+   *
+   * 注入逻辑：仅当 tools 非空且 supportsToolCalling=true 时才把 tools / tool_choice /
+   * parallel_tool_calls 注入请求体；否则请求体与修复前完全一致（降级保护）。
+   *
+   * 响应解析：streamParser.parseStream 已扩展为累积 tool_calls 分片与 finish_reason，
+   * 本方法将其透传到 StreamResponse，调用方据 finishReason='tool_calls' 进入工具执行循环。
    */
   async streamChatAPI(
     messages: ChatMessage[],
@@ -539,11 +439,14 @@ export class AIService {
       temperature: number;
       maxTokens: number;
       maxRetries?: number;
+      tools?: any[];
+      parallelToolCalls?: boolean;
+      supportsToolCalling?: boolean;
     },
     onChunk: StreamChunkCallback
   ): Promise<StreamResponse> {
     const config = await this.getConfig();
-    const { model, temperature, maxTokens, abortSignal, maxRetries = 2 } = options;
+    const { model, temperature, maxTokens, abortSignal, maxRetries = 2, tools, parallelToolCalls, supportsToolCalling } = options;
 
     if (!config.baseUrl) {
       throw new Error('未配置 AI 服务地址，请在设置中配置');
@@ -557,7 +460,10 @@ export class AIService {
       temperature,
       maxTokens,
       stream: true,
-      config
+      config,
+      tools,
+      parallelToolCalls,
+      supportsToolCalling,
     });
 
     let lastError: Error | null = null;
@@ -589,7 +495,9 @@ export class AIService {
         return {
           content: result.content,
           generationTime: result.generationTime,
-          model
+          model,
+          finishReason: result.finishReason,
+          toolCalls: result.toolCalls,
         };
       } catch (error) {
         lastError = error as Error;

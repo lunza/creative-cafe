@@ -57,7 +57,7 @@ export class KnowledgeBaseService {
       {
         id: 'kb_doc_vector_implementation',
         title: '文档向量化 - 技术实现详解',
-        content: `技术选型：Electron 框架 + React/TypeScript 前端 + Ant Design UI + Vecstore-wasm 向量存储 + EmbeddingService 向量化服务。
+        content: `技术选型：Electron 框架 + React/TypeScript 前端 + Ant Design UI + sqlite-vec 向量存储 + EmbeddingService 向量化服务。
 
 算法原理：(1) 文本分块 - 按段落分割，MAX_CHUNK_SIZE=500 字符，CHUNK_OVERLAP=50 字符重叠，无空格文本防护确保每次循环缩短 remaining；(2) 余弦相似度 - cosine_similarity(A,B) = (A·B)/(||A||×||B||)，结果范围 [0,1]；(3) 批处理 - 每批 10 条向量化，最后一次性批量写入磁盘，避免 O(n) 次 I/O。
 
@@ -106,7 +106,7 @@ export class KnowledgeBaseService {
 (3) 优先 TXT/MD 格式
 (4) 远程向量化模式
 (5) 定期清理文档
-(6) JSON 模式用于 <5000 向量，Vecstore 模式用于 >5000 向量
+(6) sqlite-vec 后端统一存储所有向量（基于 SQLite 向量扩展，cosine 距离）
 (7) 指定文档范围而非全部搜索`,
         source: 'document-vectorization',
         category: ['常见问题', '最佳实践'],

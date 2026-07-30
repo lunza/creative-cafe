@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import path from 'path';
 import { setupIpcHandlers } from './ipc';
-import { abortAllActiveRequests } from './ipc/handlers/writingHandlers';
+import { abortAllActiveRequests, abortActiveWritingAgent } from './ipc/handlers/writingHandlers';
 
 // ========== 全局异常处理器（防止未捕获的 Promise rejection / 同步异常导致主进程崩溃） ==========
 // 【重点标记】修复：增量向量化等 fire-and-forget 调用若产生逃逸异常，Node.js 16+ 默认会退出进程，
@@ -88,6 +88,8 @@ function createWindow() {
   // Abort all active generation requests on page refresh (F5/Cmd+R) or navigation
   mainWindow.webContents.on('will-navigate', () => {
     abortAllActiveRequests();
+    // Task 15.2: 同时取消活跃的写作智能体编排，避免后台孤儿任务
+    abortActiveWritingAgent();
   });
 }
 
@@ -128,11 +130,14 @@ app.on('before-quit', (event) => {
   if (hasPersisted || isQuitting) {
     return;
   }
-  
+
+  // Task 15.2: 退出前取消活跃的写作智能体编排（避免后台孤儿任务持续调用 AI）
+  abortActiveWritingAgent();
+
   // 阻止退出，先执行异步持久化
   event.preventDefault();
   console.log('[App] before-quit: blocking quit to persist vector data...');
-  
+
   // 标记正在退出，防止死循环
   isQuitting = true;
   
@@ -141,15 +146,13 @@ app.on('before-quit', (event) => {
     try {
       const { vectorStoreService } = await import('./services/VectorStoreService');
       const { vectorRegistryService } = await import('./services/VectorRegistryService');
-      const mode = vectorStoreService.getMode();
-      
-      if (mode === 'vecstore') {
-        console.log('[App] Persisting vecstore data...');
-        await vectorStoreService.persist();
-        console.log('[App] Persisting vector registry...');
-        await vectorRegistryService.persist();
-        console.log('[App] Vecstore data and registry persisted successfully');
-      }
+
+      // sqlite-vec 后端：SQLite 通过 WAL 自动落盘，vectorStoreService.persist() 为 no-op；
+      // 但 vectorRegistryService 仍需持久化 source/scope 元数据，故无条件调用。
+      console.log('[App] Persisting vector registry (sqlite-vec auto-persists)...');
+      await vectorStoreService.persist();
+      await vectorRegistryService.persist();
+      console.log('[App] Vector registry persisted successfully');
     } catch (error) {
       console.error('[App] Failed to persist vector data before quit:', error);
     } finally {

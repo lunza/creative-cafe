@@ -20,7 +20,15 @@ export default defineConfig({
           build: {
             outDir: 'dist/main',
             rollupOptions: {
-              external: ['electron', '@xenova/transformers', 'onnxruntime-node', 'onnxruntime-common', ...builtinModules],
+              external: [
+                'electron',
+                '@xenova/transformers',
+                'onnxruntime-node',
+                'onnxruntime-common',
+                'better-sqlite3',
+                'sqlite-vec',
+                ...builtinModules
+              ],
               treeshake: false
             },
             commonjsOptions: {

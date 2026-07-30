@@ -110,9 +110,10 @@ export class VectorRegistryService {
       ? entry.sourceId.split(':').find(p => p.startsWith('doc_')) || entry.sourceId.split(':').filter(Boolean).pop() || entry.sourceId
       : 'default';
     
-    const vectorStorePath = `vectors/${storageConfig.storageDir}/${safeSourceId}/vecstore.json`;
-    const vectorStoreFile = 'vecstore.json';
-    const metadataFile = 'vecstore_metadata.json';
+    // sqlite-vec 后端：向量与元数据统一存储在 vectors.db（无独立 metadata 文件）
+    const vectorStorePath = `vectors/${storageConfig.storageDir}/${safeSourceId}/vectors.db`;
+    const vectorStoreFile = 'vectors.db';
+    const metadataFile = '';
 
     const newEntry: VectorRegistryEntry = {
       id,

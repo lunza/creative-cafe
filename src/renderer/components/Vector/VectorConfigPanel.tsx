@@ -19,7 +19,7 @@ const DEFAULT_CONFIGS: Record<'remote' | 'local', VectorDefaults> = {
     remoteModel: 'text-embedding-3-small',
     remoteApiUrl: 'https://api.openai.com/v1/embeddings',
     remoteApiKey: '',
-    vectorStoreMode: 'vecstore',
+    vectorStoreMode: 'sqlite-vec',
     cacheEnabled: true,
     cacheL1Size: 1000,
     cacheL1TTL: 300,
@@ -33,7 +33,7 @@ const DEFAULT_CONFIGS: Record<'remote' | 'local', VectorDefaults> = {
   },
   local: {
     localModel: 'onnx-community/Qwen3-Embedding-0.6B-ONNX',
-    vectorStoreMode: 'vecstore',
+    vectorStoreMode: 'sqlite-vec',
     cacheEnabled: true,
     cacheL1Size: 2000,
     cacheL1TTL: 600,
@@ -406,7 +406,7 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
           <Form.Item name="cacheEnabled" label={
             <span>
               启用缓存
-              <Tooltip title="当前使用 VecStore 向量存储引擎。缓存用于加速向量检索，L1 为内存缓存，L2 为磁盘缓存。">
+              <Tooltip title="当前使用 sqlite-vec 向量存储引擎（基于 SQLite 向量扩展）。缓存用于加速向量检索，L1 为内存缓存，L2 为磁盘缓存。">
                 <QuestionCircleOutlined style={{ marginLeft: 6, color: '#999', cursor: 'pointer' }} />
               </Tooltip>
             </span>
@@ -671,7 +671,7 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
             message={storageTestResult.success ? '存储连接测试成功' : '存储连接测试失败'}
             description={
               <div>
-                <p><strong>存储模式:</strong> {storageTestResult.mode === 'vecstore' ? 'VecStore (vecstore-wasm)' : 'JSON'}</p>
+                <p><strong>存储模式:</strong> {storageTestResult.mode === 'sqlite-vec' ? 'sqlite-vec' : storageTestResult.mode}</p>
                 <p><strong>向量数量:</strong> {storageTestResult.vectorCount || 0}</p>
                 {storageTestResult.storagePath && <p><strong>存储路径:</strong> {storageTestResult.storagePath}</p>}
                 <p><strong>详细信息:</strong> {storageTestResult.details || '无'}</p>

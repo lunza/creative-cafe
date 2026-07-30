@@ -26,7 +26,7 @@ import { ANIMATIONS, ANIMATION_DELAYS, CARD_ANIMATIONS, HOVER_EFFECTS, BUTTON_AN
 import './Dashboard.css';
 
 const Dashboard: React.FC = () => {
-  const { characters, installedPlugins, avatars, fetchCharacters, fetchInstalledPlugins, fetchAvatars, error: dataError } = useDataStore();
+  const { characters, avatars, fetchCharacters, fetchAvatars, error: dataError } = useDataStore();
   const { worldBooks, fetchWorldBooks, error: worldBookError } = useWorldBookStore();
   const { setting, fetchSetting, testConnection } = useSettingStore();
   const { animationEnabled } = useUIStore();
@@ -98,9 +98,8 @@ const Dashboard: React.FC = () => {
     fetchSetting();
     fetchWorldBooks();
     fetchCharacters();
-    fetchInstalledPlugins();
     fetchAvatars();
-  }, [fetchSetting, fetchWorldBooks, fetchCharacters, fetchInstalledPlugins, fetchAvatars]);
+  }, [fetchSetting, fetchWorldBooks, fetchCharacters, fetchAvatars]);
 
   // Fetch storage size on mount
   useEffect(() => {
@@ -409,7 +408,6 @@ const Dashboard: React.FC = () => {
 
   const totalWorldBooks = worldBooks.length;
   const totalCharacters = characters.length;
-  const totalPlugins = installedPlugins.length;
   const totalAvatars = avatars.length;
 
   return (
@@ -569,7 +567,7 @@ const Dashboard: React.FC = () => {
                 <div style={{ textAlign: 'center', padding: '12px 0' }}>
                   <div style={{ marginBottom: 8 }}>
                     <Tag color={vectorStorageStatus.success ? 'success' : 'error'}>
-                      {vectorStorageStatus.mode === 'vecstore' ? 'VecStore (vecstore-wasm)' : vectorStorageStatus.mode}
+                      {vectorStorageStatus.mode === 'sqlite-vec' ? 'sqlite-vec' : vectorStorageStatus.mode}
                     </Tag>
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>

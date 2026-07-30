@@ -2,9 +2,18 @@
  * 聊天会话仓储
  * 负责 SillyTavern JSONL 聊天记录的读取、会话列表、消息分页、搜索与筛选。
  * 包括对角色卡聊天记录（.json 格式）的读取、整理流程专用的消息读取与分段。
+ *
+ * 异步化说明（spec §4.2 P4）：
+ *   原实现全部使用 fs.*Sync 同步 API，在主进程读取大型 JSONL 聊天记录时会阻塞事件循环，
+ *   导致 IPC 请求排队、UI 卡顿。本模块已全面改为 fs.promises 异步 I/O：
+ *   - readFirstNonEmptyLines / countNonEmptyLines 使用 fs.promises.open + filehandle.read
+ *   - getChatSessions / getChatSession / getChatMessages / searchChatMessages / filterChatMessages
+ *     均返回 Promise，调用方（IPC handler / organizeOrchestrator / chatLogService）已适配 await
+ *   - splitChatIntoSegments 为纯逻辑（无 I/O），保持同步
+ *   - 会话元数据缓存（mtime+size）保留，命中时跳过 I/O
  */
 
-import fs from 'fs';
+import fsp from 'fs/promises';
 import path from 'path';
 import {
   addLog,
@@ -52,10 +61,12 @@ const sessionMetaCache = new Map<string, CachedSessionEntry>();
  * 流式读取文件前 N 个"非空行"（行为与 `content.split('\n').filter(l => l.trim())` 的前 N 项一致）。
  * 一旦凑够 maxLines 行即停止读取，避免将整个大文件加载到内存。
  *
+ * 异步实现（spec §4.2 P4）：使用 fs.promises.open + filehandle.read，避免阻塞事件循环。
+ *
  * @param maxBytes 安全字节上限，防止极端情况下读到超大单行时无限读取。
  */
-function readFirstNonEmptyLinesSync(filePath: string, maxLines: number, maxBytes: number = 1024 * 1024): string[] {
-  const fd = fs.openSync(filePath, 'r');
+async function readFirstNonEmptyLines(filePath: string, maxLines: number, maxBytes: number = 1024 * 1024): Promise<string[]> {
+  const fh = await fsp.open(filePath, 'r');
   try {
     const result: string[] = [];
     let pending = '';
@@ -63,7 +74,7 @@ function readFirstNonEmptyLinesSync(filePath: string, maxLines: number, maxBytes
     let totalRead = 0;
 
     while (totalRead < maxBytes && result.length < maxLines) {
-      const bytesRead = fs.readSync(fd, chunk, 0, Math.min(chunk.length, maxBytes - totalRead), null);
+      const { bytesRead } = await fh.read(chunk, 0, Math.min(chunk.length, maxBytes - totalRead), null);
       if (bytesRead <= 0) break;
       pending += chunk.toString('utf-8', 0, bytesRead);
       totalRead += bytesRead;
@@ -89,23 +100,25 @@ function readFirstNonEmptyLinesSync(filePath: string, maxLines: number, maxBytes
     }
     return result;
   } finally {
-    fs.closeSync(fd);
+    await fh.close();
   }
 }
 
 /**
  * 流式统计文件中"非空行"的数量（与 `content.split('\n').filter(l => l.trim()).length` 行为一致）。
- * 仅逐字节扫描换行符，不进行 JSON 解析，对大文件成本远低于 readFileSync + split。
+ * 仅逐字节扫描换行符，不进行 JSON 解析，对大文件成本远低于 readFile + split。
+ *
+ * 异步实现（spec §4.2 P4）：使用 fs.promises.open + filehandle.read。
  */
-function countNonEmptyLinesSync(filePath: string): number {
-  const fd = fs.openSync(filePath, 'r');
+async function countNonEmptyLines(filePath: string): Promise<number> {
+  const fh = await fsp.open(filePath, 'r');
   try {
     const chunk = Buffer.alloc(65536);
     let bytesRead = 0;
     let count = 0;
     let hasNonEmpty = false;
 
-    while ((bytesRead = fs.readSync(fd, chunk, 0, chunk.length, null)) > 0) {
+    while ((bytesRead = (await fh.read(chunk, 0, chunk.length, null)).bytesRead) > 0) {
       for (let i = 0; i < bytesRead; i++) {
         const b = chunk[i];
         if (b === 0x0A) {
@@ -131,63 +144,73 @@ function countNonEmptyLinesSync(filePath: string): number {
     }
     return count;
   } finally {
-    fs.closeSync(fd);
+    await fh.close();
   }
 }
 
 /**
  * 获取所有聊天会话列表
+ *
+ * 异步实现（spec §4.2 P4）：fs.promises.readdir/stat 替代同步版本，避免阻塞事件循环。
  */
-export function getChatSessions(ctx: ChatLogContext): ChatSession[] {
+export async function getChatSessions(ctx: ChatLogContext): Promise<ChatSession[]> {
   addLog(`开始获取聊天会话列表，目录: ${ctx.chatsDir}`, 'debug');
 
   const sessions: ChatSession[] = [];
   const seenChatFilePaths = new Set<string>();
 
   try {
-    if (fs.existsSync(ctx.chatsDir)) {
+    let chatsDirExists = true;
+    try {
+      await fsp.access(ctx.chatsDir);
+    } catch {
+      chatsDirExists = false;
+    }
+    if (chatsDirExists) {
       // 读取角色目录
-      const characterDirs = fs.readdirSync(ctx.chatsDir);
+      const characterDirs = await fsp.readdir(ctx.chatsDir);
       addLog(`找到 ${characterDirs.length} 个角色目录: ${characterDirs.join(', ')}`, 'debug');
 
-      characterDirs.forEach(characterDir => {
+      for (const characterDir of characterDirs) {
         const characterPath = path.join(ctx.chatsDir, characterDir);
 
         // 检查是否是目录
-        if (fs.statSync(characterPath).isDirectory()) {
-          // 读取该角色的所有聊天文件
-          try {
-            const chatFiles = fs.readdirSync(characterPath);
-            addLog(`角色 ${characterDir} 有 ${chatFiles.length} 个文件`, 'debug');
-
-            chatFiles.forEach(chatFile => {
-              if (chatFile.endsWith('.jsonl')) {
-                const chatId = `${characterDir}/${chatFile.replace('.jsonl', '')}`;
-                // 记录本次扫描中实际存在的文件路径，用于清理已删除文件的缓存
-                seenChatFilePaths.add(path.join(characterPath, chatFile));
-                const session = getChatSession(ctx, chatId);
-                if (session) {
-                  const templateId = getAssociatedTemplate(ctx, chatId);
-                  session.templateId = templateId ?? undefined;
-                  session.isTemplateAssociated = !!templateId;
-                  session.isProcessed = getSessionProcessedStatus(ctx, chatId);
-                  const progress = getOrganizingProgress(ctx, chatId);
-                  if (progress) {
-                    session.organizingProgress = progress;
-                  }
-                  sessions.push(session);
-                  addLog(`添加聊天会话: ${session.name} (${session.characterName})${templateId ? ` - 已关联模板` : ''}${session.isProcessed ? ' - 已整理' : ''}${progress ? ` - 整理进度 ${progress.processedCount}/${progress.totalMessages}` : ''}`, 'debug');
-                }
-              }
-            });
-          } catch (error) {
-            console.error(`读取角色目录 ${characterDir} 失败:`, error);
-          }
+        const stat = await fsp.stat(characterPath).catch(() => null);
+        if (!stat || !stat.isDirectory()) {
+          continue;
         }
-      });
+        // 读取该角色的所有聊天文件
+        try {
+          const chatFiles = await fsp.readdir(characterPath);
+          addLog(`角色 ${characterDir} 有 ${chatFiles.length} 个文件`, 'debug');
+
+          for (const chatFile of chatFiles) {
+            if (chatFile.endsWith('.jsonl')) {
+              const chatId = `${characterDir}/${chatFile.replace('.jsonl', '')}`;
+              // 记录本次扫描中实际存在的文件路径，用于清理已删除文件的缓存
+              seenChatFilePaths.add(path.join(characterPath, chatFile));
+              const session = await getChatSession(ctx, chatId);
+              if (session) {
+                const templateId = getAssociatedTemplate(ctx, chatId);
+                session.templateId = templateId ?? undefined;
+                session.isTemplateAssociated = !!templateId;
+                session.isProcessed = getSessionProcessedStatus(ctx, chatId);
+                const progress = getOrganizingProgress(ctx, chatId);
+                if (progress) {
+                  session.organizingProgress = progress;
+                }
+                sessions.push(session);
+                addLog(`添加聊天会话: ${session.name} (${session.characterName})${templateId ? ` - 已关联模板` : ''}${session.isProcessed ? ' - 已整理' : ''}${progress ? ` - 整理进度 ${progress.processedCount}/${progress.totalMessages}` : ''}`, 'debug');
+              }
+            }
+          }
+        } catch (error) {
+          console.error(`读取角色目录 ${characterDir} 失败:`, error);
+        }
+      }
 
       // 清理已删除文件残留的缓存条目（不在本次扫描集合中且文件已不存在的）
-      pruneStaleSessionCache(seenChatFilePaths);
+      await pruneStaleSessionCache(seenChatFilePaths);
     } else {
       console.warn('聊天记录目录不存在:', ctx.chatsDir);
     }
@@ -204,14 +227,20 @@ export function getChatSessions(ctx: ChatLogContext): ChatSession[] {
 /**
  * 清理已删除文件残留的会话元数据缓存条目。
  * 仅移除"不在本次扫描集合中且文件已不存在"的条目，避免内存中累积过期缓存。
+ *
+ * 异步实现（spec §4.2 P4）：fs.promises.access 替代 existsSync。
  */
-function pruneStaleSessionCache(seenFilePaths: Set<string>): void {
+async function pruneStaleSessionCache(seenFilePaths: Set<string>): Promise<void> {
   for (const filePath of sessionMetaCache.keys()) {
     if (seenFilePaths.has(filePath)) {
       continue;
     }
     // 不在本次扫描集合中：若文件确实已不存在，则移除缓存；否则保留（可能是目录扫描范围外的合法条目）
-    if (!fs.existsSync(filePath)) {
+    try {
+      await fsp.access(filePath);
+      // 文件存在，保留缓存
+    } catch {
+      // 文件不存在，移除缓存
       sessionMetaCache.delete(filePath);
     }
   }
@@ -224,10 +253,12 @@ function pruneStaleSessionCache(seenFilePaths: Set<string>): void {
  *   - 命中 mtime+size 缓存时直接返回，不再读取文件内容（SubTask 27.1）。
  *   - 缓存未命中时仅流式读取前 2 行获取元数据+预览，并流式统计非空行数（SubTask 27.2），
  *     不再将整个 JSONL 加载为字符串后 split。
- *   - 文件被删除（existsSync=false）时，移除对应缓存并返回 null。
+ *   - 文件被删除（access 失败）时，移除对应缓存并返回 null。
  *   - 返回值始终为独立副本，避免调用方修改污染缓存。
+ *
+ * 异步实现（spec §4.2 P4）：fs.promises.stat/access + 异步流式读取。
  */
-export function getChatSession(ctx: ChatLogContext, chatId: string): ChatSession | null {
+export async function getChatSession(ctx: ChatLogContext, chatId: string): Promise<ChatSession | null> {
   // 解析 chatId，格式为 "characterDir/chatFileName"
   const [characterDir, chatFileName] = chatId.split('/');
   if (!characterDir || !chatFileName) {
@@ -236,14 +267,16 @@ export function getChatSession(ctx: ChatLogContext, chatId: string): ChatSession
 
   const chatFilePath = path.join(ctx.chatsDir, characterDir, `${chatFileName}.jsonl`);
 
-  if (!fs.existsSync(chatFilePath)) {
+  try {
+    await fsp.access(chatFilePath);
+  } catch {
     // 文件已被删除：清理可能存在的旧缓存条目
     sessionMetaCache.delete(chatFilePath);
     return null;
   }
 
   try {
-    const stats = fs.statSync(chatFilePath);
+    const stats = await fsp.stat(chatFilePath);
     const mtimeMs = stats.mtime.getTime();
     const size = stats.size;
 
@@ -254,7 +287,7 @@ export function getChatSession(ctx: ChatLogContext, chatId: string): ChatSession
     }
 
     // 缓存未命中：仅读前 2 个非空行（元数据 + 第一条消息预览），不加载整个文件
-    const firstLines = readFirstNonEmptyLinesSync(chatFilePath, 2);
+    const firstLines = await readFirstNonEmptyLines(chatFilePath, 2);
     if (firstLines.length === 0) {
       return null;
     }
@@ -282,7 +315,7 @@ export function getChatSession(ctx: ChatLogContext, chatId: string): ChatSession
     }
 
     // 流式统计非空行数（与原 fileContent.split('\n').filter(l => l.trim()).length 行为一致）
-    const totalNonEmptyLines = countNonEmptyLinesSync(chatFilePath);
+    const totalNonEmptyLines = await countNonEmptyLines(chatFilePath);
     const messageCount = Math.max(0, totalNonEmptyLines - 1);
 
     const sessionBase: SessionBaseMeta = {
@@ -311,12 +344,14 @@ export function getChatSession(ctx: ChatLogContext, chatId: string): ChatSession
 
 /**
  * 获取聊天记录
+ *
+ * 异步实现（spec §4.2 P4）：fs.promises.readFile 替代 readFileSync。
  */
-export function getChatMessages(ctx: ChatLogContext, chatId: string, page: number = 1, pageSize: number = 50): {
+export async function getChatMessages(ctx: ChatLogContext, chatId: string, page: number = 1, pageSize: number = 50): Promise<{
   messages: ChatMessage[],
   total: number,
   totalPages: number
-} {
+}> {
   // 解析 chatId，格式为 "characterDir/chatFileName"
   const [characterDir, chatFileName] = chatId.split('/');
   if (!characterDir || !chatFileName) {
@@ -325,12 +360,14 @@ export function getChatMessages(ctx: ChatLogContext, chatId: string, page: numbe
 
   const chatFilePath = path.join(ctx.chatsDir, characterDir, `${chatFileName}.jsonl`);
 
-  if (!fs.existsSync(chatFilePath)) {
+  try {
+    await fsp.access(chatFilePath);
+  } catch {
     return { messages: [], total: 0, totalPages: 0 };
   }
 
   try {
-    const fileContent = fs.readFileSync(chatFilePath, 'utf-8');
+    const fileContent = await fsp.readFile(chatFilePath, 'utf-8');
     const lines = fileContent.split('\n').filter(line => line.trim());
 
     const messages: ChatMessage[] = [];
@@ -375,17 +412,21 @@ export function getChatMessages(ctx: ChatLogContext, chatId: string, page: numbe
 /**
  * 读取角色卡聊天记录（.json 格式）
  * 角色卡聊天记录存储在 data/memories/chats/ 目录下，格式为 { messages: [...] }
+ *
+ * 异步实现（spec §4.2 P4）：fs.promises.readFile 替代 readFileSync。
  */
-export function readCharacterChatMessages(ctx: ChatLogContext, chatId: string): ChatMessage[] {
+export async function readCharacterChatMessages(ctx: ChatLogContext, chatId: string): Promise<ChatMessage[]> {
   try {
     const jsonFilePath = path.join(ctx.chatsDir, `${chatId}.json`);
 
-    if (!fs.existsSync(jsonFilePath)) {
+    try {
+      await fsp.access(jsonFilePath);
+    } catch {
       addLog(`角色卡聊天记录文件不存在: ${jsonFilePath}`, 'debug');
       return [];
     }
 
-    const content = fs.readFileSync(jsonFilePath, 'utf-8');
+    const content = await fsp.readFile(jsonFilePath, 'utf-8');
     const parsed = JSON.parse(content);
 
     if (!Array.isArray(parsed.messages)) {
@@ -414,36 +455,47 @@ export function readCharacterChatMessages(ctx: ChatLogContext, chatId: string): 
 
 /**
  * 搜索聊天记录
+ *
+ * 异步实现（spec §4.2 P4）：fs.promises.readdir/stat 替代同步版本。
  */
-export function searchChatMessages(ctx: ChatLogContext, keyword: string, chatId?: string): ChatMessage[] {
+export async function searchChatMessages(ctx: ChatLogContext, keyword: string, chatId?: string): Promise<ChatMessage[]> {
   const results: ChatMessage[] = [];
 
-  if (fs.existsSync(ctx.chatsDir)) {
-    if (chatId) {
-      // 搜索指定的聊天记录
-      const [characterDir, chatFileName] = chatId.split('/');
-      if (characterDir && chatFileName) {
-        const chatFilePath = path.join(ctx.chatsDir, characterDir, `${chatFileName}.jsonl`);
-        if (fs.existsSync(chatFilePath)) {
-          searchInChatFile(chatFilePath, chatId, keyword, results);
+  try {
+    await fsp.access(ctx.chatsDir);
+  } catch {
+    return results;
+  }
+
+  if (chatId) {
+    // 搜索指定的聊天记录
+    const [characterDir, chatFileName] = chatId.split('/');
+    if (characterDir && chatFileName) {
+      const chatFilePath = path.join(ctx.chatsDir, characterDir, `${chatFileName}.jsonl`);
+      try {
+        await fsp.access(chatFilePath);
+        await searchInChatFile(chatFilePath, chatId, keyword, results);
+      } catch {
+        // 文件不存在，跳过
+      }
+    }
+  } else {
+    // 搜索所有聊天记录
+    const characterDirs = await fsp.readdir(ctx.chatsDir);
+    for (const characterDir of characterDirs) {
+      const characterPath = path.join(ctx.chatsDir, characterDir);
+      const stat = await fsp.stat(characterPath).catch(() => null);
+      if (!stat || !stat.isDirectory()) {
+        continue;
+      }
+      const chatFiles = await fsp.readdir(characterPath);
+      for (const chatFile of chatFiles) {
+        if (chatFile.endsWith('.jsonl')) {
+          const fileChatId = `${characterDir}/${chatFile.replace('.jsonl', '')}`;
+          const chatFilePath = path.join(characterPath, chatFile);
+          await searchInChatFile(chatFilePath, fileChatId, keyword, results);
         }
       }
-    } else {
-      // 搜索所有聊天记录
-      const characterDirs = fs.readdirSync(ctx.chatsDir);
-      characterDirs.forEach(characterDir => {
-        const characterPath = path.join(ctx.chatsDir, characterDir);
-        if (fs.statSync(characterPath).isDirectory()) {
-          const chatFiles = fs.readdirSync(characterPath);
-          chatFiles.forEach(chatFile => {
-            if (chatFile.endsWith('.jsonl')) {
-              const chatId = `${characterDir}/${chatFile.replace('.jsonl', '')}`;
-              const chatFilePath = path.join(characterPath, chatFile);
-              searchInChatFile(chatFilePath, chatId, keyword, results);
-            }
-          });
-        }
-      });
     }
   }
 
@@ -452,10 +504,12 @@ export function searchChatMessages(ctx: ChatLogContext, keyword: string, chatId?
 
 /**
  * 在单个聊天文件中搜索
+ *
+ * 异步实现（spec §4.2 P4）：fs.promises.readFile 替代 readFileSync。
  */
-export function searchInChatFile(chatFilePath: string, chatId: string, keyword: string, results: ChatMessage[]): void {
+export async function searchInChatFile(chatFilePath: string, chatId: string, keyword: string, results: ChatMessage[]): Promise<void> {
   try {
-    const fileContent = fs.readFileSync(chatFilePath, 'utf-8');
+    const fileContent = await fsp.readFile(chatFilePath, 'utf-8');
     const lines = fileContent.split('\n').filter(line => line.trim());
 
     // 跳过元数据行，从第二行开始搜索
@@ -484,11 +538,13 @@ export function searchInChatFile(chatFilePath: string, chatId: string, keyword: 
 
 /**
  * 筛选聊天记录
+ *
+ * 异步实现（spec §4.2 P4）：fs.promises.readFile 替代 readFileSync。
  */
-export function filterChatMessages(ctx: ChatLogContext, chatId: string, filters: {
+export async function filterChatMessages(ctx: ChatLogContext, chatId: string, filters: {
   startTime?: string;
   endTime?: string;
-}): ChatMessage[] {
+}): Promise<ChatMessage[]> {
   // 解析 chatId，格式为 "characterDir/chatFileName"
   const [characterDir, chatFileName] = chatId.split('/');
   if (!characterDir || !chatFileName) {
@@ -497,12 +553,14 @@ export function filterChatMessages(ctx: ChatLogContext, chatId: string, filters:
 
   const chatFilePath = path.join(ctx.chatsDir, characterDir, `${chatFileName}.jsonl`);
 
-  if (!fs.existsSync(chatFilePath)) {
+  try {
+    await fsp.access(chatFilePath);
+  } catch {
     return [];
   }
 
   try {
-    const fileContent = fs.readFileSync(chatFilePath, 'utf-8');
+    const fileContent = await fsp.readFile(chatFilePath, 'utf-8');
     const lines = fileContent.split('\n').filter(line => line.trim());
 
     const messages: ChatMessage[] = [];
@@ -556,12 +614,14 @@ export function filterChatMessages(ctx: ChatLogContext, chatId: string, filters:
 /**
  * 读取并过滤出可参与整理的消息（仅 user/assistant）。
  * 优先从 JSONL 读取，若 JSONL 为空则回退到角色卡聊天记录（.json）。
+ *
+ * 异步实现（spec §4.2 P4）：跟随 getChatMessages / readCharacterChatMessages 异步化。
  */
-export function readAndFilterMessages(ctx: ChatLogContext, chatId: string): ChatMessage[] {
-  const allMessages = getChatMessages(ctx, chatId).messages;
+export async function readAndFilterMessages(ctx: ChatLogContext, chatId: string): Promise<ChatMessage[]> {
+  const allMessages = (await getChatMessages(ctx, chatId)).messages;
   let messages: ChatMessage[] = allMessages;
   if (allMessages.length === 0) {
-    const jsonMessages = readCharacterChatMessages(ctx, chatId);
+    const jsonMessages = await readCharacterChatMessages(ctx, chatId);
     if (jsonMessages.length > 0) {
       addLog(`[TableOrganize] 从角色卡聊天记录格式读取到 ${jsonMessages.length} 条消息`, 'debug');
       messages = jsonMessages;

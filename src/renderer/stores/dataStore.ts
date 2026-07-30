@@ -1,92 +1,51 @@
 import { create } from 'zustand';
+import {
+  fetchCharacters as fetchCharactersService,
+  fetchAvatars as fetchAvatarsService,
+  optimizeCharacter as optimizeCharacterService,
+} from '../services/dataService';
 
-interface AvailablePlugin {
-  id: string;
-  name: string;
-  displayName: string;
-  description: string;
-  version: string;
-  author?: string;
-  homepage?: string;
-  repository?: string;
-  keywords?: string[];
-  dependencies?: { [key: string]: string };
-  downloadUrl?: string;
-  source: 'official' | 'custom';
-}
-
-interface InstalledPlugin {
-  id: string;
-  name: string;
-  displayName: string;
-  description: string;
-  version: string;
-  author?: string;
-  homepage?: string;
-  repository?: string;
-  keywords?: string[];
-  dependencies?: { [key: string]: string };
-  path: string;
-  enabled: boolean;
-  size: number;
-  modified: Date;
-}
-
+/**
+ * DataStore —— 角色卡 / 头像纯数据状态（D1 分层修复产物）
+ *
+ * 来源：spec §1.2 D1（原 store 直接操作 ElectronAPI，违反分层）
+ * 决策：store 仅持有数据状态 + loading/error 标志，所有 IPC 调用委托 `services/dataService`。
+ *
+ * 分层边界：
+ *  - 本 store：characters / avatars / loading / error 状态 + setter + async action（编排）
+ *  - dataService：IPC 通信 + 结果归一化（防腐层）
+ *  - ElectronAPI：主进程 IPC 通道
+ *
+ * async action 职责：调用 service → 成功写入数据状态 / 失败写入 error 状态。
+ * 不直接访问 `window.electronAPI`，便于单元测试 mock service。
+ */
 interface DataState {
   characters: any[];
   avatars: any[];
-  availablePlugins: AvailablePlugin[];
-  installedPlugins: InstalledPlugin[];
   loading: boolean;
-  loadingAvailablePlugins: boolean;
-  loadingInstalledPlugins: boolean;
-  checkingPluginUpdates: boolean;
-  updatingPluginDescriptions: boolean;
-  installingPlugin: boolean;
-  uninstallingPlugin: boolean;
   error: string | null;
   setCharacters: (characters: any[]) => void;
   setAvatars: (avatars: any[]) => void;
-  setAvailablePlugins: (plugins: AvailablePlugin[]) => void;
-  setInstalledPlugins: (plugins: InstalledPlugin[]) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   fetchCharacters: () => Promise<void>;
   fetchAvatars: () => Promise<void>;
-  fetchAvailablePlugins: (forceRefresh?: boolean) => Promise<void>;
-  fetchInstalledPlugins: () => Promise<void>;
-  togglePlugin: (pluginId: string, enabled: boolean) => Promise<void>;
-  uninstallPlugin: (pluginId: string) => Promise<void>;
-  checkPluginUpdates: () => Promise<void>;
-  updatePluginDescriptions: (translatedPlugins: AvailablePlugin[]) => Promise<void>;
-  installPlugin: (url: string, branch?: string) => Promise<void>;
-  uninstallPluginById: (pluginId: string) => Promise<void>;
   optimizeCharacter: (path: string) => Promise<void>;
 }
 
-export const useDataStore = create<DataState>((set, get) => ({
+export const useDataStore = create<DataState>((set) => ({
   characters: [],
   avatars: [],
-  availablePlugins: [],
-  installedPlugins: [],
   loading: false,
-  loadingAvailablePlugins: false,
-  loadingInstalledPlugins: false,
-  checkingPluginUpdates: false,
-  updatingPluginDescriptions: false,
-  installingPlugin: false,
-  uninstallingPlugin: false,
   error: null,
   setCharacters: (characters) => set({ characters }),
   setAvatars: (avatars) => set({ avatars }),
-  setAvailablePlugins: (plugins) => set({ availablePlugins: plugins }),
-  setInstalledPlugins: (plugins) => set({ installedPlugins: plugins }),
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
   fetchCharacters: async () => {
     set({ loading: true, error: null });
     try {
-      const characters = await window.electronAPI.character.list();
+      const characters = await fetchCharactersService();
       set({ characters, loading: false });
     } catch (error) {
       set({ error: 'Failed to fetch characters', loading: false });
@@ -95,126 +54,23 @@ export const useDataStore = create<DataState>((set, get) => ({
   fetchAvatars: async () => {
     set({ loading: true, error: null });
     try {
-      const avatars = await window.electronAPI.avatar.list();
+      const avatars = await fetchAvatarsService();
       set({ avatars, loading: false });
     } catch (error) {
       set({ error: 'Failed to fetch avatars', loading: false });
     }
   },
-  fetchAvailablePlugins: async (forceRefresh?: boolean) => {
-    set({ loadingAvailablePlugins: true, error: null });
-    try {
-      const plugins = await window.electronAPI.plugin.getAvailable(forceRefresh);
-      set({ availablePlugins: plugins, loadingAvailablePlugins: false });
-    } catch (error) {
-      set({ error: 'Failed to fetch available plugins', loadingAvailablePlugins: false });
-    }
-  },
-  fetchInstalledPlugins: async () => {
-    set({ loadingInstalledPlugins: true, error: null });
-    try {
-      const plugins = await window.electronAPI.plugin.getInstalled();
-      set({ installedPlugins: plugins, loadingInstalledPlugins: false });
-    } catch (error) {
-      set({ error: 'Failed to fetch installed plugins', loadingInstalledPlugins: false });
-    }
-  },
-  togglePlugin: async (pluginId: string, enabled: boolean) => {
-    set({ loadingInstalledPlugins: true, error: null });
-    try {
-      const result = await window.electronAPI.plugin.toggle(pluginId, enabled);
-      if (result.success) {
-        await get().fetchInstalledPlugins();
-      } else {
-        throw new Error(result.error || 'Failed to toggle plugin');
-      }
-    } catch (error) {
-      set({ error: error instanceof Error ? error.message : 'Failed to toggle plugin', loadingInstalledPlugins: false });
-    }
-  },
-  uninstallPlugin: async (pluginId: string) => {
-    set({ loadingInstalledPlugins: true, error: null });
-    try {
-      const result = await window.electronAPI.plugin.uninstall(pluginId);
-      if (result.success) {
-        await get().fetchInstalledPlugins();
-      } else {
-        throw new Error(result.error || 'Failed to uninstall plugin');
-      }
-    } catch (error) {
-      set({ error: error instanceof Error ? error.message : 'Failed to uninstall plugin', loadingInstalledPlugins: false });
-    }
-  },
   optimizeCharacter: async (path) => {
     set({ loading: true, error: null });
     try {
-      const result = await window.electronAPI.character.optimize(path);
+      const result = await optimizeCharacterService(path);
       if (result.success) {
         set({ loading: false });
       } else {
-        set({ error: `优化失败: ${result.message}`, loading: false });
+        set({ error: `优化失败: ${result.message ?? '未知原因'}`, loading: false });
       }
     } catch (error) {
       set({ error: `优化异常: ${error instanceof Error ? error.message : '未知错误'}`, loading: false });
-    }
-  },
-  checkPluginUpdates: async () => {
-    set({ checkingPluginUpdates: true, error: null });
-    try {
-      const result = await window.electronAPI.plugin.checkUpdates();
-      if (result.success && result.plugins) {
-        set({ availablePlugins: result.plugins, checkingPluginUpdates: false });
-      } else {
-        throw new Error(result.error || 'Failed to check updates');
-      }
-    } catch (error) {
-      set({ error: error instanceof Error ? error.message : 'Failed to check plugin updates', checkingPluginUpdates: false });
-      throw error;
-    }
-  },
-  updatePluginDescriptions: async (translatedPlugins: AvailablePlugin[]) => {
-    set({ updatingPluginDescriptions: true, error: null });
-    try {
-      const result = await window.electronAPI.plugin.updateDescriptions(translatedPlugins);
-      if (result.success) {
-        set({ availablePlugins: translatedPlugins, updatingPluginDescriptions: false });
-      } else {
-        throw new Error(result.error || 'Failed to update descriptions');
-      }
-    } catch (error) {
-      set({ error: error instanceof Error ? error.message : 'Failed to update plugin descriptions', updatingPluginDescriptions: false });
-      throw error;
-    }
-  },
-  installPlugin: async (url: string, branch?: string): Promise<any> => {
-    set({ installingPlugin: true, error: null });
-    try {
-      const result = await window.electronAPI.plugin.install(url, branch);
-      if (result.success) {
-        await get().fetchInstalledPlugins();
-        set({ installingPlugin: false });
-        return result;
-      } else {
-        throw new Error(result.error || 'Failed to install plugin');
-      }
-    } catch (error) {
-      set({ error: error instanceof Error ? error.message : 'Failed to install plugin', installingPlugin: false });
-      throw error;
-    }
-  },
-  uninstallPluginById: async (pluginId: string) => {
-    set({ uninstallingPlugin: true, error: null });
-    try {
-      const result = await window.electronAPI.plugin.uninstallById(pluginId);
-      if (result.success) {
-        await get().fetchInstalledPlugins();
-        set({ uninstallingPlugin: false });
-      } else {
-        throw new Error(result.error || 'Failed to uninstall plugin');
-      }
-    } catch (error) {
-      set({ error: error instanceof Error ? error.message : 'Failed to uninstall plugin', uninstallingPlugin: false });
-      throw error;
     }
   }
 }));

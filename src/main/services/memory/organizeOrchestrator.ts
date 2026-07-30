@@ -287,7 +287,7 @@ export async function processChatWithAI(
   modelName: string
 ): Promise<AIProcessingResult[]> {
   // 读取聊天记录
-  const messages = getChatMessages(ctx, chatId).messages;
+  const messages = (await getChatMessages(ctx, chatId)).messages;
 
   if (messages.length === 0) {
     throw new Error('没有聊天记录可处理');
@@ -331,7 +331,7 @@ export async function processChat(
   try {
     // 1. 读取聊天记录
     addLog('步骤 1/12: 读取聊天记录', 'debug');
-    const messages = getChatMessages(ctx, chatId).messages;
+    const messages = (await getChatMessages(ctx, chatId)).messages;
     addLog(`共读取 ${messages.length} 条消息`, 'debug');
 
     if (messages.length === 0) {
@@ -551,7 +551,7 @@ async function processChatWithCommonFlow(
     // 5. 读取并过滤聊天记录
     addLog(`[TableOrganize][${modeName}] 步骤 1/5: 读取并过滤聊天记录`, 'debug');
     checkAborted();
-    const targetMessages = readAndFilterMessages(ctx, chatId);
+    const targetMessages = await readAndFilterMessages(ctx, chatId);
     addLog(`[TableOrganize][${modeName}] 共读取并过滤 ${targetMessages.length} 条消息`, 'debug');
 
     if (targetMessages.length === 0) {

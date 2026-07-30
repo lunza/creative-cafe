@@ -71,10 +71,43 @@ export interface AIEngineConfig {
    *   - use_function_calling=true  且 supportsToolCalling=true  → 工具调用生效
    *   - use_function_calling=true  但 supportsToolCalling!=true → 禁用工具调用（模型不支持，降级为纯文本聊天）
    *   - use_function_calling!=true                              → 不启用工具调用
-   * 当前 ChatEngine 走纯文本聊天流程（不构造 tools 数组），此处仅做能力一致性守卫与注释，
-   * 为后续接入 tools 字段预留正确的双条件判断点。
+   *
+   * 【F1 修复 - 工具调用全链路注入】
+   * 此开关现已真正驱动 tools 字段注入：当 use_function_calling=true &&
+   * supportsToolCalling=true && tools 数组非空时，ChatEngine 把 tools / tool_choice /
+   * parallel_tool_calls 注入请求体。tools 数组来源：当前阶段底座尚未落地，由调用方
+   * （CharacterDialogueChat.hooks）从 config.tools 透传，默认 undefined（降级为纯文本聊天）。
+   * 后续 agent 底座接入时只需提供 tools 数组即可打通完整链路。
    */
   use_function_calling?: boolean;
+  /**
+   * 是否启用智能体模式（Agent 模式）。
+   *
+   * Spec: implement-agent-foundation-and-fix-defects / Task 16.2
+   * 灰度开关（默认 off），开启后对话走 AgentCore.run() + 对话组工具
+   * （searchWorldbook / searchHistory / updateStateTable / addMemoryNote），
+   * AI 可自主检索世界书、搜索历史、更新状态表、记录记忆笔记。
+   *
+   * 一致性要求：此开关仅在模型 `supportsToolCalling === true` 时才生效。
+   *   - useAgent=true   且 supportsToolCalling=true  → 走 agent:run IPC（AgentCore 循环）
+   *   - useAgent=true   但 supportsToolCalling!=true → 降级为纯文本聊天（旧路径）
+   *   - useAgent!=true                                  → 纯文本聊天（旧路径）
+   *
+   * 降级保护：AgentCore 异常时自动回退到旧 streamChatAPI 路径，
+   *           确保对话功能不受影响。
+   */
+  useAgent?: boolean;
+  /**
+   * 工具集（OpenAI function-calling schema 数组）。
+   *
+   * 【F1 修复 - 工具调用全链路注入】
+   * 结构：[{ type: 'function', function: { name, description, parameters } }]
+   * 仅当 use_function_calling=true && supportsToolCalling=true && tools 非空时
+   * ChatEngine 才将其注入请求体。
+   * 当前阶段底座尚未落地，调用方通常不提供此字段（undefined），保持降级路径；
+   * 后续 agent 底座接入时由调用方填充实际工具集。
+   */
+  tools?: any[];
   /**
    * Repetition penalty（仅 supportsRepPen=true 后端生效）。
    *
@@ -116,6 +149,17 @@ export interface AIResponse {
     totalTokens: number;
   };
   id: string;
+  /**
+   * 模型返回的 tool_calls（仅当请求包含 tools 且模型决定调用工具时非空）。
+   *
+   * 【F1 修复 - 工具调用全链路注入】
+   * 结构：[{ id, type: 'function', function: { name, arguments } }]
+   * 由 ChatEngine.setupEventListeners 在流式过程中累积 delta 分片得到。
+   * 当 finishReason='tool_calls' 时调用方应消费此字段：执行对应工具后把结果以
+   * role='tool' 消息回灌到 messages 再次请求（agentLoop 循环，后续阶段实现）。
+   * 当前阶段仅记录日志，不执行工具。
+   */
+  toolCalls?: any[];
 }
 
 // AI错误接口

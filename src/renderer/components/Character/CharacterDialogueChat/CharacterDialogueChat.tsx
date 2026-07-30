@@ -5,6 +5,7 @@ import ChatHeader from './ChatHeader';
 import ChatMessageBubble from './ChatMessageBubble';
 import ChatInputBar from './ChatInputBar';
 import ChatTypingIndicator from './ChatTypingIndicator';
+import { VirtualizedMessageList, shouldVirtualize } from './VirtualizedMessageList';
 import ConfigPanel from './ConfigPanel';
 import CharacterSelectorPanel from './CharacterSelectorPanel';
 import AssetManagerModal from './AssetManagerModal';
@@ -64,6 +65,7 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
     editMessage,
     rollbackToMessage,
     clearChat,
+    clearError,
     cancelRequest,
     selectedPersona,
     personas,
@@ -467,36 +469,50 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
             </div>
           )}
 
-          {stateWithVersionInfo.messages.map((msg, index) => {
-            // 计算 AI 回复序号：在当前消息之前所有 role=assistant 的消息数量 + 1
-            const aiSequenceNumber = msg.role === 'assistant'
-              ? stateWithVersionInfo.messages.slice(0, index).filter(m => m.role === 'assistant').length + 1
-              : 0;
-            return (
-            <ChatMessageBubble
-              key={msg.id}
-              message={msg}
-              characterName={characterInfo.characterCardName}
-              avatarPath={avatarPath}
-              expressionImage={
-                msg.role === 'assistant' && msg.emotion &&
-                !(stateWithVersionInfo.isStreaming && index === stateWithVersionInfo.messages.length - 1)
-                  ? resolveExpressionImage(msg.emotion) ?? undefined
-                  : undefined
-              }
-              onRetry={retryMessage}
-              onRetryFromVersion={retryMessageFromVersion}
-              onContinue={handleContinueConversation}
-              onEdit={editMessage}
-              onRollback={handleRollback}
-              isLastMessage={index === stateWithVersionInfo.messages.length - 1}
-              isStreaming={stateWithVersionInfo.isStreaming && index === stateWithVersionInfo.messages.length - 1 && msg.role === 'assistant'}
-              isGenerating={stateWithVersionInfo.isLoading && index === stateWithVersionInfo.messages.length - 1 && msg.role === 'assistant' && msg.status === 'sending'}
-              onSelectOption={handleSelectOption}
-              aiSequenceNumber={aiSequenceNumber}
-            />
-            );
-          })}
+          {(() => {
+            // Task 19 P6: 消息数超过阈值时启用虚拟化，否则走原 .map() 路径
+            const renderMessageBubble = (msg: any, index: number) => {
+              // 计算 AI 回复序号：在当前消息之前所有 role=assistant 的消息数量 + 1
+              const aiSequenceNumber = msg.role === 'assistant'
+                ? stateWithVersionInfo.messages.slice(0, index).filter(m => m.role === 'assistant').length + 1
+                : 0;
+              return (
+                <ChatMessageBubble
+                  key={msg.id}
+                  message={msg}
+                  characterName={characterInfo.characterCardName}
+                  avatarPath={avatarPath}
+                  expressionImage={
+                    msg.role === 'assistant' && msg.emotion &&
+                    !(stateWithVersionInfo.isStreaming && index === stateWithVersionInfo.messages.length - 1)
+                      ? resolveExpressionImage(msg.emotion) ?? undefined
+                      : undefined
+                  }
+                  onRetry={retryMessage}
+                  onRetryFromVersion={retryMessageFromVersion}
+                  onContinue={handleContinueConversation}
+                  onEdit={editMessage}
+                  onRollback={handleRollback}
+                  isLastMessage={index === stateWithVersionInfo.messages.length - 1}
+                  isStreaming={stateWithVersionInfo.isStreaming && index === stateWithVersionInfo.messages.length - 1 && msg.role === 'assistant'}
+                  isGenerating={stateWithVersionInfo.isLoading && index === stateWithVersionInfo.messages.length - 1 && msg.role === 'assistant' && msg.status === 'sending'}
+                  onSelectOption={handleSelectOption}
+                  aiSequenceNumber={aiSequenceNumber}
+                />
+              );
+            };
+
+            if (shouldVirtualize(stateWithVersionInfo.messages.length)) {
+              return (
+                <VirtualizedMessageList
+                  items={stateWithVersionInfo.messages}
+                  scrollElementRef={chatContainerRef}
+                  renderItem={renderMessageBubble}
+                />
+              );
+            }
+            return stateWithVersionInfo.messages.map((msg, index) => renderMessageBubble(msg, index));
+          })()}
 
           {stateWithVersionInfo.isStreaming && stateWithVersionInfo.messages[stateWithVersionInfo.messages.length - 1]?.role === 'user' && (
             <ChatTypingIndicator
@@ -517,6 +533,46 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
               fontSize: '13px',
             }}>
               {state.error}
+              <div style={{ marginTop: 8, display: 'flex', justifyContent: 'center', gap: 8 }}>
+                {/* Task 21: 错误恢复 UI —— 重试上一条用户消息 */}
+                {(() => {
+                  const lastUserMsg = [...stateWithVersionInfo.messages].reverse().find(m => m.role === 'user');
+                  const lastAssistantMsg = [...stateWithVersionInfo.messages].reverse().find(m => m.role === 'assistant');
+                  if (lastAssistantMsg) {
+                    return (
+                      <Button
+                        size="small"
+                        type="primary"
+                        ghost
+                        onClick={() => {
+                          clearError();
+                          retryMessage(lastAssistantMsg.id);
+                        }}
+                      >
+                        重试
+                      </Button>
+                    );
+                  }
+                  if (lastUserMsg) {
+                    return (
+                      <Button
+                        size="small"
+                        type="primary"
+                        ghost
+                        onClick={() => {
+                          clearError();
+                          sendMessage(lastUserMsg.content);
+                        }}
+                      >
+                        重试
+                      </Button>
+                    );
+                  }
+                  return null;
+                })()}
+                {/* Task 21: 错误恢复 UI —— 关闭错误提示 */}
+                <Button size="small" onClick={clearError}>关闭</Button>
+              </div>
             </div>
           )}
 

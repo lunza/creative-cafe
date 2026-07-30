@@ -1,4 +1,10 @@
 import { WorldBookEntry } from '../../renderer/types/worldBook';
+import {
+  WorldBookKeywordIndex,
+  getEffectivePrimaryKeys,
+  getEffectiveSecondaryKeys,
+  type IndexStats,
+} from './WorldBookKeywordIndex';
 
 // ==================== 类型定义 ====================
 
@@ -32,22 +38,39 @@ export const WORLD_INFO_LOGIC = {
 
 // ==================== 核心匹配引擎 ====================
 // 参考：sillytavern-source/SillyTavern/public/scripts/world-info.js L4655-L4860
+//
+// 性能优化（spec §二 Task 11）：
+//  原实现 match() 对所有条目逐个 matchEntry，每条目再对每个关键词做
+//  text.includes —— O(Σ|key| × |text|) 每消息。现引入 WorldBookKeywordIndex
+//  （Aho-Corasick + 关键词→条目倒排索引）先筛出「主关键词在文本中出现」
+//  的候选条目（O(|text| + |matches|)），再仅对候选运行完整 matchEntry。
+//  matchEntry 的 selectiveLogic / probability / 评分逻辑保持不变，仅在候选
+//  集上运行 → 零行为变更，零假阴性（候选集 ⊇ 真正激活集）。
 
 export class WorldBookKeywordMatcher {
-  private entries: WorldBookEntry[];
   private options: Required<KeywordMatchOptions>;
+  private readonly index: WorldBookKeywordIndex;
 
   constructor(entries: WorldBookEntry[], options?: KeywordMatchOptions) {
-    this.entries = entries.filter(e => !e.disable);
     this.options = { ...DEFAULT_OPTIONS, ...options };
+    this.index = new WorldBookKeywordIndex();
+    // 构造即批量构建索引（过滤 disable 条目由 index.rebuild 负责）
+    this.index.rebuild(entries);
   }
 
   match(text: string): KeywordMatchResult[] {
     if (!text) return [];
 
-    const results: KeywordMatchResult[] = [];
+    // 1. 倒排索引筛候选：仅对「主关键词在文本中出现」的条目运行完整判定
+    const candidates = this.index.findCandidateEntries(text, {
+      caseSensitive: this.options.caseSensitive,
+      matchWholeWords: this.options.matchWholeWords,
+    });
 
-    for (const entry of this.entries) {
+    if (candidates.length === 0) return [];
+
+    const results: KeywordMatchResult[] = [];
+    for (const entry of candidates) {
       const match = this.matchEntry(entry, text);
       if (match) {
         results.push(match);
@@ -60,13 +83,51 @@ export class WorldBookKeywordMatcher {
     return results;
   }
 
+  // ==================== 增量更新 API（spec SubTask 11.2） ====================
+
+  /**
+   * 批量替换所有条目。重建在下一次 match 时懒触发。
+   * 适用于 worldBook 缓存整体刷新场景。
+   */
+  rebuild(entries: WorldBookEntry[]): void {
+    this.index.rebuild(entries);
+  }
+
+  /**
+   * 增量新增/更新单个条目（O(1)，置 dirty）。
+   * disable 的条目等价于删除。重建在下一次 match 时懒触发。
+   */
+  upsertEntry(entry: WorldBookEntry): void {
+    this.index.upsertEntry(entry);
+  }
+
+  /**
+   * 增量删除单个条目（O(1)，置 dirty）。
+   */
+  removeEntry(uid: number): void {
+    this.index.removeEntry(uid);
+  }
+
+  /** 当前索引条目数（不含 disable）。 */
+  get indexedSize(): number {
+    return this.index.size;
+  }
+
+  /** 索引诊断信息（条目数 / 关键词数 / AC 节点数 / 上次重建耗时）。 */
+  getIndexStats(): IndexStats {
+    return this.index.getStats();
+  }
+
   /**
    * 匹配单个条目 — 完全按照 SillyTavern 的激活逻辑实现
    * 参考：world-info.js L4762-L4860
+   *
+   * 注意：本方法假定 entry 已通过候选筛选（主关键词在文本中出现）。
+   * 仍会重新校验主关键词以保持逻辑自洽（候选集可能有少量假阳性，需再确认）。
    */
   private matchEntry(entry: WorldBookEntry, text: string): KeywordMatchResult | null {
-    const primaryKeys = this.getEffectivePrimaryKeys(entry);
-    const secondaryKeys = this.getEffectiveSecondaryKeys(entry);
+    const primaryKeys = getEffectivePrimaryKeys(entry);
+    const secondaryKeys = getEffectiveSecondaryKeys(entry);
 
     // 没有主关键词的条目不通过关键词匹配激活
     if (primaryKeys.length === 0) {
@@ -81,7 +142,8 @@ export class WorldBookKeywordMatcher {
     });
 
     if (!primaryKeyMatch) {
-      // 没有主关键词匹配，直接跳过
+      // 候选筛选已保证至少一个主关键词命中；此处理论上不应进入。
+      // 保留原校验以保证正确性（如 options 不一致时的降级）。
       return null;
     }
 
@@ -187,14 +249,6 @@ export class WorldBookKeywordMatcher {
     }
 
     return { activated: false, matchedSecondaryKeys };
-  }
-
-  private getEffectivePrimaryKeys(entry: WorldBookEntry): string[] {
-    return entry.key || entry.keys || [];
-  }
-
-  private getEffectiveSecondaryKeys(entry: WorldBookEntry): string[] {
-    return entry.keysecondary || entry.secondary_keys || [];
   }
 
   private matchSingleKey(key: string, text: string): boolean {

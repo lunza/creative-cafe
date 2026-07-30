@@ -325,6 +325,12 @@ export interface AIEngineSetting {
   presence_penalty: number;
   enable_chain_of_thought: boolean;
   use_function_calling: boolean;
+  /**
+   * 智能体模式开关（Task 16.2）。
+   * 默认 false（灰度）。开启后对话走 AgentCore + 对话组工具。
+   * 仅在模型 supportsToolCalling=true 时生效，否则降级为纯文本聊天。
+   */
+  useAgent: boolean;
   
   // 连接设置
   auto_connect: boolean;
@@ -374,14 +380,6 @@ export interface AppSetting {
   // 调试模式设置
   debugMode: boolean;
 
-  /**
-   * Agent 模式全局开关（Spec: add-tool-calling-agent-engine / Task 4b）
-   *
-   * 默认关闭，确保现有功能零影响。开启后，当引擎 supportsToolCalling=true 时，
-   * AI 调用走工具调用智能体循环；supportsToolCalling=false 时自动降级为纯文本生成。
-   */
-  enableAgentMode: boolean;
-
   // 向量化设置
   vector?: {
     embeddingMode?: 'remote' | 'local' | 'disabled';
@@ -389,7 +387,7 @@ export interface AppSetting {
     remoteApiKey?: string;
     remoteApiUrl?: string;
     localModel?: string;
-    vectorStoreMode?: 'vecstore';
+    vectorStoreMode?: 'sqlite-vec';
     autoVectorizeWorldBook?: boolean;
     autoRetrieveContext?: boolean;
     contextTopK?: number;

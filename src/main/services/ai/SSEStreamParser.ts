@@ -28,6 +28,21 @@ export interface StreamParseResult {
   content: string;
   /** 生成耗时（毫秒） */
   generationTime: number;
+  /**
+   * 累积的 tool_calls（仅当请求包含 tools 且模型返回 tool_calls 时非空）。
+   *
+   * 【F1 修复 - 工具调用全链路注入】
+   * 流式响应中 tool_calls 以 delta 分片到达，每个分片形如：
+   *   { index: 0, id?: 'call_xxx', function: { name?: 'foo', arguments?: '{"a":' } }
+   * 解析器按 index 累积：id/name 取首个非空值，arguments 字符串拼接。
+   * 完整结构：[{ id, type: 'function', function: { name, arguments } }]
+   */
+  toolCalls?: any[];
+  /**
+   * 完成原因（'stop' | 'tool_calls' | 'length' | 'content_filter' | ...）。
+   * 当模型返回 tool_calls 时为 'tool_calls'，调用方据此进入工具执行循环。
+   */
+  finishReason?: string;
 }
 
 // ==================== SSEStreamParser ====================
@@ -44,6 +59,25 @@ export class SSEStreamParser {
    * @returns 解析出的 content 片段；如非 data 行、为 [DONE]、或解析失败则返回 null
    */
   parseSSELine(line: string): string | null {
+    const detailed = this.parseSSELineDetailed(line);
+    return detailed?.content ?? null;
+  }
+
+  /**
+   * 解析 SSE 单行数据，返回详细字段（content / tool_calls delta / finish_reason）。
+   *
+   * 【F1 修复 - 工具调用全链路注入】
+   * parseSSELine 仅返回 content 字符串，无法承载 tool_calls delta 与 finish_reason。
+   * 本方法为详细版，供 parseStream 累积 tool_calls 与 finish_reason 使用。
+   *
+   * @param line 单行 SSE 数据
+   * @returns 包含 content / toolCallsDelta / finishReason 的对象；非 data 行或解析失败返回 null
+   */
+  private parseSSELineDetailed(line: string): {
+    content: string | null;
+    toolCallsDelta: any[] | null;
+    finishReason: string | null;
+  } | null {
     const trimmed = line.trim();
     if (!trimmed.startsWith('data:')) return null;
 
@@ -52,15 +86,45 @@ export class SSEStreamParser {
 
     try {
       const parsed = JSON.parse(jsonStr);
-      const delta = parsed.choices?.[0]?.delta?.content;
-      if (delta) return delta;
+      const choice = parsed.choices?.[0];
+      if (!choice) return null;
 
-      const message = parsed.choices?.[0]?.message?.content;
-      if (message) return message;
-
-      return null;
+      const content = choice.delta?.content ?? choice.message?.content ?? null;
+      const toolCallsDelta = choice.delta?.tool_calls ?? null;
+      const finishReason = choice.finish_reason ?? null;
+      return { content, toolCallsDelta, finishReason };
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * 将 tool_calls delta 分片合并到累积数组中。
+   *
+   * 【F1 修复 - 工具调用全链路注入】
+   * OpenAI 流式协议中，tool_calls 以分片到达：
+   *   - 第一个分片含 id/type/function.name，arguments 通常为空串或起始片段
+   *   - 后续分片仅含 function.arguments 字符串片段（按 index 对齐）
+   *   - 最后一个分片可能伴随 finish_reason='tool_calls'
+   * 本方法按 index 累积：id/name/type 取首个非空值，arguments 字符串拼接。
+   *
+   * @param accumulator 累积数组（按 delta.index 对齐）
+   * @param delta 当前分片的 tool_calls 数组
+   */
+  private mergeToolCallsDelta(accumulator: any[], delta: any[]): void {
+    for (const tc of delta) {
+      const idx = typeof tc.index === 'number' ? tc.index : accumulator.length;
+      if (!accumulator[idx]) {
+        accumulator[idx] = {
+          id: '',
+          type: tc.type || 'function',
+          function: { name: '', arguments: '' },
+        };
+      }
+      if (tc.id) accumulator[idx].id = tc.id;
+      if (tc.type) accumulator[idx].type = tc.type;
+      if (tc.function?.name) accumulator[idx].function.name += tc.function.name;
+      if (tc.function?.arguments) accumulator[idx].function.arguments += tc.function.arguments;
     }
   }
 
@@ -137,6 +201,9 @@ export class SSEStreamParser {
     const decoder = new TextDecoder('utf-8');
     let fullContent = '';
     let buffer = '';
+    // 【F1 修复】累积 tool_calls 分片与 finish_reason
+    const toolCallsAccumulator: any[] = [];
+    let finishReason: string | null = null;
     const startTime = Date.now();
 
     // 若调用方已取消，立即返回（abortSignal 通常与 fetch 共享，
@@ -171,6 +238,14 @@ export class SSEStreamParser {
                       fullContent += content;
                       onChunk(content);
                     }
+                    // 【F1 修复】残留行也需累积 tool_calls 与 finish_reason
+                    const tcDelta = chunkData.choices[0].delta?.tool_calls;
+                    if (tcDelta) {
+                      this.mergeToolCallsDelta(toolCallsAccumulator, tcDelta);
+                    }
+                    if (chunkData.choices[0].finish_reason) {
+                      finishReason = chunkData.choices[0].finish_reason;
+                    }
                   }
                 } catch {
                   // 忽略解析错误
@@ -189,10 +264,19 @@ export class SSEStreamParser {
         buffer = lines.pop() || '';
 
         for (const line of lines) {
-          const parsed = this.parseSSELine(line);
-          if (parsed) {
-            fullContent += parsed;
-            onChunk(parsed);
+          // 【F1 修复】使用详细解析以同时提取 content / tool_calls / finish_reason
+          const detailed = this.parseSSELineDetailed(line);
+          if (detailed) {
+            if (detailed.content) {
+              fullContent += detailed.content;
+              onChunk(detailed.content);
+            }
+            if (detailed.toolCallsDelta) {
+              this.mergeToolCallsDelta(toolCallsAccumulator, detailed.toolCallsDelta);
+            }
+            if (detailed.finishReason) {
+              finishReason = detailed.finishReason;
+            }
           }
         }
       }
@@ -213,7 +297,12 @@ export class SSEStreamParser {
       }
     }
 
-    return { content: fullContent, generationTime: Date.now() - startTime };
+    return {
+      content: fullContent,
+      generationTime: Date.now() - startTime,
+      toolCalls: toolCallsAccumulator.length > 0 ? toolCallsAccumulator : undefined,
+      finishReason: finishReason || undefined,
+    };
   }
 
   /**

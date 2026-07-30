@@ -102,19 +102,22 @@ creative-cafe/
 │   │   └── utils/            # 工具函数
 │   ├── renderer/             # 渲染进程（前端 UI）
 │   │   ├── components/       # React 组件
-│   │   │   ├── Character/    # 角色卡管理
-│   │   │   ├── Creative/     # 创意管理
+│   │   │   ├── Character/    # 角色卡管理 + 角色对话
+│   │   │   ├── Creative/     # 创意管理 + 写作模式
 │   │   │   ├── WorldBook/    # 世界书管理
+│   │   │   ├── Game/         # 游戏模式
 │   │   │   ├── MemoryChat/   # 记忆插件
-│   │   │   ├── Persona/      # 用户人设
+│   │   │   ├── Avatar/       # 用户人设
 │   │   │   ├── KnowledgeBase/# 知识库
+│   │   │   ├── Chat/         # 创作中心
+│   │   │   ├── PromptManagement/ # 提示词管理
 │   │   │   ├── Settings/     # 系统设置
-│   │   │   └── Common/       # 公共组件
+│   │   │   └── Common/       # 公共组件（ChatEngine/AIService 等）
 │   │   ├── stores/           # Zustand 状态管理
 │   │   └── types/            # TypeScript 类型定义
 │   └── shared/               # 主渲染共享代码
 ├── data/                     # 用户数据存储目录
-├── doc/                      # 技术文档
+├── docs/                     # 技术文档（FIX_RECORDS.md 等）
 ├── start.bat                 # 启动脚本
 └── package.json
 ```
@@ -162,6 +165,18 @@ Creative Café 导出的角色卡严格遵循 **SillyTavern V3 标准**：
 - **状态管理**：使用 Zustand store 集中管理模块状态
 - **日志记录**：使用 `useLogStore` 统一记录关键操作和错误
 - **错误处理**：所有异步操作必须包含 try-catch 和用户反馈
+
+---
+
+## 技术文档
+
+| 文档 | 用途 |
+|------|------|
+| [CODE_WIKI.md](./CODE_WIKI.md) | 架构真源：整体架构、模块职责、IPC、服务、状态管理、依赖 |
+| [docs/FIX_RECORDS.md](./docs/FIX_RECORDS.md) | 修复记录与重点问题日志（Bug 根因 / Spec 实现记录） |
+| [CHANGELOG.md](./CHANGELOG.md) | 版本发布日志 |
+| [docs/SILLYTAVERN_TECHNICAL_ANALYSIS.md](./docs/SILLYTAVERN_TECHNICAL_ANALYSIS.md) | SillyTavern 源码技术分析（参考） |
+| [docs/werewolf-game/](./docs/werewolf-game/) | 狼人杀游戏 Phase 0 策划文档集 |
 
 ---
 

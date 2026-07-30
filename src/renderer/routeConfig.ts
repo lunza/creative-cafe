@@ -18,7 +18,6 @@ import {
   UserOutlined,
   ToolOutlined,
   RocketOutlined,
-  AppstoreOutlined,
   ThunderboltOutlined,
   DatabaseOutlined,
   FileTextOutlined,
@@ -30,7 +29,6 @@ import Dashboard from './components/Dashboard/Dashboard';
 import WorldBookManager from './components/WorldBook/WorldBookManager';
 import AvatarManager from './components/Avatar/AvatarManager';
 import CharacterManager from './components/Character/CharacterManager';
-import PluginManager from './components/Plugin/PluginManager';
 import Settings from './components/Settings/Settings';
 import MemoryChatManager from './components/MemoryChat/MemoryChatManager';
 import CreativeManager from './components/Creative/CreativeManager';
@@ -115,13 +113,6 @@ export const routeConfigs: RouteConfig[] = [
     label: '提示词管理',
     icon: FileTextOutlined,
     component: PromptManagement
-  },
-  {
-    key: 'plugin',
-    label: '插件管理',
-    icon: AppstoreOutlined,
-    component: PluginManager,
-    devOnly: true
   },
   {
     key: 'test',

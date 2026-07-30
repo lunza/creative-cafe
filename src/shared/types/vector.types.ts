@@ -9,17 +9,17 @@
  * - 仅包含"向量数据"相关类型（VectorItem / SearchResult / 上下文 / 检索选项）
  * - 不包含 `VectorConfig`（配置参数）、`EmbeddingResult`（嵌入结果）等
  *   非"向量数据"概念，这些仍由 `src/main/types/vectorConfig.ts` 维护
- * - 字段语义对齐 `vector_registry.json` 与 `vecstore.json` 的存储结构
+ * - 字段语义对齐 `vector_registry.json` 与 `vectors.db` 的存储结构
  */
 
 /** 嵌入模式：远程调用模型 / 本地推理 / 禁用向量化 */
 export type EmbeddingMode = 'remote' | 'local' | 'disabled';
 
-/** 向量存储后端模式（当前仅 vecstore） */
-export type VectorStoreMode = 'vecstore';
+/** 向量存储后端模式（当前仅 sqlite-vec） */
+export type VectorStoreMode = 'sqlite-vec';
 
 /**
- * 向量项 - vecstore.json 中的单条向量记录
+ * 向量项 - vectors.db 中的单条向量记录
  *
  * @property id        向量唯一标识（通常为 `${sourceType}:${sourceId}:${entryUid}` 形式）
  * @property vector    嵌入向量数组（维度由 EmbeddingService.dimension 决定）

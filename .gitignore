@@ -64,3 +64,6 @@ data/
 
 # SillyTavern source
 sillytavern-source/
+
+# Test script runtime outputs (PNG/log artifacts)
+scripts/test-output/

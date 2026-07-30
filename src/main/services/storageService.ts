@@ -5,6 +5,7 @@
 
 import { ipcMain, ipcRenderer } from 'electron';
 import * as fs from 'fs';
+import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from './logger';
 import { getStorageManager, StorageManager } from './storageManager';
@@ -250,7 +251,6 @@ class StorageService {
           avatarPath: this.resolvePath('__USER_DATA__/data/avatars'),
           creativePath: this.resolvePath('__USER_DATA__/data/creatives'),
           memoryPath: this.resolvePath('__USER_DATA__/data/memories'),
-          pluginPath: this.resolvePath('__USER_DATA__/data/plugins'),
           dashboardBackgroundImage: '',
           animationEnabled: true,
           compactMode: false
@@ -302,14 +302,13 @@ class StorageService {
         const settings = settingResult.data;
         const customPaths: Record<string, string> = {};
         
-        const pathFields = ['characterPath', 'worldBookPath', 'avatarPath', 'creativePath', 'memoryPath', 'pluginPath'] as const;
+        const pathFields = ['characterPath', 'worldBookPath', 'avatarPath', 'creativePath', 'memoryPath'] as const;
         const moduleMap: Record<string, string> = {
           characterPath: 'character',
           worldBookPath: 'worldbook',
           avatarPath: 'avatar',
           creativePath: 'creative',
           memoryPath: 'memory',
-          pluginPath: 'plugin',
         };
 
         for (const field of pathFields) {
@@ -338,29 +337,34 @@ class StorageService {
   /**
    * 确保通用人设预设文件存在（内置预设，不可删除）
    * 通用人设不提供固定身份描述，而是引导 AI 根据角色卡中 {{user}} 的设定动态确定用户身份
+   *
+   * 异步 I/O（spec §4.2 P3）：使用 fs.promises 替代同步 API，避免启动期阻塞事件循环。
    */
   private async ensureGenericPersona(): Promise<void> {
     try {
       const userDataPath = getUserDataPath();
       const avatarDir = path.join(userDataPath, 'data', 'avatars');
-      if (!fs.existsSync(avatarDir)) {
-        fs.mkdirSync(avatarDir, { recursive: true });
-      }
+      await fsp.mkdir(avatarDir, { recursive: true });
       const genericPersonaPath = path.join(avatarDir, 'generic-persona.json');
-      if (!fs.existsSync(genericPersonaPath)) {
-        const genericPersona = {
-          id: 'generic-persona',
-          name: 'User',
-          description: '',
-          avatarPath: '',
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-          isGeneric: true,
-          isSystem: true
-        };
-        fs.writeFileSync(genericPersonaPath, JSON.stringify(genericPersona, null, 2), 'utf-8');
-        console.log('[StorageService] Created generic persona preset');
+      try {
+        await fsp.access(genericPersonaPath);
+        // 文件已存在，无需创建
+        return;
+      } catch {
+        // 文件不存在，继续创建
       }
+      const genericPersona = {
+        id: 'generic-persona',
+        name: 'User',
+        description: '',
+        avatarPath: '',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isGeneric: true,
+        isSystem: true
+      };
+      await fsp.writeFile(genericPersonaPath, JSON.stringify(genericPersona, null, 2), 'utf-8');
+      console.log('[StorageService] Created generic persona preset');
     } catch (error) {
       console.error('[StorageService] Failed to ensure generic persona:', error);
     }
@@ -368,17 +372,18 @@ class StorageService {
 
   /**
    * 确保所有模块目录存在
+   *
+   * 异步 I/O（spec §4.2 P3）：使用 fs.promises.mkdir（recursive，幂等）替代
+   * existsSync + mkdirSync 组合，避免启动期阻塞事件循环。
    */
   private async ensureModuleDirectories(): Promise<void> {
     try {
       const userDataPath = getUserDataPath();
-      const modules = ['characters', 'worldbooks', 'avatars', 'creatives', 'memories', 'plugins'];
+      const modules = ['characters', 'worldbooks', 'avatars', 'creatives', 'memories'];
       for (const mod of modules) {
         const dirPath = path.join(userDataPath, 'data', mod);
-        if (!fs.existsSync(dirPath)) {
-          fs.mkdirSync(dirPath, { recursive: true });
-          console.log(`[StorageService] Created module directory: ${dirPath}`);
-        }
+        // mkdir recursive 幂等：目录已存在时不报错，省去 existsSync 预检
+        await fsp.mkdir(dirPath, { recursive: true });
       }
     } catch (error) {
       console.error('[StorageService] Failed to create module directories:', error);
@@ -389,6 +394,14 @@ class StorageService {
    * 设置 IPC 处理
    */
   private setupIPC(): void {
+    // 防御：非 Electron 主进程环境（如 vitest 单元测试）下 ipcMain 为 undefined，
+    // 跳过 IPC 处理器注册，避免模块加载即崩溃。生产环境（Electron 主进程）ipcMain 始终可用。
+    // ⚠️ Bug修复：原实现直接调用 ipcMain.handle，导致所有经由 VectorConfigManager →
+    //    storageService 的测试套件（ChatVectorizationService / e2e-performance 等）加载即崩溃。
+    if (!ipcMain || typeof ipcMain.handle !== 'function') {
+      this.sendLog('setupIPC 跳过：非 Electron 主进程环境（ipcMain 不可用）', 'warn');
+      return;
+    }
     // 获取数据
     ipcMain.handle('storage:get', (event, key) => {
       try {
@@ -633,18 +646,69 @@ class StorageService {
     try {
       // 清理配置中的向量数据
       const cleanedSettings = this.sanitizeSettings(settings);
-      
+
       const settingsPath = path.join(this.storageManager['baseDataPath'], 'settings.json');
       const settingsDir = path.dirname(settingsPath);
       if (!fs.existsSync(settingsDir)) {
         fs.mkdirSync(settingsDir, { recursive: true });
       }
       fs.writeFileSync(settingsPath, JSON.stringify(cleanedSettings, null, 2), 'utf-8');
-      
+
       // 同时更新存储管理器中的配置
       this.set(STORAGE_KEYS.SETTINGS, cleanedSettings);
     } catch (error) {
       console.error('写入 settings.json 失败:', error);
+      this.set(STORAGE_KEYS.SETTINGS, settings);
+    }
+  }
+
+  // ========== 异步变体（spec §4.2 P3：fs.promises，供新代码使用） ==========
+  // 旧调用方（构造函数/同步初始化路径）继续使用同步 getSettings/setSettings；
+  // 新代码（agent 模块、IPC handler 中已 async 的路径）应优先使用异步变体，
+  // 避免在主进程事件循环上阻塞。两者的读写语义、sanitize 逻辑完全一致。
+
+  /**
+   * 异步读取 settings.json（spec §4.2 P3）。
+   *
+   * 与同步 getSettings 行为一致：优先直接读 settings.json 文件，失败时回退到 StorageManager。
+   * 使用 fs.promises.readFile 替代 readFileSync。
+   */
+  async getSettingsAsync(): Promise<any> {
+    try {
+      const settingsPath = path.join(this.storageManager['baseDataPath'], 'settings.json');
+      try {
+        const raw = await fsp.readFile(settingsPath, 'utf-8');
+        return JSON.parse(raw);
+      } catch {
+        // 文件不存在或读取失败，回退到存储管理器
+        return this.get(STORAGE_KEYS.SETTINGS);
+      }
+    } catch (error) {
+      console.error('异步读取 settings.json 失败:', error);
+      return this.get(STORAGE_KEYS.SETTINGS);
+    }
+  }
+
+  /**
+   * 异步写入 settings.json（spec §4.2 P3）。
+   *
+   * 与同步 setSettings 行为一致：先 sanitize，再写文件 + StorageManager。
+   * 使用 fs.promises.writeFile / mkdir 替代同步版本。
+   */
+  async setSettingsAsync(settings: any): Promise<void> {
+    try {
+      // 清理配置中的向量数据
+      const cleanedSettings = this.sanitizeSettings(settings);
+
+      const settingsPath = path.join(this.storageManager['baseDataPath'], 'settings.json');
+      const settingsDir = path.dirname(settingsPath);
+      await fsp.mkdir(settingsDir, { recursive: true });
+      await fsp.writeFile(settingsPath, JSON.stringify(cleanedSettings, null, 2), 'utf-8');
+
+      // 同时更新存储管理器中的配置
+      this.set(STORAGE_KEYS.SETTINGS, cleanedSettings);
+    } catch (error) {
+      console.error('异步写入 settings.json 失败:', error);
       this.set(STORAGE_KEYS.SETTINGS, settings);
     }
   }

@@ -180,10 +180,10 @@ describe('对话流畅度端到端集成测试 (Task 11.1)', () => {
     it('每轮 AI 回复不应包含 \\n用户: 前缀（stop sequences 生效）', async () => {
       const userName = '测试用户';
       const stopSequences = buildStopSequences(userName);
-      // 验证 stop sequences 已正确构造
-      expect(stopSequences).toContain(`\n${userName}:`);
-      expect(stopSequences).toContain('\n用户:');
-      expect(stopSequences).toContain('\nUser:');
+      // 验证 stop sequences 已正确构造（Bug修复后仅保留双换行前缀变体）
+      expect(stopSequences).toContain(`\n\n${userName}:`);
+      expect(stopSequences).toContain('\n\n用户:');
+      expect(stopSequences).toContain('\n\nUser:');
 
       const config: AIEngineConfig = {
         id: 'test-engine',

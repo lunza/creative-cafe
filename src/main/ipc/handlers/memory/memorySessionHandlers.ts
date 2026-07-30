@@ -54,7 +54,7 @@ export function registerMemorySessionHandlers(): void {
   ipcMain.handle('memory:getChatSessions', async (): Promise<ChatSession[]> => {
     try {
       console.log('获取所有聊天会话列表...');
-      const sessions = chatLogService.getChatSessions();
+      const sessions = await chatLogService.getChatSessions();
       console.log(`成功获取 ${sessions.length} 个聊天会话`);
       return sessions;
     } catch (error) {

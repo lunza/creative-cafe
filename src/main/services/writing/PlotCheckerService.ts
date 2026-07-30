@@ -316,6 +316,15 @@ ${contextParts}
           }
         }
 
+        // F7 修复：先校验得到 validatedSuggestion，再据此设置 quickFixable，
+        // 保证 quickFixable === (quickFixSuggestion !== undefined) 的一致性
+        const validatedSuggestion = issue.quickFixSuggestion
+          ? this.validateQuickFixSuggestion(issue.quickFixSuggestion, chapterContent || '')
+          : undefined;
+        if (issue.quickFixSuggestion && !validatedSuggestion) {
+          addLog(`【快速修正】维度 ${dim} issue "${issueTitle}" 的 quickFixSuggestion 校验失败，已降级为不可快速修复`, 'warn');
+        }
+
         return {
           dimension: dim,
           severity: issue.severity || 'low',
@@ -325,8 +334,8 @@ ${contextParts}
           position: issue.position || undefined,
           originalText: origTextEntries.length > 0 ? origTextEntries : undefined,
           references: refs.length > 0 ? refs : undefined,
-          quickFixable: !!issue.quickFixSuggestion,
-          quickFixSuggestion: issue.quickFixSuggestion ? this.validateQuickFixSuggestion(issue.quickFixSuggestion, chapterContent || '') : undefined
+          quickFixable: validatedSuggestion !== undefined,
+          quickFixSuggestion: validatedSuggestion
         };
       });
 
@@ -362,6 +371,15 @@ ${contextParts}
         }
       }
 
+      // F7 修复：先校验得到 validatedSuggestion，再据此设置 quickFixable，
+      // 保证 quickFixable === (quickFixSuggestion !== undefined) 的一致性
+      const validatedSuggestion = issue.quickFixSuggestion
+        ? this.validateQuickFixSuggestion(issue.quickFixSuggestion, chapterContent || '')
+        : undefined;
+      if (issue.quickFixSuggestion && !validatedSuggestion) {
+        addLog(`【快速修正】逻辑矛盾 issue "${issueTitle}" 的 quickFixSuggestion 校验失败，已降级为不可快速修复`, 'warn');
+      }
+
       return {
         title: issueTitle,
         type: issue.type || 'plot_setting',
@@ -372,8 +390,8 @@ ${contextParts}
         position: issue.position || undefined,
         originalText: issue.originalText || undefined,
         references: issue.references || undefined,
-        quickFixable: !!issue.quickFixSuggestion,
-        quickFixSuggestion: issue.quickFixSuggestion ? this.validateQuickFixSuggestion(issue.quickFixSuggestion, chapterContent || '') : undefined,
+        quickFixable: validatedSuggestion !== undefined,
+        quickFixSuggestion: validatedSuggestion,
         chapterIndex: chapterIndex
       };
     });
@@ -406,6 +424,22 @@ ${contextParts}
     };
   }
 
+  /**
+   * 校验 AI 返回的 quickFixSuggestion 格式一致性（F7 修复）。
+   *
+   * F7 缺陷：原实现仅校验字段存在与类型，未校验 fixedText 格式合理性，
+   * 且 parseCheckResponse 中 `quickFixable` 基于 AI 原始输入（`!!issue.quickFixSuggestion`），
+   * 而 `quickFixSuggestion` 经本方法后可能为 undefined（匹配失败），
+   * 导致"标记可修复但无 suggestion"的不一致。
+   *
+   * 修复后本方法额外校验：
+   *  1. fixedText 非空、非纯空白
+   *  2. fixedText 与 originalText 不能完全相同（no-op 修复）
+   *  3. originalText 长度上限 2000 字符（防止 AI 返回整章作为原文）
+   *  4. fixedText 长度上限 5000 字符（防止 AI 返回异常长内容）
+   *
+   * 调用方应基于本方法返回值（而非原始输入）设置 `quickFixable` 标志。
+   */
   private validateQuickFixSuggestion(suggestion: any, chapterContent: string): QuickFixSuggestion | undefined {
     if (!suggestion || !suggestion.originalText || !suggestion.fixedText) {
       return undefined;
@@ -414,6 +448,35 @@ ${contextParts}
       return undefined;
     }
     if (!chapterContent || typeof chapterContent !== 'string') {
+      return undefined;
+    }
+
+    // F7 新增：fixedText 格式校验
+    const trimmedFixed = suggestion.fixedText.trim();
+    if (trimmedFixed.length === 0) {
+      addLog('【快速修正】校验失败：fixedText 为空或纯空白', 'warn');
+      return undefined;
+    }
+    // F7 新增：no-op 修复校验（originalText 与 fixedText 完全相同则无意义）
+    if (suggestion.originalText === suggestion.fixedText) {
+      addLog('【快速修正】校验失败：originalText 与 fixedText 完全相同（no-op 修复）', 'warn');
+      return undefined;
+    }
+    // F7 新增：no-op 修复校验（去除首尾空白后相同也视为无效）
+    if (suggestion.originalText.trim() === trimmedFixed) {
+      addLog('【快速修正】校验失败：originalText 与 fixedText 修剪后相同（no-op 修复）', 'warn');
+      return undefined;
+    }
+    // F7 新增：originalText 长度上限校验（防止 AI 返回整章作为原文）
+    const MAX_ORIGINAL_TEXT_LENGTH = 2000;
+    if (suggestion.originalText.length > MAX_ORIGINAL_TEXT_LENGTH) {
+      addLog(`【快速修正】校验失败：originalText 长度 ${suggestion.originalText.length} 超过上限 ${MAX_ORIGINAL_TEXT_LENGTH}`, 'warn');
+      return undefined;
+    }
+    // F7 新增：fixedText 长度上限校验（防止 AI 返回异常长内容）
+    const MAX_FIXED_TEXT_LENGTH = 5000;
+    if (suggestion.fixedText.length > MAX_FIXED_TEXT_LENGTH) {
+      addLog(`【快速修正】校验失败：fixedText 长度 ${suggestion.fixedText.length} 超过上限 ${MAX_FIXED_TEXT_LENGTH}`, 'warn');
       return undefined;
     }
 

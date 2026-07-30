@@ -23,7 +23,7 @@
 import { ipcMain, app } from 'electron';
 import path from 'path';
 import { LRUCache } from 'lru-cache';
-import { VecstoreBackend } from './VecstoreVectorStore';
+import { SqliteVecBackend } from './SqliteVecBackend';
 import { VectorCache } from './VectorCache';
 import { VectorStoreMode } from '../types/vectorConfig';
 import { getStorageService } from './storageService';
@@ -99,12 +99,12 @@ const SOURCE_BACKEND_LRU_MAX = 100;
  */
 export class VectorStoreService {
   /** 默认 backend（source='default'） */
-  private defaultBackend: VecstoreBackend;
+  private defaultBackend: SqliteVecBackend;
   /**
    * 多源 backend 索引（LRU Map）
    * SubTask 3.9：从普通 Map 改为 LRU Map，上限 SOURCE_BACKEND_LRU_MAX
    */
-  private storeBySource: LRUCache<string, VecstoreBackend>;
+  private storeBySource: LRUCache<string, SqliteVecBackend>;
   /** 仓储层：路由 + 反向索引 */
   private repository: VectorRepository;
   /** 缓存层 */
@@ -117,10 +117,10 @@ export class VectorStoreService {
   private testStartTime: number = 0;
 
   constructor() {
-    this.defaultBackend = new VecstoreBackend();
-    this.storeBySource = new LRUCache<string, VecstoreBackend>({
+    this.defaultBackend = new SqliteVecBackend();
+    this.storeBySource = new LRUCache<string, SqliteVecBackend>({
       max: SOURCE_BACKEND_LRU_MAX,
-      // LRU 驱逐时尝试 destroy 释放 WASM 资源
+      // LRU 驱逐时尝试 destroy 释放 SQLite 连接资源
       dispose: (backend, _key, _reason) => {
         if (backend.initialized) {
           backend.destroy().catch(err => {
@@ -130,9 +130,9 @@ export class VectorStoreService {
       },
     });
 
-    // 默认 backend 工厂：动态创建 VecstoreBackend
+    // 默认 backend 工厂：动态创建 SqliteVecBackend
     const backendFactory = (_source: string, _sourceId: string) => {
-      return new VecstoreBackend();
+      return new SqliteVecBackend();
     };
 
     this.repository = new VectorRepository(this.defaultBackend, backendFactory);
@@ -145,12 +145,16 @@ export class VectorStoreService {
    * 获取（不存在则创建）指定 source 的 backend。
    * 公共方法：外部消费方（DocumentProcessorService / worldBookService）通过此方法
    * 访问底层 backend 以调用 destroyAndDeleteFiles / getStoreFilePath 等。
+   *
+   * 注意：方法名保留历史命名（原 vecstore 时期），实际返回 SqliteVecBackend。
+   * 消费方仅使用 destroyAndDeleteFiles() 方法，该方法在新 backend 中同样实现，
+   * 调用代码零改动（决策 2.3）。
    */
-  getVecstoreStoreForSource(source: string, sourceId: string): VecstoreBackend {
+  getVecstoreStoreForSource(source: string, sourceId: string): SqliteVecBackend {
     const key = `${source}:${sourceId}`;
     let backend = this.storeBySource.get(key);
     if (!backend) {
-      backend = new VecstoreBackend();
+      backend = new SqliteVecBackend();
       this.storeBySource.set(key, backend);
       // 同步注册到 Repository
       this.repository.registerBackend(source, sourceId, backend);
@@ -187,7 +191,7 @@ export class VectorStoreService {
     return grouped;
   }
 
-  private async ensureStoreInitialized(source: string, sourceId: string): Promise<VecstoreBackend> {
+  private async ensureStoreInitialized(source: string, sourceId: string): Promise<SqliteVecBackend> {
     const sourceStore = this.getVecstoreStoreForSource(source, sourceId);
     if (!sourceStore.initialized) {
       await sourceStore.initialize({ source, sourceId });
@@ -400,7 +404,7 @@ export class VectorStoreService {
       // SubTask 3.5：注入 Repository 引用到 Cache（替代原 Service 反射访问）
       this.cache.setRepository(this.repository);
 
-      console.log('[VectorStoreService] Initializing default VecstoreBackend...');
+      console.log('[VectorStoreService] Initializing default SqliteVecBackend...');
       await this.defaultBackend.initialize({ source: 'default' });
 
       // 加载已注册的 source stores
@@ -603,7 +607,7 @@ export class VectorStoreService {
   }
 
   getMode(): VectorStoreMode {
-    return 'vecstore';
+    return 'sqlite-vec';
   }
 
   async rebuildIndex(): Promise<void> {
@@ -690,10 +694,10 @@ export class VectorStoreService {
       const storagePath = pathDetails.join(', ');
       const testResult: StorageTestResult = {
         success: true,
-        mode: 'vecstore',
+        mode: 'sqlite-vec',
         vectorCount: totalCount,
         storagePath,
-        details: `存储测试成功 (耗时 ${Date.now() - startTime}ms, ${totalCount} 条向量, 模式: VecStore, 存储路径: ${pathDetails.join(', ')})`
+        details: `存储测试成功 (耗时 ${Date.now() - startTime}ms, ${totalCount} 条向量, 模式: sqlite-vec, 存储路径: ${pathDetails.join(', ')})`
       };
       console.log(`[VectorStoreService] Storage test passed:`, testResult.details);
       return testResult;
@@ -703,7 +707,7 @@ export class VectorStoreService {
       console.error(`[VectorStoreService] Storage test failed (${duration}ms):`, errorMsg);
       return {
         success: false,
-        mode: 'vecstore',
+        mode: 'sqlite-vec',
         vectorCount: 0,
         error: `存储服务测试失败 (耗时 ${duration}ms): ${errorMsg}`
       };

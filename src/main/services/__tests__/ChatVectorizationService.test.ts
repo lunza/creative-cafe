@@ -45,6 +45,16 @@ vi.mock('../../services/VectorRegistryService', () => ({
   vectorRegistryService: mocks.vectorRegistryService,
 }));
 
+// ⚠️ Bug修复（测试隔离缺陷）：原测试未 mock vectorConfigManager，导致 retrieveChatHistory /
+// vectorizeIncremental 读取真实磁盘 settings.json 的 vector.embeddingMode。当用户在本机
+// 应用中禁用向量化（embeddingMode='disabled'）时，服务短路返回 []，测试全部失败。
+// 现固定 mock 为 'remote' 模式，使测试与机器配置解耦（hermetic）。
+vi.mock('../../services/VectorConfigManager', () => ({
+  vectorConfigManager: {
+    loadVectorConfig: vi.fn(() => ({ embeddingMode: 'remote' as const })),
+  },
+}));
+
 // 静音 console.error / console.warn 以保持测试输出整洁
 const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);

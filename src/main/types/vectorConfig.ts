@@ -1,5 +1,5 @@
 export type EmbeddingMode = 'remote' | 'local' | 'disabled';
-export type VectorStoreMode = 'vecstore';
+export type VectorStoreMode = 'sqlite-vec';
 
 /**
  * 向量源类型枚举 — 严格对应 vector_registry.json 的 sourceType 字段
@@ -14,8 +14,6 @@ export enum VectorSourceType {
   MANUAL_KNOWLEDGE = 'manual_knowledge',
   /** 角色卡聊天记录（预留接口） */
   CHARACTER_CHAT = 'character_chat',
-  /** Agent 长期记忆（复用向量基础设施存储记忆条目） */
-  AGENT_MEMORY = 'agent-memory',
 }
 
 /** 源类型中文标签字典 */
@@ -24,7 +22,6 @@ export const VectorSourceTypeLabel: Record<VectorSourceType, string> = {
   [VectorSourceType.KNOWLEDGE]: '知识库文档',
   [VectorSourceType.MANUAL_KNOWLEDGE]: '手动知识',
   [VectorSourceType.CHARACTER_CHAT]: '角色聊天记录',
-  [VectorSourceType.AGENT_MEMORY]: 'Agent 长期记忆',
 };
 
 /** 源类型描述字典 */
@@ -33,7 +30,6 @@ export const VectorSourceTypeDescription: Record<VectorSourceType, string> = {
   [VectorSourceType.KNOWLEDGE]: '通过文档上传功能处理的 PDF/Word/Excel/TXT/MD 文件向量化数据',
   [VectorSourceType.MANUAL_KNOWLEDGE]: '用户手动创建的知识条目向量化数据，存储于 default 目录',
   [VectorSourceType.CHARACTER_CHAT]: '角色卡聊天记录向量化数据',
-  [VectorSourceType.AGENT_MEMORY]: 'Agent 记忆系统长期记忆条目向量化数据',
 };
 
 /**
@@ -88,11 +84,6 @@ export const VectorSourceTypeStorageConfig: Record<VectorSourceType, SourceTypeS
     perEntrySubdir: true,
     filePrefix: 'chat',
   },
-  [VectorSourceType.AGENT_MEMORY]: {
-    storageDir: 'agent-memory',
-    perEntrySubdir: true,
-    filePrefix: 'mem',
-  },
 };
 
 /**
@@ -100,7 +91,7 @@ export const VectorSourceTypeStorageConfig: Record<VectorSourceType, SourceTypeS
  * 
  * 重要说明：
  * - 此接口用于存储向量化的配置参数（模型、API、缓存等设置）
- * - 向量数据（vector arrays）必须存储在独立的 vecstore.json 文件中
+ * - 向量数据（vector arrays）必须存储在独立的 vectors.db 文件中
  * - 严禁在此配置中包含 vectors、embeddings、items 等数据字段
  * - 配置大小应保持在 10KB 以下
  */
@@ -109,6 +100,15 @@ export interface VectorConfig {
   remoteModel: string;
   remoteApiUrl: string;
   remoteApiKey: string;
+  /**
+   * 远程 Embedding API Key 传递方式：
+   *  - 'header'（默认）：通过 Authorization: Bearer <key> 头部传递
+   *  - 'body'：通过请求体 api_key 字段传递
+   *
+   * 该字段由 storageService 持久化、ConfigCleanupService 清理，
+   * 此前未在接口声明导致 EmbeddingService 中 TS 报错（运行时可用）。
+   */
+  remoteApiKeyTransmission?: 'header' | 'body';
   localModel: string;
   cacheEnabled: boolean;
   cacheL1Size: number;
@@ -122,11 +122,11 @@ export interface VectorConfig {
   dimension?: number;
   
   // 禁止字段说明（以下字段不应出现在此配置中）：
-  // - vectors: number[][] - 向量数组，应存储在 vecstore.json
-  // - vectorData: any[] - 向量数据，应存储在 vecstore.json  
-  // - embeddings: any[] - 嵌入向量，应存储在 vecstore.json
-  // - items: VectorItem[] - 向量项，应存储在 vecstore.json
-  // - records: any[] - 记录数据，应存储在 vecstore.json
+  // - vectors: number[][] - 向量数组，应存储在 vectors.db
+  // - vectorData: any[] - 向量数据，应存储在 vectors.db
+  // - embeddings: any[] - 嵌入向量，应存储在 vectors.db
+  // - items: VectorItem[] - 向量项，应存储在 vectors.db
+  // - records: any[] - 记录数据，应存储在 vectors.db
 }
 
 export interface EmbeddingResult {

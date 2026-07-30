@@ -649,6 +649,8 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       // supportsThinking / supportsToolCalling 做双条件守卫后再决定是否注入参数。
       enable_chain_of_thought: activeEngine.enable_chain_of_thought,
       use_function_calling: activeEngine.use_function_calling,
+      // Task 16.2: 智能体模式灰度开关透传（useAgent）
+      useAgent: activeEngine.useAgent,
     };
 
     console.log(`[CharacterDialogueChat] engineConfigWithParams.max_tokens:`, engineConfigWithParams.max_tokens);
@@ -1816,6 +1818,8 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       // 将用户思维链/工具调用开关透传给 ChatEngine，由其按 supportsThinking / supportsToolCalling 守卫。
       enable_chain_of_thought: activeEngine.enable_chain_of_thought,
       use_function_calling: activeEngine.use_function_calling,
+      // Task 16.2: 智能体模式灰度开关透传（useAgent）
+      useAgent: activeEngine.useAgent,
     };
 
     if (effectiveParams.top_p !== undefined) {
@@ -2031,6 +2035,8 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       // 将用户思维链/工具调用开关透传给 ChatEngine，由其按 supportsThinking / supportsToolCalling 守卫。
       enable_chain_of_thought: activeEngine.enable_chain_of_thought,
       use_function_calling: activeEngine.use_function_calling,
+      // Task 16.2: 智能体模式灰度开关透传（useAgent）
+      useAgent: activeEngine.useAgent,
     };
 
     if (effectiveParams.top_p !== undefined) {
@@ -2325,6 +2331,11 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     addLog('[CharacterDialogueChat] Chat cleared', 'info');
     message.success('对话已清空');
   }, [state.isStreaming, getActiveEngineConfig, saveChatToStore, addLog]);
+
+  // Task 21: 清除错误状态（错误恢复 UI 的「关闭」按钮使用）
+  const clearError = useCallback(() => {
+    setState(prev => ({ ...prev, error: null }));
+  }, []);
 
   const cancelRequest = useCallback(() => {
     // 中断用户回复生成（Spec: add-ai-user-reply-button / Task 2.6）
@@ -2673,6 +2684,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     editMessage,
     rollbackToMessage,
     clearChat,
+    clearError,
     cancelRequest,
     selectedPersona,
     personas,

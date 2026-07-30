@@ -21,7 +21,7 @@
 /**
  * 禁止的向量数据字段 - 不应出现在 settings.json 的向量配置中
  *
- * 这些字段为向量数据（向量数组、条目列表等），应存储在独立的 vecstore.json
+ * 这些字段为向量数据（向量数组、条目列表等），应存储在独立的 vectors.db
  * 文件中。若出现在配置中会膨胀配置文件大小，需在配置清理时移除。
  *
  * 来源：ConfigCleanupService.FORBIDDEN_VECTOR_FIELDS

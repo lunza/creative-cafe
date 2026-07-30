@@ -78,24 +78,22 @@ describe('resolveStopForRequestBody', () => {
 
   it('与 buildStopSequences 集成：默认用户名变体数组在 supportsStopArray=true 时完整传递', () => {
     // 模拟 hooks.ts 中的实际调用链
-    // Spec: fix-ai-response-length-degradation / Task 6 — 默认数组改为 12 项（6 双换行 + 6 单换行）
+    // Spec: fix-ai-response-length-degradation / Task 6 + 🐛 Bug修复 — 默认数组为 6 项双换行前缀变体
+    // （单换行前缀变体已移除，避免 OpenAI-compatible 后端子串匹配误触发截断）
     const stops = buildStopSequences('张三');
     const result = resolveStopForRequestBody(stops, { supportsStopArray: true });
     expect(Array.isArray(result)).toBe(true);
-    // 双换行前缀变体（前 6 项）
+    // 6 项双换行前缀变体
     expect(result).toContain('\n\n张三:');
     expect(result).toContain('\n\n张三：');
     expect(result).toContain('\n\n用户:');
     expect(result).toContain('\n\n用户：');
     expect(result).toContain('\n\nUser:');
     expect(result).toContain('\n\nUser：');
-    // 单换行前缀变体（后 6 项，兜底）
-    expect(result).toContain('\n张三:');
-    expect(result).toContain('\n张三：');
-    expect(result).toContain('\n用户:');
-    expect(result).toContain('\n用户：');
-    expect(result).toContain('\nUser:');
-    expect(result).toContain('\nUser：');
+    // 单换行前缀变体已移除（Bug修复）
+    expect(result).not.toContain('\n张三:');
+    expect(result).not.toContain('\n用户:');
+    expect(result).not.toContain('\nUser:');
   });
 
   it('与 buildStopSequences 集成：supportsStopArray=false 时返回首个用户名变体字符串', () => {

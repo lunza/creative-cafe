@@ -1,12 +1,12 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback } from 'react';
 import { Tabs, Input, Button, Empty, Tag, Tooltip, Typography, Spin, Badge, Modal, Progress, Upload, message, Descriptions, Popconfirm } from 'antd';
 import { BookOutlined, SearchOutlined, ReloadOutlined, GlobalOutlined, IdcardOutlined, UserOutlined, UnorderedListOutlined, UploadOutlined, DeleteOutlined, StopOutlined, FileTextOutlined, SafetyOutlined, TableOutlined } from '@ant-design/icons';
 import { theme } from 'antd';
 import type { MaterialItem, MaterialType, PlotCheckReport, PlotCheckIssue, LogicCheckIssue } from '../../../../shared/types/writing.types';
 import { useWritingMaterials } from './useWritingMaterials';
+import { usePanelResize } from './usePanelResize';
 import MaterialList from './MaterialList';
 import { RightPanelTab } from '../../../stores/writingModeUIStore';
-import { MIN_PANEL_WIDTH, MAX_PANEL_WIDTH } from '../../../constants/writingModeConstants';
 import PlotCheckPanelContent from './PlotCheckPanelContent';
 import TableOrganizeMainPanel from './TableOrganizeMainPanel';
 
@@ -94,38 +94,8 @@ const WritingModeRightPanel: React.FC<WritingModeRightPanelProps> = ({
   const [selectedSummaryVisible, setSelectedSummaryVisible] = useState(false);
   const [selectedStyleForPreview, setSelectedStyleForPreview] = useState<MaterialItem | null>(null);
 
-  // Resize handle state
-  const [isResizing, setIsResizing] = useState(false);
-  const resizeStartXRef = useRef<number>(0);
-  const resizeStartWidthRef = useRef<number>(0);
-
-  const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsResizing(true);
-    resizeStartXRef.current = e.clientX;
-    resizeStartWidthRef.current = width;
-  }, [width]);
-
-  React.useEffect(() => {
-    if (!isResizing) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      const delta = resizeStartXRef.current - e.clientX;
-      const newWidth = Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, resizeStartWidthRef.current + delta));
-      onResize(newWidth);
-    };
-
-    const handleMouseUp = () => {
-      setIsResizing(false);
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isResizing, onResize]);
+  // D2 拆分：resize 逻辑下沉到 usePanelResize hook，本组件仅消费 isResizing / handleResizeMouseDown
+  const { isResizing, handleResizeMouseDown } = usePanelResize(width, onResize);
 
   const handleRefresh = useCallback(() => {
     refreshMaterials();

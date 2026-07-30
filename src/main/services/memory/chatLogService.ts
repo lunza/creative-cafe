@@ -203,24 +203,26 @@ export class ChatLogService {
   }
 
   // ========== 聊天记录读取 ==========
+  // 异步化（spec §4.2 P4）：底层 chatSessionRepository 已改为 fs.promises 异步 I/O，
+  // 包装方法相应标记为 async，调用方需 await。
 
-  getChatSessions() {
+  async getChatSessions() {
     return getChatSessions(this.ctx);
   }
 
-  getChatSession(chatId: string) {
+  async getChatSession(chatId: string) {
     return getChatSession(this.ctx, chatId);
   }
 
-  getChatMessages(chatId: string, page: number = 1, pageSize: number = 50) {
+  async getChatMessages(chatId: string, page: number = 1, pageSize: number = 50) {
     return getChatMessages(this.ctx, chatId, page, pageSize);
   }
 
-  searchChatMessages(keyword: string, chatId?: string) {
+  async searchChatMessages(keyword: string, chatId?: string) {
     return searchChatMessages(this.ctx, keyword, chatId);
   }
 
-  filterChatMessages(chatId: string, filters: { sheetName?: string; startTime?: string; endTime?: string }) {
+  async filterChatMessages(chatId: string, filters: { sheetName?: string; startTime?: string; endTime?: string }) {
     return filterChatMessages(this.ctx, chatId, filters);
   }
 

@@ -13,7 +13,8 @@ import {
   FileTextOutlined,
   TableOutlined,
   AppstoreOutlined,
-  CloseOutlined
+  CloseOutlined,
+  RobotOutlined
 } from '@ant-design/icons';
 import {
   GeneratedOutline,
@@ -33,6 +34,7 @@ import QuickFixSuggestionModal from './QuickFixSuggestionModal';
 import GenerationSuggestionModal from './GenerationSuggestionModal';
 import RegenerationSuggestionModal from './RegenerationSuggestionModal';
 import WritingModeRightPanel from './WritingModeRightPanel';
+import WritingAgentModal from './WritingAgentModal';
 import { useChapterGeneration } from './hooks/useChapterGeneration';
 import { useModalStates } from './hooks/useModalStates';
 import { usePlotCheck } from './hooks/usePlotCheck';
@@ -102,6 +104,7 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId 
   const [isOrganizing, setIsOrganizing] = React.useState(false);
   const [showGenerationModal, setShowGenerationModal] = React.useState(false);
   const [showRegenerationModal, setShowRegenerationModal] = React.useState(false);
+  const [showAgentModal, setShowAgentModal] = React.useState(false);
 
   const handleTableOrganizeStatusChange = React.useCallback((organizing: boolean) => {
     setIsOrganizing(organizing);
@@ -505,6 +508,16 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId 
                   >
                     逻辑记录
                   </Button>
+                  <Tooltip title="智能体自动写作：读大纲→写章→自审→修复→更新表→下一章">
+                    <Button
+                      type="primary"
+                      ghost
+                      icon={<RobotOutlined />}
+                      onClick={() => setShowAgentModal(true)}
+                    >
+                      智能体写作
+                    </Button>
+                  </Tooltip>
                   {layoutMode === LayoutMode.WIDE && (
                     <Tooltip title={rightPanelVisible ? '关闭辅助面板' : '打开辅助面板'}>
                       <Button
@@ -690,6 +703,18 @@ const ContentWorkspace: React.FC<ContentWorkspaceProps> = ({ outline, projectId 
         onCancel={handleRegenerationCancel}
         previousContent={chapterGeneration.chapterContents[currentChapter?.index] || ''}
         savedGuidance={getCurrentChapterGuidance()}
+      />
+
+      {/* Task 15.2: 智能体写作编排模态框 */}
+      <WritingAgentModal
+        visible={showAgentModal}
+        onClose={() => setShowAgentModal(false)}
+        projectId={projectId}
+        outline={outline}
+        onCompleted={() => {
+          // 编排完成后刷新章节列表
+          useWritingProjectStore.getState().loadProjects();
+        }}
       />
     </Layout>
   );

@@ -109,6 +109,21 @@ const WritingModeEntry: React.FC = () => {
   }, []);
 
   const handleConfigConfirm = useCallback(async (config, projectId?: string) => {
+    // Task 21: 新建项目输入校验 —— 防御性校验 config 最小结构，
+    // 防止表单校验被绕过或异常调用时创建空项目
+    if (!config || typeof config !== 'object') {
+      message.error('配置无效，无法创建项目');
+      return;
+    }
+    if (!config.parameters || typeof config.parameters.creativeDescription !== 'string' || !config.parameters.creativeDescription.trim()) {
+      message.error('请填写创意描述后再创建项目');
+      return;
+    }
+    if (!config.modelConfig || (!config.modelConfig.model && !(config.modelConfig as any).modelName)) {
+      message.error('AI 模型配置缺失，请先在设置中配置 AI 服务');
+      return;
+    }
+
     let finalProjectId = projectId;
     if (!finalProjectId) {
       finalProjectId = await useWritingProjectStore.getState().createProject(config);

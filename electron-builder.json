@@ -10,6 +10,11 @@
     "package.json"
   ],
   "npmRebuild": true,
+  "asarUnpack": [
+    "**/node_modules/better-sqlite3/**/*",
+    "**/node_modules/sqlite-vec/**/*",
+    "**/node_modules/sqlite-vec-*/**/*"
+  ],
   "win": {
     "icon": "build/icon.png",
     "target": [
