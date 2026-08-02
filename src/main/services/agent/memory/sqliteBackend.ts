@@ -33,6 +33,7 @@ import {
   type SqliteStatement,
 } from '../infra/sqliteUtils';
 import { toAgentError } from '../infra/errors';
+import { getUserDataPath } from '../../../utils/appPath';
 import * as path from 'path';
 
 // ==================== Schema 定义 ====================
@@ -156,6 +157,23 @@ export const AGENT_SCHEMA_STATEMENTS: readonly string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_embedding_cache_model ON embedding_cache(model_name)`,
   `CREATE INDEX IF NOT EXISTS idx_embedding_cache_last_accessed ON embedding_cache(last_accessed_at DESC)`,
+
+  // 7. agent_configs：智能体配置表（spec §add-agent-mode-management-and-center Task 3）
+  //    存储系统预置智能体 + 用户自定义智能体配置
+  `CREATE TABLE IF NOT EXISTS agent_configs (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'enabled',
+    is_system INTEGER NOT NULL DEFAULT 0,
+    skills TEXT NOT NULL DEFAULT '[]',
+    mode TEXT NOT NULL,
+    identity TEXT,
+    config TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`,
 ];
 
 // ==================== AgentSqliteBackend ====================
@@ -306,9 +324,6 @@ export function getAgentBackend(): AgentSqliteBackend {
  * `<userData>/agent/memory.db` —— 集中存放 agent 记忆 / 用量 / cron / 技能 / 溯源 / embedding 缓存。
  */
 export function getAgentDbPath(): string {
-  // 动态引入避免在 better-sqlite3 未安装时影响 appPath 模块加载
-  const { getUserDataPath } = require('../../../utils/appPath');
-  // 使用 path.join 保证跨平台分隔符正确（Windows 反斜杠 / POSIX 正斜杠）
   return path.join(getUserDataPath(), 'agent', 'memory.db');
 }
 

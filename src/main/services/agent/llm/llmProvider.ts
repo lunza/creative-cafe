@@ -63,13 +63,21 @@ export class AIServiceAdapter implements ILLMProvider {
         })),
       ];
 
+      // 解析模型名称与采样参数：request 字段为空时回退到 AIService 引擎配置
+      // （与非 Agent 路径 useWorldBookAIOperations / CharacterDialogueChat 一致）
+      const config = await this.aiService.getConfig();
+      let modelName = request.modelName;
+      if (!modelName) {
+        modelName = config.model;
+      }
+
       // 调用 AIService.streamChatAPI（复用其重试/超时/错误分类）
       const response = await this.aiService.streamChatAPI(
         messages,
         {
-          model: request.modelName,
-          temperature: request.temperature ?? 0.8,
-          maxTokens: request.maxTokens ?? 4096,
+          model: modelName,
+          temperature: request.temperature ?? config.temperature ?? 0.8,
+          maxTokens: request.maxTokens ?? config.maxTokens ?? 4096,
           tools: request.tools as ToolDefinition[] | undefined,
           parallelToolCalls: request.parallelToolCalls,
           supportsToolCalling: request.tools && request.tools.length > 0,

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Card, Form, Input, Select, Button, Space, Alert, AutoComplete, Modal, Table, Tag, Tooltip } from 'antd';
+import { Card, Form, Input, Select, Button, Space, Alert, AutoComplete, Modal, Table, Tag, Tooltip, Segmented } from 'antd';
 import { SettingOutlined, SaveOutlined, PlusOutlined, EditOutlined, CopyOutlined, SearchOutlined, SyncOutlined, EyeOutlined, BulbOutlined, ToolOutlined } from '@ant-design/icons';
 import { useSettingStore } from '../../stores/settingStore';
 import { useAIEngineSettings } from './hooks/useAIEngineSettings';
@@ -140,20 +140,21 @@ const AIEngineSettingsPanel: React.FC<AIEngineSettingsPanelProps> = ({ form }) =
             />
           </Form.Item>
 
-          <Form.Item label="API模式" name="api_mode">
-            <Select
-              options={[
-                { label: '文本补全', value: 'text_completion' },
-                { label: '聊天补全', value: 'chat_completion' },
-              ]}
-            />
-          </Form.Item>
-
           <Form.Item label="API密钥传输方式" name="api_key_transmission">
             <Select
               options={[
                 { label: '请求头 (Authorization: Bearer)', value: 'header' },
                 { label: '请求体', value: 'body' },
+              ]}
+            />
+          </Form.Item>
+
+          <Form.Item label="智能体模式" name="agentModeOverride" tooltip="控制该引擎是否启用智能体模式">
+            <Segmented
+              options={[
+                { label: '自动', value: 'auto' },
+                { label: '强制开启', value: 'force-on' },
+                { label: '强制关闭', value: 'force-off' },
               ]}
             />
           </Form.Item>
@@ -199,6 +200,14 @@ const AIEngineSettingsPanel: React.FC<AIEngineSettingsPanelProps> = ({ form }) =
 
           <Form.Item label="生成数量 (n)" name="n">
             <Input type="number" min={1} max={10} step={1} placeholder="范围: 1-10，例如: 1" />
+          </Form.Item>
+
+          <Form.Item label="连接超时 (connection_timeout)" name="connection_timeout" tooltip="等待 AI 服务器响应头到达的最大时间（毫秒）。兼容深度思考模型首字延迟较长的情况。0 表示不限制。默认 120000ms（120秒）">
+            <Input type="number" min={0} max={3600000} step={1000} placeholder="范围: 0-3600000，默认 120000（120秒），0 表示不限制" />
+          </Form.Item>
+
+          <Form.Item label="请求超时 (request_timeout)" name="request_timeout" tooltip="完整 AI 请求的最大时长（毫秒）。0 表示不限制。默认 300000ms（300秒）">
+            <Input type="number" min={0} max={3600000} step={1000} placeholder="范围: 0-3600000，默认 300000（300秒），0 表示不限制" />
           </Form.Item>
 
           <Form.Item label="系统提示词 (system_prompt)" name="system_prompt">
@@ -312,12 +321,6 @@ const AIEngineSettingsPanel: React.FC<AIEngineSettingsPanelProps> = ({ form }) =
                   ellipsis: true,
                 },
                 {
-                  title: 'API模式',
-                  dataIndex: 'api_mode',
-                  key: 'api_mode',
-                  render: (mode: string) => mode === 'text_completion' ? '文本补全' : '聊天补全',
-                },
-                {
                   title: '状态',
                   key: 'status',
                   render: (_: any, record: AIEngineSetting) => (
@@ -386,19 +389,20 @@ const AIEngineSettingsPanel: React.FC<AIEngineSettingsPanelProps> = ({ form }) =
                 filterOption={false}
               />
             </Form.Item>
-            <Form.Item label="API模式" name="api_mode" rules={[{ required: true, message: '请选择API模式' }]}>
-              <Select
-                options={[
-                  { label: '文本补全', value: 'text_completion' },
-                  { label: '聊天补全', value: 'chat_completion' },
-                ]}
-              />
-            </Form.Item>
             <Form.Item label="API密钥传输方式" name="api_key_transmission">
               <Select
                 options={[
                   { label: '请求头 (Authorization: Bearer)', value: 'header' },
                   { label: '请求体', value: 'body' },
+                ]}
+              />
+            </Form.Item>
+            <Form.Item label="智能体模式" name="agentModeOverride" tooltip="控制该引擎是否启用智能体模式">
+              <Segmented
+                options={[
+                  { label: '自动', value: 'auto' },
+                  { label: '强制开启', value: 'force-on' },
+                  { label: '强制关闭', value: 'force-off' },
                 ]}
               />
             </Form.Item>
@@ -435,6 +439,12 @@ const AIEngineSettingsPanel: React.FC<AIEngineSettingsPanelProps> = ({ form }) =
             </Form.Item>
             <Form.Item label="生成数量 (n)" name="n">
               <Input type="number" min={1} max={10} step={1} placeholder="范围: 1-10，例如: 1" />
+            </Form.Item>
+            <Form.Item label="连接超时 (connection_timeout)" name="connection_timeout" tooltip="等待 AI 服务器响应头到达的最大时间（毫秒）。兼容深度思考模型首字延迟较长的情况。0 表示不限制。默认 120000ms（120秒）">
+              <Input type="number" min={0} max={3600000} step={1000} placeholder="范围: 0-3600000，默认 120000（120秒），0 表示不限制" />
+            </Form.Item>
+            <Form.Item label="请求超时 (request_timeout)" name="request_timeout" tooltip="完整 AI 请求的最大时长（毫秒）。0 表示不限制。默认 300000ms（300秒）">
+              <Input type="number" min={0} max={3600000} step={1000} placeholder="范围: 0-3600000，默认 300000（300秒），0 表示不限制" />
             </Form.Item>
             <Form.Item label="系统提示词 (system_prompt)" name="system_prompt">
               <Input.TextArea

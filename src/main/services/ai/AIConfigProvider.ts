@@ -1,5 +1,6 @@
 import { getStorageService } from '../storageService';
 import type { ModelConfig } from '../../../shared/types/writing.types';
+import type { FallbackProvider } from '../agent/failoverPolicy';
 
 /**
  * AIConfigProvider 返回的 AI 调用配置视图。
@@ -164,6 +165,30 @@ export class AIConfigProvider {
   }
 
   /**
+   * 获取备用 Provider 列表（Task 10.4：故障转移配置）。
+   *
+   * 从 settings.fallbackProviders 读取，未配置时返回空数组。
+   * 当主 provider 发生非瞬态错误时，从此列表中选择下一个 provider 切换。
+   */
+  getFallbackProviders(): FallbackProvider[] {
+    const storageService = getStorageService();
+    const settings = storageService.getSettings();
+    return settings?.fallbackProviders ?? [];
+  }
+
+  /**
+   * 设置备用 Provider 列表（Task 10.4：故障转移配置）。
+   *
+   * 持久化到 storageService 的 settings.fallbackProviders 字段。
+   */
+  setFallbackProviders(providers: FallbackProvider[]): void {
+    const storageService = getStorageService();
+    const settings = storageService.getSettings();
+    settings.fallbackProviders = providers;
+    storageService.setSettings(settings);
+  }
+
+  /**
    * 构建表格整理 AI 调用所需的端点信息。
    * 与原 buildApiEndpoint 行为完全一致：
    * - apiUrl 根据 api_mode 自动追加 /v1/completions 或 /v1/chat/completions
@@ -190,19 +215,12 @@ export class AIConfigProvider {
     const modelName = this.getModelName();
 
     let apiUrl = activeEngine?.api_url || 'http://127.0.0.1:5000';
-    const apiMode = activeEngine?.api_mode || 'chat_completion';
 
-    if (apiMode === 'text_completion') {
-      if (!apiUrl.endsWith('/v1/completions')) {
-        apiUrl += '/v1/completions';
-      }
-    } else {
-      if (!apiUrl.endsWith('/v1/chat/completions')) {
-        apiUrl += '/v1/chat/completions';
-      }
+    if (!apiUrl.endsWith('/v1/chat/completions')) {
+      apiUrl += '/v1/chat/completions';
     }
 
-    return { apiUrl, apiMode, apiKey, apiKeyTransmission, modelName };
+    return { apiUrl, apiMode: 'chat_completion', apiKey, apiKeyTransmission, modelName };
   }
 }
 

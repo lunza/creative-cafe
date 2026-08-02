@@ -22,7 +22,8 @@ import {
   DatabaseOutlined,
   FileTextOutlined,
   EditOutlined,
-  MessageOutlined
+  MessageOutlined,
+  RobotOutlined
 } from '@ant-design/icons';
 
 import Dashboard from './components/Dashboard/Dashboard';
@@ -37,6 +38,7 @@ import DocumentVectorPage from './components/Test/DocumentVectorPage';
 import { KnowledgeBaseManager } from './components/KnowledgeBase/KnowledgeBaseManager';
 import { CreationCenter } from './components/Chat/CreationCenter';
 import PromptManagement from './components/PromptManagement/PromptManagement';
+import AgentCenter from './components/AgentCenter/AgentCenter';
 
 export interface RouteConfig {
   /** 唯一 key，与 uiStore.activeTab 对应 */
@@ -107,6 +109,12 @@ export const routeConfigs: RouteConfig[] = [
     label: '设置',
     icon: SettingOutlined,
     component: Settings
+  },
+  {
+    key: 'agent-center',
+    label: '智能体中心',
+    icon: RobotOutlined,
+    component: AgentCenter
   },
   {
     key: 'prompt-management',

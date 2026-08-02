@@ -3,7 +3,8 @@ import { Modal, Input, Select, Switch, Space, Button, message } from 'antd';
 import {
   TranslationOutlined,
   EditOutlined,
-  StopOutlined
+  StopOutlined,
+  SafetyCertificateOutlined
 } from '@ant-design/icons';
 import type { UseWorldBookFormStateReturn } from './hooks/useWorldBookFormState';
 
@@ -31,6 +32,8 @@ export interface WorldBookEntryEditorProps {
   onTranslate: (field: string) => void | Promise<void>;
   /** 触发 AI 单字段润色流程（弹出润色要求 Modal） */
   onPolish: (field: string) => void;
+  /** 触发 AI 单字段审核流程（弹出审核要求 Modal） */
+  onAudit: (field: string) => void;
   /** 中断 AI 请求 */
   onCancelAIRequest: () => void;
   /** 写日志 */
@@ -41,6 +44,7 @@ const WorldBookEntryEditor: React.FC<WorldBookEntryEditorProps> = ({
   formState,
   onTranslate,
   onPolish,
+  onAudit,
   onCancelAIRequest,
   addLog,
 }) => {
@@ -55,6 +59,7 @@ const WorldBookEntryEditor: React.FC<WorldBookEntryEditorProps> = ({
     setFormValues,
     translatingField,
     polishingField,
+    auditingField,
     worldBookContent,
     setWorldBookContent,
     viewingItem,
@@ -174,6 +179,15 @@ const WorldBookEntryEditor: React.FC<WorldBookEntryEditorProps> = ({
                   AI润色
                 </Button>
               )}
+              {auditingField === 'comment' ? (
+                <Button type="link" danger icon={<StopOutlined />} onClick={onCancelAIRequest} size="small">
+                  中断审核
+                </Button>
+              ) : (
+                <Button type="link" icon={<SafetyCertificateOutlined />} onClick={() => onAudit('comment')} size="small">
+                  AI审核
+                </Button>
+              )}
             </Space>
           </Space>
         </div>
@@ -230,6 +244,15 @@ const WorldBookEntryEditor: React.FC<WorldBookEntryEditorProps> = ({
               ) : (
                 <Button type="link" icon={<EditOutlined />} onClick={() => onPolish('content')} size="small">
                   AI润色
+                </Button>
+              )}
+              {auditingField === 'content' ? (
+                <Button type="link" danger icon={<StopOutlined />} onClick={onCancelAIRequest} size="small">
+                  中断审核
+                </Button>
+              ) : (
+                <Button type="link" icon={<SafetyCertificateOutlined />} onClick={() => onAudit('content')} size="small">
+                  AI审核
                 </Button>
               )}
             </Space>

@@ -1,1095 +1,1102 @@
-# Creative Café 代码 Wiki
+# Code Wiki
 
-> **版本**：v1.0.5 ｜ **最后更新**：2026-07-31
-> **定位**：本文档是对 `creative-cafe` 仓库的系统性架构解读，涵盖整体架构、模块职责、关键类与函数、依赖关系及运行方式。
-> **结构变更**：原 §14「已知重点问题与修复记录」（51 个子节、2447 行）已拆分至 [`docs/FIX_RECORDS.md`](./docs/FIX_RECORDS.md)；版本级发布日志见 `CHANGELOG.md`。
-
----
-
-## 目录
-
-1. [项目概述](#1-项目概述)
-2. [整体架构](#2-整体架构)
-3. [目录结构](#3-目录结构)
-4. [主进程架构](#4-主进程架构)
-5. [渲染进程架构](#5-渲染进程架构)
-6. [核心功能模块详解](#6-核心功能模块详解)
-7. [AI 服务体系](#7-ai-服务体系)
-8. [向量与检索体系](#8-向量与检索体系)
-9. [状态管理](#9-状态管理)
-10. [共享类型系统](#10-共享类型系统)
-11. [依赖关系](#11-依赖关系)
-12. [项目运行方式](#12-项目运行方式)
-13. [关键设计规范与约定](#13-关键设计规范与约定)
-14. [已知重点问题与修复记录（已拆分至 docs/FIX_RECORDS.md）](#14-已知重点问题与修复记录已拆分)
+> 本文件记录项目核心架构与功能模块的技术文档。
+> 注意：原文件内容因磁盘异常全部丢失（全为 null 字节），本文件由 2026-08-01 的 spec `add-agent-and-skill-user-management` 重建，仅包含本次新增功能的文档。历史章节请参考 git 历史记录。
 
 ---
 
-## 1. 项目概述
+## 智能体与技能用户管理（Spec: add-agent-and-skill-user-management）
 
-**Creative Café（创想咖啡厅）** 是一款 **AI 驱动的创意内容管理桌面工具**，基于 Electron + React + TypeScript 构建。它专注于角色卡、世界书的创建编辑，并扩展出小说写作、文字游戏、记忆管理、知识库检索等高级能力。
+### 概述
 
-### 核心特性一览
+为智能体中心和技能广场补全用户自定义智能体及技能的手动创建、编辑和删除功能。系统预置智能体（`isSystem === true`）和内置技能（`source === 'builtin'`）仅提供查看功能，隐藏管理按钮；用户自定义项目显示完整的管理按钮集。
 
-| 模块 | 能力 |
-|------|------|
-| 角色卡管理 | 兼容 SillyTavern V2/V3 PNG 格式，可视化编辑、AI 辅助生成、测试对话、PNG 导出 |
-| 世界书管理 | SillyTavern JSON 格式，条目 CRUD、AI 智能生成、关系图谱、向量化检索 |
-| 写作模式 | 大纲生成、章节生成（分片/分块/续写）、剧情检查、表格整理、版本管理、风格学习 |
-| 游戏模式 | 文字 RPG / 狼人杀 / 恋爱模拟 / 推理 / 经营五类模板，AI 叙事 + tableEdit 表格驱动 |
-| 记忆插件 | Excel 模板管理、聊天记录树形浏览、AI 自动整理归档、表格关联 |
-| 创意管理 | Milkdown/TextEditor 编辑、AI 扩写润色翻译、创意一键转角色卡/世界书 |
-| 知识库 | PDF/DOCX/TXT 导入、sqlite-vec 向量存储、语义检索 |
-| 用户人设 | 自定义 Persona、统一存储路径管理 |
-| 提示词管理 | 模板编辑、组装预览、版本历史、回滚、AI 优化 |
+### 架构分层
 
-### 技术栈
+```
+┌─────────────────────────────────────────────────────┐
+│ Renderer (React)                                    │
+│  AgentCenter.tsx                                    │
+│   ├─ AgentList.tsx (创建按钮 + 操作列权限渲染)       │
+│   ├─ AgentFormModal.tsx (创建/编辑模态表单)          │
+│   ├─ AgentDetail.tsx (详情抽屉)                      │
+│   └─ SkillMarketplace.tsx (创建/编辑/删除按钮)       │
+│       └─ SkillFormModal.tsx (创建/编辑模态表单)      │
+│                                                     │
+│  hooks/useAgentConfigs.ts (createAgent/deleteAgent) │
+├─────────────────────────────────────────────────────┤
+│ Preload Bridge (contextBridge)                      │
+│  agent.config.create / agent.config.delete          │
+│  skill.create / skill.edit                          │
+├─────────────────────────────────────────────────────┤
+│ Main Process (IPC Handlers)                         │
+│  agent-config:create  → agentConfigService.create() │
+│  agent-config:delete  → agentConfigService.delete() │
+│  skill:create         → createSkill()               │
+│  skill:edit           → editSkill()                 │
+├─────────────────────────────────────────────────────┤
+│ Service Layer                                        │
+│  agentConfigService (SQLite + 内存缓存)              │
+│  skillLoader.createSkill() / editSkill()            │
+│    └─ assembleSkillMd() (frontmatter + body 组装)    │
+└─────────────────────────────────────────────────────┘
+```
 
-| 层级 | 选型 |
-|------|------|
-| 桌面框架 | Electron 33 |
-| 前端框架 | React 18 + TypeScript |
-| UI 组件 | Ant Design 6 |
-| 状态管理 | Zustand 5 |
-| Markdown 编辑 | Milkdown 7.x (Crepe) + 自研 TextEditor |
-| 构建工具 | Vite 5 + vite-plugin-electron |
-| 向量数据库 | sqlite-vec + better-sqlite3 + @xenova/transformers |
-| AI 集成 | AI SDK V6 (`ai`)、`@ai-sdk/openai`、`@ai-sdk/react` |
-| 角色卡读写 | `@lenml/char-card-reader`、`png-chunks-extract`、`png-chunk-text` |
-| 文档解析 | `pdf-parse`、`mammoth`、`xlsx` |
-| Token 计数 | `gpt-tokenizer`（cl100k_base） |
-| 测试 | Vitest 4 |
+### 智能体 CRUD
+
+#### 后端 IPC 通道
+
+| IPC 通道 | 入参 | 返回 | 说明 |
+|---|---|---|---|
+| `agent-config:create` | `{ config: Omit<AgentConfig, 'id'\|'createdAt'\|'updatedAt'\|'isSystem'> }` | `{ ok, config?, error? }` | 创建用户自定义智能体，强制 `isSystem: false` |
+| `agent-config:delete` | `{ id: string }` | `{ ok, error? }` | 删除智能体（系统预置保护由 `agentConfigService.delete()` 保证） |
+
+创建成功后通过 `broadcastConfigChanged(id, 'created')` 广播变更事件，删除成功后广播 `broadcastConfigChanged(id, 'deleted')`。
+
+#### 前端 Hook
+
+`useAgentConfigs.ts` 新增两个方法：
+
+- `createAgent(config)` — 调用 `agent.config.create()` IPC，成功后 `setConfigs(prev => [...prev, result.config])` 追加到列表
+- `deleteAgent(id)` — 调用 `agent.config.delete()` IPC，成功后 `setConfigs(prev => prev.filter(c => c.id !== id))` 从列表移除
+
+#### 前端组件
+
+**AgentFormModal.tsx** — 智能体创建/编辑模态表单
+
+- 支持 `create` 和 `edit` 两种模式
+- 表单字段：`name`（必填，1-50 字符，重名校验）、`description`（必填，1-200 字符）、`type`（5 选项 Select）、`mode`（4 选项 Select）、`emoji`（可选，默认 🤖）
+- 编辑模式下 ID 通过 `agent` prop 传入，不作为表单字段
+- 提交时 loading 状态，消息提示由父组件 `AgentCenter.tsx` 处理
+
+**AgentList.tsx** — 智能体列表
+
+- 列表上方新增"创建智能体"按钮（`PlusOutlined` 图标，`type="primary"`）
+- 操作列按权限渲染：系统预置（`isSystem === true`）仅显示"详情"按钮；用户自定义显示"详情"+"编辑"+"删除"
+- 删除操作使用 `Modal.confirm`，显示智能体名称，`okType="danger"`
+
+**AgentCenter.tsx** — 主页面
+
+- 管理 `AgentFormModal` 状态（`formOpen`、`formMode`、`editingAgent`）
+- 5 个处理函数：`handleCreate`、`handleEdit`、`handleDelete`、`handleFormCreate`、`handleFormUpdate`
+- 操作成功/失败均通过 `message.success/error` 提示
+
+### 技能 CRUD
+
+#### 后端函数
+
+`skillLoader.ts` 新增：
+
+- `SkillFormData` 接口 — `{ name, description, emoji?, body }`
+- `assembleSkillMd(params)` — 内部函数，组装 SKILL.md 内容（YAML frontmatter + markdown body）
+- `createSkill(params)` — 校验技能名格式（`^[a-z0-9-]+$`）、检查目录唯一性、写入 `<userDataPath>/skills/<name>/SKILL.md`
+- `editSkill(params)` — 校验非内置技能、覆盖写入已有 SKILL.md
+
+#### IPC 通道
+
+| IPC 通道 | 入参 | 返回 | 说明 |
+|---|---|---|---|
+| `skill:create` | `{ name, description, emoji?, body }` | `{ success, skillName?, error? }` | 创建工作区技能 |
+| `skill:edit` | `{ name, description, emoji?, body }` | `{ success, skillName?, error? }` | 编辑工作区技能（内置技能拒绝编辑） |
+
+#### 前端组件
+
+**SkillFormModal.tsx** — 技能创建/编辑模态表单
+
+- 支持 `create` 和 `edit` 两种模式
+- 表单字段：`name`（必填，仅小写字母/数字/连字符，创建时可编辑、编辑时 `disabled`）、`description`（必填，1-500 字符）、`emoji`（可选）、`body`（必填，1-10000 字符）
+- 创建模式下技能名唯一性校验
+- 消息提示由父组件 `SkillMarketplace.tsx` 处理
+
+**SkillMarketplace.tsx** — 技能广场
+
+- 工具栏新增"创建技能"按钮（`PlusOutlined` 图标，`type="primary"`）
+- 操作列按权限渲染：内置技能（`source === 'builtin'`）仅显示"详情"按钮；非内置显示"详情"+"编辑"+"删除"
+- 原"卸载"按钮文案改为"删除"，保持 `Modal.confirm` 确认逻辑
+- 编辑操作先调用 `skill.getDetail()` 获取完整 SKILL.md 内容填充表单
+
+### 权限控制机制
+
+| 项目类型 | 判定字段 | 系统预置/内置 | 用户自定义 |
+|---|---|---|---|
+| 智能体 | `isSystem` | `true` → 仅"详情" | `false` → "详情"+"编辑"+"删除" |
+| 技能 | `source` | `'builtin'` → 仅"详情" | 非 `'builtin'` → "详情"+"编辑"+"删除" |
+
+详情只读保护（系统智能体）：
+
+当 `agent.isSystem === true` 时，`AgentDetail.tsx` 向 `SkillConfigPanel` 传入 `readOnly={true}` prop，实现详情视图的只读保护：
+
+- `SkillConfigPanel` 顶部显示 antd `Alert`（type="info"）提示"系统智能体配置为只读"
+- 所有 `Switch`（技能启用/禁用开关）设置 `disabled={readOnly}`
+- 上/下移动 `Button` 设置 `disabled={readOnly || 原始条件}`，readOnly 优先禁用
+- `readOnly` 为可选 prop（默认 undefined），不影响非系统智能体的编辑功能
+
+后端双重保护：
+- `agent-config:create` 强制设置 `isSystem: false`，防止前端伪造系统预置智能体
+- `agentConfigService.delete()` 内部拒绝删除系统预置智能体
+- `editSkill()` 内部拒绝编辑内置技能
+
+### 涉及文件清单
+
+**新增文件：**
+- `src/renderer/components/AgentCenter/AgentFormModal.tsx`
+- `src/renderer/components/AgentCenter/SkillFormModal.tsx`
+
+**修改文件：**
+- `src/shared/types/agent-center.types.ts` — 新增 create/delete payload 类型
+- `src/main/ipc/handlers/agentHandlers.ts` — 新增 4 个 IPC handler
+- `src/main/services/agent/skills/skillLoader.ts` — 新增 `createSkill()` / `editSkill()` / `assembleSkillMd()` / `SkillFormData`
+- `src/main/services/agent/management/agentConfigTypes.ts` — re-export 新增类型
+- `src/main/preload.ts` — 新增 4 个桥接方法
+- `src/renderer/types/electron.d.ts` — 新增 4 个方法类型声明
+- `src/renderer/components/AgentCenter/hooks/useAgentConfigs.ts` — 新增 `createAgent` / `deleteAgent`
+- `src/renderer/components/AgentCenter/AgentList.tsx` — 新增创建按钮 + 权限渲染
+- `src/renderer/components/AgentCenter/AgentCenter.tsx` — 集成 AgentFormModal
+- `src/renderer/components/AgentCenter/SkillMarketplace.tsx` — 新增创建/编辑/删除功能
 
 ---
 
-## 2. 整体架构
+## ⚠️ Bug 修复：世界书编写智能体 sessionId 时序问题（2026-08-01）
 
-Creative Café 采用标准的 **Electron 双进程架构**，并通过 `shared/` 目录实现主进程与渲染进程间的类型与常量共享。
+### 问题描述
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      Electron 应用外壳                           │
-│                                                                 │
-│  ┌──────────────────────┐        IPC         ┌────────────────┐ │
-│  │     主进程 (Main)     │ ◄──────────────► │  渲染进程       │ │
-│  │  Node.js 环境         │   contextBridge   │  (Renderer)     │ │
-│  │                       │   electronAPI     │  React UI       │ │
-│  │  • ipc/handlers       │                   │  • components/  │ │
-│  │  • services           │                   │  • stores/      │ │
-│  │  • 文件系统 / 向量库   │                   │  • hooks/       │ │
-│  └──────────┬───────────┘                   └───────┬────────┘ │
-│             │                                        │          │
-│             │           ┌──────────────┐             │          │
-│             └──────────►│  shared/     │◄────────────┘          │
-│                         │  types/      │                        │
-│                         │  constants/  │                        │
-│                         │  settings.ts │                        │
-│                         └──────────────┘                        │
-└─────────────────────────────────────────────────────────────────┘
-```
+`worldbookAgent:run` IPC 是阻塞调用，sessionId 仅在调用返回时才设置到 React state。但澄清问题（`planning_clarifying`）在运行期间通过 progress 事件到达，此时 `state.sessionId` 仍为 `null`，导致用户提交回答时报错"无活跃会话，无法提交回答"。
 
-### 进程职责划分
+### 根因
 
-- **主进程**：负责所有 Node.js 能力——文件读写、向量存储、AI HTTP 请求转发、文档解析、模型下载、原生对话框等。通过 `ipcMain.handle` 注册处理器，向渲染进程暴露能力。
-- **渲染进程**：纯前端 React 应用，通过 `window.electronAPI` 调用主进程能力，不直接接触 Node.js API。所有业务 UI、状态管理、提示词构建在此完成。
-- **Preload 脚本**：通过 `contextBridge.exposeInMainWorld('electronAPI', ...)` 在隔离上下文中桥接两进程，是唯一的通信通道。
+- 主进程 `worldbookAuthoringService.emitProgress()` 构造的 `AuthoringProgressEvent` 未携带 `sessionId`
+- `waitForClarifyAnswers()` 中的 `extendedEvent`（携带 clarifyingQuestions 的关键事件）也直接调用 `session.onProgress` 绕过了 `emitProgress`，同样未携带 `sessionId`
+- 渲染进程 `handleProgressEvent` 回调未从 progress 事件中提取 `sessionId`，仅依赖 `run` 返回值
 
-### 通信数据流（以 AI 流式请求为例）
+### 修复方案
 
-```
-Renderer (React)
-  └─> window.electronAPI.ai.request({url, headers, body, streaming})
-       └─> IPC channel: 'ai:request'
-            └─> aiHandlers.ts (主进程)
-                 └─> fetch HTTP (OpenAI 兼容 API)
-                      └─> ReadableStream (SSE)
-                           └─> IPC: 'ai:stream' (chunk)
-                                └─> Renderer onStream 回调
-```
+通过 progress 事件携带 `sessionId`，让渲染进程在阻塞调用期间提前建立 sessionId 映射：
+
+1. **`src/shared/types/worldbook-authoring.types.ts`** — `AuthoringProgressEvent` 接口新增可选字段 `sessionId?: string`（向后兼容）
+2. **`src/main/services/agent/worldbook/worldbookAuthoringService.ts`** — `emitProgress()` 方法在构造 `fullEvent` 时自动附带 `sessionId: session.id`；`waitForClarifyAnswers()` 中的 `extendedEvent` 同样添加 `sessionId: session.id`
+3. **`src/renderer/components/WorldBook/hooks/useWorldBookAuthoring.ts`** — `handleProgressEvent` 回调的 setState 中添加 `sessionId: event.sessionId ?? prev.sessionId`
+
+### 涉及文件
+
+- `src/shared/types/worldbook-authoring.types.ts`
+- `src/main/services/agent/worldbook/worldbookAuthoringService.ts`
+- `src/renderer/components/WorldBook/hooks/useWorldBookAuthoring.ts`
 
 ---
 
-## 3. 目录结构
+## 世界书编写智能体思考步骤可视化（thoughtStep 事件处理）
 
-```
-creative-cafe/
-├── src/
-│   ├── main/                          # Electron 主进程
-│   │   ├── index.ts                   # 主进程入口（创建窗口、注册 IPC、退出持久化）
-│   │   ├── preload.ts                 # 预加载脚本（暴露 electronAPI）
-│   │   ├── ipc/
-│   │   │   ├── index.ts               # IPC 注册统一入口 setupIpcHandlers()
-│   │   │   ├── handlers/              # 各功能 IPC 处理器
-│   │   │   │   ├── game/              # 游戏模式（分 meta/save/narrative/table/config）
-│   │   │   │   ├── memory/            # 记忆插件（session/table/template/external）
-│   │   │   │   ├── writing/           # 写作模式（project/outline/chapter/plotCheck/style/template/table）
-│   │   │   │   ├── utils/             # IPC 工具（boundedQueue 背压、wrapHandler 包装）
-│   │   │   │   └── *.ts               # 其他功能处理器
-│   │   │   └── ...
-│   │   ├── services/                  # 核心业务服务
-│   │   │   ├── ai/                    # AI 配置提供者 + SSE 流解析器
-│   │   │   ├── agent/                 # 智能体底座（自研 + openclaw 适配，详见 §4.5）
-│   │   │   │   ├── core/              # AgentCore / agentLoop / sandbox / lifecycle / lanes
-│   │   │   │   ├── infra/             # backoff / dedupe / retry / sqliteUtils 等基础设施
-│   │   │   │   ├── learning/          # 长期记忆与自学习（dreaming / goal / steer / feedback / cron）
-│   │   │   │   ├── llm/               # capabilityDetector / llmProvider / streamAdapter / multimodalMessage
-│   │   │   │   ├── memory/            # memoryStore / sqliteBackend / adapters（chapter/character/chatHistory/worldBook）
-│   │   │   │   ├── skills/            # SKILL.md 契约 + 三层可见性 + 双调用
-│   │   │   │   ├── tools/             # ToolRegistry + builtin（dialogue/worldbook/updateStateTable）
-│   │   │   │   ├── writing/           # writingAgentService（固定编排循环 + 断点续跑）
-│   │   │   │   └── contracts.ts        # 自研类型契约（统一 ISkill / ITool / IAgent 等接口）
-│   │   │   ├── game/                  # 游戏叙事/仓库/表格编辑/模板
-│   │   │   ├── memory/                # 记忆整理编排/聊天日志/表格操作
-│   │   │   ├── vector/                # 向量后端/仓库/策略
-│   │   │   ├── writing/               # 写作生成/检查/大纲/风格/模板/仓库
-│   │   │   ├── AIService.ts           # 统一 AI 调用抽象层
-│   │   │   ├── EmbeddingService.ts    # 远程 Embedding
-│   │   │   ├── EmbeddingWorkerService.ts  # 本地 Embedding（@xenova/transformers）
-│   │   │   ├── EmbeddingCache.ts     # Embedding LRU + SQLite 持久化
-│   │   │   ├── VectorStoreService.ts  # 向量存储 Facade
-│   │   │   ├── VectorRegistryService.ts / VectorConfigManager.ts / VectorCache.ts  # 向量注册/配置/缓存
-│   │   │   ├── SqliteVecBackend.ts # sqlite-vec 后端实现（替换原 VecstoreVectorStore）
-│   │   │   ├── KnowledgeBaseService.ts / KnowledgeBaseDocumentService.ts  # 知识库
-│   │   │   ├── ContextManager.ts      # 上下文检索（RAG）
-│   │   │   ├── ChatVectorizationService.ts / ChatStorageService.ts / ChatVersionService.ts  # 对话向量化与版本
-│   │   │   ├── TextSplitterService.ts / DocumentProcessorService.ts  # 文档切分/解析
-│   │   │   ├── TableSnapshotService.ts / VersionLinkerService.ts  # 表格快照/版本链接
-│   │   │   ├── worldBookService.ts / WorldBookKeywordMatcher.ts / WorldBookKeywordIndex.ts  # 世界书服务 + 倒排索引
-│   │   │   ├── characterService.ts    # 角色卡服务
-│   │   │   ├── avatarService.ts / expressionService.ts  # 用户人设 / 角色表情
-│   │   │   ├── assetService.ts / characterTraitService.ts / characterTraitAIService.ts  # 素材与角色特征
-│   │   │   ├── loraService.ts / characterLoraService.ts  # LoRA 列表 + 按角色独立存储
-│   │   │   ├── sdGenerationService.ts # Stable Diffusion WebUI 客户端
-│   │   │   ├── storageService.ts      # 通用 KV 存储（electron-store）
-│   │   │   ├── storageManager.ts / storage.types.ts  # 存储管理
-│   │   │   ├── settingService.ts / promptTemplateService.ts / optimizerService.ts  # 设置/提示词模板/优化
-│   │   │   ├── ConfigCleanupService.ts / ModelDownloadService.ts / modelDownloader.ts  # 配置清理 / 模型下载
-│   │   │   ├── TokenCountService.ts   # 精确 Token 计数
-│   │   │   ├── logger.ts / logPathService.ts / pathService.ts / fileService.ts  # 日志/路径/文件
-│   │   │   ├── WritingStorageService.ts / WritingResourceManager.ts / WritingStyleLearningService.ts  # 写作存储/素材/风格学习
-│   │   │   └── ...
-│   │   ├── types/                     # 主进程专用类型（vectorConfig.ts）
-│   │   └── utils/appPath.ts           # 用户数据路径工具
-│   │
-│   ├── renderer/                      # 渲染进程
-│   │   ├── main.tsx                   # React 挂载入口
-│   │   ├── App.tsx                    # 根组件（布局 + 路由渲染）
-│   │   ├── routeConfig.ts             # 统一路由配置（单一数据源）
-│   │   ├── settings.ts                # 渲染进程设置入口
-│   │   ├── components/                # React 组件
-│   │   │   ├── Character/             # 角色卡管理 + 角色对话
-│   │   │   ├── Creative/              # 创意管理 + 写作模式
-│   │   │   ├── WorldBook/             # 世界书管理
-│   │   │   ├── Game/                  # 游戏模式
-│   │   │   ├── MemoryChat/            # 记忆插件
-│   │   │   ├── KnowledgeBase/         # 知识库
-│   │   │   ├── Chat/                  # 创作中心（统一聊天入口）
-│   │   │   ├── PromptManagement/      # 提示词管理
-│   │   │   ├── Layout/                # 布局（Sidebar/Header/PageTransition）
-│   │   │   ├── Common/                # 公共组件（ChatEngine/MarkdownEditor/TextEditor/AIService）
-│   │   │   ├── Dashboard/             # 仪表盘
-│   │   │   ├── Avatar/                # 用户人设（路由 `avatar` → AvatarManager）
-│   │   │   ├── UserPersona/           # 用户人设（新版组件，与 Avatar/ 并存）
-│   │   │   ├── Vector/                # 向量配置 UI
-│   │   │   ├── Settings/              # 系统设置
-│   │   │   └── Test/                  # 测试页（DEV，含 document-vector / test-markdown 子页）
-│   │   ├── stores/                    # Zustand 状态管理
-│   │   ├── hooks/                     # 通用 Hooks
-│   │   ├── services/                  # 渲染进程服务（AIEdit/documentVector/rendererEmbedding）
-│   │   ├── utils/                     # 工具函数
-│   │   ├── types/                     # 渲染进程类型（electron.d.ts 等）
-│   │   ├── constants/                 # 常量
-│   │   └── styles/                    # 全局样式
-│   │
-│   └── shared/                        # 主/渲染共享
-│       ├── types/                     # 共享类型定义（单一真源）
-│       ├── constants/                 # 共享常量
-│       └── settings.ts                # 全局默认设置 AppSetting
-│
-├── scripts/generate-icon.js           # 图标生成脚本
-├── index.html                         # Vite 入口 HTML
-├── vite.config.ts                     # Vite + Electron 构建配置
-├── electron-builder.json              # 打包配置
-├── tsconfig.json                      # TypeScript 配置
-├── vitest.config.ts                   # 测试配置
-├── start.bat / start.sh               # 启动脚本
-└── package.json
-```
+### 概述
 
----
+`AuthoringProgressEvent` 新增可选字段 `thoughtStep?: ThoughtStep`，用于在进度事件中携带 AI 的微观思考步骤（LLM 调用目的、输入输出摘要、耗时等）。渲染进程 `useWorldBookAuthoring` hook 订阅该字段并维护思考时间线，供 UI 展示从初始构思到最终输出的演变轨迹。
 
-## 4. 主进程架构
-
-### 4.1 入口 `src/main/index.ts`
-
-主进程入口承担三项核心职责：
-
-1. **窗口创建**：`createWindow()` 创建 1400×900 的 `BrowserWindow`，配置 `contextIsolation: true`、`nodeIntegration: false`、`sandbox: false`，并注入 CSP 安全策略。
-2. **IPC 注册**：`app.whenReady()` 后调用 `setupIpcHandlers()` 注册所有处理器，并异步初始化 `VectorRegistryService`。
-3. **退出持久化**：`before-quit` 事件中通过 `event.preventDefault()` 阻止退出，异步完成向量数据落盘后再 `app.quit()`，避免数据丢失。
+### `ThoughtStep` 类型（`src/shared/types/worldbook-authoring.types.ts`）
 
 ```typescript
-// 关键：退出时持久化向量数据
-app.on('before-quit', (event) => {
-  if (hasPersisted || isQuitting) return;
-  event.preventDefault();
-  isQuitting = true;
-  (async () => {
-    try {
-      await vectorStoreService.persist();
-      await vectorRegistryService.persist();
-    } finally {
-      hasPersisted = true;
-      app.quit();
-    }
-  })();
-});
+export interface ThoughtStep {
+  type: 'llm_call' | 'parse' | 'decision' | 'tool_call';
+  purpose: string;
+  inputSummary?: string;
+  outputSummary?: string;
+  durationMs: number;
+  success: boolean;
+  phase?: AuthoringProgressEvent['phase'];
+  timestamp: number;
+}
 ```
 
-### 4.2 IPC 注册中心 `src/main/ipc/index.ts`
+### Hook 改动（`src/renderer/components/WorldBook/hooks/useWorldBookAuthoring.ts`）
 
-`setupIpcHandlers()` 是所有 IPC 处理器的统一注册入口，调用顺序：
+1. **导入** — 从 `worldbook-authoring.types` 导入 `ThoughtStep` 类型
+2. **State 接口** — `WorldBookAuthoringState` 新增 `thoughtSteps: ThoughtStep[]` 字段
+3. **常量** — 新增 `MAX_THOUGHT_STEPS = 100`（思考步骤缓存上限，避免长编排无限增长）
+4. **初始 state** — `thoughtSteps: []`
+5. **`handleProgressEvent`** — 当 `event.thoughtStep` 存在时追加到 `thoughtSteps` 数组；超过 100 条时丢弃最旧的（`slice(length - 100)`）；不修改现有事件处理逻辑
+6. **`reset()`** — 清空 `thoughtSteps: []`
 
-1. 基础处理器：`settingHandlers`、`worldBookHandlers`、`characterHandlers`、`avatarHandlers`、`fileHandlers`、`appHandlers`、`pluginHandlers`、`documentHandlers`、`updateHandlers`
-2. 业务处理器（register 模式，按 `setupIpcHandlers` 调用顺序）：
-   - `registerMemoryHandlers`、`registerCreativeHandlers`、`registerCharacterChatHandlers`、`registerWritingHandlers`、`registerGameHandlers`、`registerPromptHandlers`、`registerTokenHandlers`（早期业务）
-   - `registerExpressionHandlers`（表情管理，Spec: add-character-expression-system / Task 1）
-   - `registerCharacterTraitHandlers`（角色特征，add-asset-and-trait-management / Task 2）
-   - `registerAssetHandlers`（素材管理，Task 7）
-   - `registerSdGenerationHandlers`（SD 表情生成，add-ai-expression-generation / Task 2）
-   - `registerCharacterTraitAIHandlers`（AI 辅助特征生成，Task 12）
-   - `registerLoraHandlers`（LoRA 列表，add-lora-model-selection / Task 3）
-   - `registerCharacterLoraHandlers`（按角色独立存储 LoRA，2026-07-29 bug 修复）
-   - `registerAgentHandlers`（智能体底座，implement-agent-foundation-and-fix-defects / Task 9，暴露 `agent:*` / `skill:*` / `memory:search` / `learning:dream` 等 9 个通道）
-3. 服务自注册：`embeddingService`、`vectorStoreService`、`knowledgeBaseService`、`knowledgeBaseDocumentService`、`contextManager`、`modelDownloadService`、`embeddingWorkerService` 各自调用 `initialize()` + `registerIpcHandlers()`
+### 涉及文件
 
-> **单一入口约束**：`main/index.ts` 仅依赖 `setupIpcHandlers()`，所有 register 调用必须在此函数内登记（Task 25.2 迁移后确立）。新增业务 IPC 时，请在第 2 组对应位置追加 register 调用，避免散落到 `main/index.ts`。
-
-### 4.3 IPC 处理器命名空间
-
-`preload.ts` 通过 `contextBridge` 暴露 `window.electronAPI`，主要命名空间：
-
-| 命名空间 | 职责 |
-|----------|------|
-| `setting` | 系统设置加载/保存/路径（注意单数 `setting`） |
-| `character` / `characterConfig` / `characterChat` / `chatVersion` | 角色卡 CRUD、配置、测试对话、版本管理 |
-| `characterTrait` / `characterTraitAI` | 角色特征 CRUD / AI 辅助特征生成（`ai:generateCharacterTraits`，add-asset-and-trait-management） |
-| `characterLora` | 按角色卡独立持久化 LoRA 配置（`character-lora:list/save`，2026-07-29 bug 修复） |
-| `expression` | 角色表情管理（list/save/delete/批量预热，add-character-expression-system） |
-| `asset` | 素材管理（list/save/delete/getImagePath，按 `assetType` 区分表情/立绘/特征图） |
-| `lora` | LoRA 模型列表（`/sdapi/v1/loras`，add-lora-model-selection） |
-| `sdGeneration` | SD WebUI 表情生成（checkStatus/getModels/generateExpression/generateAllExpressions/cancelGeneration） |
-| `worldBook` / `worldbook` | 世界书文件操作 / 关键词匹配 |
-| `avatar` | 用户人设 |
-| `creative` | 创意数据 |
-| `memory` | 记忆模板/会话/表格/聊天记录/外部调用 |
-| `writing` | 写作项目/大纲/章节/分片/表格/风格/模板/剧情检查 |
-| `game` | 游戏元数据/存档/表格/叙事生成（流式） |
-| `ai` | AI 请求转发（流式/非流式）、取消、模型列表 |
-| `agent` | 智能体底座：`agent:run/cancel/token/toolCall/done` + `skill:list/invoke` + `memory:search` + `learning:dream`（implement-agent-foundation-and-fix-defects / Task 9） |
-| `embedding` / `vector` / `chatVector` / `chatHistory` | Embedding 生成、向量存储、对话向量化、历史 RAG |
-| `document` / `knowledge` | 文档处理、知识库 |
-| `context` | 上下文检索（RAG retrieve/compress） |
-| `prompt` | 提示词模板管理 |
-| `token` | 精确 Token 计数（cl100k_base） |
-| `storage` / `file` / `app` / `update` / `plugin` / `model` | 通用存储、文件、应用信息、更新、插件、模型下载 |
-
-> **规范提醒**：获取系统设置必须用 `window.electronAPI.setting.load()`（单数），返回 `{ success, setting }`。详见 [§13](#13-关键设计规范与约定)。
-
-### 4.4 核心服务层 `src/main/services/`
-
-#### 通用服务
-
-| 服务 | 文件 | 职责 |
-|------|------|------|
-| `AIService` | `AIService.ts` | 统一 AI 调用抽象层：配置获取、请求构建、SSE 流解析、错误重试。Re-export `SSEStreamParser` |
-| `storageService` | `storageService.ts` | 基于 `electron-store` 的通用 KV 存储，单例 `getStorageService()` |
-| `storageManager` | `storageManager.ts` | 存储管理器 |
-| `pathService` / `logPathService` / `appPath` | `pathService.ts` 等 | 路径管理 |
-| `logger` | `logger.ts` | 统一分级日志（error/warn/info/debug） |
-| `fileService` | `fileService.ts` | 文件操作 |
-| `settingService` | `settingService.ts` | 系统设置加载/保存（与 `settingHandlers` 配合） |
-| `promptTemplateService` | `promptTemplateService.ts` | 提示词模板 CRUD |
-| `optimizerService` | `optimizerService.ts` | AI 参数优化建议 |
-| `ConfigCleanupService` | `ConfigCleanupService.ts` | 历史配置清理 |
-| `TokenCountService` | `TokenCountService.ts` | 精确 Token 计数（cl100k_base，与 `tokenHandlers` 配合） |
-| `ModelDownloadService` / `modelDownloader` | `ModelDownloadService.ts` / `modelDownloader.ts` | 本地 Embedding 模型下载 |
-| `avatarService` | `avatarService.ts` | 用户人设 CRUD |
-| `expressionService` | `expressionService.ts` | 角色表情管理（manifest 读写、批量预热，add-character-expression-system / Task 1，详见 [`docs/FIX_RECORDS.md`](./docs/FIX_RECORDS.md) §14.10 / §14.12） |
-| `assetService` | `assetService.ts` | 素材 CRUD（按 `assetType` 区分表情/立绘/特征图，add-asset-and-trait-management / Task 6，详见 `docs/FIX_RECORDS.md` §14.22） |
-| `characterTraitService` | `characterTraitService.ts` | 角色特征持久化（Task 1，详见 `docs/FIX_RECORDS.md` §14.21） |
-| `characterTraitAIService` | `characterTraitAIService.ts` | AI 辅助特征生成（LLM 提取视觉 tag，Task 12，详见 `docs/FIX_RECORDS.md` §14.25） |
-| `sdGenerationService` | `sdGenerationService.ts` | Stable Diffusion WebUI API 客户端：状态检查 / 模型列表 / 角色卡基底图提取 / img2img 表情生成 / 任务取消（Spec: add-ai-expression-generation，详见 `docs/FIX_RECORDS.md` §14.14） |
-| `loraService` | `loraService.ts` | LoRA 模型列表获取服务：调用 `/sdapi/v1/loras` 拉取列表 + 构建预览图 URL + 读取 JSON 元数据 + 提取分类（Spec: add-lora-model-selection，详见 `docs/FIX_RECORDS.md` §14.28） |
-| `characterLoraService` | `characterLoraService.ts` | 按角色卡独立持久化 LoRA 配置（2026-07-29 bug 修复，详见 `docs/FIX_RECORDS.md` §14.36） |
-| `EmbeddingCache` | `EmbeddingCache.ts` | Embedding LRU（内存）+ SQLite 持久化双轨缓存（implement-agent-foundation-and-fix-defects / Task 10，详见 `docs/FIX_RECORDS.md` §14.42） |
-| `WorldBookKeywordIndex` | `WorldBookKeywordIndex.ts` | 世界书关键词倒排索引（Aho-Corasick + 增量更新，Task 11，详见 `docs/FIX_RECORDS.md` §14.43） |
-| `WorldBookKeywordMatcher` | `WorldBookKeywordMatcher.ts` | 世界书关键词匹配器（依赖 `WorldBookKeywordIndex`，按 scope 缓存） |
-| `ChatStorageService` / `ChatVersionService` | `ChatStorageService.ts` / `ChatVersionService.ts` | 对话存储 / 版本管理 |
-| `ChatVectorizationService` | `ChatVectorizationService.ts` | 对话历史向量化与检索 |
-| `TableSnapshotService` / `VersionLinkerService` | `TableSnapshotService.ts` / `VersionLinkerService.ts` | 表格快照 / 版本链接 |
-| `TextSplitterService` / `DocumentProcessorService` | `TextSplitterService.ts` / `DocumentProcessorService.ts` | 文档切分 / 解析 |
-
-#### 向量与检索服务（详见 [§8](#8-向量与检索体系)）
-
-`VectorStoreService`、`EmbeddingService`、`EmbeddingWorkerService`、`SqliteVecBackend`、`VectorRegistryService`、`VectorConfigManager`、`VectorCache`、`ContextManager`、`KnowledgeBaseService`、`KnowledgeBaseDocumentService`、`ChatVectorizationService`、`TextSplitterService`、`DocumentProcessorService`、`WorldBookKeywordMatcher`、`WorldBookKeywordIndex`、`VersionLinkerService`、`TableSnapshotService`、`EmbeddingCache`。
-
-#### 写作服务（`services/writing/`）
-
-| 服务 | 职责 |
-|------|------|
-| `WritingProjectRepository` | 项目持久化（索引/章节/分块目录管理，安全写入） |
-| `WritingStorageService` | 写作数据存储 + 表格整理提示词构建 + 长章节分批 |
-| `ContentGenerator` | 章节内容生成 |
-| `ChapterChunkService` | 章节分块生成（支持断点续传） |
-| `OutlineGenerator` | 大纲生成 |
-| `DescriptionPolisher` | 描述润色（流式） |
-| `PlotCheckerService` | 剧情逻辑检查 + 自动修正（带 diff） |
-| `AIAssistedChapterService` | AI 辅助章节操作（拆分/合并建议） |
-| `TableEditCommandExecutor` | tableEdit 命令执行 |
-| `TableOrganizeService` | 表格整理编排 |
-| `WritingStyleRepository` / `WritingStyleLearningService` | 写作风格学习 |
-| `WritingTemplateRepository` | 自定义模板（小说类型/写作风格） |
-| `WritingTableRepository` | 写作表格数据 |
-| `PromptBuilder` | 写作提示词构建 |
-| `NovelTypeTemplates` | 预置小说类型模板 |
-| `LogicCheckRecorder` | 逻辑检查记录 |
-| `WritingResourceManager` | 写作素材资源管理 |
-
-#### 游戏服务（`services/game/`）
-
-| 服务 | 职责 |
-|------|------|
-| `GameRepository` | 游戏元数据 CRUD |
-| `GameSaveRepository` | 存档 CRUD |
-| `GameTableRepository` | 游戏表格数据 |
-| `GameNarrativeService` | AI 叙事生成（流式） |
-| `GamePromptBuilder` | 游戏提示词构建 |
-| `GameTableEditParser` | 游戏表格编辑命令解析 |
-| `ManagementNarrativeService` / `ManagementPromptBuilder` | 经营类专属叙事与提示词 |
-
-#### 记忆服务（`services/memory/`）
-
-| 服务 | 职责 |
-|------|------|
-| `chatLogService` | 聊天记录管理 + AI 整理（同步/异步）+ tableEdit 执行 |
-| `organizeOrchestrator` | 整理编排器 |
-| `tableFileRepository` | 表格文件持久化 |
-| `tableOperationExecutor` | 表格操作执行 |
-| `tableTemplateService` | 表格模板管理 |
-| `tableEditParser` | tableEdit 命令解析（memory 适配层，继承 `TableEditParserBase`） |
-| `tableEditParserBase` | tableEdit 解析器公共基类（块提取 / JSON 容错 / 命令分派 / F3 越界校验） |
-| `chatSessionRepository` | 聊天会话 |
-| `associationRepository` | 会话-模板关联 |
-| `characterChatRecordService` | 角色聊天记录 |
-| `aiClient` / `aiPromptBuilder` | 记忆专用 AI 客户端与提示词 |
-
-### 4.5 智能体底座服务 `src/main/services/agent/`
-
-> **来源**：implement-agent-foundation-and-fix-defects（阶段 1-6，Task 4-18）。自研 + 适配 openclaw 的混合实现，作为对话 / 写作 / 世界书自驱的统一执行底座。详细变更记录见 [`docs/FIX_RECORDS.md`](./docs/FIX_RECORDS.md) §14.39-§14.49。
-
-#### 模块结构
-
-| 子目录 | 关键文件 | 职责 |
-|--------|----------|------|
-| `core/` | `agentCore.ts` / `agentLoop.ts` / `sandbox.ts` / `lifecycle.ts` / `lanes.ts` / `timeout.ts` / `usage.ts` / `context.ts` | AgentCore 主循环、工具沙箱执行、生命周期、并发 lane、超时与用量统计 |
-| `infra/` | `backoff.ts` / `dedupe.ts` / `retry.ts` / `sqliteUtils.ts` / `errors.ts` | 退避 / 去重 / 重试 / SQLite 工具 / 错误类型（ES2020 兼容） |
-| `llm/` | `capabilityDetector.ts` / `llmProvider.ts` / `streamAdapter.ts` / `multimodalMessage.ts` / `mediaCodec.ts` | 模型能力探测（视觉/思维链/工具调用）、流式适配、多模态消息编码 |
-| `memory/` | `memoryStore.ts` / `sqliteBackend.ts` / `memoryPromptPrepare.ts` / `writeProvenance.ts` + `adapters/`（chapter/character/chatHistory/worldBook） | 长期记忆 SQLite 存储 + 四类业务适配器 + 写入溯源 |
-| `skills/` | `skillContract.ts` / `skillAvailability.ts` / `skillLoader.ts` / `skillSnapshot.ts` / `skillInvoker.ts` / `skillRegistry.ts` / `types.ts` | SKILL.md 契约解析 + 三层可见性 + 双调用（同步/异步）+ 会话快照 LRU |
-| `tools/` | `toolRegistry.ts` / `types.ts` + `builtin/`（`dialogueTools.ts` / `worldbookTools.ts` / `updateStateTable.ts`） | ToolRegistry + 三组内置工具（dialogue / worldbook / writing） |
-| `writing/` | `writingAgentService.ts` / `writingAgentTypes.ts` | 写作智能体编排（固定编排循环 + 断点续跑 + 前端三态视图） |
-| `learning/` | `dreamingService.ts` / `goalTracker.ts` / `steerEngine.ts` / `feedbackLoop.ts` / `cronScheduler.ts` / `pacing.ts` / `stagger.ts` / `types.ts` | 长期记忆与自学习（dreaming 短期→长期摘要 / goal 目标追踪 / steer 行为引导 / feedback 反思 / cron 轻量调度 + pacing/stagger 防失控双保险） |
-| 顶层 | `contracts.ts` | 自研类型契约，统一 ISkill / ITool / IAgent 等接口 |
-
-#### 核心设计要点
-
-- **照抄 vs 适配 vs 自研**：`core/` 与 `infra/` 多为 openclaw 适配（保留原结构以利后续 sync）；`contracts.ts`、`learning/cronScheduler.ts`、`writing/writingAgentService.ts` 为自研。
-- **ES2020 兼容性**：Electron 主进程目标为 ES2020，`infra/` 中所有 `??` / `?.` / `Promise.allSettled` 使用均经核验；`sqliteUtils.ts` 对 `better-sqlite3` 同步 API 做了 Promise 化封装。
-- **IPC 通道**：`agentHandlers.ts` 注册 9 个通道（`agent:run/cancel/token/toolCall/done` + `skill:list/invoke` + `memory:search` + `learning:dream`），详见 §4.3 `agent` 命名空间。
-- **降级策略**：模型不支持工具调用时，自动降级为纯文本生成（由 `llm/capabilityDetector.ts` 探测，`agentCore.ts` 决策）。
-- **配套修复（重点标记）**：Embedding 缓存初始化、WorldBook 倒排索引增量更新、storageService 异步化、写作服务容错（F5 重试 / F7 quickFix 一致性）、测试套件全量审核——详见 `docs/FIX_RECORDS.md` §14.42 / §14.43 / §14.44 / §14.45 / §14.51。
+- `src/shared/types/worldbook-authoring.types.ts` — `AuthoringProgressEvent.thoughtStep` 字段与 `ThoughtStep` 接口定义
+- `src/renderer/components/WorldBook/hooks/useWorldBookAuthoring.ts` — 思考步骤状态管理与事件处理
 
 ---
 
-## 5. 渲染进程架构
+## 世界书编写智能体进度事件填充 generatedEntries 与 auditDetail（2026-08-02）
 
-### 5.1 启动链路
+### 概述
 
-`main.tsx` → 挂载 `<App />` → `App.tsx` 读取 `useUIStore` 的 `activeTab`，通过 `findRouteComponent(activeTab)` 从 `routeConfig.ts` 查找组件渲染。
+`AuthoringProgressEvent` 接口新增两个可选字段 `generatedEntries` 和 `auditDetail`，用于在进度事件中携带最近生成的条目列表和审计结果摘要，供前端进度面板展示实际生成内容与审计过程。本次在 `worldbookAuthoringService.ts` 的三个关键 `emitProgress` 调用点填充这两个字段。
+
+### 修改点
+
+1. **条目生成完成（`runAuthoringDimension`，单个条目创建成功后）** — 填充 `generatedEntries`，取当前批次 `drafts` 前 5 条，`content` 截断到 200 字符。
+2. **微型审计完成（`runMiniAudit`）** — 填充 `auditDetail`（`type: 'mini'`），包含维度名、完整性问题数、一致性问题数，以及最多 5 条 error/critical 级别的一致性问题详情（`entryIds` 转为 `string[]`）。
+3. **完整审计完成（`runAuditing`）** — 填充 `auditDetail`（`type: 'full'`），包含综合通过状态与分数、三维度（完整性/一致性/符合度）摘要字符串、已自动修复数、最多 5 条需用户决策项。
+
+### 注意事项
+
+- **维度完成后的 `emitProgress`（`runAuthoringDimension` 维度完成判定块）未填充 `generatedEntries`**：`drafts` 变量在 while 循环内声明，维度完成时已超出作用域，故跳过此修改点。
+- `ConsistencyIssue.entryIds` 类型为 `Array<number | string>`，映射到 `auditDetail.issues[].entryIds` 时使用 `.map(String)` 转为 `string[]` 以匹配类型定义。
+- `AuditUserDecision.severity` 类型为 `AuditSeverity`（联合类型），映射到 `auditDetail.userDecisions[].severity` 时使用 `String(d.severity)` 转为 `string`。
+
+### 涉及文件
+
+- `src/shared/types/worldbook-authoring.types.ts` — `AuthoringProgressEvent.generatedEntries` 与 `auditDetail` 字段定义
+- `src/main/services/agent/worldbook/worldbookAuthoringService.ts` — 三个 `emitProgress` 调用点填充新字段
+
+---
+
+## 智能体对话功能（Spec: add-agent-mode-management-and-center）
+
+### 概述
+
+为智能体管理中心新增"对话"功能，用户可直接从智能体列表中打开对话 Modal，与选定的智能体进行实时流式对话。
+
+### 架构分层
+
+```
+┌─────────────────────────────────────────────────────┐
+│ Renderer (React)                                    │
+│  AgentCenter.tsx                                    │
+│   ├─ AgentList.tsx (操作列新增"对话"按钮)            │
+│   └─ AgentDialogueModal.tsx (对话模态窗口)           │
+│       └─ hooks/useAgentDialogue.ts (消息/流式管理)    │
+├─────────────────────────────────────────────────────┤
+│ Preload Bridge (contextBridge)                      │
+│  agent.run / agent.cancel / agent.onToken / onDone  │
+├─────────────────────────────────────────────────────┤
+│ Main Process (IPC Handlers)                         │
+│  agent:run → 流式调用智能体执行引擎                   │
+└─────────────────────────────────────────────────────┘
+```
+
+### 前端组件
+
+**AgentList.tsx** — 智能体列表
+
+- 操作列新增"对话"按钮（`MessageOutlined` 图标，`type="link" size="small"`），位于操作列第一个位置
+- "对话"按钮对所有智能体显示（不区分 `isSystem`）
+- Props 接口新增 `onChat: (agent: AgentConfig) => void` 回调
+- 点击"对话"按钮时调用 `onChat(record)`
+
+**AgentDialogueModal.tsx** — 智能体对话模态窗口（新增文件）
+
+- Props：`open: boolean`、`agent: AgentConfig | null`、`onClose: () => void`
+- 通过 `useAgentDialogue` hook 管理消息列表与流式状态
+- 始终调用 hook，传入 `agent ?? FALLBACK_AGENT`（满足 React hooks 不可条件调用约束）
+- Modal：width=720、footer=null、destroyOnClose=true
+- 消息列表：固定高度 400px，用户消息右对齐（#e6f7ff）、助手消息左对齐（#f5f5f5），支持自动滚动
+- 流式光标：assistant 消息 streaming=true 时末尾显示 CSS 闪烁光标动画（`@keyframes agentDialogueBlink`）
+- 输入区域：TextArea（autoSize 1-4 行）+ 发送/停止按钮，Enter 发送 / Shift+Enter 换行
+- 斜杠命令补全：输入 `/` 前缀时展示全部已注册命令（系统指令 + 内置命令），通过 `SlashCommandAutoComplete` 浮层补全
+- 空状态：显示智能体 emoji + name + description + "输入消息开始对话"提示
+- 关闭清理：`afterClose` 回调调用 `hook.reset()`（agent 为 null 时不调用）
+
+**AgentCenter.tsx** — 主页面
+
+- 新增 `useCallback` 导入
+- 新增状态：`dialogueOpen`、`chattingAgent`
+- 新增处理函数：`handleChat`（打开对话）、`handleCloseDialogue`（关闭对话）
+- 向 `AgentList` 传入 `onChat={handleChat}` 回调
+- 在 JSX 末尾渲染 `AgentDialogueModal`
+
+### 涉及文件清单
+
+**新增文件：**
+- `src/renderer/components/AgentCenter/AgentDialogueModal.tsx`
+
+**修改文件：**
+- `src/renderer/components/AgentCenter/AgentList.tsx` — 新增"对话"按钮 + `onChat` 回调
+- `src/renderer/components/AgentCenter/AgentCenter.tsx` — 集成 `AgentDialogueModal`
+
+---
+
+## 斜杠命令系统与快捷操作菜单（Common 公共组件）
+
+### 概述
+
+为聊天输入区域新增两套公共组件：斜杠命令系统（SlashCommand）和快捷操作菜单（QuickActions）。斜杠命令系统允许用户在输入框中输入 `/` 前缀触发命令补全与执行；快捷操作菜单提供分组式下拉菜单，聚合对话、内容、设置三类操作入口。
+
+### 斜杠命令系统（SlashCommand）
+
+#### 架构
+
+```
+┌──────────────────────────────────────────────────────┐
+│ SlashCommandRegistry.ts                              │
+│  ├─ SlashCommand 接口（name/description/handler等）  │
+│  ├─ SlashCommandContext（输入框上下文）              │
+│  ├─ ArgSuggestions（静态/动态参数建议）              │
+│  └─ slashCommandRegistry 单例                        │
+│      ├─ register / unregister                        │
+│      ├─ get / getAll（去重）                          │
+│      └─ search（模糊搜索）                            │
+├──────────────────────────────────────────────────────┤
+│ builtinCommands.ts                                   │
+│  ├─ SlashCommandCallbacks（回调注入接口）            │
+│  ├─ setSlashCommandCallbacks()（由 ChatInputBar 调用）│
+│  └─ registerBuiltinCommands()（注册 8 个内置命令）    │
+│      help / reset / retry / continue / polish /      │
+│      ai-reply / model / clear                        │
+├──────────────────────────────────────────────────────┤
+│ systemCommands.ts                                    │
+│  ├─ SystemCommandCallbacks（回调注入接口）           │
+│  ├─ setSystemCommandCallbacks()（由 useAgentDialogue │
+│  │  注入）                                           │
+│  ├─ registerSystemCommands()（注册 5 个系统指令）    │
+│  │  世界书 / 角色卡 / 编写 / 审核 / 帮助             │
+│  ├─ getSystemCommandNames()（指令名列表）            │
+│  ├─ isSystemCommand()（匹配判断）                    │
+│  └─ parseSystemCommand()（解析指令名+参数）          │
+├──────────────────────────────────────────────────────┤
+│ SlashCommandAutoComplete.tsx                         │
+│  ├─ 浮层定位在输入框上方                              │
+│  ├─ 键盘导航（↑↓ Enter ESC）                         │
+│  ├─ 鼠标悬停高亮 + 选中项滚动到可见区域               │
+│  └─ query 文本高亮匹配                               │
+└──────────────────────────────────────────────────────┘
+```
+
+#### 内置命令清单
+
+| 命令 | 别名 | 说明 | 需确认 |
+|------|------|------|--------|
+| `/help` | - | 显示可用命令列表 | 否 |
+| `/reset` | - | 重置当前对话（清空所有消息） | 是 |
+| `/retry` | - | 重新生成上一条 AI 回复 | 否 |
+| `/continue` | - | 继续生成上一条 AI 回复 | 否 |
+| `/polish` | - | 润色当前输入框文本 | 否 |
+| `/ai-reply` | `/ai`, `/reply` | 以当前用户人设生成对话回复 | 否 |
+| `/model` | - | 切换 AI 模型（动态参数建议） | 否 |
+| `/clear` | - | 清空当前对话 | 是 |
+
+#### 系统指令清单（systemCommands.ts）
+
+系统指令使用中文名称，与 `builtinCommands.ts` 中的英文内置指令互补，面向 Agent 对话场景（由 `AgentDialogueModal` / `useAgentDialogue` 注入回调）。指令的实际执行与结果展示由 `useAgentDialogue.ts` 的 `sendMessage` 逻辑统一管理，`systemCommands.ts` 仅负责指令注册与名称管理。
+
+| 指令 | 别名 | 参数 | 说明 |
+|------|------|------|------|
+| `/世界书` | - | - | 列出系统中所有世界书 |
+| `/角色卡` | - | - | 列出系统中所有角色卡 |
+| `/编写` | - | `<世界书名称>` | 启动指定世界书的编写流程 |
+| `/审核` | - | `<世界书名称>` | 启动指定世界书的审核流程 |
+| `/帮助` | `help` | - | 显示所有可用系统指令 |
+
+辅助函数：
+
+- `getSystemCommandNames()` — 返回所有系统指令名列表（不含 `/` 前缀）
+- `isSystemCommand(content)` — 判断消息内容是否匹配系统指令
+- `parseSystemCommand(content)` — 解析系统指令，返回 `{ name, args }`
+
+#### 回调注入机制
+
+`builtinCommands.ts` 中的 `setSlashCommandCallbacks()` 接收一个 `SlashCommandCallbacks` 对象，由 ChatInputBar 在挂载时注入实际实现。命令 handler 通过 `callbacksRef` 间接调用，实现命令定义与业务逻辑的解耦。
+
+`systemCommands.ts` 采用相同的回调注入模式：`setSystemCommandCallbacks()` 接收一个 `SystemCommandCallbacks` 对象，由 `AgentDialogueModal` / `useAgentDialogue` 注入实际实现。每个回调返回 `Promise<string>`，结果以 assistant 消息形式展示在对话流中。注意：handler 内部仅触发回调，不处理返回值——指令执行与结果展示由 `useAgentDialogue.ts` 的 `sendMessage` 逻辑统一管理。
+
+#### 深色主题样式
+
+浮层使用 `rgba(30, 30, 46, 0.95)` 半透明深色背景 + `backdrop-filter: blur(10px)` 毛玻璃效果，选中项高亮 `rgba(99, 102, 241, 0.2)`，命令名紫色 `#8b5cf6`，描述灰色 `#94a3b8`，与 ChatInputBar 现有风格一致。
+
+### 快捷操作菜单（QuickActions）
+
+#### 组件结构
+
+`QuickActionsMenu.tsx` 使用 antd `Dropdown` + `Button` + `Tooltip` 实现：
+
+- **触发按钮**：44px 圆形渐变按钮（`linear-gradient(135deg, #f59e0b 0%, #f97316 100%)`），与 ChatInputBar 其他操作按钮（Send/AI回复/润色）尺寸和布局一致
+- **菜单分组**：三组操作（`dialogueActions` / `contentActions` / `settingActions`），组间用 `{ type: 'divider' }` 分隔
+- **菜单项**：每项显示 label + shortcut（右侧灰色文字），支持 icon、disabled 状态
+- **Tooltip**：悬停提示"快捷操作"
+- **禁用态**：按钮半透明（`opacity: 0.5`）
+
+### 涉及文件清单
+
+**新增文件：**
+- `src/renderer/components/Common/SlashCommand/SlashCommandRegistry.ts` — 命令注册中心（类型定义 + 单例）
+- `src/renderer/components/Common/SlashCommand/SlashCommandAutoComplete.tsx` — 自动补全浮层组件
+- `src/renderer/components/Common/SlashCommand/builtinCommands.ts` — 8 个内置命令注册 + 回调注入
+- `src/renderer/components/Common/SlashCommand/systemCommands.ts` — 5 个中文系统指令注册 + 回调注入 + 指令解析辅助函数
+- `src/renderer/components/Common/SlashCommand/index.ts` — 统一导出
+- `src/renderer/components/Common/QuickActions/QuickActionsMenu.tsx` — 快捷操作菜单组件
+- `src/renderer/components/Common/QuickActions/index.ts` — 统一导出
+
+## 智能体对话系统指令集成（useAgentDialogue + AgentDialogueModal）
+
+### 概述
+
+在 `useAgentDialogue.ts` 中集成 `systemCommands.ts` 模块，实现 5 个系统指令（`/世界书`、`/角色卡`、`/编写`、`/审核`、`/帮助`）的拦截与执行，以及无效 `/` 指令的友好提示。系统指令在 `sendMessage` 入口处优先检测，命中后短路返回不进入正常对话流程。
+
+### 指令处理流程
+
+```
+sendMessage(content)
+  │
+  ├─ 空内容 / streaming 检查（原有逻辑）
+  │
+  ├─ isSystemCommand(content) ?  ← 系统指令检测
+  │   ├─ 是 → parseSystemCommand → switch(name) 分发
+  │   │        ├─ 世界书 → handleListWorldbooks()
+  │   │        ├─ 角色卡 → handleListCharacters()
+  │   │        ├─ 编写   → handleWriteWorldbook(args) → return（自行管理消息追加与流式输出）
+  │   │        ├─ 审核   → handleAuditWorldbook(args)
+  │   │        ├─ 帮助   → handleHelp()
+  │   │        └─ 追加 user + assistant 消息，return
+  │   │
+  │   └─ 否 → trimmed.startsWith('/') && !startsWith('//') ?  ← 无效指令检测
+  │        ├─ 是 → 追加 user + assistant（"未知指令"提示），return
+  │        └─ 否 → 进入正常对话流程（原有逻辑）
+```
+
+### 指令处理函数
+
+| 函数 | 指令 | 调用的 electronAPI | 说明 |
+|------|------|---------------------|------|
+| `handleListWorldbooks` | `/世界书` | `worldBook.list()` | 返回格式化 Markdown 列表（名称/大小/更新日期） |
+| `handleListCharacters` | `/角色卡` | `character.list()` | 返回格式化 Markdown 列表（名称/描述摘要） |
+| `handleWriteWorldbook` | `/编写 <名称>` | `worldBook.list()` + `skill.getPromptSnippet()` + `agent.run()` + `agent.onToken()` | 匹配世界书后通过 agent.run 流式对话模式编写，自行管理消息追加（返回 `Promise<void>`，sendMessage 中直接 return） |
+| `handleAuditWorldbook` | `/审核 <名称>` | `worldBook.list()` + `worldBook.read()` + `agent.run()` | 读取世界书内容后，用 agent.run 执行三维审核（完整性/一致性/符合度） |
+| `handleHelp` | `/帮助` | 无 | 返回指令列表 Markdown 表格 |
+
+### 开场白增强
+
+`buildGreeting` 函数对系统智能体（`agent.isSystem === true`）追加可用指令列表提示，引导用户使用系统指令。
+
+### AgentDialogueModal 输入提示与命令补全
+
+输入框 placeholder 从 `"输入消息...（Enter 发送，Shift+Enter 换行）"` 改为 `"输入消息或 /世界书 /角色卡 /编写 /审核…（Enter 发送）"`，提示用户可使用系统指令。
+
+输入 `/` 前缀时，`SlashCommandAutoComplete` 浮层展示**全部已注册命令**（系统指令 + 内置命令），而非仅系统指令。组件通过 `slashCommandRegistry.getAll()` 获取全部命令列表（`allCommands`），并按 `autoCompleteQuery` 进行模糊过滤。`ensureSystemCommandsRegistered()` 同时调用 `registerBuiltinCommands()` 与 `registerSystemCommands()` 确保两类命令均已注册。
+
+### 涉及文件清单
+
+**修改文件：**
+- `src/renderer/components/AgentCenter/hooks/useAgentDialogue.ts` — 导入 systemCommands 模块、buildGreeting 增强、5 个指令处理函数、sendMessage 指令检测逻辑
+- `src/renderer/components/AgentCenter/AgentDialogueModal.tsx` — placeholder 提示文案；`/` 补全展示全部已注册命令（系统指令 + 内置命令）；`ensureSystemCommandsRegistered` 同时注册内置命令
+
+---
+
+## 输入优化与系统智能体 Prompt 强化（Task 2 + Task 4）
+
+### 概述
+
+为 `useAgentDialogue` hook 新增 `optimizeInput` 方法，通过 `agent.run` IPC 通道对用户输入文本进行智能优化（提升清晰度、补充上下文、修正语法），同时强化系统智能体（`isSystem === true`）的 system prompt，注入角色定位、思考框架、工具使用、多步推理、回答规范等能力强化段落。
+
+### 输入优化（optimizeInput）
+
+**新增状态：**
+- `isOptimizing: boolean` — 是否正在进行输入优化
+- `optimizeAbortRef: useRef(false)` — 优化取消标志
+
+**optimizeInput 方法流程：**
+1. 空文本 / 正在优化时阻止重复执行
+2. 从 `useSettingStore` 获取当前激活引擎的 `system_prompt`，前置到优化提示词
+3. 调用 `window.electronAPI.agent.run`，`maxIterations: 1` 确保不进入工具调用循环，`timeoutMs: 30000`
+4. 成功时返回优化后文本（trim）；失败 / 取消时返回原始文本（不阻塞用户操作）
+5. `cancelOptimize` 方法设置 abort 标志并重置 `isOptimizing`
+
+**返回值新增字段：**
+- `optimizeInput: (originalText: string) => Promise<string>` — 优化输入文本
+- `isOptimizing: boolean` — 优化进行中状态
+- `cancelOptimize: () => void` — 取消优化
+
+### 系统智能体 System Prompt 强化（buildSystemPrompt）
+
+`buildSystemPrompt` 函数在 `agent.isSystem === true` 时追加「能力与行为准则」段落，包含五个子章节：
+- **角色定位**：Creative Cafe 系统智能体的综合能力定义
+- **思考框架**：理解意图 → 分解任务 → 逐步执行 → 汇总结果
+- **工具使用**：主动调用工具获取信息，失败时提供替代方案
+- **多步推理**：列出计划 → 逐步执行 → 及时修正 → 汇总结果
+- **回答规范**：结构化输出、代码块包裹、不确定信息标注
+
+### system-agent description 更新
+
+`agentConfigService.ts` 中 `system-agent` 的 description 字段更新为更完整的描述，涵盖多轮对话、工具调用、多步推理、任务分解能力，以及斜杠指令和复杂需求处理场景。
+
+### 涉及文件清单
+
+**修改文件：**
+- `src/renderer/components/AgentCenter/hooks/useAgentDialogue.ts` — 新增 `optimizeInput` / `cancelOptimize` / `isOptimizing`；`buildSystemPrompt` 增加系统智能体能力强化段落；`UseAgentDialogueReturn` 类型扩展
+- `src/main/services/agent/management/agentConfigService.ts` — `system-agent` description 字段更新
+
+---
+
+## 混合检索记忆搜索（Task 14: optimize-agent-interaction-from-openclaw）
+
+### 概述
+
+在 `ContextManager` 中新增 `retrieveWithHybrid` 方法，实现向量检索 + 关键词检索的混合检索策略，包含 MMR 去重和时间衰减，参考 openclaw 混合检索策略。
+
+### 检索流程
+
+1. **向量检索（权重 0.7）**：用 `embeddingService.generateEmbedding(query)` 生成查询向量，通过 `vectorStoreService.search` 检索 `topK * 2` 条结果（多取一倍用于 MMR 筛选），过滤 `score >= minScore`，每条 score 乘以 0.7
+2. **关键词检索（权重 0.3）**：仅对 worldbook 来源，复用 `buildScanText` 构建扫描文本，调用 `worldBookService.matchKeywords`，每条 score 乘以 0.3，按 `metadata.entryUid` 去重
+3. **合并候选集**：合并向量结果和关键词结果
+4. **时间衰减**：`score *= exp(-daysSinceLastAccess / halfLife)`，半衰期默认 30 天（30 天前内容 score 衰减为 e^(-1) ≈ 0.37）
+5. **MMR 去重选择**：`MMR = λ * relevance_score - (1-λ) * max_similarity_to_selected`，λ 默认 0.7；文档间相似度使用 Jaccard 相似度（中文按 2 字滑动窗口分词，英文按空格分词）
+6. **返回结果**：按最终 score 降序排列，取 topK 条
+
+### IPC 通道
+
+- `context:retrieveWithHybrid` — 入参 `{ query: string; options: any }`，返回 `{ success, items }`
+
+### 涉及文件
+
+- `src/main/services/ContextManager.ts` — 新增 `tokenize` / `jaccardSimilarity` 辅助函数 + `retrieveWithHybrid` 方法 + `context:retrieveWithHybrid` IPC handler
+- `src/main/preload.ts` — context 命名空间新增 `retrieveWithHybrid` API
+- `src/renderer/types/electron.d.ts` — context 命名空间新增 `retrieveWithHybrid` 类型声明
+
+## 对话消息列表组件复用优化（CharacterDialogueChat 迁移至 ChatMessageList）
+
+### 概述
+
+将 CharacterDialogueChat（角色对话）的消息列表渲染从自有的 `VirtualizedMessageList` + IIFE 模式迁移到复用 `ChatMessageList` 组件，使角色对话与智能体对话（AgentDialogueModal）共享同一消息列表组件，组件复用率 ≥ 80%。
+
+### 改动内容
+
+#### ChatMessageList 组件增强（`src/renderer/components/Common/ChatMessageList/ChatMessageList.tsx`）
+
+新增三个可选 props，支持虚拟化模式：
+
+- `enableVirtualization?: boolean`（默认 false）— 是否启用虚拟化
+- `virtualizationThreshold?: number`（默认 100）— 虚拟化启用的消息数阈值，同时受 `shouldVirtualize` 最低阈值 50 约束
+- `scrollElementRef?: React.RefObject<HTMLDivElement>` — 外部滚动容器引用，虚拟化模式下复用父级滚动容器
+
+虚拟化模式（`enableVirtualization=true` 且传入 `scrollElementRef`）行为：
+- 不创建嵌套滚动容器，直接使用父级滚动容器
+- 不执行内部自动滚动（由父组件管理）
+- 消息数超过阈值时使用 `VirtualizedMessageList` 渲染，否则直接 `.map()` 渲染
+- 空消息列表返回 null（空状态由父组件处理）
+
+非虚拟化模式（默认）行为保持不变：内部滚动容器 + 自动滚动 + 空状态展示。
+
+新增导入：从 `../../Character/CharacterDialogueChat/VirtualizedMessageList` 导入 `VirtualizedMessageList` 和 `shouldVirtualize`。
+
+#### CharacterDialogueChat 迁移（`src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.tsx`）
+
+- 移除 `VirtualizedMessageList` 和 `shouldVirtualize` 的直接导入
+- 新增 `ChatMessageList` 导入（`../../Common/ChatMessageList/ChatMessageList`）
+- 将原 IIFE 内的 `renderMessageBubble` 函数提取到组件体中（return 之前）
+- 用 `<ChatMessageList>` 替换原消息列表 IIFE：
+  - `mode="character"` / `enableVirtualization={true}` / `scrollElementRef={chatContainerRef}` / `renderMessage={renderMessageBubble}`
+- `ChatTypingIndicator`、错误消息、`messagesEndRef`、滚动按钮保持原有位置不变（作为 ChatMessageList 的兄弟元素）
+
+### 未修改的组件
+
+- **ChatMessageBubble** — 保持不变，由 `renderMessageBubble` 调用
+- **VirtualizedMessageList** — 保持不变，由 ChatMessageList 内部调用
+
+### 涉及文件
+
+- `src/renderer/components/Common/ChatMessageList/ChatMessageList.tsx` — 新增虚拟化支持
+- `src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.tsx` — 迁移至 ChatMessageList
+
+---
+
+## ⚠️ 重点 Bug 修复：智能体对话三项功能运行时失效（2026-08-02）
+
+### 问题描述
+
+用户报告智能体对话的三项功能（命令自动提示、优化输入按钮、系统智能体能力强化）在实际测试中完全无效。前一轮修复已将代码写入磁盘，但运行时行为未改变。
+
+### 根因分析
+
+经 Self-Improving + Proactive Agent 自反思流程深入调查，发现**三个独立的根因**：
+
+#### 根因 1：`agentConfigService._doInit()` 幂等注册跳过已有记录（最严重）
+
+**位置**：`src/main/services/agent/management/agentConfigService.ts` `_doInit()`
+
+**问题**：`if (this.cache.has(def.id)) continue;` 跳过已存在的 `system-agent` 记录。如果该记录在代码更新前已创建（旧版本 `is_system=0` 或旧 description），代码变更**永远不会同步到数据库**。
+
+**修复**：将 skip 逻辑改为 upsert — 已存在的记录执行 `updateConfig()`，新记录执行 `insertConfig()`。
+
+#### 根因 2：`optimizeInput` 与 `activeRuns` 守卫的竞态条件
+
+**位置**：`src/renderer/components/AgentCenter/hooks/useAgentDialogue.ts` `cancelOptimize` / `optimizeInput`
+
+**问题**：`cancelOptimize` 设置 `setIsOptimizing(false)` 后，`activeRuns` IPC 锁可能尚未释放。用户再次点击"优化"时被守卫拦截返回 "Agent is already running"。
+
+**修复**：新增 `optimizeRunningRef`（useRef），在 `optimizeInput` 入口同步检查，在 `finally` 块中清理。
+
+#### 根因 3：Electron 主进程未重启
+
+前一轮代码修复已正确写入磁盘，但 Electron 主进程未重启，旧编译产物仍在运行。
+
+### 经验教训
+
+1. **幂等注册必须使用 upsert 模式**：`if (exists) update(); else insert();`，而非 `if (exists) continue;`
+2. **React state 不能用于并发控制**：`useState` 的更新是异步批处理的，对于 IPC 重入防护必须使用 `useRef`
+3. **Electron 主进程修改后必须重启 dev server**
+4. **运行时验证 > 静态代码分析**
+
+---
+
+## Agent 对话页面美化重构（2026-08-02）
+
+### 概述
+
+将 AgentDialogueModal 的对话页面美化到与 CharacterDialogueChat 同等水平，包括背景装饰、消息气泡、头像、动画、输入区域等全面重构。
+
+### 新增文件
+
+- `src/renderer/components/AgentCenter/AgentDialogueModal.css` — Agent 对话页面专用 CSS（背景装饰、滚动条、Modal 覆盖样式、动画 keyframes）
+
+### 修改文件
+
+- `src/renderer/components/AgentCenter/AgentDialogueModal.tsx` — 完全重写 JSX 和样式
+
+### 美化元素清单
+
+| 元素 | 修复前 | 修复后 |
+|------|--------|--------|
+| Modal 尺寸 | 720px 宽, 400px 高 | 900px 宽, 70vh 高 |
+| Modal 遮罩 | 普通遮罩 | `backdropFilter: blur(8px)` 毛玻璃 |
+| 背景 | 纯色 | 5 层径向渐变 + 3 个模糊光球 + 网格点阵 |
+| 头部 | antd 默认标题栏 | 自定义头部（40px 圆形头像 + 名称 + 描述 + SYSTEM 标签） |
+| 消息气泡 | 8px 统一圆角, 无阴影 | 不对称圆角 `18px 18px 4px 18px`, 毛玻璃, 彩色阴影 |
+| 头像 | 无 | 36px 圆形头像, 用户/AI 差异化渐变边框 |
+| 发送者名称 | 无 | "You" / 智能体名 + #序号标签 |
+| 入场动画 | 无 | `agentFadeInUp 0.3s ease-out` |
+| 流式光标 | 8x14px 矩形块 | 2px 竖线, `step-end` 闪烁 |
+| 打字指示器 | 无 | 头像 + LoadingOutlined + "Thinking..." |
+| 空状态 | emoji + 简单文本 | 80px 圆形渐变图标 + 发光阴影 + 标题 + 描述 |
+| 输入框 | antd TextArea | 胶囊形 `border-radius: 24px` + 毛玻璃背景 + 聚焦发光 |
+| 按钮 | antd 矩形按钮 | 44x44px 圆形渐变按钮 + 阴影 |
+| 滚动按钮 | 无 | 脉冲动画圆形渐变按钮 |
+| 滚动条 | 默认 | 6px 细滚动条 + 悬停变色 |
+| 键盘提示 | 无 | "Enter 发送 · Shift+Enter 换行" |
+
+---
+
+## ⚠️ Bug 修复：系统指令参数解析无法分离文件名和自然语言（2026-08-02）
+
+### 问题描述
+
+用户输入 `/编写 神秘别墅.json，有任何疑问随时问我`，系统将整个 `神秘别墅.json，有任何疑问随时问我` 作为世界书名称查找，导致 "未找到名为「神秘别墅.json，有任何疑问随时问我」的世界书" 错误。
+
+### 根因
+
+`parseSystemCommand` 将指令名后的所有文本作为单个 `args` 字符串传递给 handler，handler 直接用整个 args 去匹配世界书名称，没有分离文件名和用户的自然语言补充说明。
+
+### 修复
+
+在 [useAgentDialogue.ts](file:///g:/AI/creative-cafe/src/renderer/components/AgentCenter/hooks/useAgentDialogue.ts) 中新增 `extractWorldbookNameAndExtra()` 辅助函数，按以下策略提取文件名：
+
+1. **文件扩展名匹配**：匹配 `.json` / `.json5` / `.tags.json` 扩展名，扩展名后的内容作为附加上下文
+2. **中文标点分割**：按 `，。！？、；` 分割，第一段为名称
+3. **空格分割**：按空格分割，第一段为名称
+4. **兜底**：整个 args 作为名称
+
+提取后的附加上下文（`extra`）会传入 `agent.run` 的 `writePrompt` 和 `agent.run` 的 `messages`，让 AI 能理解用户的补充说明。（注：`/编写` 指令已从 `worldBookAgent.run` 改为 `agent.run` 流式对话模式，详见 [/编写 指令重构](#编写-指令重构移除进度面板与逐项提问改为流式对话模式2026-08-02)。）
+
+`handleWriteWorldbook` 和 `handleAuditWorldbook` 均已应用此修复。
+
+---
+
+## 意图识别前置处理机制（2026-08-02）
+
+### 概述
+
+在用户输入发送至执行智能体之前，增加一个由轻量级 LLM 构成的意图识别前置处理环节。该环节对用户输入进行深层语义分析，精准识别用户真实意图类型，判断当前智能体是否具备处理该意图的能力，并确定最匹配的响应策略。
+
+### 新增文件
+
+- [intentRecognizer.ts](file:///g:/AI/creative-cafe/src/renderer/components/AgentCenter/hooks/intentRecognizer.ts) — 意图识别核心模块
+
+### 意图分类体系
+
+| 意图类型 | 标识 | 说明 |
+|----------|------|------|
+| 信息查询 | `information_query` | 查询信息、了解事实、搜索资料 |
+| 任务执行 | `task_execution` | 执行具体任务、创建/修改/删除内容 |
+| 问题解决 | `problem_solving` | 解决技术问题、调试、排错 |
+| 建议咨询 | `advice_consultation` | 寻求建议、征求意见、方案咨询 |
+| 创作写作 | `creative_writing` | 创作故事、写诗、编写剧本、角色设定 |
+| 日常闲聊 | `casual_chat` | 闲聊、问候、情感交流 |
+| 系统操作 | `system_command` | 调用系统功能、管理配置 |
+| 代码开发 | `code_development` | 编写/审查/重构代码 |
+| 数据分析 | `data_analysis` | 分析数据、统计、可视化 |
+
+### 处理流程
+
+```
+用户输入
+  ↓
+系统指令检测（/世界书 等）───是──→ 直接执行指令
+  ↓ 否
+无效指令检测（/未知命令）───是──→ 提示未知指令
+  ↓ 否
+【意图识别前置处理】
+  ├─ 调用 agent.run（maxIterations=1, timeoutMs=8000）
+  ├─ LLM 返回 JSON：{ intentType, summary, canHandle, strategy, confidence }
+  ├─ 识别成功 → 展示「思考过程」消息 + 注入 systemPrompt
+  └─ 识别失败 → 静默降级，不阻断对话
+  ↓
+执行智能体对话（agent.run，含意图增强 systemPrompt）
+  ↓
+流式返回
+```
+
+### 核心设计
+
+1. **轻量级调用**：意图识别使用 `maxIterations=1, timeoutMs=8000`，快速返回
+2. **容错降级**：识别失败时静默降级，不阻断正常对话流程
+3. **并发防护**：使用 `recognizingIntentRef`（useRef）防止意图识别期间重复提交（共享 `activeRuns` 单实例锁）
+4. **透明展示**：识别结果以「🔍 意图识别」消息卡片展示给用户，包含意图类型、核心需求、响应策略、能力匹配、置信度
+5. **systemPrompt 注入**：识别结果注入执行智能体的 systemPrompt，帮助 AI 更准确理解用户需求
+6. **UI 状态指示器**：头部显示「识别意图」加载状态和「意图标签」结果标签
+
+### 修改文件
+
+| 文件 | 修改内容 |
+|------|----------|
+| `src/renderer/components/AgentCenter/hooks/intentRecognizer.ts` | 新增：意图识别核心模块 |
+| `src/renderer/components/AgentCenter/hooks/useAgentDialogue.ts` | 集成意图识别到 sendMessage 流程 |
+| `src/renderer/components/AgentCenter/AgentDialogueModal.tsx` | 头部添加意图识别状态指示器 |
+
+---
+
+## 智能体对话参数配置面板（Spec: add-agent-dialogue-parameter-panel，2026-08-02）
+
+### 概述
+
+在智能体对话框右侧增加折叠式参数面板，提供人格自定义系统和辅助模式功能。参数按智能体 ID 持久化到 localStorage，切换智能体自动加载对应配置。
+
+### 新增文件
+
+| 文件 | 说明 |
+|------|------|
+| [useAgentParams.ts](file:///g:/AI/creative-cafe/src/renderer/components/AgentCenter/hooks/useAgentParams.ts) | 参数持久化 hook（`AgentParams` 接口 + localStorage 读写 + 切换 agentId 自动加载） |
+| [AgentParamPanel.tsx](file:///g:/AI/creative-cafe/src/renderer/components/AgentCenter/AgentParamPanel.tsx) | 参数面板 UI 组件（人格 TextArea + 辅助模式 Switch + 强度 Radio + 重置按钮） |
+| [AgentParamPanel.css](file:///g:/AI/creative-cafe/src/renderer/components/AgentCenter/AgentParamPanel.css) | 参数面板样式 |
+
+### 修改文件
+
+| 文件 | 修改内容 |
+|------|----------|
+| `AgentDialogueModal.tsx` | 双列布局（对话区 + 300px 参数面板），头部人格/辅助模式标签、齿轮按钮、辅助模式选项卡片渲染 |
+| `useAgentDialogue.ts` | `buildSystemPrompt` 追加人格风格段 + 辅助模式段，`parseAssistModeOptions` 解析剥离选项块，`DialogueMessage` 新增 `suggestedOptions` 字段 |
+
+### 核心设计
+
+#### 参数持久化架构
+
+```
+localStorage key: agent-params-{agentId}
+存储内容（JSON）:
+{
+  customPersonality: string,       // 自定义人格文本
+  assistMode: boolean,             // 辅助模式开关
+  assistModeIntensity: 'low'|'medium'|'high'  // 强度
+}
+```
+
+- `useAgentParams(agentId)` hook 在 `agentId` 变化时通过 `useEffect` 自动重新加载
+- `updateParams(partial)` 实时写入 localStorage（无需确认步骤）
+- `resetParams()` 恢复默认值并立即持久化
+
+#### systemPrompt 分段注入
+
+```
+[全局 system_prompt]
+
+[智能体描述段] — 你是「{name}」。{description}...
+[能力强化段]   — ## 能力与行为准则（仅系统智能体）
+[人格风格段]   — ## 人格风格（仅 customPersonality 非空时）
+[辅助模式段]   — ## 辅助模式（仅 assistMode 开启时）
+```
+
+人格段与角色定义段独立呈现：角色定义段定义"你是谁"（身份职责），人格风格段定义"你怎么说话"（语气风格）。
+
+#### 辅助模式选项格式
+
+使用 `<<<SUGGESTED_OPTIONS>>>...<<<END_OPTIONS>>>` 纯文本标记格式（非 XML/HTML）。AI 回复完成后，`parseAssistModeOptions` 从内容中解析并剥离选项块，支持 6 种正则模式容错匹配。
+
+选项卡片三色差异化设计：
+- 稳妥推进（绿色 `#10b981`）
+- 平衡探索（紫色 `#6366f1`）
+- 发散创新（橙红 `#f59e0b`）
+
+选项文本解析正则：`/\(([^)]*)\)|"([^"]*)"/g`，分离动作描写（斜体灰色）和对话内容（白色）。
+
+---
+
+## ⚠️ Bug 修复：/编写 指令秒回"已完成"但世界书未实际编写（2026-08-02）
+
+### 问题
+
+`handleWriteWorldbook` 中 IPC 返回值字段不匹配：检查 `result?.success` 但 IPC handler 返回 `{ ok, result?, error? }`，`success` 在嵌套的 `result.result` 上。导致无论成功失败永远报"已完成"。同时缺少 `config` 参数，服务端必然失败。
+
+详见 [FIX_RECORDS.md §3.1](file:///g:/AI/creative-cafe/docs/FIX_RECORDS.md)。
+
+---
+
+## 世界书编写实时进度面板（2026-08-02）
+
+### 概述
+
+将世界书编写过程从"每次进度事件追加新消息"改为"单条消息实时更新"，类似 Trae IDE 的 Agent 面板。展示编写阶段、思考过程时间线、维度进度、当前活动和活动日志。
+
+### 核心设计
+
+#### 单条消息实时更新机制
+
+使用 `_progressPanelId` 字段（值为 `'__worldbook_progress__'`）标记进度面板消息。每次进度事件到达时，通过 `findIndex` 查找已有面板消息并原地更新内容，而非追加新消息。
 
 ```typescript
-// App.tsx 核心渲染逻辑
-const renderContent = () => {
-  const Component = findRouteComponent(activeTab);
-  return Component ? <Component /> : <Dashboard />;
+// DialogueMessage 接口新增字段
+_progressPanelId?: string;
+
+// 进度面板消息更新逻辑
+const idx = prev.findIndex(m => m._progressPanelId === '__worldbook_progress__');
+if (idx >= 0) {
+  const updated = [...prev];
+  updated[idx] = { ...updated[idx], content: panelContent };
+  return updated;
+}
+```
+
+#### 进度面板内容结构
+
+`buildAuthoringProgressPanel(displayName, events, thoughtSteps)` 函数构建 Markdown 面板：
+
+1. **标题行**：`## 📖 世界书「{name}」编写进度`
+2. **整体进度**：阶段 ｜ 维度进度 ｜ 已生成条目数
+3. **当前活动**：`> 🔄 {currentActivity}`
+4. **澄清问题**（planning_clarifying 阶段）：展示 AI 提出的问题列表
+5. **最近生成条目**（`generatedEntries` 存在时）：每条展示名称 + 内容摘要（截断 200 字符）
+6. **审计结果**（`auditDetail` 存在时）：区分 `mini`（维度 / 完整性问题数 / 一致性问题数 / 关键问题列表）与 `full`（综合结果 / 分数 / 三维度摘要 / 自动修复数 / 需用户决策项）
+7. **思考过程时间线**（最近 8 条）：🧠 LLM 调用 / 📝 解析 / 🎯 决策 / 🔧 工具调用，含目的、输入输出摘要（截断 300 字符）、耗时
+8. **活动日志**（最近 5 条）：时间戳 + 阶段标签 + 维度 + 条目数 + 消息
+
+#### 阶段标签映射
+
+```typescript
+const AUTHORING_PHASE_LABELS: Record<string, string> = {
+  planning_analyzing: '分析提示',
+  planning_clarifying: '澄清问题',
+  planning_building: '构建计划',
+  authoring_generating: '生成条目',
+  authoring_mini_audit: '微型审计',
+  authoring_fixing: '自我修正',
+  auditing_full: '完整审计',
+  auditing_fixing: '自动修复',
+  // ...
 };
 ```
 
-### 5.2 路由配置 `routeConfig.ts`
+#### 数据流
 
-**单一数据源（Single Source of Truth）** 设计：Sidebar 菜单与 App 渲染块均消费 `routeConfigs`，新增 Tab 只需在此添加一项。
-
-| key | 标签 | 组件 | 备注 |
-|-----|------|------|------|
-| `dashboard` | 仪表盘 | `Dashboard` | |
-| `chat` | 创作中心 | `CreationCenter` | 统一聊天入口 |
-| `creative` | 创意管理 | `CreativeManager` | |
-| `worldbook` | 世界书 | `WorldBookManager` | |
-| `avatar` | 用户人设 | `AvatarManager` | 由 `components/Avatar/AvatarManager` 实现 |
-| `character` | 角色卡 | `CharacterManager` | |
-| `memory` | 记忆管理 | `MemoryChatManager` | |
-| `knowledge` | 知识库 | `KnowledgeBaseManager` | |
-| `settings` | 设置 | `Settings` | |
-| `prompt-management` | 提示词管理 | `PromptManagement` | |
-| `test` | 测试 | `TestPage` | devOnly，含子菜单：`test-vector`（无 component，走 default → Dashboard）/ `document-vector`（`DocumentVectorPage`）/ `test-markdown`（`TestPage`） |
-
-> **历史变更**：早期版本曾规划 `plugin` 路由（`PluginManager`，devOnly），但当前 `routeConfig.ts` 已无此条目，插件管理入口未启用。`UserPersona/` 目录虽存在但尚未接入路由。
-
-### 5.3 布局组件 `components/Layout/`
-
-- `Sidebar.tsx`：左侧导航，基于 `getMenuRoutes(debugMode)` 渲染，支持 DEV 徽标
-- `Header.tsx`：顶部栏。**【全局模型能力徽章，2026-07-28】** Logo 区新增当前激活引擎能力标识组合（数据来源 `useSettingStore` → `activeEngine.capabilities`）：`EditOutlined`（文本生成，常驻）/ `EyeOutlined`（视觉，`supportsVision=true`，绿色）/ `BulbOutlined`（思维链，`supportsThinking=true`，紫色）/ `ToolOutlined`（工具调用，`supportsToolCalling=true`，橙色）。`capabilities` 为 `undefined` 时仅显示编辑图标 + Tooltip 提示测试连通性。与 `AIEngineSettingsPanel.renderCapabilityBadges`（详见 [`docs/FIX_RECORDS.md`](./docs/FIX_RECORDS.md) §14.27）形成「全局概览 + 详细管理」双层可视化
-- `PageTransition.tsx`：页面切换动画包装
-
-### 5.4 公共组件 `components/Common/`
-
-| 组件 | 职责 |
-|------|------|
-| `ChatEngine/` | 聊天引擎核心（策略模式 + 工厂模式），封装 AI 调用 |
-| `MarkdownEditor/` | 基于 Milkdown 的专业 Markdown 编辑器 + AI 工具 |
-| `TextEditor/` | 基于 textarea + Ant Design 的轻量编辑器，替代世界书中的 Milkdown |
-| `AIService.tsx` | 渲染进程 AI 服务管理器类（配置管理、请求取消、流式） |
-| `StoragePathDisplay.tsx` | 存储路径展示 |
-
----
-
-## 6. 核心功能模块详解
-
-### 6.1 角色卡模块 `components/Character/`
-
-- `CharacterManager.tsx`：角色卡列表与编辑入口，集成 AI 翻译/生成/润色（均拼接全局 `system_prompt`）
-- `CharacterEditModal.tsx`：Tabs 分页 + 双栏布局的角色编辑弹窗
-- `CharacterDialogueChat/`：角色对话核心子系统
-  - `CharacterDialogueChat.tsx`：对话主界面
-  - `CharacterDialogueChat.hooks.ts`：对话业务逻辑（消息收发、`system_prompt` 拼接、token 计数）
-  - `PromptBuilder.ts`：角色对话提示词构建（角色定义、背景、世界书上下文、记忆、对话示例、记忆指令）；含 `EMOTION_PRESETS` 预置情绪清单 + `buildExpressionPrompt` / `parseExpressionFromContent` 表情相关函数（Spec: add-character-expression-system / Task 3）
-  - `ExpressionManagerModal.tsx`：表情管理弹窗（30 预置 + 自定义情绪网格、上传/删除/预览，Spec: add-character-expression-system / Task 7）
-  - `ImageCropperModal.tsx`：基于 `react-easy-crop` 的方形图片裁剪弹窗（PNG 输出、长边 > 512px 压缩，Spec: add-character-expression-system / Task 5）
-  - `TokenManagement/`：上下文截断（`ContextTruncator`）、token 计数（`TokenCounter`）
-  - `MessageRenderer/`：消息渲染（支持 Markdown、代码高亮、引号高亮）
-  - `utils/messageProcessor.ts`：消息处理管道（含 `stripThinkingTags` 思考标签过滤）
-  - `utils/chatHistoryRagUtils.ts`：对话历史 RAG 工具
-  - `ConfigPanel.tsx` / `ParameterPanel.tsx` / `PersonaPanel.tsx`：配置面板（ConfigPanel 含「记忆与上下文增强」分组标题，聚合知识库检索与记忆表格两个子面板；ParameterPanel 含「开启表情」开关代替原 Emoji 增强模式）
-  - `VectorizationPanel.tsx`（标题「知识库检索」，Tooltip 指引向量化模型在系统设置配置）/ `KnowledgeBaseBindingPanel.tsx`（知识库绑定、列表项健康度 Tag「可检索/未向量化」、错误重试、检索反馈区读取 `sessionStorage[chat-rag-feedback-{characterCardId}]`）/ `MemoryTablePanel.tsx`：记忆与上下文增强相关面板
-
-### 6.2 世界书模块 `components/WorldBook/`
-
-- `WorldBookManager.tsx`：世界书列表管理
-- `WorldBookEntryEditor.tsx`：条目编辑
-- `WorldBookAIGenerateFlow.tsx` / `WorldBookGenerateModal.tsx`：AI 智能生成流
-- `WorldBookPolishModal.tsx`：AI 润色
-- `WorldBookSortModal.tsx`：排序（使用 TextEditor）
-- `hooks/useWorldBookAIOperations.ts`：AI 操作 Hook
-- `WorldBookVectorPanel.tsx`：向量化面板
-
-### 6.3 写作模式 `components/Creative/WritingMode/`
-
-写作模式是项目最复杂的子系统，采用 Hook 拆分管理状态：
-
-| Hook | 职责 |
-|------|------|
-| `useChapterGeneration.ts` / `useChapterGeneration.shared.ts` | 章节生成（含流式、续传） |
-| `useChapterStructure.ts` | 章节结构（拆分/合并） |
-| `useChunkedGeneration.ts` | 分块生成 |
-| `useShardGeneration.ts` | 分片生成 |
-| `useGenerationResume.ts` | 生成续传 |
-| `usePlotCheck.ts` | 剧情检查 |
-| `useVersionManagement.ts` | 版本管理 |
-| `useModalStates.ts` | 弹窗状态 |
-| `useTableOrganize.ts` | 表格整理 |
-| `useWritingMaterials.ts` | 素材库（世界书/角色卡/人设/知识库四类，300ms 防抖搜索） |
-
-核心组件：`ContentWorkspace.tsx`（内容工作区）、`OutlineEditor.tsx`（大纲编辑）、`StreamingTextEditor.tsx`（流式编辑器）、`WritingConfigPanel.tsx`（配置）、`WritingTemplateManager.tsx`（自定义模板管理）、`TableVersionControl.tsx`（表格版本控制）。
-
-> **架构要点**：章节数据已统一迁移至 `project.outline.chapters`（详见 [§14](#14-已知重点问题与修复记录)），消除双重存储。
-
-### 6.4 游戏模式 `components/Game/`
-
-- `GameModeEntry.tsx`：游戏模式入口（基于 `gameUIStore.currentView` 切换）
-- `GameLobby.tsx`：游戏大厅
-- `GameDetailPage.tsx`：游戏详情
-- `GameMainPage.tsx`：游戏运行时主页面
-- `templates/`：游戏类型模板
-  - `GameTemplateRegistry.ts`：模板注册中心
-  - `management/`：经营类（完整实现，含 `ManagementGameMain.tsx`、`managementSchema.ts`、`managementInitialState.ts`）
-  - `WerewolfTemplate.ts` / `MysteryTemplate.ts` / `DatingSimTemplate.ts` / `TextRpgTemplate.ts`：其他四类模板
-- `panels/`：运行时面板（`NarrativePanel`、`ResourcePanel`、`FacilityPanel`、`StatisticsPanel`、`GameStateBar`，均基于 `CollapsiblePanel`）
-
-游戏类型枚举（`GameType`）：`werewolf` / `mystery` / `dating_sim` / `management` / `text_rpg`。
-
-### 6.5 记忆插件 `components/MemoryChat/`
-
-- `MemoryChatManager.tsx`：记忆管理主界面
-- `ChatManager.tsx`：聊天记录管理（树形、分页、搜索、筛选）
-- `TemplateManager.tsx`：Excel 模板管理
-- `stMemoryTemplate.ts`：记忆模板预设
-
-### 6.6 知识库 `components/KnowledgeBase/`
-
-- `KnowledgeBaseManager.tsx`：知识库管理
-- `KnowledgeItemList.tsx`：条目列表
-- `UploadDocumentModal.tsx`：文档上传
-- `VectorSearchPanel.tsx`：向量搜索面板
-
-### 6.7 创意管理 `components/Creative/`
-
-- `CreativeManager.tsx`：创意列表与编辑入口
-- `CreativeEditPage.tsx`：创意编辑（Tabs：Markdown / V3 字段 / 图片导出）
-- `CharacterCardEditPage.tsx` / `WorldBookEditPage.tsx`：从创意生成角色卡/世界书
-- `FormatExport/`：格式导出（角色卡 PNG、世界书 JSON）
-
-### 6.8 创作中心 `components/Chat/`
-
-- `CreationCenter.tsx`：统一聊天入口
-- `UnifiedChatDialog.tsx` / `SingleChatDialog.tsx`：统一/单聊对话框
-
-### 6.9 提示词管理 `components/PromptManagement/`
-
-- `PromptManagement.tsx`：主界面
-- `PromptEditor.tsx`：模板编辑
-- `PromptAssemblyView.tsx`：组装预览
-- `PromptFlowChart.tsx`：流程图
-- `PromptHistory.tsx`：版本历史
-- `PromptPreview.tsx`：预览
-- `PromptSaveDialog.tsx`：保存对话框
-
----
-
-## 7. AI 服务体系
-
-### 7.1 双层 AI 架构
-
-项目存在两套并行的 AI 调用路径，服务于不同场景：
-
-**路径 A — 主进程转发（`aiHandlers.ts`）**：用于角色对话、写作生成等需要底层控制的场景。渲染进程组装 `url/headers/body`，主进程纯转发，支持流式背压控制。
-
-**路径 B — 渲染进程直调（`AIService.tsx` + `ChatEngine`）**：用于创意管理、角色卡 AI 工具等场景，基于 AI SDK V6 的 `streamText`。
-
-### 7.2 主进程 `AIService`（`services/AIService.ts`）
-
-统一 AI 调用抽象层，封装：
-- `AIConfigProvider`：从 `storageService` 获取激活引擎配置
-- `SSEStreamParser`（`services/ai/SSEStreamParser.ts`）：SSE 流解析工具
-- 请求构建、流式响应解析、错误处理与重试
-- `enrichSystemPrompt(messages, engineSystemPrompt)`：拼接引擎级 system prompt。**【多模态兼容性修复，2026-07-28】** 增加类型守卫 `typeof msg.content === 'string'`——字符串 content 走拼接逻辑（向后兼容），数组 content（多模态 `Array<{type:'text'|'image_url', ...}>`）原样保留，避免 `'+'` 拼接产生 `"[object Object]"` 导致 prompt 静默损坏。该守卫为防御性编程，目前所有调用方 system message 均为字符串。`ChatMessage.content` 已扩展为 `string | Array<...>` 联合类型（Spec: ai-capability-detection-and-image-recognition / Task 6），仅 `characterTraitAIService` 使用多模态数组 content。
-
-核心接口：
-```typescript
-interface AIConfig {
-  baseUrl: string;
-  apiKey: string;
-  apiKeyTransmission: 'header' | 'body';
-  model: string;
-  systemPrompt?: string;
-}
-interface CallOptions {
-  temperature?: number;
-  maxTokens?: number;
-  timeoutMs?: number;
-  maxRetries?: number;
-  abortSignal?: AbortSignal;
-}
+```
+worldbookAgent:progress IPC 事件
+  → progressEvents.push(data) + thoughtStepsAccum.push(data.thoughtStep)
+  → buildAuthoringProgressPanel() 构建 Markdown
+  → setMessages() 原地更新 _progressPanelId 消息
 ```
 
-### 7.3 IPC 处理器 `aiHandlers.ts`
+编排完成后，进度面板消息追加分隔线和最终总结（成功/失败）。
 
-- `ai:request`：接收 `{url, method, headers, body, timeout, streaming}`，发起 HTTP 请求
-- `ai:cancel`：通过 `senderId` 取消活跃请求（`AbortController`）
-- `ai:listModels`：列出可用模型
-- **流式背压控制**：使用 `BoundedQueue`（`ipc/handlers/utils/boundedQueue.ts`），高水位 80 暂停生产者，低水位 40 恢复，硬上限 100
-- **超时**：流式连接超时 60s，非流式 30s
+---
 
-### 7.4 渲染进程 `AIService` 类（`components/Common/AIService.tsx`）
+## 智能体逐项问答弹窗组件 AgentQuestionModal（Spec: optimize-agent-question-interaction，2026-08-02）
 
-- 配置安全校验（`ensureSafeConfig` / `clampNumber` / `sanitizeNumber`，仅校验范围，不注入硬编码默认值）
-- 请求管理（`abortControllers` Map，支持单请求/全部取消）
-- 基于 `@ai-sdk/openai` + `ai` 的 `streamText`
-- 配套工具：`AIErrorHandler`、`AIUtils`、`AIConfigValidator`（`AIService.utils.ts`）
+### 概述
 
-### 7.5 `ChatEngine`（`components/Common/ChatEngine/`）
+新增 `AgentQuestionModal` 组件，用于智能体在世界书编写 PLANNING 阶段向用户逐项提出澄清问题。每个问题提供预设选项卡片和"其他"自定义输入，用户确认或跳过后继续下一个问题。ESC 键和点击外部均不关闭弹窗，必须显式操作。
 
-采用 **策略模式 + 工厂模式**：
-- `IChatEngine`：聊天引擎接口（`onStream` / `onComplete` / `onError` / `sendMessage`）
-- `ChatEngine`：默认实现，内联 URL/Body 构造，支持 `chat_completion` / `text_completion` 两种 `api_mode`
-- `ChatEngineFactory`：单例工厂，按 `engineType` 创建并缓存引擎实例
-- `ChatEngine.types.ts`：`resolveStopForRequestBody`（stop 序列解析）、`buildSamplingExtras`（采样参数构建）
-- **【能力感知，2026-07-28】** 请求体构建新增 `supportsThinking` / `supportsToolCalling` 能力守卫：思维链参数（`enable_chain_of_thought`）仅在 `config.capabilities?.supportsThinking === true` 时注入；工具调用（`use_function_calling`）仅在 `config.capabilities?.supportsToolCalling === true` 时生效。不支持时降级为纯文本聊天，避免向不支持的模型注入参数导致 4xx 错误。`EngineCapabilities` 接口已扩展三字段，`getDefaultEngineCapabilities` 返回默认值 `false`
+### 新增文件
 
-### 7.6 System Prompt 拼接规范
+| 文件 | 说明 |
+|------|------|
+| [AgentQuestionModal.tsx](file:///g:/AI/creative-cafe/src/renderer/components/AgentCenter/AgentQuestionModal.tsx) | 逐项问答弹窗 React FC 组件 |
+| [AgentQuestionModal.css](file:///g:/AI/creative-cafe/src/renderer/components/AgentCenter/AgentQuestionModal.css) | 弹窗样式（全局类名，因 antd Modal 渲染在 body 下） |
 
-所有涉及 AI 请求的模块须遵循统一拼接模式：
+### Props 接口
 
 ```typescript
-let finalSystemPrompt = taskSpecificPrompt;
-if (activeEngine.system_prompt && activeEngine.system_prompt.trim()) {
-  finalSystemPrompt = activeEngine.system_prompt.trim() + '\n\n' + taskSpecificPrompt;
+interface AgentQuestionModalProps {
+  question: string;        // 问题内容
+  why: string;             // 上下文说明（为什么需要这个信息）
+  options: string[];       // 预设选项列表
+  currentIndex: number;    // 当前问题序号（从 1 开始）
+  totalCount: number;      // 总问题数
+  onAnswer: (answer: string | undefined, skipped: boolean) => void;
 }
 ```
 
-已实现拼接的模块：角色卡翻译/生成/润色（`CharacterManager.tsx`）、Markdown AI 工具（`MarkdownAITools.tsx`）、世界书 AI 生成（`WorldBookEditor.tsx`）、角色对话（`CharacterDialogueChat.hooks.ts`）。
+### 内部状态
 
-### 7.7 提示词构建器
-
-| 构建器 | 位置 | 职责 |
-|--------|------|------|
-| 角色对话 `PromptBuilder` | `CharacterDialogueChat/PromptBuilder.ts` | 角色定义、背景、世界书/记忆上下文、对话示例、记忆指令 |
-| 写作 `PromptBuilder` | `services/writing/PromptBuilder.ts` | 小说类型/写作风格/大纲/章节提示词 |
-| 写作表格整理 | `WritingStorageService.buildWritingTableOrganizePrompt` | 10 段标准化提示词（角色/消息/历史/模板/规则/ID/策略/更新/输出/示例） |
-| 记忆整理 | `services/memory/aiPromptBuilder.ts` | 聊天记录整理提示词 |
-| 游戏 `GamePromptBuilder` | `services/game/GamePromptBuilder.ts` | 游戏叙事提示词 |
-
----
-
-## 8. 向量与检索体系
-
-### 8.1 三层抽象架构
-
-```
-VectorStoreService (Facade)        ← 缓存 + 策略选择 + IPC 适配
-       │
-       ▼
-VectorRepository                   ← 多源路由 + 反向索引
-       │
-       ▼
-IVectorBackend (SqliteVecBackend)  ← 单源存储后端契约（sqlite-vec + better-sqlite3）
-```
-
-- **`IVectorBackend`**（`vector/IVectorBackend.ts`）：单源存储后端契约接口
-- **`VectorRepository`**（`vector/VectorRepository.ts`）：多源路由 + 反向索引（`delete` 通过反向索引路由，O(1) 替代全源扫描）
-- **`VectorStoreService`**（`VectorStoreService.ts`）：Facade，使用 LRU Map（max=100 源）缓存，组合 Strategy
-
-**`SqliteVecBackend` 关键特性**（2026-07-31 替换原 `VecstoreVectorStore`，决策：完全替换不保留兼容）：
-- vec0 虚拟表 + cosine 距离，`score = 1 - distance`（与原 vecstore 行为一致）
-- metadata 存 DB 表内（`item_metadata`），无需 sidecar Map；SQLite 事务即时落盘，`persist()` 为 no-op + WAL checkpoint
-- search filter 下推到 SQL WHERE（白名单列名防注入）；**⚠️ post-filter 语义**：vec0 先按距离返回 top-K 再过滤元数据，过滤后可能 < K 条（详见 `SqliteVecBackend.ts:search()` 注释）
-- TEXT 主键方案 + rowid 降级方案（`VEC0_TEXT_PK_SUPPORTED` 检测，旧版 sqlite-vec 自动降级 + `id_map` JOIN）
-- 维度变更切 DB 文件（`handleDimensionChange`），不删旧维度数据
-- **测试盲区**：37 个单测基于 `FakeVectorDb` 内存模拟（因 better-sqlite3 原生模块 ABI 与 vitest 不匹配），真实 vec0 行为依赖 Electron 集成测试
-
-### 8.2 策略模式
-
-**批处理策略**（`vector/strategies/`）：
-- `NormalBatchStrategy`：标准批处理
-- `DeferredBatchStrategy`：延迟批处理
-- `NoPersistBatchStrategy`：不持久化批处理
-- `BatchProcessingStrategy`：策略接口
-
-**搜索策略**：
-- `ScopeIdsSearchStrategy`：按 scopeIds 过滤搜索
-- `SourceTypeSearchStrategy`：按来源类型搜索
-- `AggregateSearchStrategy`：聚合搜索
-- `SearchStrategy`：策略接口
-
-### 8.3 Embedding 双模式
-
-| 模式 | 服务 | 说明 |
+| 状态 | 类型 | 说明 |
 |------|------|------|
-| `remote` | `EmbeddingService` | 远程 API Embedding（默认 `text-embedding-3-small`） |
-| `local` | `EmbeddingWorkerService` | 本地 Embedding（`@xenova/transformers`，支持 ModelScope 默认模型） |
+| `selectedOption` | `string \| null` | 当前选中的预设选项 |
+| `isOtherSelected` | `boolean` | 是否选中"其他" |
+| `customInput` | `string` | "其他"输入框内容 |
 
-配置由 `VectorConfigManager` 管理，支持维度自动切换（`modelscope-default-and-dimension-autoswitch`）。
+### 组件行为
 
-### 8.4 上下文检索（RAG）
+1. **Modal 配置**：`open` 始终为 `true`，`closable={false}`、`maskClosable={false}`、`keyboard={false}`、`footer={null}`、`width=520`、`centered`
+2. **标题**：`🤔 智能体需要确认`
+3. **问题序号**：antd `Tag`（color="blue"）显示"问题 {currentIndex}/{totalCount}"
+4. **问题内容**：18px 加粗
+5. **上下文说明**：13px 灰色，💡 图标前缀
+6. **预设选项**：可点击卡片（非 Radio），选中状态蓝色边框 `#3b82f6` + 浅蓝背景 `#eff6ff`
+7. **"其他"选项**：✏️ 图标，点击后展开 `Input.TextArea`（autoSize 3-6 行，autoFocus）；选中"其他"时预设选项取消高亮，反之亦然
+8. **确认按钮**：蓝色 primary，未选择任何选项且"其他"输入框为空时禁用；点击调用 `onAnswer(selectedOption || customInput.trim(), false)`
+9. **跳过按钮**：默认样式，点击调用 `onAnswer(undefined, true)`
+10. **底部布局**：`flex` + `justify-content: flex-end` + `gap: 12px`
 
-`ContextManager`（`services/ContextManager.ts`）提供：
-- `context:retrieve`：向量检索上下文
-- `context:retrieveWithKeywords`：向量 + 世界书关键词联合检索
-- `context:compress`：上下文压缩
+### 样式要点
 
-### 8.5 对话历史 RAG
-
-`chatHistory` 命名空间（Spec: `optimize-chat-ai-intelligence` / Task 7.4）：
-- `chatHistory:retrieve`：检索本会话历史相似片段（默认 topK=3, minScore=0.6）
-- `chatHistory:vectorizeIncremental`：增量向量化最近消息（fire-and-forget）
-
----
-
-## 9. 状态管理
-
-采用 **Zustand 5**，每个模块独立 store，集中于 `src/renderer/stores/`。
-
-| Store | 职责 |
-|-------|------|
-| `uiStore` | UI 状态（`activeTab`、`theme`、`compactMode`、`animationEnabled`、`debugMode`） |
-| `settingStore` | 系统设置（加载/保存/测试连接/导入导出/历史） |
-| `dataStore` | 通用数据 |
-| `logStore` | 统一日志（`addLog`，贯穿全应用） |
-| `characterChatStore` | 角色对话状态 |
-| `creativeStore` | 创意数据 |
-| `worldBookStore` | 世界书 |
-| `knowledgeBaseStore` | 知识库 |
-| `vectorStore` | 向量配置 |
-| `promptStore` | 提示词模板 |
-| `favoritesStore` | 收藏 |
-| `gameStore` | 游戏运行时状态 |
-| `gameUIStore` | 游戏 UI 状态（`currentView`） |
-| `writingModeStore` / `writingModeUIStore` / `writingProjectStore` | 写作模式状态/UI/项目 |
-| `expressionStore` | 角色卡表情状态（Spec: add-character-expression-system / Task 6）。持有 `manifest` / `imageCache`（**仅存 data URL，CSP 兼容**）/ `loading` / `error`；封装 `window.electronAPI.expression.*` IPC 调用；提供 `loadExpressions` / `saveExpression` / `deleteExpression` / `addCustomEmotion` / `removeCustomEmotion` / `resolveExpressionImage` / `getAvailableEmotionKeys` / `clear` actions。加载时通过 `new Image()` 预热浏览器图像缓存避免情绪切换闪烁。不持久化到 localStorage（manifest 由主进程 `expressionService` 写盘）。【重点标记 - CSP 裂图 BUG 修复】imageCache 不存磁盘绝对路径，避免被 CSP `img-src 'self' data: blob:` 拦截。详见 `docs/FIX_RECORDS.md` §14.12。 |
-| `characterTraitStore` | 角色特征 Zustand store（add-asset-and-trait-management / Task 3 + Task 13 扩展 `setTraits`）。详见 `docs/FIX_RECORDS.md` §14.23 |
-| `assetStore` | 素材 Zustand store（Task 8，按 `assetType` 分桶管理表情/立绘/特征图）。详见 `docs/FIX_RECORDS.md` §14.24 |
-| `characterLoraStore` | 按角色卡独立的 LoRA 配置 store（2026-07-29 bug 修复配套）。详见 `docs/FIX_RECORDS.md` §14.36 |
-
-**日志规范**：所有 store 通过 `useLogStore.getState().addLog(message, type, options)` 记录，`options` 支持 `details`、`error`、`context`、`category`。
+- CSS 使用全局类名（`.agent-question-modal .ant-modal-body`），因 antd Modal 默认渲染在 body 下
+- 选项卡片：`padding: 12px 16px`、`border-radius: 8px`、`border: 1px solid #e5e7eb`、hover 浅灰背景
+- "其他"输入区域展开动画：`aqmFadeIn 0.2s ease-out`
 
 ---
 
-## 10. 共享类型系统
+## worldbook-author SKILL.md 架构变更：三阶段工作流 → 流式对话模式（2026-08-02）
 
-`src/shared/types/` 是主进程与渲染进程的 **类型单一真源**，通过 `index.ts` barrel 统一导出。
+### 概述
 
-| 文件 | 内容 |
-|------|------|
-| `writing.types.ts` | 写作模式全套类型（`NovelType`、`WritingStyle`、`WritingProject`、`ChapterOutline`、`CustomNovelTypeTemplate`、`CustomWritingStyleTemplate`、`AutoFixResult` 等） |
-| `writing-table.types.ts` | 写作表格数据（`WritingTableData`，单一真源） |
-| `writing-agent.types.ts` | 写作智能体编排类型（`WritingAgentState` / 三态视图 / 断点续跑，implement-agent-foundation-and-fix-defects / Task 15，详见 `docs/FIX_RECORDS.md` §14.47） |
-| `game.types.ts` | 游戏模式类型（`GameType`、`GameMeta`、`GameSaveData`、`GameTableData`、`GameTypeTemplate`、`GameNarrativeRequest` 等） |
-| `chat.types.ts` | 聊天消息类型 |
-| `vector.types.ts` | 向量检索类型（`VectorItem`、`SearchResult`、`ContextItem`、`RetrieveOptions`） |
-| `vector.ts` | 向量兼容 re-export |
-| `vectorConfigSchema.ts` | 向量配置 Schema 常量 |
-| `promptTemplate.types.ts` | 提示词模板类型 |
-| `vectorConfig.ts`（主进程 `types/`） | `VectorConfig`、`VectorStoreMode`（`'sqlite-vec'` 单值，主进程专用） |
+`worldbook-author` 内置技能的 SKILL.md 从「三阶段启发式工作流（PLANNING→AUTHORING→AUDITING）」重写为「自由流式工作模式 + 数据入库格式规范」。智能体不再通过专用 IPC 通道 `worldbookAgent:run` 工作，而是通过 `agent.run` 流式对话模式工作，智能体自主决定工作流程。
 
-**冲突消解**：`ContextItem` / `RetrieveOptions` 在 `vector.types`（向量检索）与 `writing.types`（写作上下文）中同名，barrel 优先暴露向量语义版本，写作版本需直接 `import` 自 `writing.types`。
+### 变更内容
 
-`src/shared/settings.ts` 定义全局默认设置 `AppSetting.defaultSetting`，包含完整的 AI 引擎默认配置（采样器、停用词、路径、向量配置等）。
+- **description 字段更新**：从三阶段工作流描述改为流式对话模式描述
+- **新增「工作模式」章节**：智能体通过流式对话与用户交互，自主决定信息收集、条目生成、质量检查等工作流程，不设预设工作路线
+- **新增「数据入库格式规范」章节**：
+  - 条目结构表（`worldBookPath` / `name` / `content` / `keys` / `secondaryKeys` / `comment` / `dimensionId`）
+  - autoGenerated 标记说明
+  - worldBookPath 传递规范
+  - 工具调用指引（`createEntry` / `generateKeywords` / `expandFromContext`）
+- **移除的内容**：
+  - 三阶段启发式工作流（规划阶段 / 自驱编写阶段 / 审计闭环阶段）
+  - 专用 IPC 通道列表（`worldbookAgent:run` / `cancel` / `status` / `resume` / `answer` / `progress` / `clarify`）
+  - 断点续跑与取消（状态机相关）
+  - 注意事项中的单实例守卫、会话超时等状态机相关内容
+  - 「与手动编写的区别」表格中的「质量保障」行（不再有自动审计）
 
-`src/shared/constants/` 沉淀跨进程常量：`game.constants.ts`（游戏类型枚举与默认值）、`writing.constants.ts`（写作模式常量）。
+### 保留的内容
+
+- YAML frontmatter 的 `name` / `emoji` / `user-invocable` / `disable-model-invocation` / `command-name` 字段不变
+- 「何时调用」与「不适用场景」
+- 「Agent 模式要求」
+- 「注意事项」中的草稿审批提醒
+- 「与手动编写的区别」表格（移除「质量保障」行后保留其余行）
+
+### 涉及文件
+
+- `src/main/services/agent/skills/builtin-skills/worldbook-author/SKILL.md`
 
 ---
 
-## 11. 依赖关系
+## /编写 指令重构：移除进度面板与逐项提问，改为流式对话路径（2026-08-02）
 
-### 11.1 核心依赖图
+### 概述
 
-```
-                          ┌─────────────┐
-                          │ electron    │
-                          └──────┬──────┘
-                                 │
-              ┌──────────────────┼──────────────────┐
-              ▼                  ▼                  ▼
-        ┌──────────┐      ┌──────────┐      ┌──────────────┐
-        │ ipcMain  │      │ services │      │  preload.ts  │
-        │ handlers │◄────►│ (Node)   │      │ contextBridge│
-        └────┬─────┘      └────┬─────┘      └──────┬───────┘
-             │                 │                    │
-             │    IPC channels │                    │ electronAPI
-             │                 │                    ▼
-             └─────────────────┴────────────►┌─────────────┐
-                                             │  Renderer   │
-                                             │  (React)    │
-                                             └──────┬──────┘
-                                                    │
-                              ┌─────────────────────┼─────────────────────┐
-                              ▼                     ▼                     ▼
-                        ┌──────────┐         ┌──────────┐          ┌──────────┐
-                        │ stores   │         │components│          │  shared  │
-                        │(Zustand) │         │ (React)  │          │  types   │
-                        └──────────┘         └──────────┘          └──────────┘
-```
+将 `/编写` 指令从 `worldBookAgent.run` IPC 阻塞调用模式改为 `agent.run` 流式对话模式，移除所有进度面板、逐项提问弹窗、Loading 指示器。此重构与 `worldbook-author SKILL.md` 架构变更（三阶段工作流 → 流式对话模式）配套，使前端代码与技能架构保持一致。
 
-### 11.2 关键第三方依赖
+### 修改文件
 
-| 依赖 | 用途 |
-|------|------|
-| `electron` 33 | 桌面框架 |
-| `react` / `react-dom` 18 | UI 框架 |
-| `antd` 6 | UI 组件库 |
-| `zustand` 5 | 状态管理 |
-| `ai` 6 / `@ai-sdk/openai` / `@ai-sdk/react` | AI SDK |
-| `@milkdown/*` 7.x | Markdown 编辑器（Crepe） |
-| `sqlite-vec` | 向量数据库（SQLite 向量扩展，cosine 距离，vec0 虚拟表） |
-| `better-sqlite3` | SQLite 原生绑定（向量库 + agent 记忆库共用） |
-| `@xenova/transformers` | 本地 Embedding 模型 |
-| `@lenml/char-card-reader` / `png-chunks-extract` / `png-chunk-text` | 角色卡 PNG 读写 |
-| `gpt-tokenizer` | Token 计数（cl100k_base） |
-| `pdf-parse` / `mammoth` / `xlsx` | 文档解析 |
-| `electron-store` | 持久化 KV 存储 |
-| `lru-cache` | LRU 缓存（向量源、token 等） |
-| `fuse.js` | 模糊搜索 |
-| `simple-git` | Git 操作（更新功能） |
-| `zod` 4 | Schema 校验 |
-| `vite` 5 / `vite-plugin-electron` | 构建 |
-| `vitest` 4 | 测试 |
+| 文件 | 修改内容 |
+|------|----------|
+| [useAgentDialogue.ts](file:///g:/AI/creative-cafe/src/renderer/components/AgentCenter/hooks/useAgentDialogue.ts) | 重写 `handleWriteWorldbook`；删除进度面板/澄清问题相关代码 |
+| [AgentDialogueModal.tsx](file:///g:/AI/creative-cafe/src/renderer/components/AgentCenter/AgentDialogueModal.tsx) | 移除 `AgentQuestionModal` 引用、Loading 指示器、`clarifyState` 禁用条件 |
 
-### 11.3 构建外部化
+### useAgentDialogue.ts 修改详情
 
-`vite.config.ts` 将以下模块从主进程 bundle 中外部化，避免打包问题：
-`electron`、`@xenova/transformers`、`onnxruntime-node`、`onnxruntime-common`、所有 Node.js 内建模块。
+#### 删除的代码
 
-### 11.4 路径别名
+1. **`buildAuthoringProgressPanel` 函数及常量** — `AUTHORING_PHASE_LABELS`、`THOUGHT_STEP_ICONS` 常量和 `buildAuthoringProgressPanel()` 函数（约 170 行），不再需要进度面板内容构建
+2. **`worldbookWriting` 状态** — `const [worldbookWriting, setWorldbookWriting] = useState(false)`，不再需要编写中状态跟踪
+3. **澄清问题状态** — `clarifyQuestions`、`currentClarifyIndex`、`pendingAnswers`、`awaitingSessionId` 四个 useState
+4. **`handleClarifyAnswer` 函数** — 逐项提问回答处理逻辑（约 27 行）
+5. **`clarifyState` 计算与导出** — return 之前的计算块和 return 语句中的 `clarifyState`、`handleClarifyAnswer`、`worldbookWriting`
+6. **`UseAgentDialogueReturn` 接口字段** — `clarifyState`、`handleClarifyAnswer`、`worldbookWriting` 三个字段
+7. **import 清理** — 移除 `AuthoringProgressEvent`、`ClarifyingQuestion`、`ThoughtStep` 类型导入（仅用于已删除的代码）
+
+#### `handleWriteWorldbook` 重写
+
+**旧实现**：通过 `worldBookAgent.run()` IPC 阻塞调用，订阅 `worldBookAgent.onProgress()` 事件实时更新进度面板消息，检测 `planning_clarifying` 阶段触发逐项提问弹窗，返回 `Promise<string>`（最终总结文本）。
+
+**新实现**：通过 `agent.run()` 流式对话模式工作，流程如下：
+1. 匹配世界书名称（复用 `extractWorldbookNameAndExtra`）
+2. 构建 `writePrompt`（含世界书路径和用户附加说明）
+3. 追加 user 消息
+4. 获取技能提示词片段（`skill.getPromptSnippet()`），构建 `effectiveSystemPrompt`
+5. 创建 assistant 占位消息（`streaming: true`）
+6. 订阅 `agent.onToken` / `agent.onDone` 事件
+7. 调用 `agent.run()`，`context.mode: 'worldbook'`，`maxIterations: 30`，`timeoutMs: 600000`
+8. 完成后标记 `streaming: false`，解析辅助模式选项
+9. 返回 `Promise<void>`（自行管理消息追加，不再返回文本）
+
+#### `sendMessage` 中 `/编写` 分支修改
 
 ```typescript
-'@'         → ./src
-'@main'     → ./src/main
-'@renderer' → ./src/renderer
-'@shared'   → ./src/shared
+// 旧：
+case '编写':
+  resultContent = await handleWriteWorldbook(args);
+  break;
+
+// 新：
+case '编写':
+  await handleWriteWorldbook(args);
+  return;  // handleWriteWorldbook 自己管理消息追加和流式输出
 ```
 
----
+`handleWriteWorldbook` 不再返回字符串，`/编写` 分支直接 return，不走 `appendAssistantMessage(resultContent)` 路径。`resultContent` 变量类型仍为 `string`（其他分支不受影响）。
 
-## 12. 项目运行方式
+### AgentDialogueModal.tsx 修改详情
 
-### 12.1 环境要求
+1. **移除 `AgentQuestionModal` import** — 不再使用逐项问答弹窗组件
+2. **移除解构字段** — `clarifyState`、`handleClarifyAnswer`、`worldbookWriting` 从 `useAgentDialogue` 返回值解构中移除
+3. **移除 `AgentQuestionModal` 渲染块** — 整个 `{clarifyState.currentQuestion && (<AgentQuestionModal ... />)}` 块删除
+4. **移除 `clarifyState.currentQuestion != null` 禁用条件** — textarea、优化按钮、发送按钮的 `disabled` 和 `cursor` 条件中移除该判断
+5. **移除 Loading 指示器** — `msg._progressPanelId === '__worldbook_progress__'` 条件渲染块删除
 
-- **Node.js** ≥ 18.17.0
-- **npm** ≥ 11.6.2
+### 向后兼容
 
-### 12.2 常用命令
+- `DialogueMessage._progressPanelId` 字段保留在接口定义中（向后兼容），但不再有代码设置该字段
+- `AgentQuestionModal` 组件文件本身未删除（可能在其他地方使用或未来复用）
+- `worldBookAgent` IPC 通道相关代码未删除（主进程服务仍存在）
 
-```bash
-# 安装依赖
-npm install
+### 与既有文档的关系
 
-# 启动开发环境（Vite dev server，端口 5174 + Electron）
-npm run dev
+- [世界书编写实时进度面板](#世界书编写实时进度面板2026-08-02) — 该功能已在本次重构中移除
+- [智能体逐项问答弹窗组件 AgentQuestionModal](#智能体逐项问答弹窗组件-agentquestionmodalspecoptimize-agent-question-interaction2026-08-02) — 该弹窗已从 `AgentDialogueModal` 中移除
+- [worldbook-author SKILL.md 架构变更](#worldbook-author-skillmd-架构变更三阶段工作流--流式对话模式2026-08-02) — 本次前端重构是该架构变更的配套修改
 
-# 类型检查
-npm run typecheck
+## 世界书新生成 / 草稿条目审核按钮（2026-08-03）
 
-# Lint
-npm run lint
+### 概述
 
-# 运行测试
-npm run test
-npm run test:watch
+在 AI 生成的新条目列表与 autoGenerated 草稿条目待审阅区中，为每个条目新增"审核"按钮。点击后提取条目 `content` 文本，复用既有的单字段审核流程（`WorldBookAuditModal`），设置 `currentAuditField='content'` / `currentAuditText` 并打开审核 Modal，无需新增审核逻辑。
 
-# 构建生产版本（Vite build）
-npm run build
+### 修改点
 
-# 打包 Electron 安装包（vite build + electron-builder）
-npm run electron:build
+1. **`WorldBookAIGenerateFlow.tsx`**：
+   - Props 接口新增可选回调 `onAuditEntry?: (entry: any) => void`
+   - 导入 `SafetyCertificateOutlined` 图标
+   - 在 `generatedEntries`（新建世界书 Modal）与 `addedEntries`（添加条目 Modal）两个条目列表中，每个条目卡片内容区下方添加"审核"按钮，点击调用 `onAuditEntry?.(entry)`
 
-# 生产模式运行（需先 build）
-npm run electron:prod
-```
+2. **`WorldBookAutoGeneratedReview.tsx`**：
+   - Props 接口新增可选回调 `onAuditEntry?: (entry: AutoGeneratedEntry) => void`
+   - 导入 `SafetyCertificateOutlined` 图标
+   - 在表格"操作"列中，"批准"按钮之前添加"审核"按钮，点击调用 `onAuditEntry?.(record)`
+   - 操作列宽度由 160 调整为 220 以容纳三个按钮
 
-### 12.3 一键启动脚本
+3. **`WorldBookManager.tsx`**（编排层）：
+   - 新增 `handleAuditGeneratedEntry` useCallback 函数：提取 `entry.content`，校验非空后设置审核状态（`setCurrentAuditField('content')` / `setCurrentAuditText` / `setAuditRequirements('')` / `setIsAuditModalOpen(true)`），并记录日志
+   - 将 `onAuditEntry={handleAuditGeneratedEntry}` 分别传递给 `WorldBookAIGenerateFlow` 与 `WorldBookAutoGeneratedReview`
 
-- **Windows**：双击 `start.bat`
-  - 自动检查 Node/npm 环境
-  - 配置 npmmirror 国内镜像源
-  - 安装依赖、校验 Vite/Electron/transformers
-  - 初始化 `%APPDATA%\Creative Cafe\data` 与 `cache` 目录
-  - 执行 `npm run dev`
-- **macOS**：`./start.sh`
-  - 检查环境与向量依赖
-  - 启动 dev server（端口 5174），失败则尝试 `npm install --legacy-peer-deps --ignore-scripts` 后重试
+### 设计说明
 
-### 12.4 开发模式工作原理
+- 审核按钮复用既有的 `WorldBookAuditModal` 审核流程，无需新增 Modal 或审核逻辑
+- `onAuditEntry` 为可选 prop，不传递时按钮仍渲染但点击无操作（`?.` 可选链保护）
+- 草稿条目（`AutoGeneratedEntry`）的结构与生成条目不同，但均包含 `content` 字段，`handleAuditGeneratedEntry` 统一通过 `entry?.content` 提取
 
-`npm run dev` 通过 `vite-plugin-electron` 同时启动：
-1. Vite Dev Server（端口 5174，`strictPort: true`）
-2. Electron 主进程（加载 `http://localhost:5174`）
-3. 文件变更时 HMR 热更新
+### 涉及文件
 
-### 12.5 打包
-
-`electron-builder.json` 配置：
-- **appId**：`com.creativecafe.app`
-- **productName**：`Creative Café`
-- **Windows 目标**：NSIS 安装包（可改安装目录、创建快捷方式）+ Portable 便携版
-- **输出目录**：`release/`
-
-### 12.6 数据存储
-
-用户数据存放于 `%APPDATA%/Creative Cafe/`（Windows）或对应平台 userData 目录：
-- `data/characters`、`data/worldbooks`、`data/avatars`、`data/creatives`、`data/memories`、`data/plugins`
-- `data/writing-projects/{projectId}/`（含 `chapters/`、`chunks/`）
-- `data/writing-templates/novel-types/`、`data/writing-templates/writing-styles/`
-- `cache/`（向量、模型缓存）
-
-路径前缀 `__USER_DATA__` 在 `shared/settings.ts` 中使用，运行时由 `utils/appPath.ts` 解析为真实路径。
-
----
-
-## 13. 关键设计规范与约定
-
-### 13.1 【最高优先级】禁止 AI 参数默认值
-
-调用 AI 引擎时，所有参数（Temperature、MaxTokens、Model 等）必须从系统设置动态获取，**绝对禁止**设置默认值。参数缺失时应抛出明确异常，而非静默使用默认值。
-
-```typescript
-// ✅ 正确
-const temperature = Number(activeEngine.temperature);
-if (!temperature && temperature !== 0) {
-  throw new Error('AI 引擎未配置 temperature 参数，请在设置中配置');
-}
-
-// ❌ 错误
-const temperature = activeEngine.temperature || 0.7;  // 禁止
-```
-
-### 13.2 【最高优先级】IPC API 路径规范
-
-获取系统设置必须用 `window.electronAPI.setting.load()`（**单数** `setting`），返回 `{ success, setting }`。严禁使用 `window.electronAPI.settings.getSettings()` 等不存在路径。新增 IPC API 前必须先更新 `src/renderer/types/electron.d.ts`。
-
-### 13.3 System Prompt 拼接
-
-所有 AI 请求模块须拼接全局 `system_prompt`（见 [§7.6](#76-system-prompt-拼接规范)）。
-
-### 13.4 tableEdit 命令协议
-
-表格编辑统一使用 `tableEdit` 命令格式：
-- `insertRow(sheetIndex, {"fieldIndex":"value", ...})`
-- `updateRow(sheetIndex, rowIndex, {"fieldIndex":"value", ...})`
-- `deleteRow(sheetIndex, rowIndex)`
-
-命令由 `tableEditParser`（记忆）/ `GameTableEditParser`（游戏）/ `TableEditCommandExecutor`（写作）解析执行。
-
-> **F3/F4 重构说明（2026-07-30）**：两个解析器的公共逻辑已抽取到
-> `src/main/services/memory/tableEditParserBase.ts` 的 `TableEditParserBase` 抽象基类，
-> `tableEditParser` 与 `GameTableEditParser` 改为薄适配层（继承 Base，保留各自对外 API 签名）。
->
-> Base 统一提供：块提取（`extractBlocks`，按正则数组依次提取并去重）、JSON 数据对象容错解析
-> （`parseDataObject` / `normalizeJsonObject` / `toStringValueMap`）、命令行分派
-> （`tryParseLine`，顺序 updateRow → insertRow → deleteRow）、字段索引转换
-> （`convertFieldIndicesToZeroBased`）、索引校验原语（`validatePositiveIndex` /
-> `validateNonNegativeIndex`）。
->
-> **F3 越界校验**（统一在 Base 中实现，校验失败一律"跳过 + 警告"，不崩溃不中断）：
-> - `parseInsertRow` / `parseUpdateRow` / `parseDeleteRow`：sheetIndex/rowIndex 必须为正整数
->   （1-based 协议最小为 1），否则跳过整条命令并警告
-> - 字段索引 1→0 转换后 < 0 时（如原键为 `"0"`）跳过该字段并警告（不丢弃整条命令）
-> - 字段索引为非整数（命名键，如 `"name"`）保持原样不转换（容错）
-> - 列范围校验（`< 列数`）需 `maxColumnIndex` 参数；parser 阶段通常不传，列范围校验留给 executor
->
-> 两个适配层差异（保持各自对外行为不变）：
->
-> | 维度 | memory 适配层 | game 适配层 |
-> |------|---------------|-------------|
-> | 对外方法 | `parse(text)` | `parse(text)` + `stripTableEditTags(text)` |
-> | 返回结构 | `{success, commands, errors}` | `{commands, errors}` |
-> | 命令字段 | `tableIndex` / `rowIndex` / `data` / `rawCommand` | `sheetIndex` / `rowIndex` / `rowData` / `raw` |
-> | 索引语义 | parser 阶段 1→0 转换 | 保持 1-based（由 `GameTableRepository.applyTableEdits` 转换） |
-> | 字段索引 | 1→0 转换 + 非负校验 | 保持原样不转换 |
-> | 命令正则 | 非 anchored | anchored + `i` 标志 |
-> | 未识别行 | debug 日志"跳过非命令行" | push error"无法解析的命令行" |
-
-### 13.5 安全规范
-
-- `contextIsolation: true`、`nodeIntegration: false`、`webSecurity: true`
-- CSP 严格限制 `script-src`、`connect-src`（仅允许 self、localhost、GitHub API）
-- 渲染进程不直接接触 Node.js，所有能力经 `electronAPI` 桥接
-- API Key 脱敏记录（`Bearer [REDACTED]`）
-
-### 13.6 代码风格
-
-- TypeScript 严格模式 + ESLint + Prettier
-- 组件 PascalCase，变量/函数 camelCase
-- Zustand store 集中管理模块状态
-- 所有异步操作须 try-catch + 用户反馈
-- 统一日志（`useLogStore`）
-
----
-
-## 14. 已知重点问题与修复记录（已拆分）
-
-> **文档结构变更（2026-07-31）**：原 §14 累计 51 个子节、约 2447 行修复记录，已占整份 Wiki 逾 70% 篇幅，使架构性内容与历史修复日志混杂、可读性下降。已将该部分整体拆分至独立文件 [docs/FIX_RECORDS.md](./docs/FIX_RECORDS.md)。
->
-> **拆分原则**：
-> - **架构性描述**（模块职责、IPC 通道、类型契约等）随对应章节并入本文 §3-§13，并随代码演进维护；
-> - **历史修复日志**（Bug 根因、Spec 实现记录、反复调试过程）统一沉淀至 docs/FIX_RECORDS.md；
-> - CHANGELOG.md 继续承载版本级发布日志，三者各司其职。
-
-### 历史修复记录索引
-
-| Spec / 阶段 | 对应 docs/FIX_RECORDS.md 小节 | 主题 |
-|---|---|---|
-| add-character-expression-system | 14.10 – 14.13, 14.18 | 表情管理系统后端、弹窗、提示词与情绪解析 |
-| add-ai-expression-generation | 14.14 – 14.17, 14.20, 14.26 | SD 表情生成服务、IPC、设置面板、生成弹窗 |
-| add-asset-and-trait-management | 14.18 – 14.25 | 素材与特征管理（服务 / Store / 弹窗 / AI 生成） |
-| add-model-capability-detection-and-image-recognition | 14.27 | AI 引擎能力标识 UI |
-| add-lora-model-selection | 14.28 – 14.29, 14.36 | LoRA 模型选择与按角色独立存储 |
-| 立绘与图片生成增强 | 14.30 – 14.34, 14.37 | 立绘重构、img2img 模式、质量参数、自定义尺寸 |
-| ADetailer 面部修复 | 14.35 | img2img 不支持 Hires.fix 的源码核验 |
-| tableEdit 解析器统一 | 14.38 | 越界校验与解析器统一 |
-| implement-agent-foundation-and-fix-defects / 阶段 1 | 14.39 – 14.40 | 智能体底座 infra/ + contracts.ts |
-| implement-agent-foundation-and-fix-defects / 阶段 0 | 14.41 | ChatEngine 消息校验 + 取消错误反馈 |
-| implement-agent-foundation-and-fix-defects / 阶段 2 | 14.42 – 14.45 | Embedding 缓存、WorldBook 倒排索引、storageService 异步化、写作容错 |
-| implement-agent-foundation-and-fix-defects / 阶段 3-6 | 14.46 – 14.48 | skills/ 技能系统、writing/ 编排、对话与世界书自驱 |
-| implement-agent-foundation-and-fix-defects / Task 18 | 14.49 | learning/ 长期记忆与自学习系统 |
-| implement-agent-foundation-and-fix-defects / 阶段 7 | 14.50 | P2 UI/设计修复（虚拟化、dataStore 分层、RightPanel 拆分） |
-| implement-agent-foundation-and-fix-defects / 阶段 8 | 14.51 | 现有测试套件全量审核与缺陷修复 |
-| 早期重点问题（角色卡 / 写作 / 世界书 / 思考标签等） | 14.1 – 14.9 | 见 docs/FIX_RECORDS.md 顶部 |
-
-> 完整修复细节、根因分析、涉及文件清单请查阅 [docs/FIX_RECORDS.md](./docs/FIX_RECORDS.md)。
-
----
-
-
-## 附录：关键文件索引
-
-> **引用约定**：下表中 `（§14.X）` 形式的引用均指向 [`docs/FIX_RECORDS.md`](./docs/FIX_RECORDS.md) 对应小节（即原 CODE_WIKI.md §14 拆分内容）；`Spec: xxx / Task N` 标注原始需求来源。
-
-| 类别 | 文件 |
-|------|------|
-| 主进程入口 | [index.ts](src/main/index.ts) |
-| Preload 桥接 | [preload.ts](src/main/preload.ts) |
-| IPC 注册中心 | [ipc/index.ts](src/main/ipc/index.ts) |
-| AI 处理器 | [aiHandlers.ts](src/main/ipc/handlers/aiHandlers.ts) |
-| AI 服务抽象层 | [AIService.ts](src/main/services/AIService.ts) |
-| 向量存储 Facade | [VectorStoreService.ts](src/main/services/VectorStoreService.ts) |
-| 写作项目仓库 | [WritingProjectRepository.ts](src/main/services/writing/WritingProjectRepository.ts) |
-| 写作智能体编排服务 | [writingAgentService.ts](src/main/services/agent/writing/writingAgentService.ts)（§14.47） |
-| 写作智能体 IPC 处理器 | [writingAgentHandlers.ts](src/main/ipc/handlers/writing/writingAgentHandlers.ts)（§14.47） |
-| 写作智能体共享类型 | [writing-agent.types.ts](src/shared/types/writing-agent.types.ts)（§14.47） |
-| 写作智能体前端 hook | [useWritingAgent.ts](src/renderer/components/Creative/WritingMode/hooks/useWritingAgent.ts)（§14.47） |
-| 写作智能体编排弹窗 | [WritingAgentModal.tsx](src/renderer/components/Creative/WritingMode/WritingAgentModal.tsx)（§14.47） |
-| 记忆聊天日志 | [chatLogService.ts](src/main/services/memory/chatLogService.ts) |
-| 角色表情服务 | [expressionService.ts](src/main/services/expressionService.ts) |
-| SD 表情生成服务 | [sdGenerationService.ts](src/main/services/sdGenerationService.ts)（Spec: add-ai-expression-generation / Task 1） |
-| SD 表情生成 IPC 处理器 | [sdGenerationHandlers.ts](src/main/ipc/handlers/sdGenerationHandlers.ts)（Spec: add-ai-expression-generation / Task 2） |
-| SD WebUI 设置面板 | [SDWebuiSettings.tsx](src/renderer/components/Settings/SDWebuiSettings.tsx)（Spec: add-ai-expression-generation / Task 6） |
-| 表情 IPC 处理器 | [expressionHandlers.ts](src/main/ipc/handlers/expressionHandlers.ts) |
-| 表情状态 Store | [expressionStore.ts](src/renderer/stores/expressionStore.ts) |
-| 表情管理弹窗 | [ExpressionManagerModal.tsx](src/renderer/components/Character/CharacterDialogueChat/ExpressionManagerModal.tsx) |
-| AI 表情生成弹窗 | [ExpressionGenerateModal.tsx](src/renderer/components/Character/CharacterDialogueChat/ExpressionGenerateModal.tsx)（Spec: add-ai-expression-generation / Task 4） |
-| 素材与特征管理弹窗 | [AssetManagerModal.tsx](src/renderer/components/Character/CharacterDialogueChat/AssetManagerModal.tsx)（Spec: add-asset-and-trait-management / Task 9，5 Tab：表情/立绘/一般图像/三视图/特征） |
-| AI 素材生成弹窗 | [AssetGenerateModal.tsx](src/renderer/components/Character/CharacterDialogueChat/AssetGenerateModal.tsx)（Spec: add-asset-and-trait-management / Task 10，5 mode：batch-expression / single-expression / illustration / general / three-view） |
-| 角色特征持久化服务 | [characterTraitService.ts](src/main/services/characterTraitService.ts)（Spec: add-asset-and-trait-management / Task 1） |
-| AI 特征生成服务 | [characterTraitAIService.ts](src/main/services/characterTraitAIService.ts)（Spec: add-asset-and-trait-management / Task 12） |
-| 素材管理服务 | [assetService.ts](src/main/services/assetService.ts)（Spec: add-asset-and-trait-management / Task 6） |
-| 角色特征 IPC 处理器 | [characterTraitHandlers.ts](src/main/ipc/handlers/characterTraitHandlers.ts)（Spec: add-asset-and-trait-management / Task 2） |
-| AI 特征 IPC 处理器 | [characterTraitAIHandlers.ts](src/main/ipc/handlers/characterTraitAIHandlers.ts)（Spec: add-asset-and-trait-management / Task 12） |
-| 素材 IPC 处理器 | [assetHandlers.ts](src/main/ipc/handlers/assetHandlers.ts)（Spec: add-asset-and-trait-management / Task 7） |
-| 角色特征 store | [characterTraitStore.ts](src/renderer/stores/characterTraitStore.ts)（Spec: add-asset-and-trait-management / Task 3 + Task 13） |
-| 素材 store | [assetStore.ts](src/renderer/stores/assetStore.ts)（Spec: add-asset-and-trait-management / Task 8） |
-| LoRA 模型列表服务 | [loraService.ts](src/main/services/loraService.ts)（Spec: add-lora-model-selection / Task 1） |
-| LoRA 模型 IPC 处理器 | [loraHandlers.ts](src/main/ipc/handlers/loraHandlers.ts)（Spec: add-lora-model-selection / Task 3） |
-| LoRA 模型选择弹窗 | [LoraSelectModal.tsx](src/renderer/components/Character/CharacterDialogueChat/LoraSelectModal.tsx)（Spec: add-lora-model-selection / Task 4） |
-| 图片尺寸选择组件 | [SizeSelector.tsx](src/renderer/components/Character/CharacterDialogueChat/SizeSelector.tsx)（2026-07-29 新增，§14.37） |
-| 角色卡 LoRA 持久化服务 | [characterLoraService.ts](src/main/services/characterLoraService.ts)（2026-07-29 按角色独立存储 LoRA，§14.36） |
-| 角色卡 LoRA IPC 处理器 | [characterLoraHandlers.ts](src/main/ipc/handlers/characterLoraHandlers.ts)（§14.36） |
-| 角色卡 LoRA store | [characterLoraStore.ts](src/renderer/stores/characterLoraStore.ts)（§14.36） |
-| 表情管理 Tab 入口 | [CharacterEditModal.tsx](src/renderer/components/Character/CharacterEditModal.tsx)（Task 15 新增「表情管理」Tab） |
-| 表情裁剪弹窗 | [ImageCropperModal.tsx](src/renderer/components/Character/CharacterDialogueChat/ImageCropperModal.tsx) |
-| 表情提示词构建 | [PromptBuilder.ts](src/renderer/components/Character/CharacterDialogueChat/PromptBuilder.ts)（`EMOTION_PRESETS` / `buildExpressionPrompt` / `parseExpressionFromContent`） |
-| 渲染进程入口 | [main.tsx](src/renderer/main.tsx) |
-| 根组件 | [App.tsx](src/renderer/App.tsx) |
-| 路由配置 | [routeConfig.ts](src/renderer/routeConfig.ts) |
-| ChatEngine | [ChatEngine.ts](src/renderer/components/Common/ChatEngine/ChatEngine.ts) |
-| 角色对话逻辑 | [CharacterDialogueChat.hooks.ts](src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.hooks.ts) |
-| 消息处理 | [messageProcessor.ts](src/renderer/components/Character/CharacterDialogueChat/utils/messageProcessor.ts) |
-| 共享类型入口 | [shared/types/index.ts](src/shared/types/index.ts) |
-| 全局默认设置 | [shared/settings.ts](src/shared/settings.ts) |
-| 构建配置 | [vite.config.ts](vite.config.ts) |
-| 打包配置 | [electron-builder.json](electron-builder.json) |
-| 启动脚本 | [start.bat](start.bat) / [start.sh](start.sh) |
-| 技术文档 | [.trae/documents/技术文档.md](.trae/documents/技术文档.md) |
-
----
-
-> **维护说明**：本 Wiki 随项目演进增量更新。新增模块或重大架构变更时，请同步更新对应章节；出现 Bug 或经反复调试修复的问题，记录至 [docs/FIX_RECORDS.md](./docs/FIX_RECORDS.md) 中以 ⭐ 标记重点。版本级发布日志见 CHANGELOG.md。
+- `src/renderer/components/WorldBook/WorldBookAIGenerateFlow.tsx` — 新增 prop + 审核按钮
+- `src/renderer/components/WorldBook/WorldBookAutoGeneratedReview.tsx` — 新增 prop + 审核按钮 + 列宽调整
+- `src/renderer/components/WorldBook/WorldBookManager.tsx` — 新增 `handleAuditGeneratedEntry` + prop 传递

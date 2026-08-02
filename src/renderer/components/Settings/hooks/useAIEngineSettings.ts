@@ -107,7 +107,7 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
       api_url: 'http://127.0.0.1:5000',
       api_key: '',
       model_name: 'qwen3.5-27b-heretic-v3',
-      api_mode: 'text_completion',
+      api_mode: 'chat_completion',
       api_key_transmission: 'body',
       max_tokens: 10240,
       temperature: 0.7,
@@ -117,6 +117,8 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
       frequency_penalty: 0,
       presence_penalty: 0,
       n: 1,
+      connection_timeout: 120000,
+      request_timeout: 300000,
       system_prompt: '',
     };
     setEditingEngine(emptyEngine);
@@ -162,6 +164,8 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
               frequency_penalty: Number(values.frequency_penalty) || undefined,
               presence_penalty: Number(values.presence_penalty) || undefined,
               n: Number(values.n) || 1,
+              connection_timeout: values.connection_timeout !== undefined && values.connection_timeout !== '' ? Number(values.connection_timeout) : 120000,
+              request_timeout: values.request_timeout !== undefined && values.request_timeout !== '' ? Number(values.request_timeout) : 300000,
               // Save capabilities from test result if available (Spec: Task 4.4);
               // otherwise preserve existing engine.capabilities from spread above
               ...(engineTestResult?.capabilities ? { capabilities: engineTestResult.capabilities } : {}),
@@ -179,7 +183,7 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
           api_url: values.api_url || 'http://127.0.0.1:5000',
           api_key: values.api_key || '',
           model_name: values.model_name || 'qwen3.5-27b-heretic-v3',
-          api_mode: values.api_mode || 'text_completion',
+          api_mode: values.api_mode || 'chat_completion',
           api_key_transmission: values.api_key_transmission || 'body',
           max_tokens: Number(values.max_tokens) || 10240,
           temperature: Number(values.temperature) ?? 0.7,
@@ -189,6 +193,8 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
           frequency_penalty: Number(values.frequency_penalty) || undefined,
           presence_penalty: Number(values.presence_penalty) || undefined,
           n: Number(values.n) || 1,
+          connection_timeout: values.connection_timeout !== undefined && values.connection_timeout !== '' ? Number(values.connection_timeout) : 120000,
+          request_timeout: values.request_timeout !== undefined && values.request_timeout !== '' ? Number(values.request_timeout) : 300000,
           system_prompt: values.system_prompt || '',
           // Save capabilities from test result if available (Spec: Task 4.4)
           ...(engineTestResult?.capabilities ? { capabilities: engineTestResult.capabilities } : {}),

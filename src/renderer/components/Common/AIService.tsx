@@ -263,7 +263,7 @@ export class AIService {
         method: 'POST',
         headers: this.buildHeaders(formattedOptions),
         body: this.buildRequestBody(formattedOptions, false),
-        timeout: (this.config as any).timeout || 300000, // 默认 300 秒超时
+        timeout: (this.config as any).timeout || undefined, // 未配置时由主进程读取用户设置的 request_timeout
         streaming: false
       });
 
@@ -535,7 +535,7 @@ export class AIService {
         method: 'POST',
         headers: this.buildHeaders(formattedOptions),
         body: this.buildRequestBody(formattedOptions, true),
-        timeout: (this.config as any).timeout || 300000, // 默认 300 秒超时
+        timeout: (this.config as any).timeout || undefined, // 未配置时由主进程读取用户设置的 request_timeout
         streaming: true
       });
 

@@ -304,7 +304,7 @@ const Dashboard: React.FC = () => {
   const handleOpenWorldBookFolder = async () => {
     try {
       addLog('打开世界书存储文件夹', 'info');
-      const folderPath = setting?.worldBookPath || '__USER_DATA__/data/worldbooks';
+      const folderPath = '__USER_DATA__/data/worldbooks';
       const userDataPath = await window.electronAPI.app.getUserDataPath();
       const resolvedPath = folderPath.replace('__USER_DATA__', userDataPath);
       const result = await window.electronAPI.file.openFolder(resolvedPath);
@@ -318,7 +318,7 @@ const Dashboard: React.FC = () => {
   const handleOpenCharacterFolder = async () => {
     try {
       addLog('打开角色卡存储文件夹', 'info');
-      const folderPath = setting?.characterPath || '__USER_DATA__/data/characters';
+      const folderPath = '__USER_DATA__/data/characters';
       const userDataPath = await window.electronAPI.app.getUserDataPath();
       const resolvedPath = folderPath.replace('__USER_DATA__', userDataPath);
       const result = await window.electronAPI.file.openFolder(resolvedPath);
@@ -332,7 +332,7 @@ const Dashboard: React.FC = () => {
   const handleOpenAvatarFolder = async () => {
     try {
       addLog('打开用户设定存储文件夹', 'info');
-      const folderPath = setting?.avatarPath || '__USER_DATA__/data/avatars';
+      const folderPath = '__USER_DATA__/data/avatars';
       const userDataPath = await window.electronAPI.app.getUserDataPath();
       const resolvedPath = folderPath.replace('__USER_DATA__', userDataPath);
       const result = await window.electronAPI.file.openFolder(resolvedPath);

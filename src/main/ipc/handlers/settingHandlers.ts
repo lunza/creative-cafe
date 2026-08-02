@@ -5,6 +5,7 @@ import { AppSetting } from '../../../shared/settings';
 import type { AppSetting as AppSettingType } from '../../../renderer/types/setting';
 import { getAppDataPath } from '../../utils/appPath';
 import { createLogger, setLogLevel } from '../../services/logger';
+import { reevaluateAgentModeFromSettings } from './agentHandlers';
 
 const logger = createLogger('setting-handler');
 
@@ -137,6 +138,9 @@ export function settingHandlers(): void {
         if (setting.logLevel) {
           setLogLevel(setting.logLevel);
         }
+        // 【重点标记】保存设置后重新评估 Agent 模式状态
+        // 确保引擎切换或能力清单更新后，agentModeService 与缓存的能力清单保持同步
+        reevaluateAgentModeFromSettings(setting);
         return { success: true };
       } else {
         return { 

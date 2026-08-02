@@ -1,6 +1,13 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Button, Tooltip, Select } from 'antd';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { Button, Tooltip, Select, message } from 'antd';
 import { SendOutlined, StopOutlined, ClearOutlined, RobotOutlined, LoadingOutlined, HighlightOutlined } from '@ant-design/icons';
+import { SlashCommandAutoComplete, slashCommandRegistry, registerBuiltinCommands, setSlashCommandCallbacks } from '../../Common/SlashCommand';
+import type { SlashCommand } from '../../Common/SlashCommand';
+import { QuickActionsMenu } from '../../Common/QuickActions';
+import type { QuickActionItem } from '../../Common/QuickActions';
+import { SkillQuickAccess } from '../../Common/SkillQuickAccess';
+import type { SkillInfo } from '../../Common/SkillQuickAccess';
+import TokenUsageBar from './TokenUsageBar';
 
 interface ChatInputBarProps {
   onSend: (message: string) => void;
@@ -22,6 +29,24 @@ interface ChatInputBarProps {
   onPolishInput?: (text: string) => void;
   isPolishingInput?: boolean;
   polishFlashKey?: number;
+  // 斜杠命令 & 快捷操作回调（Spec: optimize-agent-interaction-from-openclaw / M1）
+  onRetry?: () => void;
+  onContinue?: () => void;
+  onClear?: () => void;
+  onReset?: () => void;
+  quickActionItems?: {
+    dialogueActions?: QuickActionItem[];
+    contentActions?: QuickActionItem[];
+    settingActions?: QuickActionItem[];
+  };
+  // 技能快捷调用（Spec: optimize-agent-interaction-from-openclaw / M1-Task4）
+  skills?: SkillInfo[];
+  onInvokeSkill?: (skillName: string, args: string) => void;
+  invokingSkill?: string | null;
+  // Token 使用量进度条（Spec: optimize-agent-interaction-from-openclaw / M3-Task11）
+  tokenUsage?: { used: number; total: number } | null;
+  onCompressContext?: () => void;
+  isCompressing?: boolean;
 }
 
 const ChatInputBar: React.FC<ChatInputBarProps> = ({
@@ -41,10 +66,92 @@ const ChatInputBar: React.FC<ChatInputBarProps> = ({
   onPolishInput,
   isPolishingInput = false,
   polishFlashKey,
+  onRetry,
+  onContinue,
+  onClear,
+  onReset,
+  quickActionItems,
+  skills,
+  onInvokeSkill,
+  invokingSkill,
+  tokenUsage,
+  onCompressContext,
+  isCompressing,
 }) => {
   const [input, setInput] = useState('');
   const [flashBorder, setFlashBorder] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // 斜杠命令状态（Spec: optimize-agent-interaction-from-openclaw / M1-Task1）
+  const [slashVisible, setSlashVisible] = useState(false);
+  const [slashQuery, setSlashQuery] = useState('');
+  const inputContainerRef = useRef<HTMLDivElement>(null);
+
+  // 注册斜杠命令回调（组件挂载时注入实际处理函数）
+  useEffect(() => {
+    setSlashCommandCallbacks({
+      onReset: () => { onReset?.(); },
+      onRetry: () => { onRetry?.(); },
+      onContinue: () => { onContinue?.(); },
+      onPolish: () => { onPolishInput?.(input); },
+      onAIReply: () => { onGenerateUserReply?.(input.trim() || undefined); },
+      onClear: () => { onClear?.(); },
+      onModelChange: (model: string) => { message.info(`模型切换功能开发中: ${model}`); },
+      onHelp: () => {
+        const cmds = slashCommandRegistry.getAll();
+        const helpText = cmds.map(c => `/${c.name} - ${c.description}`).join('\n');
+        message.info('可用命令:\n' + helpText, 10);
+      },
+    });
+    registerBuiltinCommands();
+  }, [onReset, onRetry, onContinue, onPolishInput, onGenerateUserReply, onClear, input]);
+
+  // 斜杠命令过滤列表
+  const slashCommands = useMemo(() => {
+    return slashCommandRegistry.search(slashQuery);
+  }, [slashQuery]);
+
+  // 处理输入变化，检测斜杠命令
+  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    setInput(value);
+
+    // 检测斜杠命令前缀
+    if (value.startsWith('/') && !isStreaming && !isOrganizing) {
+      const afterSlash = value.slice(1);
+      // 检查是否有空格（表示命令名已完成，开始输入参数）
+      const spaceIdx = afterSlash.indexOf(' ');
+      if (spaceIdx >= 0) {
+        const cmdName = afterSlash.slice(0, spaceIdx);
+        const cmd = slashCommandRegistry.get(cmdName);
+        if (cmd) {
+          // 命令已匹配，隐藏补全（参数输入阶段暂不补全参数）
+          setSlashVisible(false);
+        } else {
+          setSlashVisible(false);
+        }
+      } else {
+        // 命令名输入阶段
+        setSlashQuery(afterSlash);
+        setSlashVisible(true);
+      }
+    } else {
+      setSlashVisible(false);
+    }
+  }, [isStreaming, isOrganizing]);
+
+  // 选择斜杠命令
+  const handleSlashCommandSelect = useCallback((cmd: SlashCommand) => {
+    setSlashVisible(false);
+    setInput('');
+    // 执行命令
+    cmd.handler('', { input: '', characterCardId: undefined });
+  }, []);
+
+  // 关闭斜杠补全
+  const handleSlashClose = useCallback(() => {
+    setSlashVisible(false);
+  }, []);
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -104,6 +211,13 @@ const ChatInputBar: React.FC<ChatInputBarProps> = ({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // 斜杠命令补全可见时，Enter 由补全组件处理（capture 阶段），不触发发送
+    if (slashVisible) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+      }
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -130,11 +244,52 @@ const ChatInputBar: React.FC<ChatInputBarProps> = ({
           background: rgba(99, 102, 241, 0.3) !important;
         }
       `}</style>
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+      {/* 快捷操作菜单（Spec: optimize-agent-interaction-from-openclaw / M1-Task3） */}
+      {/* ⚡按钮，聚合常用操作，在非流式/非整理状态下显示 */}
+      {!isStreaming && !isOrganizing && quickActionItems && (
+        <div style={{ alignSelf: 'flex-end', paddingBottom: '0px' }}>
+          <QuickActionsMenu
+            dialogueActions={quickActionItems.dialogueActions}
+            contentActions={quickActionItems.contentActions}
+            settingActions={quickActionItems.settingActions}
+            disabled={disabled || isGeneratingUserReply || isPolishingInput}
+          />
+        </div>
+      )}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, position: 'relative' }} ref={inputContainerRef}>
+      {/* Token 使用量进度条（Spec: optimize-agent-interaction-from-openclaw / M3-Task11） */}
+      {tokenUsage && !isStreaming && !isOrganizing && (
+        <div style={{ marginBottom: '6px' }}>
+          <TokenUsageBar
+            used={tokenUsage.used}
+            total={tokenUsage.total}
+            onCompress={onCompressContext}
+            isCompressing={isCompressing}
+          />
+        </div>
+      )}
+      {/* 技能快捷调用按钮组（Spec: optimize-agent-interaction-from-openclaw / M1-Task4） */}
+      {!isStreaming && !isOrganizing && skills && skills.length > 0 && onInvokeSkill && (
+        <div style={{ display: 'flex', marginBottom: '8px', overflowX: 'auto' }}>
+          <SkillQuickAccess
+            skills={skills}
+            onInvokeSkill={onInvokeSkill}
+            invokingSkill={invokingSkill}
+            disabled={disabled || isGeneratingUserReply || isPolishingInput}
+          />
+        </div>
+      )}
+      <SlashCommandAutoComplete
+        query={slashQuery}
+        visible={slashVisible}
+        commands={slashCommands}
+        onSelect={handleSlashCommandSelect}
+        onClose={handleSlashClose}
+      />
       <textarea
         ref={textareaRef}
         value={input}
-        onChange={(e) => setInput(e.target.value)}
+        onChange={handleInputChange}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
         disabled={(disabled && !isStreaming) || isGeneratingUserReply || isPolishingInput}

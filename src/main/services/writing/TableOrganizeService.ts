@@ -1395,7 +1395,7 @@ deleteRow(4, 1)
       throw new Error('未提供 maxTokens 参数');
     }
 
-    const { apiKey, apiKeyTransmission, modelName, apiMode } = apiEndpoint;
+    const { apiKey, apiKeyTransmission, modelName } = apiEndpoint;
 
     const payload: Record<string, unknown> = {
       model: modelName,
@@ -1403,16 +1403,12 @@ deleteRow(4, 1)
       max_tokens: modelConfig.maxTokens,
     };
 
-    if (apiMode === 'text_completion') {
-      Object.assign(payload, { prompt });
-    } else {
-      Object.assign(payload, {
-        messages: [
-          { role: 'system', content: '你是一个小说数据整理助手，负责从章节内容中提取结构化信息到表格中。' },
-          { role: 'user', content: prompt }
-        ]
-      });
-    }
+    Object.assign(payload, {
+      messages: [
+        { role: 'system', content: '你是一个小说数据整理助手，负责从章节内容中提取结构化信息到表格中。' },
+        { role: 'user', content: prompt }
+      ]
+    });
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -1454,11 +1450,7 @@ deleteRow(4, 1)
             addLog(data, 'debug');
             addLog(`[WritingOrganize] AI响应 - 完整解析后JSON:`, 'debug');
             addLog(JSON.stringify(response, null, 2), 'debug');
-            if (apiMode === 'text_completion') {
-              resolve(response.choices?.[0]?.text || '');
-            } else {
-              resolve(response.choices?.[0]?.message?.content || '');
-            }
+            resolve(response.choices?.[0]?.message?.content || '');
           } catch (e) {
             addLog(`[WritingOrganize] AI响应 - 解析失败，原始数据:`, 'error');
             addLog(data, 'error');

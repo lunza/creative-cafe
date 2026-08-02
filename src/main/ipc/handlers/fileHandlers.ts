@@ -18,15 +18,6 @@ function getSettingData(): any {
   return null;
 }
 
-function resolveSettingPath(key: string, defaultModule: string): string {
-  const data = getSettingData();
-  const customPath = data?.data?.[key];
-  if (customPath && customPath.startsWith('__USER_DATA__')) {
-    return customPath.replace('__USER_DATA__', app.getPath('userData'));
-  }
-  return customPath || pathService.getDefaultPath(defaultModule);
-}
-
 function getDirectorySize(dirPath: string): number {
   let totalSize = 0;
   try {
@@ -98,15 +89,15 @@ export function fileHandlers() {
       let folderPath: string;
       
       if (pathOrModule === 'worldbook' || pathOrModule === 'worldbooks') {
-        folderPath = resolveSettingPath('worldBookPath', 'worldbook');
+        folderPath = pathService.getDefaultPath('worldbook');
       } else if (pathOrModule === 'character' || pathOrModule === 'characters') {
-        folderPath = resolveSettingPath('characterPath', 'character');
+        folderPath = pathService.getDefaultPath('character');
       } else if (pathOrModule === 'avatar' || pathOrModule === 'avatars') {
-        folderPath = resolveSettingPath('avatarPath', 'avatar');
+        folderPath = pathService.getDefaultPath('avatar');
       } else if (pathOrModule === 'creative' || pathOrModule === 'creatives') {
-        folderPath = resolveSettingPath('creativePath', 'creative');
+        folderPath = pathService.getDefaultPath('creative');
       } else if (pathOrModule === 'memory' || pathOrModule === 'memories') {
-        folderPath = resolveSettingPath('memoryPath', 'memory');
+        folderPath = pathService.getDefaultPath('memory');
       } else {
         folderPath = pathOrModule;
       }

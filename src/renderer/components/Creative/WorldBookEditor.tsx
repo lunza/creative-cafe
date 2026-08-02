@@ -160,10 +160,8 @@ const WorldBookEditor: React.FC = () => {
     const handleStreamComplete = (data: any) => {
       let generated = '';
       if (data?.data) {
-        if (activeEngine.api_mode === 'chat_completion' && data.data.choices?.[0]?.message?.content) {
+        if (data.data.choices?.[0]?.message?.content) {
           generated = data.data.choices[0].message.content;
-        } else if (activeEngine.api_mode === 'text_completion' && data.data.choices?.[0]?.text) {
-          generated = data.data.choices[0].text;
         }
       }
 

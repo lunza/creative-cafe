@@ -1,8 +1,9 @@
 import { useEffect } from 'react';
-import { Layout, ConfigProvider, theme } from 'antd';
+import { Layout } from 'antd';
 import { useUIStore } from './stores/uiStore';
 import Sidebar from './components/Layout/Sidebar';
 import Header from './components/Layout/Header';
+import { ThemeProvider } from './components/Common/ThemeProvider';
 import PageTransition from './components/Layout/PageTransition';
 import Dashboard from './components/Dashboard/Dashboard';
 import { findRouteComponent } from './routeConfig';
@@ -14,15 +15,7 @@ import './styles/compact.css';
 const { Content } = Layout;
 
 function App() {
-  const { activeTab, theme: appTheme, compactMode, animationEnabled } = useUIStore();
-
-  useEffect(() => {
-    if (appTheme === 'dark') {
-      document.body.classList.add('dark');
-    } else {
-      document.body.classList.remove('dark');
-    }
-  }, [appTheme]);
+  const { activeTab, compactMode, animationEnabled } = useUIStore();
 
   useEffect(() => {
     if (compactMode) {
@@ -50,23 +43,19 @@ function App() {
   };
 
   return (
-    <ConfigProvider
-      theme={{
-        algorithm: appTheme === 'dark' ? theme.darkAlgorithm : theme.defaultAlgorithm
-      }}
-    >
-      <Layout className={`app-layout ${appTheme === 'dark' ? 'dark' : ''}`}>
+    <ThemeProvider>
+      <Layout className="app-layout">
         <Sidebar />
         <Layout>
           <Header />
-          <Content className={`app-content ${appTheme === 'dark' ? 'dark' : ''}`}>
+          <Content className="app-content">
             <PageTransition activeKey={activeTab}>
               {renderContent()}
             </PageTransition>
           </Content>
         </Layout>
       </Layout>
-    </ConfigProvider>
+    </ThemeProvider>
   );
 }
 

@@ -33,6 +33,7 @@ import type {
   GameType
 } from '../../shared/types/game.types';
 import type { AIEngineCapabilities } from './setting';
+import type { AgentModeStatus, AgentModeOverride, AgentConfig } from '../../shared/types/agent-center.types';
 
 declare global {
   interface Window {
@@ -61,7 +62,6 @@ interface ElectronAPI {
     import: (sourcePath: string, fileName: string) => Promise<{ success: boolean; targetPath?: string; error?: string }>;
     optimize: (path: string) => Promise<any>;
     getDirectory: () => Promise<string>;
-    setDirectory: (dir: string) => Promise<{ success: boolean; worldBookDir: string }>;
     readTags: (path: string) => Promise<any>;
     writeTags: (path: string, data: any) => Promise<any>;
     deleteTags: (path: string) => Promise<any>;
@@ -107,6 +107,24 @@ interface ElectronAPI {
       path: string
     ) => Promise<{ success: boolean; approvedCount: number; error?: string }>;
   };
+  // 世界书编写智能体 API（Spec: implement-worldbook-authoring-agent / Task 5.1）
+  // 5 个 invoke 通道 + 2 个事件流监听器
+  worldBookAgent: {
+    /** 启动编写会话（入参 {userPrompt, worldBookPath, allowedWorldBookPaths, config?}） */
+    run: (params: any) => Promise<any>;
+    /** 取消指定会话 */
+    cancel: (sessionId: string) => Promise<any>;
+    /** 查询会话状态（无 sessionId 时返回所有活跃会话） */
+    status: (sessionId?: string) => Promise<any>;
+    /** 从断点恢复会话 */
+    resume: (sessionId: string) => Promise<any>;
+    /** 回答 PLANNING 阶段的澄清问题 */
+    answer: (sessionId: string, answers: any) => Promise<any>;
+    /** 订阅进度事件，返回取消订阅函数 */
+    onProgress: (callback: (data: any) => void) => () => void;
+    /** 订阅澄清问题事件（预留），返回取消订阅函数 */
+    onClarify: (callback: (data: any) => void) => () => void;
+  };
   character: {
     list: () => Promise<any[]>;
     read: (path: string) => Promise<any>;
@@ -115,7 +133,6 @@ interface ElectronAPI {
     delete: (path: string) => Promise<any>;
     optimize: (path: string) => Promise<any>;
     getDirectory: () => Promise<string>;
-    setDirectory: (dir: string) => Promise<{ success: boolean }>;
     import: (sourcePath: string, fileName: string) => Promise<{ success: boolean; targetPath?: string; error?: string }>;
     testRead: (path: string) => Promise<any>;
     getWorldBookRelations: (path: string) => Promise<Array<{ worldBookPath: string; enabled: boolean; priority: number; filterTags?: string[] }>>;
@@ -131,7 +148,6 @@ interface ElectronAPI {
     write: (path: string, data: any) => Promise<any>;
     delete: (path: string) => Promise<any>;
     getDirectory: () => Promise<string>;
-    setDirectory: (dir: string) => Promise<{ success: boolean; avatarDir: string }>;
   };
   plugin: {
     getAvailable: (forceRefresh?: boolean) => Promise<any[]>;
@@ -139,7 +155,6 @@ interface ElectronAPI {
     toggle: (pluginId: string, enabled: boolean) => Promise<{ success: boolean; error?: string }>;
     uninstall: (pluginId: string) => Promise<{ success: boolean; error?: string }>;
     getDirectory: () => Promise<string>;
-    setDirectory: (dir: string) => Promise<{ success: boolean; pluginDir: string }>;
     checkUpdates: () => Promise<{ success: boolean; plugins?: any[]; error?: string }>;
     updateDescriptions: (translatedPlugins: any[]) => Promise<{ success: boolean; error?: string }>;
     install: (url: string, branch?: string) => Promise<{
@@ -362,6 +377,7 @@ interface ElectronAPI {
       }
     ) => Promise<{ success: boolean; items?: Array<{ id: string; source: string; content: string; score: number; metadata: Record<string, any> }>; vectorItems?: any[]; keywordItems?: any[]; error?: string }>;
     compress: (items: Array<{ id: string; source: string; content: string; score: number }>, maxTokens: number) => Promise<{ success: boolean; compressed?: string; error?: string }>;
+    retrieveWithHybrid: (query: string, options: any) => Promise<{ success: boolean; items?: Array<{ id: string; source: string; content: string; score: number; metadata: Record<string, any> }>; error?: string }>;
   };
 
   // 世界书关键词匹配 API
@@ -817,19 +833,91 @@ interface ElectronAPI {
       error?: string;
       timestamp: number;
     }) => void) => () => void;
+
+    /** Agent 模式管理 API */
+    mode: {
+      /** 获取完整模式状态 */
+      getStatus: () => Promise<{ ok: boolean; status?: AgentModeStatus; error?: string }>;
+      /** 查询 Agent 模式是否激活 */
+      isModeActive: () => Promise<{ ok: boolean; active?: boolean; error?: string }>;
+      /** 设置覆盖开关（auto / force-on / force-off） */
+      setOverride: (override: AgentModeOverride) => Promise<{ ok: boolean; status?: AgentModeStatus; error?: string }>;
+      /** 订阅模式变更事件，返回取消订阅函数 */
+      onModeChanged: (callback: (status: AgentModeStatus) => void) => () => void;
+    };
+
+    /** Agent 配置管理 API（Spec: add-agent-mode-management-and-center / Task 5.2） */
+    config: {
+      /** 列出全部智能体配置 */
+      list: () => Promise<{ ok: boolean; configs?: AgentConfig[]; error?: string }>;
+      /** 获取单个智能体配置 */
+      get: (id: string) => Promise<{ ok: boolean; config?: AgentConfig; error?: string }>;
+      /** 更新智能体配置（Partial<AgentConfig>） */
+      update: (id: string, patch: Partial<AgentConfig>) => Promise<{ ok: boolean; config?: AgentConfig; error?: string }>;
+      /** 切换智能体启用/禁用状态 */
+      toggle: (id: string) => Promise<{ ok: boolean; config?: AgentConfig; error?: string }>;
+      /** 更新技能白名单 */
+      updateSkills: (id: string, skills: string[]) => Promise<{ ok: boolean; config?: AgentConfig; error?: string }>;
+      /** 创建用户自定义智能体 */
+      create: (config: Omit<AgentConfig, 'id' | 'createdAt' | 'updatedAt' | 'isSystem'>) => Promise<{ ok: boolean; config?: AgentConfig; error?: string }>;
+      /** 删除用户自定义智能体（系统预置不可删除） */
+      delete: (id: string) => Promise<{ ok: boolean; error?: string }>;
+      /** 订阅配置变更事件，返回取消订阅函数 */
+      onConfigChanged: (callback: (data: { agentId: string; action: 'created' | 'updated' | 'deleted' | 'toggled' | 'skills-updated' }) => void) => () => void;
+    };
+
+    /** 故障转移 API（Spec: optimize-agent-interaction-from-openclaw / Task 10） */
+    failover: {
+      /** 获取备用 provider 列表 */
+      getProviders: () => Promise<{
+        success: boolean;
+        providers?: Array<{
+          provider: string;
+          model: string;
+          apiKey: string;
+          baseUrl: string;
+        }>;
+        error?: string;
+      }>;
+      /** 设置备用 provider 列表 */
+      setProviders: (providers: Array<{
+        provider: string;
+        model: string;
+        apiKey: string;
+        baseUrl: string;
+      }>) => Promise<{ success: boolean; error?: string }>;
+      /** 订阅故障转移事件，返回取消订阅函数 */
+      onFailover: (callback: (data: {
+        type: 'retry' | 'switch';
+        fromProvider?: string;
+        toProvider?: string;
+        toModel?: string;
+        reason: string;
+        attempt?: number;
+        timestamp: number;
+      }) => void) => () => void;
+    };
   };
 
   /** 技能系统 API（Task 14） */
   skill: {
     list: () => Promise<{
       success: boolean;
-      skills?: Array<{ name: string; title?: string; description?: string }>;
+      skills?: Array<{ name: string; title?: string; description?: string; emoji?: string; source?: string; userInvocable?: boolean }>;
+      error?: string;
     }>;
     invoke: (args: {
       skillName: string;
       args: Record<string, unknown>;
       context?: any;
     }) => Promise<{ success: boolean; result?: any; error?: string }>;
+    importFromDir: (dirPath: string) => Promise<{ success: boolean; skillName?: string; error?: string }>;
+    importFromUrl: (url: string) => Promise<{ success: boolean; skillName?: string; error?: string }>;
+    uninstall: (skillName: string) => Promise<{ success: boolean; error?: string }>;
+    getDetail: (skillName: string) => Promise<{ success: boolean; detail?: { name: string; description: string; body: string; source: string; filePath: string }; error?: string }>;
+    create: (params: { name: string; description: string; emoji?: string; body: string }) => Promise<{ success: boolean; skillName?: string; error?: string }>;
+    edit: (params: { name: string; description: string; emoji?: string; body: string }) => Promise<{ success: boolean; skillName?: string; error?: string }>;
+    getPromptSnippet: () => Promise<{ success: boolean; prompt: string; error?: string }>;
   };
 
   /** Agent 记忆检索 API（Task 8） */
@@ -958,6 +1046,120 @@ interface ElectronAPI {
         userMessage?: string;
         memoryId?: string;
       };
+      error?: string;
+    }>;
+  };
+
+  // 网络搜索 API（Spec: add-agent-web-search-tool / Task 8）
+  webSearch: {
+    /** 测试连接（设置面板"测试连接"按钮调用） */
+    test: (config: { provider: string; apiKey: string; endpoint: string }) => Promise<{
+      ok: boolean;
+      data?: { resultCount: number; sampleResult?: { title: string; snippet: string; url: string; source: string } };
+      error?: string;
+    }>;
+    /** 直接搜索（读取已保存的 webSearch 配置） */
+    search: (args: { query: string; maxResults?: number }) => Promise<{
+      ok: boolean;
+      data?: Array<{ title: string; snippet: string; url: string; source: string }>;
+      error?: string;
+    }>;
+  };
+
+  /** 会话管理 API（Task 6: 会话管理后端） */
+  session: {
+    /** 创建新会话（默认标题"新对话"） */
+    create: (args: { characterCardId: string; title?: string }) => Promise<{
+      success: boolean;
+      session?: {
+        sessionId: string;
+        characterCardId: string;
+        title: string;
+        createdAt: number;
+        lastActiveAt: number;
+        messageCount: number;
+        metadata?: Record<string, unknown>;
+      };
+      error?: string;
+    }>;
+    /** 列出当前角色所有会话（按最后活跃时间降序） */
+    list: (characterCardId: string) => Promise<{
+      success: boolean;
+      sessions?: Array<{
+        sessionId: string;
+        characterCardId: string;
+        title: string;
+        createdAt: number;
+        lastActiveAt: number;
+        messageCount: number;
+        metadata?: Record<string, unknown>;
+      }>;
+      error?: string;
+    }>;
+    /** 切换会话（更新 lastActiveAt） */
+    switch: (args: { characterCardId: string; sessionId: string }) => Promise<{
+      success: boolean;
+      session?: {
+        sessionId: string;
+        characterCardId: string;
+        title: string;
+        createdAt: number;
+        lastActiveAt: number;
+        messageCount: number;
+        metadata?: Record<string, unknown>;
+      };
+      error?: string;
+    }>;
+    /** 删除会话（同时删除消息历史文件） */
+    delete: (args: { characterCardId: string; sessionId: string }) => Promise<{
+      success: boolean;
+      session?: {
+        sessionId: string;
+        characterCardId: string;
+        title: string;
+        createdAt: number;
+        lastActiveAt: number;
+        messageCount: number;
+        metadata?: Record<string, unknown>;
+      };
+      error?: string;
+    }>;
+    /** 重命名会话标题 */
+    rename: (args: { characterCardId: string; sessionId: string; newTitle: string }) => Promise<{
+      success: boolean;
+      session?: {
+        sessionId: string;
+        characterCardId: string;
+        title: string;
+        createdAt: number;
+        lastActiveAt: number;
+        messageCount: number;
+        metadata?: Record<string, unknown>;
+      };
+      error?: string;
+    }>;
+    /** 保存会话消息历史 */
+    saveMessages: (args: {
+      characterCardId: string;
+      sessionId: string;
+      messages: Array<{ role: string; content: string; timestamp?: number; [key: string]: unknown }>;
+    }) => Promise<{
+      success: boolean;
+      session?: {
+        sessionId: string;
+        characterCardId: string;
+        title: string;
+        createdAt: number;
+        lastActiveAt: number;
+        messageCount: number;
+        metadata?: Record<string, unknown>;
+      };
+      error?: string;
+    }>;
+    /** 加载会话消息历史（文件不存在时返回空数组） */
+    loadMessages: (characterCardId: string, sessionId: string) => Promise<{
+      success: boolean;
+      messages?: Array<{ role: string; content: string; timestamp?: number; [key: string]: unknown }>;
       error?: string;
     }>;
   };

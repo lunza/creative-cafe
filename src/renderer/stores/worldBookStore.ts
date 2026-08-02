@@ -22,7 +22,6 @@ interface WorldBookState {
   writeWorldBook: (path: string, data: WorldBookData) => Promise<boolean>;
   deleteWorldBook: (path: string) => Promise<boolean>;
   optimizeWorldBook: (path: string) => Promise<boolean>;
-  setDirectory: (dir: string) => Promise<boolean>;
   getDirectory: () => Promise<string>;
   readTags: (worldBookPath: string) => Promise<WorldBookTagData | null>;
   writeTags: (worldBookPath: string, data: WorldBookTagData) => Promise<boolean>;
@@ -123,21 +122,6 @@ export const useWorldBookStore = create<WorldBookState>((set, get) => ({
       return false;
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to optimize world book';
-      set({ error: msg });
-      return false;
-    }
-  },
-
-  setDirectory: async (dir: string) => {
-    try {
-      const result = await window.electronAPI.worldBook.setDirectory(dir);
-      if (result && result.success) {
-        set({ worldBookDir: result.worldBookDir || dir });
-        return true;
-      }
-      return false;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to set world book directory';
       set({ error: msg });
       return false;
     }

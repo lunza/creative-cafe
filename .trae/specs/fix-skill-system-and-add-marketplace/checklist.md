@@ -1,0 +1,15 @@
+- [x] skill:list IPC handler 不再使用 `skillsLoaded` 永久缓存，每次调用重新加载
+- [x] skill:list 返回结果包含工作区技能（loadWorkspaceSkills 已接入）
+- [x] 用户点击系统顶部刷新按钮（页面 reload）后技能列表自动更新
+- [x] 6 个缺失技能的 SKILL.md 文件已创建且 frontmatter 格式正确
+- [x] 预置智能体的所有 skills 引用在技能面板中不再显示"技能未安装或已移除"
+- [x] 技能广场组件 SkillMarketplace.tsx 已创建并在 AgentCenter 中作为 Tab 显示
+- [x] 技能广场展示已安装技能列表，含名称/描述/来源/状态/操作列
+- [x] 从本地目录导入技能功能正常（选择目录 → 复制到工作区 → 注册 → 列表刷新）
+- [x] 从 URL 导入技能功能正常（输入 URL → 下载 → 解压 → 注册 → 列表刷新）
+- [x] 卸载功能仅对非内置技能可用，卸载后从列表消失
+- [x] 技能详情可查看 SKILL.md 完整内容
+- [x] 来源筛选器可按 builtin/workspace/imported 筛选技能
+- [x] 所有新增 IPC 通道在 preload.ts 和 electron.d.ts 中完成桥接
+- [x] `npx tsc --noEmit` 零新增错误（仅预存 preload.ts:45 类型错误）
+- [x] `npx vite build` 成功通过

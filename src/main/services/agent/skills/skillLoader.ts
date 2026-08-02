@@ -23,6 +23,11 @@ import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { parseSkillMd } from './skillContract';
 import type { SkillEntry, SkillSource } from './types';
+import { getUserDataPath } from '../../../utils/appPath';
+import * as https from 'https';
+import * as http from 'http';
+import { execSync } from 'child_process';
+import * as os from 'os';
 
 // ==================== 单文件加载 ====================
 
@@ -267,4 +272,365 @@ export function loadBuiltinSkillsSync(): SkillEntry[] {
   const entries = loadSkillsFromDirSync(dir, 'builtin');
   console.log(`[SkillLoader] Loaded ${entries.length} builtin skills (sync) from ${dir}`);
   return entries;
+}
+
+// ==================== 技能导入/卸载 ====================
+
+/**
+ * 从本地目录导入技能。
+ *
+ * 将源目录（包含 SKILL.md）复制到工作区技能目录 `<userDataPath>/skills/<dirName>/`。
+ * 使用 fsp.cp 递归复制目录。
+ *
+ * @param srcDir 源目录路径（包含 SKILL.md）
+ * @returns 加载后的 SkillEntry（source 设为 'workspace'），失败返回 null
+ */
+export async function importSkillFromDir(srcDir: string): Promise<SkillEntry | null> {
+  try {
+    const dirName = path.basename(srcDir);
+    const workspaceSkillsDir = path.join(getUserDataPath(), 'skills');
+    const targetDir = path.join(workspaceSkillsDir, dirName);
+
+    // 确保工作区技能目录存在
+    await fsp.mkdir(workspaceSkillsDir, { recursive: true });
+
+    // 如果目标目录已存在，先删除（覆盖导入）
+    try {
+      await fsp.access(targetDir);
+      await fsp.rm(targetDir, { recursive: true, force: true });
+    } catch {
+      // 目标目录不存在，无需删除
+    }
+
+    // 递归复制目录
+    await fsp.cp(srcDir, targetDir, { recursive: true });
+
+    // 加载复制后的技能
+    const skillFile = path.join(targetDir, 'SKILL.md');
+    const entry = await loadSkillFile(skillFile, 'workspace');
+    if (!entry) {
+      console.error(`[SkillLoader] importSkillFromDir: failed to parse SKILL.md after copy: ${skillFile}`);
+      return null;
+    }
+    return entry;
+  } catch (err) {
+    console.error(`[SkillLoader] importSkillFromDir failed for ${srcDir}:`, err);
+    return null;
+  }
+}
+
+/**
+ * 从 URL 下载并导入技能。
+ *
+ * 下载 zip 归档到临时文件，解压后找到包含 SKILL.md 的目录，
+ * 复制到工作区技能目录 `<userDataPath>/skills/<skillName>/`。
+ *
+ * @param url 技能归档的下载 URL
+ * @returns 加载后的 SkillEntry（source 设为 'workspace'），失败返回 null
+ */
+export async function importSkillFromUrl(url: string): Promise<SkillEntry | null> {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-import-'));
+  const tmpZip = path.join(tmpDir, 'skill-archive');
+
+  try {
+    // 1. 下载到临时文件
+    await downloadFile(url, tmpZip);
+
+    // 2. 解压到临时目录
+    const extractDir = path.join(tmpDir, 'extracted');
+    fs.mkdirSync(extractDir, { recursive: true });
+
+    if (process.platform === 'win32') {
+      execSync(`powershell -Command "Expand-Archive -Path '${tmpZip}' -DestinationPath '${extractDir}' -Force"`);
+    } else {
+      execSync(`tar -xf '${tmpZip}' -C '${extractDir}'`);
+    }
+
+    // 3. 查找包含 SKILL.md 的目录
+    const skillDir = findSkillDir(extractDir);
+    if (!skillDir) {
+      console.error(`[SkillLoader] importSkillFromUrl: no SKILL.md found in extracted archive from ${url}`);
+      return null;
+    }
+
+    // 4. 复制到工作区技能目录
+    const skillName = path.basename(skillDir);
+    const workspaceSkillsDir = path.join(getUserDataPath(), 'skills');
+    const targetDir = path.join(workspaceSkillsDir, skillName);
+
+    await fsp.mkdir(workspaceSkillsDir, { recursive: true });
+
+    // 如果目标目录已存在，先删除（覆盖导入）
+    try {
+      await fsp.access(targetDir);
+      await fsp.rm(targetDir, { recursive: true, force: true });
+    } catch {
+      // 目标目录不存在
+    }
+
+    await fsp.cp(skillDir, targetDir, { recursive: true });
+
+    // 5. 加载技能
+    const skillFile = path.join(targetDir, 'SKILL.md');
+    const entry = await loadSkillFile(skillFile, 'workspace');
+    if (!entry) {
+      console.error(`[SkillLoader] importSkillFromUrl: failed to parse SKILL.md after copy: ${skillFile}`);
+      return null;
+    }
+    return entry;
+  } catch (err) {
+    console.error(`[SkillLoader] importSkillFromUrl failed for ${url}:`, err);
+    return null;
+  } finally {
+    // 清理临时文件
+    try {
+      await fsp.rm(tmpDir, { recursive: true, force: true });
+    } catch {
+      // 清理失败不影响主流程
+    }
+  }
+}
+
+/**
+ * 卸载（删除）工作区技能。
+ *
+ * 内置技能不允许卸载（返回 false）。
+ * 工作区技能：删除 `<userDataPath>/skills/<skillName>/` 目录。
+ *
+ * @param skillName 技能名
+ * @returns 是否成功删除
+ */
+export async function uninstallSkill(skillName: string): Promise<boolean> {
+  try {
+    // 检查是否为内置技能
+    const builtinSkills = loadBuiltinSkillsSync();
+    const isBuiltin = builtinSkills.some(entry => entry.skill.name === skillName);
+    if (isBuiltin) {
+      console.warn(`[SkillLoader] uninstallSkill: cannot uninstall builtin skill '${skillName}'`);
+      return false;
+    }
+
+    // 删除工作区技能目录
+    const skillDir = path.join(getUserDataPath(), 'skills', skillName);
+    try {
+      await fsp.access(skillDir);
+      await fsp.rm(skillDir, { recursive: true, force: true });
+      return true;
+    } catch {
+      // 目录不存在，视为卸载失败
+      console.warn(`[SkillLoader] uninstallSkill: skill directory not found: ${skillDir}`);
+      return false;
+    }
+  } catch (err) {
+    console.error(`[SkillLoader] uninstallSkill failed for '${skillName}':`, err);
+    return false;
+  }
+}
+
+// ==================== 技能创建/编辑 ====================
+
+/**
+ * 技能表单数据（创建/编辑通用）。
+ */
+export interface SkillFormData {
+  name: string;
+  description: string;
+  emoji?: string;
+  body: string;
+}
+
+/**
+ * 组装 SKILL.md 文件内容。
+ *
+ * 格式：
+ *  ---
+ *  name: <技能名>
+ *  description: "<描述>"
+ *  emoji: <emoji>
+ *  user-invocable: true
+ *  disable-model-invocation: false
+ *  ---
+ *  <正文内容>
+ */
+function assembleSkillMd(params: SkillFormData): string {
+  const lines: string[] = ['---'];
+  lines.push(`name: ${params.name}`);
+  // 描述中可能包含特殊字符，用双引号包裹并转义内部双引号
+  const escapedDesc = params.description.replace(/"/g, '\\"');
+  lines.push(`description: "${escapedDesc}"`);
+  if (params.emoji) {
+    lines.push(`emoji: ${params.emoji}`);
+  }
+  lines.push('user-invocable: true');
+  lines.push('disable-model-invocation: false');
+  lines.push('---');
+  lines.push('');
+  lines.push(params.body);
+  return lines.join('\n');
+}
+
+/**
+ * 创建工作区技能（写入 SKILL.md）。
+ *
+ * 在 <userDataPath>/skills/<name>/ 目录下创建 SKILL.md 文件。
+ * 校验技能名格式（仅小写字母/数字/连字符）和目录唯一性。
+ *
+ * @param params 技能表单数据
+ * @returns 加载后的 SkillEntry，失败返回 null
+ */
+export async function createSkill(params: SkillFormData): Promise<SkillEntry | null> {
+  // 校验技能名格式
+  if (!/^[a-z0-9-]+$/.test(params.name)) {
+    console.error(`[SkillLoader] createSkill: invalid skill name '${params.name}' (only lowercase letters, digits, and hyphens allowed)`);
+    return null;
+  }
+
+  const workspaceSkillsDir = path.join(getUserDataPath(), 'skills');
+  const targetDir = path.join(workspaceSkillsDir, params.name);
+  const skillFile = path.join(targetDir, 'SKILL.md');
+
+  // 检查目录唯一性
+  try {
+    await fsp.access(targetDir);
+    console.error(`[SkillLoader] createSkill: skill directory already exists: ${targetDir}`);
+    return null;
+  } catch {
+    // 目录不存在，继续创建
+  }
+
+  try {
+    // 创建目录
+    await fsp.mkdir(targetDir, { recursive: true });
+
+    // 组装并写入 SKILL.md
+    const content = assembleSkillMd(params);
+    await fsp.writeFile(skillFile, content, 'utf-8');
+
+    // 加载写入的技能
+    const entry = await loadSkillFile(skillFile, 'workspace');
+    if (!entry) {
+      console.error(`[SkillLoader] createSkill: failed to parse SKILL.md after write: ${skillFile}`);
+      return null;
+    }
+    return entry;
+  } catch (err) {
+    console.error(`[SkillLoader] createSkill failed for '${params.name}':`, err);
+    return null;
+  }
+}
+
+/**
+ * 编辑工作区技能（更新 SKILL.md）。
+ *
+ * 读取已有 SKILL.md，更新 description/emoji/body，写回文件。
+ * 内置技能不可编辑（拒绝操作）。
+ *
+ * @param params 技能表单数据（name 用于定位目录，不可修改）
+ * @returns 加载后的 SkillEntry，失败返回 null
+ */
+export async function editSkill(params: SkillFormData): Promise<SkillEntry | null> {
+  // 检查是否为内置技能
+  const builtinSkills = loadBuiltinSkillsSync();
+  const isBuiltin = builtinSkills.some(entry => entry.skill.name === params.name);
+  if (isBuiltin) {
+    console.error(`[SkillLoader] editSkill: cannot edit builtin skill '${params.name}'`);
+    return null;
+  }
+
+  const skillFile = path.join(getUserDataPath(), 'skills', params.name, 'SKILL.md');
+
+  // 检查文件是否存在
+  try {
+    await fsp.access(skillFile);
+  } catch {
+    console.error(`[SkillLoader] editSkill: SKILL.md not found: ${skillFile}`);
+    return null;
+  }
+
+  try {
+    // 组装并写入 SKILL.md（保留 frontmatter 中的高级字段在此简化为覆盖）
+    const content = assembleSkillMd(params);
+    await fsp.writeFile(skillFile, content, 'utf-8');
+
+    // 加载更新后的技能
+    const entry = await loadSkillFile(skillFile, 'workspace');
+    if (!entry) {
+      console.error(`[SkillLoader] editSkill: failed to parse SKILL.md after update: ${skillFile}`);
+      return null;
+    }
+    return entry;
+  } catch (err) {
+    console.error(`[SkillLoader] editSkill failed for '${params.name}':`, err);
+    return null;
+  }
+}
+
+// ==================== 导入辅助函数 ====================
+
+/**
+ * 下载文件到指定路径（使用 Node.js 内置 http/https 模块，支持重定向）。
+ */
+function downloadFile(url: string, dest: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const protocol = url.startsWith('https:') ? https : http;
+    const request = protocol.get(url, (response) => {
+      // 处理重定向（3xx）
+      if (
+        response.statusCode === 301 ||
+        response.statusCode === 302 ||
+        response.statusCode === 307 ||
+        response.statusCode === 308
+      ) {
+        const redirectUrl = response.headers.location;
+        if (redirectUrl) {
+          response.resume();
+          downloadFile(redirectUrl, dest).then(resolve).catch(reject);
+          return;
+        }
+      }
+      if (response.statusCode !== 200) {
+        reject(new Error(`Download failed: HTTP ${response.statusCode}`));
+        return;
+      }
+      const fileStream = fs.createWriteStream(dest);
+      response.pipe(fileStream);
+      fileStream.on('finish', () => {
+        fileStream.close();
+        resolve();
+      });
+      fileStream.on('error', reject);
+    });
+    request.on('error', reject);
+  });
+}
+
+/**
+ * 在指定目录中查找包含 SKILL.md 的目录。
+ * 优先查找一级子目录，然后查找根目录本身。
+ */
+function findSkillDir(searchDir: string): string | null {
+  // 检查一级子目录
+  try {
+    const items = fs.readdirSync(searchDir);
+    for (const item of items) {
+      const itemPath = path.join(searchDir, item);
+      const stat = fs.statSync(itemPath);
+      if (stat.isDirectory()) {
+        const skillFile = path.join(itemPath, 'SKILL.md');
+        if (fs.existsSync(skillFile)) {
+          return itemPath;
+        }
+      }
+    }
+  } catch {
+    // 读取目录失败
+  }
+
+  // 检查根目录是否有 SKILL.md
+  const rootSkillFile = path.join(searchDir, 'SKILL.md');
+  if (fs.existsSync(rootSkillFile)) {
+    return searchDir;
+  }
+
+  return null;
 }

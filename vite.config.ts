@@ -3,6 +3,22 @@ import react from '@vitejs/plugin-react';
 import electron from 'vite-plugin-electron';
 import { builtinModules } from 'module';
 import path from 'path';
+import fs from 'fs';
+
+/** 复制 builtin-skills 目录到 dist/main/ 的 Vite 插件 */
+function copyBuiltinSkills() {
+  return {
+    name: 'copy-builtin-skills',
+    closeBundle() {
+      const src = path.resolve(__dirname, 'src/main/services/agent/skills/builtin-skills');
+      const dest = path.resolve(__dirname, 'dist/main/builtin-skills');
+      if (fs.existsSync(src)) {
+        fs.cpSync(src, dest, { recursive: true });
+        console.log(`[copyBuiltinSkills] Copied ${src} -> ${dest}`);
+      }
+    },
+  };
+}
 
 export default defineConfig({
   plugins: [
@@ -12,6 +28,7 @@ export default defineConfig({
         // Main process - do NOT bundle @xenova/transformers and native modules
         entry: 'src/main/index.ts',
         vite: {
+          plugins: [copyBuiltinSkills()],
           resolve: {
             alias: {
               '@shared': path.resolve(__dirname, './src/shared')

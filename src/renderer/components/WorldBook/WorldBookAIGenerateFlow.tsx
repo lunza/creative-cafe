@@ -1,6 +1,6 @@
 import React, { memo, useCallback } from 'react';
 import { Modal, Form, Input, Button, Card, Space, Typography, message } from 'antd';
-import { PlusOutlined, ThunderboltOutlined, LoadingOutlined } from '@ant-design/icons';
+import { PlusOutlined, ThunderboltOutlined, LoadingOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import WorldBookTemplateSelector from './WorldBookTemplateSelector';
 import WorldBookGenerateModal from './WorldBookGenerateModal';
 import { createDefaultEntry } from '../../utils/worldBookUtils';
@@ -46,6 +46,8 @@ export interface WorldBookAIGenerateFlowProps {
   onCreateFromAI: (name: string, description: string, entries: any[]) => void | Promise<void>;
   /** 从角色信息生成世界书 */
   onGenerateFromCharacters: (charactersInfo: string, instructions: string) => Promise<{ name: string; description: string; entries: any[] }>;
+  /** 审核新生成条目（打开审核 Modal） */
+  onAuditEntry?: (entry: any) => void;
 }
 
 const WorldBookAIGenerateFlow: React.FC<WorldBookAIGenerateFlowProps> = ({
@@ -60,6 +62,7 @@ const WorldBookAIGenerateFlow: React.FC<WorldBookAIGenerateFlowProps> = ({
   onSaveAddedEntries,
   onCreateFromAI,
   onGenerateFromCharacters,
+  onAuditEntry,
 }) => {
   const {
     isCreateModalOpen,
@@ -283,6 +286,15 @@ const WorldBookAIGenerateFlow: React.FC<WorldBookAIGenerateFlowProps> = ({
                     }}>
                       {entry.content || '无'}
                     </div>
+                    <div style={{ marginTop: 8, textAlign: 'right' }}>
+                      <Button
+                        size="small"
+                        icon={<SafetyCertificateOutlined />}
+                        onClick={() => onAuditEntry?.(entry)}
+                      >
+                        审核
+                      </Button>
+                    </div>
                   </Card>
                 ))}
               </Card>
@@ -433,6 +445,15 @@ const WorldBookAIGenerateFlow: React.FC<WorldBookAIGenerateFlowProps> = ({
                       borderRadius: 4,
                     }}>
                       {entry.content || '无'}
+                    </div>
+                    <div style={{ marginTop: 8, textAlign: 'right' }}>
+                      <Button
+                        size="small"
+                        icon={<SafetyCertificateOutlined />}
+                        onClick={() => onAuditEntry?.(entry)}
+                      >
+                        审核
+                      </Button>
                     </div>
                   </Card>
                 ))}

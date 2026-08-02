@@ -1,6 +1,6 @@
 // 角色对话业务逻辑Hooks
 
-import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { useState, useReducer, useCallback, useRef, useEffect, useMemo } from 'react';
 import { message } from 'antd';
 import { useSettingStore } from '../../../stores/settingStore';
 import { useCharacterChatStore } from '../../../stores/characterChatStore';
@@ -8,13 +8,22 @@ import { useLogStore } from '../../../stores/logStore';
 // 表情显示系统状态（Spec: add-character-expression-system / Task 9）
 // 使用 useExpressionStore.getState() 在非 React 上下文（requestAIResponse 回调内）命令式读取可用情绪键
 import { useExpressionStore } from '../../../stores/expressionStore';
-import { ChatMessage, CharacterInfo, ChatState, UserPersona, EffectiveAIParams } from './CharacterDialogueChat.types';
+import { ChatMessage, CharacterInfo, UserPersona, EffectiveAIParams } from './CharacterDialogueChat.types';
+import { chatReducer, initialChatState, type ToolCallInfo } from './chatReducer';
 import { ChatEngineFactory } from '../../Common/ChatEngine/ChatEngine.factory';
 import { AIEngineConfig, AIResponse, getDefaultEngineCapabilities } from '../../Common/ChatEngine/ChatEngine.types';
 import { usePromptBuilder } from './usePromptBuilder';
+import { useAgentMode } from '../../../hooks/useAgentMode';
 import { buildAssistModePrompt, buildAsyncTableOrganizeInstructions, buildStopSequences, buildRoleAnchorMessage, buildContinueNudgePrompt, buildLengthGuidancePrompt, buildLanguagePrompt, buildUserReplySystemPrompt, buildStopSequencesForUserReply, buildPolishInputSystemPrompt, buildExpressionPrompt, parseExpressionFromContent } from './PromptBuilder';
 import { TokenCounter, ContextTruncator, DEFAULT_MAX_TOKENS } from './TokenManagement';
 import type { TruncationConfig } from './TokenManagement/types';
+import {
+  shouldCompact,
+  splitMessages,
+  buildSummaryPrompt,
+  createSummaryMessage,
+  KEEP_RECENT_ROUNDS,
+} from './contextCompactor';
 import { nGramJaccard, overlapRate } from './utils/similarityUtils';
 import { stripThinkingTags } from './utils/messageProcessor';
 import {
@@ -22,6 +31,7 @@ import {
   shouldTriggerIncrementalVectorize,
   extractRecentMessagesForVectorize,
 } from './utils/chatHistoryRagUtils';
+import { recognizeIntent, getIntentSkillRecommendations, buildIntentPrompt, type IntentResult } from './IntentRecognizer';
 
 // ==================== 去重检测配置（Spec: optimize-chat-ai-intelligence / Task 5） ====================
 
@@ -326,12 +336,25 @@ export function usePersonas() {
   return { personas, loading };
 }
 
+// ==================== 会话管理类型（Spec: optimize-agent-interaction-from-openclaw / M2-Task7） ====================
+
+interface ChatSession {
+  sessionId: string;
+  characterCardId: string;
+  title: string;
+  createdAt: number;
+  lastActiveAt: number;
+  messageCount: number;
+  metadata?: Record<string, unknown>;
+}
+
 // ==================== 主对话 Hook ====================
 
 export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
   const setting = useSettingStore(state => state.setting);
   const { saveTestChat } = useCharacterChatStore();
   const addLog = useLogStore(state => state.addLog);
+  const { isActive: isAgentModeActive } = useAgentMode();
 
   useEffect(() => {
     if (setting === null) {
@@ -339,12 +362,11 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     }
   }, []);
 
-  const [state, setState] = useState<ChatState>({
-    messages: [],
-    isLoading: false,
-    isStreaming: false,
-    error: null,
-  });
+  const [state, dispatch] = useReducer(chatReducer, initialChatState);
+  // stateRef 在每次渲染后同步更新，供异步回调（engine.onStream/onComplete/onError 等）读取最新 state，
+  // 避免闭包陈旧问题（useCallback 闭包中的 state 是渲染时的快照）
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   const { config: characterConfig, updateConfig, resetParameters, getEffectiveParams } = useCharacterConfig(characterInfo.characterCardId);
   const { personas, loading: personasLoading } = usePersonas();
@@ -386,6 +408,9 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
   // responseLengthHistoryRef：维护最近 20 轮回复字符数，供 shouldStrengthenLength 检测连续短回复
   const requestStartTimeRef = useRef<number>(0);
   const responseLengthHistoryRef = useRef<number[]>([]);
+
+  // 会话管理状态（Spec: optimize-agent-interaction-from-openclaw / M2-Task7）
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
 
   const selectedPersonaId = characterConfig?.selectedPersonaId;
   const selectedPersona = useMemo(() => {
@@ -487,10 +512,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         if (cancelled) return;
         console.log('[CharacterDialogueChat] savedChat:', savedChat);
         if (savedChat && savedChat.messages && savedChat.messages.length > 0) {
-          setState(prev => ({
-            ...prev,
-            messages: savedChat.messages,
-          }));
+          dispatch({ type: 'UPDATE_MESSAGES', messages: savedChat.messages });
           messagesRef.current = savedChat.messages;
           addLog(`[CharacterDialogueChat] Loaded ${savedChat.messages.length} messages from history`, 'info');
         } else if (characterInfo.first_mes && characterInfo.first_mes.trim()) {
@@ -503,10 +525,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
             status: 'sent',
             speakerName: characterInfo.characterCardName,
           };
-          setState(prev => ({
-            ...prev,
-            messages: [firstMessage],
-          }));
+          dispatch({ type: 'UPDATE_MESSAGES', messages: [firstMessage] });
           messagesRef.current = [firstMessage];
           await saveChatToStore([firstMessage]);
           addLog(`[CharacterDialogueChat] First message loaded from character card (${characterInfo.first_mes.length} chars)`, 'info');
@@ -525,11 +544,207 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     messagesRef.current = state.messages;
   }, [state.messages]);
 
+  // 订阅工具调用事件（Spec: optimize-agent-interaction-from-openclaw / M2-Task5）
+  // phase='start' 时创建 pending 状态的 ToolCallInfo，phase='end' 时更新为 success/error。
+  // 工具调用 ID 由 name+timestamp 组合生成，确保 start/end 配对。
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.agent.onToolCall((data) => {
+      const toolCallId = `${data.name}-${data.timestamp}`;
+      if (data.phase === 'start') {
+        dispatch({
+          type: 'TOOL_CALL_UPDATE',
+          toolCall: {
+            id: toolCallId,
+            toolName: data.name,
+            args: data.args,
+            status: 'pending',
+            startTime: data.timestamp,
+          },
+        });
+      } else if (data.phase === 'end') {
+        const existing = stateRef.current.toolCalls[toolCallId];
+        const isError = data.result && typeof data.result === 'object' && 'error' in data.result;
+        dispatch({
+          type: 'TOOL_CALL_UPDATE',
+          toolCall: {
+            id: toolCallId,
+            toolName: data.name,
+            args: existing?.args || data.args,
+            status: isError ? 'error' : 'success',
+            result: typeof data.result === 'string' ? data.result : (data.result !== undefined ? JSON.stringify(data.result) : undefined),
+            error: isError ? String((data.result as { error: unknown }).error) : undefined,
+            startTime: existing?.startTime || data.timestamp,
+            endTime: data.timestamp,
+          },
+        });
+      }
+    });
+    return () => { unsubscribe(); };
+  }, []);
+
+  // 订阅故障转移事件（Spec: optimize-agent-interaction-from-openclaw / M3-Task10）
+  // provider 切换时展示 toast 通知，重试时提示正在重试。
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.ai.failover.onFailover((data: {
+      type: 'retry' | 'switch';
+      toProvider?: string;
+      toModel?: string;
+      reason: string;
+      attempt?: number;
+    }) => {
+      if (data.type === 'switch') {
+        message.info(`已切换到备用模型 ${data.toModel || data.toProvider || '未知'}`);
+      } else if (data.type === 'retry') {
+        message.warning(`请求失败，正在重试（第 ${data.attempt || 1} 次）…`);
+      }
+    });
+    return () => { unsubscribe(); };
+  }, []);
+
   useEffect(() => {
     memoryTableEnabledRef.current = characterConfig?.memoryTableEnabled ?? false;
     memoryTableAutoOrganizeRef.current = characterConfig?.memoryTableAutoOrganize ?? false;
     memoryTableOrganizeModeRef.current = characterConfig?.memoryTableOrganizeMode ?? 'sync';
   }, [characterConfig?.memoryTableEnabled, characterConfig?.memoryTableAutoOrganize, characterConfig?.memoryTableOrganizeMode]);
+
+  // ==================== 会话管理（Spec: optimize-agent-interaction-from-openclaw / M2-Task7） ====================
+
+  const loadSessions = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.session.list(characterInfo.characterCardId);
+      if (result?.success && result.sessions) {
+        setSessions(result.sessions as ChatSession[]);
+      }
+    } catch {
+      // 静默失败
+    }
+  }, [characterInfo.characterCardId]);
+
+  const createNewSession = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.session.create({
+        characterCardId: characterInfo.characterCardId,
+      });
+      if (result?.success && result.session) {
+        dispatch({ type: 'SESSION_SWITCH', sessionId: result.session.sessionId });
+        dispatch({ type: 'CLEAR_MESSAGES' });
+        messagesRef.current = [];
+        await loadSessions();
+        addLog(`[Session] Created new session: ${result.session.sessionId}`, 'info');
+      }
+    } catch (err) {
+      addLog(`[Session] Failed to create session: ${err}`, 'error');
+    }
+  }, [characterInfo.characterCardId, loadSessions, addLog]);
+
+  const switchToSession = useCallback(async (sessionId: string) => {
+    // 保存当前会话消息
+    const currentSessId = stateRef.current.currentSessionId;
+    if (currentSessId && messagesRef.current.length > 0) {
+      try {
+        await window.electronAPI.session.saveMessages({
+          characterCardId: characterInfo.characterCardId,
+          sessionId: currentSessId,
+          messages: messagesRef.current as unknown as Array<{ role: string; content: string; timestamp?: number; [key: string]: unknown }>,
+        });
+      } catch {
+        // 保存失败不阻塞切换
+      }
+    }
+
+    // 切换会话
+    try {
+      const result = await window.electronAPI.session.switch({
+        characterCardId: characterInfo.characterCardId,
+        sessionId,
+      });
+      if (result?.success) {
+        dispatch({ type: 'SESSION_SWITCH', sessionId });
+        // 加载目标会话消息
+        const msgResult = await window.electronAPI.session.loadMessages(
+          characterInfo.characterCardId,
+          sessionId
+        );
+        const loadedMessages = (msgResult?.success ? (msgResult.messages || []) : []) as unknown as ChatMessage[];
+        dispatch({ type: 'UPDATE_MESSAGES', messages: loadedMessages });
+        messagesRef.current = loadedMessages;
+        await loadSessions();
+        addLog(`[Session] Switched to session: ${sessionId}, loaded ${loadedMessages.length} messages`, 'info');
+      }
+    } catch (err) {
+      addLog(`[Session] Failed to switch session: ${err}`, 'error');
+      message.error('切换会话失败');
+    }
+  }, [characterInfo.characterCardId, loadSessions, addLog]);
+
+  const renameSession = useCallback(async (sessionId: string, newTitle: string) => {
+    try {
+      const result = await window.electronAPI.session.rename({
+        characterCardId: characterInfo.characterCardId,
+        sessionId,
+        newTitle,
+      });
+      if (result?.success) {
+        await loadSessions();
+        addLog(`[Session] Renamed session ${sessionId} to "${newTitle}"`, 'info');
+      }
+    } catch (err) {
+      addLog(`[Session] Failed to rename session: ${err}`, 'error');
+    }
+  }, [characterInfo.characterCardId, loadSessions, addLog]);
+
+  const deleteSession = useCallback(async (sessionId: string) => {
+    try {
+      const result = await window.electronAPI.session.delete({
+        characterCardId: characterInfo.characterCardId,
+        sessionId,
+      });
+      if (result?.success) {
+        await loadSessions();
+        addLog(`[Session] Deleted session: ${sessionId}`, 'info');
+      }
+    } catch (err) {
+      addLog(`[Session] Failed to delete session: ${err}`, 'error');
+    }
+  }, [characterInfo.characterCardId, loadSessions, addLog]);
+
+  // 组件挂载时加载会话列表，若无会话则创建默认会话（Spec: optimize-agent-interaction-from-openclaw / M2-Task7）
+  useEffect(() => {
+    const initSession = async () => {
+      try {
+        const result = await window.electronAPI.session.list(characterInfo.characterCardId);
+        if (result?.success && result.sessions && result.sessions.length > 0) {
+          setSessions(result.sessions as ChatSession[]);
+          // 切换到最近的会话（listSessions 已按 lastActiveAt 降序）
+          const latest = result.sessions[0];
+          dispatch({ type: 'SESSION_SWITCH', sessionId: latest.sessionId });
+          // 加载消息
+          const msgResult = await window.electronAPI.session.loadMessages(
+            characterInfo.characterCardId,
+            latest.sessionId
+          );
+          if (msgResult?.success && msgResult.messages && msgResult.messages.length > 0) {
+            const loadedMessages = msgResult.messages as unknown as ChatMessage[];
+            dispatch({ type: 'UPDATE_MESSAGES', messages: loadedMessages });
+            messagesRef.current = loadedMessages;
+          }
+        } else {
+          // 无会话，创建默认会话
+          const createResult = await window.electronAPI.session.create({
+            characterCardId: characterInfo.characterCardId,
+          });
+          if (createResult?.success && createResult.session) {
+            dispatch({ type: 'SESSION_SWITCH', sessionId: createResult.session.sessionId });
+            await loadSessions();
+          }
+        }
+      } catch {
+        // 静默失败，不影响主流程
+      }
+    };
+    initSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [characterInfo.characterCardId]);
 
   const getActiveEngineConfig = useCallback((): AIEngineConfig | null => {
     if (!setting || !setting.aiEngines || setting.aiEngines.length === 0) {
@@ -537,9 +752,9 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     }
     if (setting.activeEngineId) {
       const engine = setting.aiEngines.find((e: any) => e.id === setting.activeEngineId);
-      if (engine) return engine;
+      if (engine) return engine as AIEngineConfig;
     }
-    return setting.aiEngines[0];
+    return setting.aiEngines[0] as AIEngineConfig;
   }, [setting]);
 
   const { buildCompleteSystemPrompt, buildDialoguePrompt, buildContinuationPrompt } = usePromptBuilder(characterInfo, selectedPersona || undefined);
@@ -549,7 +764,8 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     targetMessageId: string,
     initialContent: string = '',
     promptType: 'dialogue' | 'continuation' = 'dialogue',
-    dedupConfig?: DedupConfig
+    dedupConfig?: DedupConfig,
+    intentResult?: IntentResult
   ) => {
     console.log('========================================');
     console.log('[DEBUG] requestAIResponse CALLED');
@@ -566,16 +782,9 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     console.log('[DEBUG-FLOW] activeEngine check done, has engine:', !!activeEngine);
     if (!activeEngine) {
       message.warning('请先在设置中配置AI引擎');
-      setState(prev => ({
-        ...prev,
-        messages: prev.messages.map(msg =>
-          msg.id === targetMessageId
-            ? { ...msg, content: msg.content || '请先配置AI引擎', status: 'error' as const }        
-            : msg
-        ),
-        isLoading: false,
-        isStreaming: false,
-      }));
+      const noEngineState = stateRef.current;
+      const noEngineMsg = noEngineState.messages.find(m => m.id === targetMessageId);
+      dispatch({ type: 'STREAM_ERROR', targetMessageId, content: noEngineMsg?.content || '请先配置AI引擎', error: null });
       return;
     }
 
@@ -594,17 +803,9 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     streamTimeout = setTimeout(() => {
       addLog(`[CharacterDialogueChat] Stream timeout reached (${streamTimeoutMs / 1000}s)`, 'warn');
       engine.cancelRequest();
-      setState(prev => ({
-        ...prev,
-        messages: prev.messages.map(msg =>
-          msg.id === targetMessageId
-            ? { ...msg, content: msg.content || '响应超时，请重试', status: 'error' as const }
-            : msg
-        ),
-        isLoading: false,
-        isStreaming: false,
-        error: '响应超时',
-      }));
+      const timeoutState = stateRef.current;
+      const timeoutMsg = timeoutState.messages.find(m => m.id === targetMessageId);
+      dispatch({ type: 'STREAM_ERROR', targetMessageId, content: timeoutMsg?.content || '响应超时，请重试', error: '响应超时' });
       message.error('响应超时，请重试');
       initialContentRef.current = '';
     }, streamTimeoutMs);
@@ -643,14 +844,15 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
           : undefined
       ),
       // 后端能力探测（Spec: Task 3.3）：优先用引擎显式配置，缺省按 api_mode 推断默认值
-      capabilities: activeEngine.capabilities || getDefaultEngineCapabilities(activeEngine.api_mode),
+      capabilities: activeEngine.capabilities || getDefaultEngineCapabilities(),
       // 能力感知透传（Spec: upgrade-ai-handler-multimodal-compatibility / Task 3.2 + 3.4）
       // 将用户思维链/工具调用开关透传给 ChatEngine，由其在 sendMessage 中按
       // supportsThinking / supportsToolCalling 做双条件守卫后再决定是否注入参数。
       enable_chain_of_thought: activeEngine.enable_chain_of_thought,
       use_function_calling: activeEngine.use_function_calling,
-      // Task 16.2: 智能体模式灰度开关透传（useAgent）
-      useAgent: activeEngine.useAgent,
+      // Task 16.2: 智能体模式开关透传（已迁移到 useAgentMode 共享状态）
+      useAgent: isAgentModeActive,
+      agentModeActive: isAgentModeActive,
     };
 
     console.log(`[CharacterDialogueChat] engineConfigWithParams.max_tokens:`, engineConfigWithParams.max_tokens);
@@ -955,6 +1157,11 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     addLog(`[CharacterDialogueChat] System prompt length: ${effectiveSystemPrompt.length}, tail: ...${promptTail}`, 'info');
     console.log('[DEBUG-FLOW] Step C: buildCompleteSystemPrompt done, length:', effectiveSystemPrompt.length);
 
+    // 用户意图注入 system prompt（Spec: optimize-agent-interaction-from-openclaw / M4-Task15）
+    if (intentResult && intentResult.intent !== 'DIALOGUE') {
+      effectiveSystemPrompt += buildIntentPrompt(intentResult);
+    }
+
     addLog('[CharacterDialogueChat] 提示词构建完成，开始 Token 管理', 'info');
     console.log('[DEBUG-FLOW] Step D: Starting token management');
 
@@ -1040,6 +1247,15 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         );
       }
 
+      // 上下文窗口守卫：dispatch token 用量（Spec: optimize-agent-interaction-from-openclaw / M3-Task11）
+      dispatch({
+        type: 'SET_TOKEN_USAGE',
+        usage: {
+          used: truncationAnalysis.truncatedTokens,
+          total: truncationConfig.maxContextTokens,
+        },
+      });
+
       messagesToUse = truncatedMessages;
     } else {
       // 🐛 Bug修复（重点，2026-07-26）：TokenManagement 关闭时的安全网。
@@ -1075,22 +1291,16 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         streamContentRef.current += chunk;
         const currentContent = streamContentRef.current;
 
-        setState(prev => {
-          const targetMsg = prev.messages.find(m => m.id === targetMessageId);
-          if (!targetMsg) return prev;
+        const streamState = stateRef.current;
+        const targetMsg = streamState.messages.find(m => m.id === targetMessageId);
+        if (!targetMsg) return;
 
-          const expectedPrefix = initialContentRef.current;
-          if (currentContent !== expectedPrefix && !currentContent.startsWith(expectedPrefix)) {    
-            addLog(`[CharacterDialogueChat] Content validation warning: content mismatch detected`, 'warn');
-          }
+        const expectedPrefix = initialContentRef.current;
+        if (currentContent !== expectedPrefix && !currentContent.startsWith(expectedPrefix)) {
+          addLog(`[CharacterDialogueChat] Content validation warning: content mismatch detected`, 'warn');
+        }
 
-          return {
-            ...prev,
-            messages: prev.messages.map(msg =>
-              msg.id === targetMessageId ? { ...msg, content: currentContent, status: 'sending' as const } : msg
-            ),
-          };
-        });
+        dispatch({ type: 'STREAM_CHUNK', targetMessageId, content: currentContent });
       }
     });
 
@@ -1122,16 +1332,9 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       }
 
       if (!finalContent) {
-        setState(prev => ({
-          ...prev,
-          messages: prev.messages.map(msg =>
-            msg.id === targetMessageId
-              ? { ...msg, content: msg.content || 'AI returned empty response', status: 'error' as const }
-              : msg
-          ),
-          isLoading: false,
-          isStreaming: false,
-        }));
+        const emptyState = stateRef.current;
+        const emptyMsg = emptyState.messages.find(m => m.id === targetMessageId);
+        dispatch({ type: 'STREAM_ERROR', targetMessageId, content: emptyMsg?.content || 'AI returned empty response', error: null });
         message.warning('AI returned empty response');
         return;
       }
@@ -1432,16 +1635,14 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         // 重置流式累积缓冲，使下一次生成从 initialContent 重新开始
         streamContentRef.current = initialContentRef.current;
         // 将目标消息重置为 sending 状态（保留 initialContent 作为内容前缀，避免内容闪烁）
-        setState(prev => ({
-          ...prev,
-          messages: prev.messages.map(msg =>
-            msg.id === targetMessageId
-              ? { ...msg, content: initialContentRef.current, status: 'sending' as const }
-              : msg
-          ),
-          isStreaming: true,
-          isLoading: true,
-        }));
+        const dedupRetryState = stateRef.current;
+        const dedupRetryMessages = dedupRetryState.messages.map(msg =>
+          msg.id === targetMessageId
+            ? { ...msg, content: initialContentRef.current, status: 'sending' as const }
+            : msg
+        );
+        dispatch({ type: 'UPDATE_MESSAGES', messages: dedupRetryMessages });
+        dispatch({ type: 'SET_LOADING', isLoading: true, isStreaming: true });
         // 触发重试（fire-and-forget，错误由 onError / catch 处理）
         // 注：requestAIResponse 在 useCallback 闭包内可访问自身引用
         requestAIResponse(contextMessages, targetMessageId, initialContentRef.current, promptType, nextDedupConfig).catch(err => {
@@ -1453,66 +1654,60 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         return;
       }
 
-      setState(prev => {
-        const targetMessage = prev.messages.find(msg => msg.id === targetMessageId);
-        if (!targetMessage) {
-          addLog(`[CharacterDialogueChat] Target message ${targetMessageId} not found in current messages`, 'error');
-          return prev;
-        }
+      const completeState = stateRef.current;
+      const targetMessage = completeState.messages.find(msg => msg.id === targetMessageId);
+      if (!targetMessage) {
+        addLog(`[CharacterDialogueChat] Target message ${targetMessageId} not found in current messages`, 'error');
+        return;
+      }
 
-        const existingContent = targetMessage.content;
-        // 异步模式下，tableEdit标签从显示内容中移除导致内容变短，需要跳过内容保护检查
-        const isAsyncMode = memoryTableAutoOrganizeRef.current && memoryTableOrganizeModeRef.current === 'async' && hasAsyncCommands;
-        // 【重点标记】修复：think 标签剥离导致的合法内容缩短也不应触发保护检查，
-        // 否则状态不更新 → UI 卡死在"正在生成中"（Spec: fix-think-strip-content-protection）
-        // 【重点标记】修复：辅助模式选项块剥离同样会导致合法内容缩短，需跳过保护检查（Spec: add-assist-mode-options）
-        // 【重点标记】修复：表情显示情绪标记剥离同样会导致合法内容缩短，需跳过保护检查
-        // （Spec: add-character-expression-system / Task 9.5）
-        // 【重点标记】修复：stop sequences 或 max_tokens 截断会导致 finalContent 短于流式累积的
-        // existingContent。此时 displayContent 是 AI 实际完成的回复（被后端合法截断），
-        // 不应误判为内容丢失。容差阈值：displayContent 不少于 existingContent 的 30% 即视为合法截断。
-        const stopTruncated = existingContent.length > 0
-          && displayContent.length < existingContent.length
-          && displayContent.length >= existingContent.length * 0.3;
-        if (!isAsyncMode && !thinkTagsStripped && !optionsStripped && !emotionStripped && !stopTruncated && existingContent.length > 0 && displayContent.length < existingContent.length) {
-          addLog(`[CharacterDialogueChat] Content protection: preventing content loss (${existingContent.length} -> ${displayContent.length})`, 'error');
-          return prev;
-        }
+      const existingContent = targetMessage.content;
+      // 异步模式下，tableEdit标签从显示内容中移除导致内容变短，需要跳过内容保护检查
+      const isAsyncMode = memoryTableAutoOrganizeRef.current && memoryTableOrganizeModeRef.current === 'async' && hasAsyncCommands;
+      // 【重点标记】修复：think 标签剥离导致的合法内容缩短也不应触发保护检查，
+      // 否则状态不更新 → UI 卡死在"正在生成中"（Spec: fix-think-strip-content-protection）
+      // 【重点标记】修复：辅助模式选项块剥离同样会导致合法内容缩短，需跳过保护检查（Spec: add-assist-mode-options）
+      // 【重点标记】修复：表情显示情绪标记剥离同样会导致合法内容缩短，需跳过保护检查
+      // （Spec: add-character-expression-system / Task 9.5）
+      // 【重点标记】修复：stop sequences 或 max_tokens 截断会导致 finalContent 短于流式累积的
+      // existingContent。此时 displayContent 是 AI 实际完成的回复（被后端合法截断），
+      // 不应误判为内容丢失。容差阈值：displayContent 不少于 existingContent 的 30% 即视为合法截断。
+      const stopTruncated = existingContent.length > 0
+        && displayContent.length < existingContent.length
+        && displayContent.length >= existingContent.length * 0.3;
+      if (!isAsyncMode && !thinkTagsStripped && !optionsStripped && !emotionStripped && !stopTruncated && existingContent.length > 0 && displayContent.length < existingContent.length) {
+        addLog(`[CharacterDialogueChat] Content protection: preventing content loss (${existingContent.length} -> ${displayContent.length})`, 'error');
+        return;
+      }
 
-        const finalMessages = prev.messages.map(msg =>
-          msg.id === targetMessageId ? { ...msg, content: displayContent, status: 'sent' as const, suggestedOptions: suggestedOptions.length > 0 ? suggestedOptions : undefined, emotion: parsedEmotion || undefined } : msg
-        );
+      const finalMessages = completeState.messages.map(msg =>
+        msg.id === targetMessageId ? { ...msg, content: displayContent, status: 'sent' as const, suggestedOptions: suggestedOptions.length > 0 ? suggestedOptions : undefined, emotion: parsedEmotion || undefined } : msg
+      );
 
-        // 保存聊天记录 - 注意：不在 setState 内部调用异步函数，避免 React 状态管理产生循环引用
-        // 使用 clean 副本避免 IPC 序列化错误
-        const messagesToSave = finalMessages.map(msg => ({
-          id: msg.id,
-          role: msg.role,
-          content: msg.content,
-          timestamp: msg.timestamp,
-          status: msg.status,
-          speakerName: msg.speakerName,
-          speakerAvatar: msg.speakerAvatar,
-          // 保存辅助模式推荐选项，使刷新/重启后仍可展示（Spec: add-assist-mode-options）
-          suggestedOptions: msg.suggestedOptions,
-          // 保存情绪键名，使刷新/重启后表情仍可还原（Spec: add-character-expression-system / Task 9.4）
-          emotion: msg.emotion,
-        }));
-        
-        // 使用 setTimeout 延迟保存，避免在 setState 回调中执行异步操作
-        setTimeout(() => {
-          saveChatToStore(messagesToSave).catch(err => {
-            addLog(`[CharacterDialogueChat] Failed to save chat: ${err instanceof Error ? err.message : 'Unknown error'}`, 'error');
-          });
-        }, 0);
+      // 保存聊天记录 - 注意：不在 dispatch 后立即调用异步函数，使用 setTimeout 延迟
+      // 使用 clean 副本避免 IPC 序列化错误
+      const messagesToSave = finalMessages.map(msg => ({
+        id: msg.id,
+        role: msg.role,
+        content: msg.content,
+        timestamp: msg.timestamp,
+        status: msg.status,
+        speakerName: msg.speakerName,
+        speakerAvatar: msg.speakerAvatar,
+        // 保存辅助模式推荐选项，使刷新/重启后仍可展示（Spec: add-assist-mode-options）
+        suggestedOptions: msg.suggestedOptions,
+        // 保存情绪键名，使刷新/重启后表情仍可还原（Spec: add-character-expression-system / Task 9.4）
+        emotion: msg.emotion,
+      }));
 
-        return {
-          ...prev,
-          messages: finalMessages,
-          isLoading: false,
-          isStreaming: false,
-        };
-      });
+      // 使用 setTimeout 延迟保存，避免在状态更新过程中执行异步操作
+      setTimeout(() => {
+        saveChatToStore(messagesToSave).catch(err => {
+          addLog(`[CharacterDialogueChat] Failed to save chat: ${err instanceof Error ? err.message : 'Unknown error'}`, 'error');
+        });
+      }, 0);
+
+      dispatch({ type: 'STREAM_COMPLETE', messages: finalMessages });
 
       if (memoryTableAutoOrganizeRef.current && memoryTableOrganizeModeRef.current === 'sync' && !isOrganizingRef.current) {
         addLog('[CharacterDialogueChat] Auto-organize triggered for memory table (sync mode)', 'info');
@@ -1630,17 +1825,9 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
 
     engine.onError((error) => {
       clearStreamTimeout();
-      setState(prev => ({
-        ...prev,
-        messages: prev.messages.map(msg =>
-          msg.id === targetMessageId
-            ? { ...msg, content: msg.content ? `${msg.content}\n\nError: ${error.message}` : `Error: ${error.message}`, status: 'error' as const }
-            : msg
-        ),
-        isLoading: false,
-        isStreaming: false,
-        error: error.message,
-      }));
+      const errorState = stateRef.current;
+      const errorMsg = errorState.messages.find(m => m.id === targetMessageId);
+      dispatch({ type: 'STREAM_ERROR', targetMessageId, content: errorMsg?.content ? `${errorMsg.content}\n\nError: ${error.message}` : `Error: ${error.message}`, error: error.message });
       message.error(`AI response failed: ${error.message}`);
       initialContentRef.current = '';
     });
@@ -1702,38 +1889,20 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       console.log('[DEBUG-FLOW] === requestAIResponse END ===');
     } catch (error) {
       console.error('[DEBUG-FLOW] Step E: engine.sendMessage threw error:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Failed to send message';       
-      setState(prev => ({
-        ...prev,
-        messages: prev.messages.map(msg =>
-          msg.id === targetMessageId
-            ? { ...msg, content: msg.content ? `${msg.content}\n\nError: ${errorMessage}` : `Error: ${errorMessage}`, status: 'error' as const }
-            : msg
-        ),
-        isLoading: false,
-        isStreaming: false,
-        error: errorMessage,
-      }));
+      const errorMessage = error instanceof Error ? error.message : 'Failed to send message';
+      const catchState = stateRef.current;
+      const catchMsg = catchState.messages.find(m => m.id === targetMessageId);
+      dispatch({ type: 'STREAM_ERROR', targetMessageId, content: catchMsg?.content ? `${catchMsg.content}\n\nError: ${errorMessage}` : `Error: ${errorMessage}`, error: errorMessage });
       message.error(`Failed: ${errorMessage}`);
       initialContentRef.current = '';
     }
   } catch (error) {
     console.error('[DEBUG-FLOW] !!! requestAIResponse UNCAUGHT EXCEPTION:', error);
     console.error('[DEBUG-FLOW] !!! error stack:', error instanceof Error ? error.stack : 'N/A');
-    setState(prev => ({
-      ...prev,
-      messages: prev.messages.map(msg =>
-        msg.id === targetMessageId
-          ? { ...msg, content: `错误: ${error instanceof Error ? error.message : '未知错误'}`, status: 'error' as const }
-          : msg
-      ),
-      isLoading: false,
-      isStreaming: false,
-      error: error instanceof Error ? error.message : '未知错误',
-    }));
+    dispatch({ type: 'STREAM_ERROR', targetMessageId, content: `错误: ${error instanceof Error ? error.message : '未知错误'}`, error: error instanceof Error ? error.message : '未知错误' });
     message.error(`对话请求失败: ${error instanceof Error ? error.message : '未知错误'}`);
   }
-  }, [getActiveEngineConfig, getEffectiveParams, buildDialoguePrompt, buildContinuationPrompt, saveChatToStore, addLog, characterConfig, selectedPersona]);
+  }, [getActiveEngineConfig, getEffectiveParams, buildDialoguePrompt, buildContinuationPrompt, saveChatToStore, addLog, characterConfig, selectedPersona, isAgentModeActive]);
 
   /**
    * 生成用户回复（Spec: add-ai-user-reply-button / Task 2）
@@ -1813,13 +1982,14 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       // 角色名变体阻断 AI 越权生成角色回复；customStopSequences 来自角色会话配置
       stopSequences: buildStopSequencesForUserReply(charName, customStopSequences),
       // 后端能力探测：优先用引擎显式配置，缺省按 api_mode 推断默认值
-      capabilities: activeEngine.capabilities || getDefaultEngineCapabilities(activeEngine.api_mode),
+      capabilities: activeEngine.capabilities || getDefaultEngineCapabilities(),
       // 能力感知透传（Spec: upgrade-ai-handler-multimodal-compatibility / Task 3.2 + 3.4）
       // 将用户思维链/工具调用开关透传给 ChatEngine，由其按 supportsThinking / supportsToolCalling 守卫。
       enable_chain_of_thought: activeEngine.enable_chain_of_thought,
       use_function_calling: activeEngine.use_function_calling,
-      // Task 16.2: 智能体模式灰度开关透传（useAgent）
-      useAgent: activeEngine.useAgent,
+      // Task 16.2: 智能体模式开关透传（已迁移到 useAgentMode 共享状态）
+      useAgent: isAgentModeActive,
+      agentModeActive: isAgentModeActive,
     };
 
     if (effectiveParams.top_p !== undefined) {
@@ -1938,7 +2108,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       isGeneratingUserReplyRef.current = false;
       generatedReplyAccumulatedRef.current = '';
     });
-  }, [selectedPersona, state.isStreaming, isOrganizing, characterInfo, characterConfig, getActiveEngineConfig, getEffectiveParams, addLog]);
+  }, [selectedPersona, state.isStreaming, isOrganizing, characterInfo, characterConfig, getActiveEngineConfig, getEffectiveParams, addLog, isAgentModeActive]);
 
   /**
    * 润色用户输入文本（Spec: refine-user-input-text / Task 2）
@@ -2030,13 +2200,14 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       // Stop sequences：角色名变体阻断 AI 越权生成角色回复
       stopSequences: buildStopSequencesForUserReply(charName, customStopSequences),
       // 后端能力探测：优先用引擎显式配置，缺省按 api_mode 推断默认值
-      capabilities: activeEngine.capabilities || getDefaultEngineCapabilities(activeEngine.api_mode),
+      capabilities: activeEngine.capabilities || getDefaultEngineCapabilities(),
       // 能力感知透传（Spec: upgrade-ai-handler-multimodal-compatibility / Task 3.2 + 3.4）
       // 将用户思维链/工具调用开关透传给 ChatEngine，由其按 supportsThinking / supportsToolCalling 守卫。
       enable_chain_of_thought: activeEngine.enable_chain_of_thought,
       use_function_calling: activeEngine.use_function_calling,
-      // Task 16.2: 智能体模式灰度开关透传（useAgent）
-      useAgent: activeEngine.useAgent,
+      // Task 16.2: 智能体模式开关透传（已迁移到 useAgentMode 共享状态）
+      useAgent: isAgentModeActive,
+      agentModeActive: isAgentModeActive,
     };
 
     if (effectiveParams.top_p !== undefined) {
@@ -2191,7 +2362,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       isPolishingInputRef.current = false;
       polishedAccumulatedRef.current = '';
     });
-  }, [selectedPersona, state.isStreaming, isOrganizing, isGeneratingUserReply, characterInfo, characterConfig, getActiveEngineConfig, getEffectiveParams, addLog]);
+  }, [selectedPersona, state.isStreaming, isOrganizing, isGeneratingUserReply, characterInfo, characterConfig, getActiveEngineConfig, getEffectiveParams, addLog, isAgentModeActive]);
 
   const sendMessage = useCallback(async (content: string) => {
     if (!content.trim() || state.isStreaming) return;
@@ -2216,21 +2387,37 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       speakerName: characterInfo.characterCardName,
     }];
 
-    setState(prev => ({
-      ...prev,
-      messages: newMessages,
-      isLoading: true,
-      isStreaming: true,
-      error: null,
-    }));
+    dispatch({ type: 'SEND_MESSAGE', messages: newMessages });
+
+    // 用户意图识别（Spec: optimize-agent-interaction-from-openclaw / M4-Task15）
+    const intentResult = recognizeIntent(content.trim());
+    if (intentResult.intent !== 'DIALOGUE') {
+      addLog(
+        `[IntentRecognizer] 意图: ${intentResult.intent}, 关键词: ${intentResult.matchedKeywords.join(', ')}, 置信度: ${(intentResult.confidence * 100).toFixed(0)}%`,
+        'info'
+      );
+      const recommendations = getIntentSkillRecommendations(intentResult.intent);
+      if (recommendations.length > 0) {
+        addLog(`[IntentRecognizer] 推荐技能: ${recommendations.join(', ')}`, 'info');
+      }
+    }
 
     await requestAIResponse(
       [...state.messages, userMessage],
       aiMessageId,
       '',
-      'dialogue'
+      'dialogue',
+      undefined,
+      intentResult
     );
-  }, [state.messages, state.isStreaming, requestAIResponse, selectedPersona, characterInfo.characterCardName]);
+
+    // 首条消息发送后自动更新会话标题（Spec: optimize-agent-interaction-from-openclaw / M2-Task7）
+    const currentSessionId = stateRef.current.currentSessionId;
+    if (currentSessionId && stateRef.current.messages.filter(m => m.role === 'user').length === 1) {
+      const autoTitle = content.trim().slice(0, 20);
+      renameSession(currentSessionId, autoTitle);
+    }
+  }, [state.messages, state.isStreaming, requestAIResponse, selectedPersona, characterInfo.characterCardName, renameSession]);
 
   const continueConversation = useCallback(async () => {
     if (state.isStreaming) {
@@ -2260,17 +2447,12 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
 
     addLog(`[CharacterDialogueChat] Continue conversation: message has ${existingContent.length} chars`, 'info');
 
-    setState(prev => ({
-      ...prev,
-      messages: prev.messages.map(msg =>
-        msg.id === targetMessageId ? { ...msg, status: 'sending' as const } : msg
-      ),
-      isLoading: true,
-      isStreaming: true,
-      error: null,
-    }));
+    const continueMessages = messagesRef.current.map(msg =>
+      msg.id === targetMessageId ? { ...msg, status: 'sending' as const } : msg
+    );
+    dispatch({ type: 'SEND_MESSAGE', messages: continueMessages });
 
-    await requestAIResponse(currentMessages, targetMessageId, existingContent, 'continuation');     
+    await requestAIResponse(currentMessages, targetMessageId, existingContent, 'continuation');
   }, [state.isStreaming, requestAIResponse, addLog]);
 
   const retryMessage = useCallback(async (messageId: string) => {
@@ -2295,12 +2477,8 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       status: 'sending',
     };
 
-    setState(prev => ({
-      ...prev,
-      messages: [...messagesBeforeRetry, newRetryMessage],
-      isLoading: true,
-      isStreaming: true,
-    }));
+    dispatch({ type: 'UPDATE_MESSAGES', messages: [...messagesBeforeRetry, newRetryMessage] });
+    dispatch({ type: 'SET_LOADING', isLoading: true, isStreaming: true });
 
     // 去重检测配置（Spec: optimize-chat-ai-intelligence / Task 5.2）
     // 捕获原回复内容作为去重比较基准；requestAIResponse 在 onComplete 中
@@ -2320,12 +2498,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       engine.cancelRequest();
     }
 
-    setState({
-      messages: [],
-      isLoading: false,
-      isStreaming: false,
-      error: null,
-    });
+    dispatch({ type: 'CLEAR_MESSAGES' });
     messagesRef.current = [];
     await saveChatToStore([]);
     addLog('[CharacterDialogueChat] Chat cleared', 'info');
@@ -2334,7 +2507,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
 
   // Task 21: 清除错误状态（错误恢复 UI 的「关闭」按钮使用）
   const clearError = useCallback(() => {
-    setState(prev => ({ ...prev, error: null }));
+    dispatch({ type: 'CLEAR_ERROR' });
   }, []);
 
   const cancelRequest = useCallback(() => {
@@ -2359,24 +2532,18 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       getActiveEngineConfig() || {} as AIEngineConfig
     );
     engine.cancelRequest();
-    setState(prev => ({
-      ...prev,
-      isLoading: false,
-      isStreaming: false,
-    }));
+    dispatch({ type: 'SET_LOADING', isLoading: false, isStreaming: false });
     addLog('[CharacterDialogueChat] Request cancelled', 'info');
     initialContentRef.current = '';
   }, [getActiveEngineConfig, addLog]);
 
   const editMessage = useCallback((messageId: string, newContent: string) => {
-    setState(prev => {
-      const updatedMessages = prev.messages.map(msg =>
-        msg.id === messageId ? { ...msg, content: newContent, timestamp: Date.now() } : msg
-      );
-      saveChatToStore(updatedMessages);
-      addLog(`[CharacterDialogueChat] Message ${messageId} edited`, 'info');
-      return { ...prev, messages: updatedMessages };
-    });
+    const updatedMessages = messagesRef.current.map(msg =>
+      msg.id === messageId ? { ...msg, content: newContent, timestamp: Date.now() } : msg
+    );
+    saveChatToStore(updatedMessages);
+    addLog(`[CharacterDialogueChat] Message ${messageId} edited`, 'info');
+    dispatch({ type: 'UPDATE_MESSAGES', messages: updatedMessages });
   }, [saveChatToStore, addLog]);
 
   const rollbackToMessage = useCallback((messageId: string): string => {
@@ -2405,13 +2572,9 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     // 同步更新 messagesRef（避免闭包陈旧）
     messagesRef.current = updatedMessages;
 
-    setState(prev => ({
-      ...prev,
-      messages: updatedMessages,
-      isStreaming: false,
-      isLoading: false,
-      error: null,
-    }));
+    dispatch({ type: 'UPDATE_MESSAGES', messages: updatedMessages });
+    dispatch({ type: 'SET_LOADING', isLoading: false, isStreaming: false });
+    dispatch({ type: 'CLEAR_ERROR' });
 
     saveChatToStore(updatedMessages);
     addLog(`[CharacterDialogueChat] Rolled back to message ${messageId}, removed ${removedCount} messages`, 'info');
@@ -2652,12 +2815,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       };
 
       messagesRef.current = [...messagesBeforeRetry, newEmptyMessage];
-      setState({
-        messages: [...messagesBeforeRetry, newEmptyMessage],
-        isLoading: true,
-        isStreaming: true,
-        error: null,
-      });
+      dispatch({ type: 'SEND_MESSAGE', messages: [...messagesBeforeRetry, newEmptyMessage] });
 
       await requestAIResponse(messagesBeforeRetry, newEmptyMessage.id, '', 'dialogue');
     } catch (error) {
@@ -2667,12 +2825,157 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
   }, [state.isStreaming, requestAIResponse, addLog, characterInfo.characterCardName]);
 
   const stateWithVersionInfo = useMemo(() => {
-    const messagesWithVersion = state.messages.map((msg, index) => {
+    const messagesWithVersion = state.messages.map((msg) => {
       const versionInfo = getVersionInfoForMessage(msg);
       return { ...msg, versionInfo };
     });
+
+    // 将工具调用附加到最后一条 assistant 消息（Spec: optimize-agent-interaction-from-openclaw / M2-Task5）
+    // 由于 agent:toolCall 事件目前没有直接关联到特定消息 ID，最简方案是将所有 toolCalls 显示在最后一条 assistant 消息上
+    const toolCallEntries = Object.values(state.toolCalls);
+    if (toolCallEntries.length > 0) {
+      const lastAssistantIdx = messagesWithVersion.map(m => m.role).lastIndexOf('assistant');
+      if (lastAssistantIdx >= 0) {
+        messagesWithVersion[lastAssistantIdx] = {
+          ...messagesWithVersion[lastAssistantIdx],
+          toolCalls: toolCallEntries,
+        };
+      }
+    }
+
     return { ...state, messages: messagesWithVersion };
   }, [state, getVersionInfoForMessage]);
+
+  // 手动触发上下文压缩（Spec: optimize-agent-interaction-from-openclaw / M3-Task9）
+  const [isCompressing, setIsCompressing] = useState(false);
+  const compressContext = useCallback(async () => {
+    setIsCompressing(true);
+    try {
+      const currentMessages = messagesRef.current;
+      if (currentMessages.length === 0) {
+        message.info('没有可压缩的对话历史');
+        return;
+      }
+
+      // 获取当前 token 用量
+      const tokenUsage = stateRef.current.tokenUsage;
+      if (!tokenUsage) {
+        message.info('请先发送消息后再使用压缩功能');
+        return;
+      }
+
+      // 检查是否需要压缩（SubTask 9.2：token > maxContextTokens * 0.7 时触发）
+      if (!shouldCompact(tokenUsage.used, tokenUsage.total)) {
+        message.info('当前对话历史在合理范围内，无需压缩');
+        return;
+      }
+
+      addLog(
+        `[Context] Starting context compaction: ${currentMessages.length} messages, ` +
+        `${tokenUsage.used}/${tokenUsage.total} tokens`,
+        'info'
+      );
+
+      // 分割消息：保留近期 N 轮原文，较早消息生成摘要（SubTask 9.2）
+      const { toSummarize, toKeep } = splitMessages(currentMessages, KEEP_RECENT_ROUNDS);
+
+      if (toSummarize.length === 0) {
+        message.info('没有需要压缩的旧对话');
+        return;
+      }
+
+      // 获取引擎配置
+      const activeEngine = getActiveEngineConfig();
+      if (!activeEngine) {
+        message.warning('请先配置 AI 引擎');
+        return;
+      }
+
+      // 构建摘要 prompt（SubTask 9.3）
+      const summaryPrompt = buildSummaryPrompt(toSummarize);
+
+      // 构建引擎配置（使用低 temperature 保证摘要质量）
+      const engineConfig: AIEngineConfig = {
+        id: activeEngine.id,
+        name: activeEngine.name,
+        api_url: activeEngine.api_url,
+        api_key: activeEngine.api_key,
+        model_name: activeEngine.model_name,
+        api_mode: activeEngine.api_mode,
+        api_key_transmission: activeEngine.api_key_transmission,
+        max_tokens: 2000, // 摘要不需要太长
+        system_prompt: activeEngine.system_prompt,
+        temperature: 0.3, // 低温度保证摘要忠实度
+        capabilities: activeEngine.capabilities || getDefaultEngineCapabilities(),
+      };
+
+      // 调用 AI 生成摘要（复用 ChatEngine 基础设施）
+      const engine = ChatEngineFactory.getInstance().getOrCreateDefaultEngine(engineConfig);
+
+      const summary = await new Promise<string>((resolve, reject) => {
+        let accumulated = '';
+        engine.onStream((chunk: string) => {
+          if (chunk) accumulated += chunk;
+        });
+        engine.onComplete((response: AIResponse) => {
+          resolve(response?.content || accumulated);
+        });
+        engine.onError((error) => {
+          reject(new Error(error.message));
+        });
+
+        // 发送摘要请求：system prompt 为摘要指令，user 消息为待摘要的对话内容
+        const requestMessages: ChatMessage[] = [{
+          id: `compaction-request-${Date.now()}`,
+          role: 'user',
+          content: summaryPrompt,
+          timestamp: Date.now(),
+          status: 'sent',
+        }];
+        engine.sendMessage(
+          requestMessages,
+          '你是一个对话摘要助手。请严格按照要求总结对话内容。',
+          engineConfig
+        ).catch((err: unknown) => {
+          reject(err instanceof Error ? err : new Error(String(err)));
+        });
+      });
+
+      // 构建压缩后的消息列表（SubTask 9.4：摘要作为 system 消息注入，替换原始消息）
+      const summaryMessage = createSummaryMessage(summary);
+      const compactedMessages = [summaryMessage, ...toKeep];
+
+      addLog(
+        `[Context] Compaction complete: ${currentMessages.length} -> ${compactedMessages.length} messages, ` +
+        `summarized ${toSummarize.length} messages, kept ${toKeep.length} recent messages`,
+        'info'
+      );
+
+      // 更新状态
+      dispatch({ type: 'UPDATE_MESSAGES', messages: compactedMessages });
+      messagesRef.current = compactedMessages;
+      await saveChatToStore(compactedMessages);
+
+      // 更新 token 用量
+      const newUsed = TokenCounter.countMessagesTokens(compactedMessages);
+      dispatch({ type: 'SET_TOKEN_USAGE', usage: { used: newUsed, total: tokenUsage.total } });
+
+      message.success(`对话历史已压缩：${currentMessages.length} → ${compactedMessages.length} 条消息`);
+    } catch (error) {
+      // SubTask 9.5：压缩失败降级为直接裁剪（ContextTruncator 会在下次请求时自动裁剪）
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      addLog(`[Context] Compaction failed, falling back to truncation: ${errorMsg}`, 'warn');
+      message.warning(`压缩失败，已降级为裁剪模式：${errorMsg}`);
+    } finally {
+      setIsCompressing(false);
+    }
+  }, [getActiveEngineConfig, addLog, saveChatToStore]);
+
+  // 添加/更新工具调用状态（Spec: optimize-agent-interaction-from-openclaw / M1-Task4.3 修复）
+  // 用于用户手动调用技能时在消息流中展示工具调用卡片
+  const addToolCall = useCallback((toolCall: ToolCallInfo) => {
+    dispatch({ type: 'TOOL_CALL_UPDATE', toolCall });
+  }, [dispatch]);
 
   return {
     state,
@@ -2703,6 +3006,9 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     memoryTableTemplateId: characterConfig?.memoryTableTemplateId ?? null,
     memoryTableTemplateName: characterConfig?.memoryTableTemplateName ?? '',
     isOrganizing,
+    // 工具调用状态（Spec: optimize-agent-interaction-from-openclaw / M2-Task5）
+    toolCalls: state.toolCalls,
+    addToolCall,
     // 用户回复生成（Spec: add-ai-user-reply-button / Task 2.5）
     generateUserReply,
     isGeneratingUserReply,
@@ -2718,5 +3024,17 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     handleTokenManagementConfigChange,
     handleStopOrganizing,
     getMemoryTableData: () => memoryTableDataRef.current,
+    // 会话管理（Spec: optimize-agent-interaction-from-openclaw / M2-Task7）
+    sessions,
+    currentSessionId: state.currentSessionId,
+    createNewSession,
+    switchToSession,
+    renameSession,
+    deleteSession,
+    loadSessions,
+    // Token 用量与上下文压缩（Spec: optimize-agent-interaction-from-openclaw / M3-Task11）
+    tokenUsage: state.tokenUsage,
+    compressContext,
+    isCompressing,
   };
 }

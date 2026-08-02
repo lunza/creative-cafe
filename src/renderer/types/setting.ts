@@ -192,7 +192,7 @@ export interface AIEngineSetting {
   api_mode: string;
   /**
    * 后端能力探测（Spec: optimize-chat-ai-intelligence / Task 3.3）。
-   * 缺省时由调用方通过 getDefaultEngineCapabilities(api_mode) 推断默认值。
+   * 缺省时由调用方通过 getDefaultEngineCapabilities() 推断默认值。
    * Task 6 将在设置 UI 中允许用户按 engine type 显式配置。
    */
   capabilities?: AIEngineCapabilities;
@@ -329,8 +329,20 @@ export interface AIEngineSetting {
    * 智能体模式开关（Task 16.2）。
    * 默认 false（灰度）。开启后对话走 AgentCore + 对话组工具。
    * 仅在模型 supportsToolCalling=true 时生效，否则降级为纯文本聊天。
+   * @deprecated 已被 agentModeOverride 三态开关替代，保留为只读兼容快照
    */
   useAgent: boolean;
+  /**
+   * 智能体模式覆盖（三态开关）。
+   *
+   * Spec: add-agent-mode-management-and-center / Task 1
+   * - 'auto'：根据引擎能力自动判定（默认）
+   * - 'force-on'：强制启用智能体模式
+   * - 'force-off'：强制关闭智能体模式
+   * 由 agentModeService 读取并计算最终 active 状态，
+   * 替代旧 useAgent 布尔开关。
+   */
+  agentModeOverride?: 'auto' | 'force-on' | 'force-off';
   
   // 连接设置
   auto_connect: boolean;
@@ -338,13 +350,52 @@ export interface AIEngineSetting {
   use_proxy: boolean;
   proxy_url: string;
   proxy_port: number;
-  
+
+  // 请求超时设置（毫秒）
+  /**
+   * 连接超时：等待响应头到达的最大时间（TTFB）。
+   * 流式请求在响应头到达后立即清除；非流式请求在响应头到达后清除。
+   * 兼容深度思考模型首字延迟较长的情况。
+   * 默认 120000ms（120秒），0 表示不限制。
+   */
+  connection_timeout?: number;
+  /**
+   * 请求超时：完整 AI 请求的最大时长。
+   * 调用方可通过 requestConfig.timeout 覆盖此值；传 0 表示无限制。
+   * 默认 300000ms（300秒）。
+   */
+  request_timeout?: number;
+
   // 安全设置
   encrypt_api_key: boolean;
   enable_access_control: boolean;
-  
+
   // API 密钥传输方式
   api_key_transmission: 'header' | 'body';
+}
+
+/**
+ * 网络搜索配置（对应 AppSetting.webSearch）
+ * 与 src/main/services/webSearchProviders/types.ts 中 WebSearchConfig 保持一致。
+ * 由 Settings 页面 WebSearchSettings 组件编辑，主进程 webSearchService 读取。
+ */
+export interface WebSearchConfig {
+  /** 全局开关 */
+  enabled: boolean;
+  /** 搜索引擎提供商 */
+  provider: 'duckduckgo' | 'tavily' | 'searxng' | 'custom';
+  /** API 密钥（Tavily 等 provider 用） */
+  apiKey: string;
+  /** 端点 URL（SearXNG / Custom 用） */
+  endpoint: string;
+  /** 默认结果数 */
+  maxResults: number;
+  /** 请求超时（ms） */
+  timeout: number;
+  /** 域名白名单 */
+  allowedDomains: string[];
+  /** 世界书编写智能体集成开关 */
+  enableInAuthoring: boolean;
 }
 
 /**
@@ -358,14 +409,6 @@ export interface AppSetting {
   aiEngines: AIEngineSetting[];
   activeEngineId: string;
   defaultEngineId: string;
-  
-  // 路径设置
-  characterPath: string;
-  worldBookPath: string;
-  avatarPath: string;
-  creativePath: string;
-  memoryPath: string;
-  pluginPath: string;
   
   // 外观设置
   dashboardBackgroundImage: string;
@@ -405,6 +448,9 @@ export interface AppSetting {
   // Stable Diffusion WebUI 设置（Spec: add-ai-expression-generation / Task 6）
   // 用于角色卡 AI 表情生成（img2img），由主进程 sdGenerationService 读取
   sdWebui?: SDWebuiConfig;
+
+  /** 网络搜索配置（Spec: add-agent-web-search-tool） */
+  webSearch?: WebSearchConfig;
 }
 
 export type AIEngine = AIEngineSetting;

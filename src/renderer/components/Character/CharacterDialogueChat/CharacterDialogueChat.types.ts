@@ -1,5 +1,7 @@
 // 角色测试聊天类型定义
 
+import type { ToolCallInfo } from './chatReducer';
+
 // 聊天消息接口
 export interface ChatMessage {
   id: string;
@@ -12,6 +14,8 @@ export interface ChatMessage {
   suggestedOptions?: string[];
   /** AI 回复情绪键名（Spec: add-character-expression-system），用于驱动表情图像渲染 */
   emotion?: string;
+  /** 关联的工具调用列表（Spec: optimize-agent-interaction-from-openclaw / M2-Task5） */
+  toolCalls?: ToolCallInfo[];
   versionInfo?: ChatMessageVersionInfo;
 }
 

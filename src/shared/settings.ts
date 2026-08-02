@@ -16,15 +16,14 @@ export const AppSetting = {
         api_url: 'http://127.0.0.1:5000',
         api_key: '',
         model_name: 'llmfan46/Qwen3.5-27B-heretic-v3-no-think',
-        api_mode: 'text_completion',
+        api_mode: 'chat_completion',
         // 后端能力探测（Spec: optimize-chat-ai-intelligence / Task 6.2）
-        // 默认引擎使用 text_completion 模式（textgen-webui/koboldcpp/aphrodite 类后端），
-        // 因此预设 supportsRepPen=true / supportsDrySampler=true，使 DRY 采样与 rep_pen 默认启用。
+        // 仅支持 chat_completion 模式。
         // 用户可在设置 UI 中按 engine type 显式覆盖此字段。
         capabilities: {
           supportsStopArray: true,
-          supportsRepPen: true,
-          supportsDrySampler: true,
+          supportsRepPen: false,
+          supportsDrySampler: false,
           supportsVision: false,
           supportsThinking: false,
           supportsToolCalling: false,
@@ -154,6 +153,8 @@ export const AppSetting = {
         use_proxy: false,
         proxy_url: 'http://localhost:7890',
         proxy_port: 7890,
+        connection_timeout: 120000,
+        request_timeout: 300000,
         encrypt_api_key: false,
         enable_access_control: false,
         api_key_transmission: 'body'
@@ -162,12 +163,6 @@ export const AppSetting = {
     activeEngineId: 'default',
     defaultEngineId: 'default',
     logLevel: 'info',
-    characterPath: '__USER_DATA__/data/characters',
-    worldBookPath: '__USER_DATA__/data/worldbooks',
-    avatarPath: '__USER_DATA__/data/avatars',
-    creativePath: '__USER_DATA__/data/creatives',
-    memoryPath: '__USER_DATA__/data/memories',
-    pluginPath: '__USER_DATA__/data/plugins',
     dashboardBackgroundImage: '',
     animationEnabled: true,
     compactMode: false,

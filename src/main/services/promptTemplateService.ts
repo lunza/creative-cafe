@@ -1312,6 +1312,74 @@ ${frameworkList}
     };
     map.set('world-book.polish-content', wbPolishContentTemplate);
 
+    // ===== 世界书条目审核模板 (world-book.audit-content) =====
+    const wbAuditContentEditableContent = `你是一个专业的世界书内容审核助手，正在审核SillyTavern世界书的条目内容。请对以下内容进行系统性审核，从四个维度进行评估：
+
+【审核维度】
+1. 内容正确性：事实准确性、逻辑连贯性、专业术语使用规范
+2. 主题一致性：与世界书整体主题的契合度、内容关联性
+3. 格式规范性：符合世界书既定的内容格式与结构要求
+4. 语言表达：表述清晰度、无歧义性、专业得体性
+
+【输出格式要求】
+请以JSON格式返回审核结果，不要输出任何其他文字、前缀或后缀：
+{"passed": true/false, "suggestions": "具体的修改建议，如果通过则为空字符串或'无'", "revisedText": "审核并修改后的文本，如果通过则返回原文"}
+
+其中：
+- passed：布尔值，表示内容是否通过审核（四个维度均合格则为true）
+- suggestions：字符串，具体的修改建议和问题说明
+- revisedText：字符串，审核并修改后的文本。如果通过审核，返回原文；如果不通过，返回修改后的版本
+- 如果原文包含{{}}格式的变量/通配符，在revisedText中保持其原样不修改`;
+
+    const wbAuditContentFixedContent = `【审核要求】
+{{audit_requirements}}`;
+
+    const wbAuditContentVariables: PromptVariable[] = [
+      {
+        name: 'audit_requirements',
+        description: '用户审核要求',
+        source: 'auditRequirements',
+        required: false,
+        defaultValue: '请对内容进行全面审核，确保符合世界书高质量标准规范。'
+      }
+    ];
+
+    const wbAuditContentParts: PromptPart[] = [
+      {
+        id: 'wb-audit-content-instructions',
+        type: 'editable',
+        label: '审核指令',
+        content: wbAuditContentEditableContent,
+        source: '用户可编辑',
+        order: 0,
+        role: 'system',
+        variables: []
+      },
+      {
+        id: 'wb-audit-content-requirements',
+        type: 'fixed',
+        label: '审核要求',
+        content: wbAuditContentFixedContent,
+        source: '系统固定结构',
+        order: 1,
+        role: 'system',
+        variables: ['audit_requirements']
+      }
+    ];
+
+    const wbAuditContentTemplate: PromptTemplate = {
+      id: 'world-book.audit-content',
+      moduleId: 'world-book.audit-content',
+      name: '世界书条目审核',
+      description: '审核世界书条目内容的正确性与合理性',
+      framework: 'ICIO',
+      parts: wbAuditContentParts,
+      assemblyOrder: [0, 1],
+      variables: wbAuditContentVariables,
+      metadata: { ...metadata }
+    };
+    map.set('world-book.audit-content', wbAuditContentTemplate);
+
     // ===== 世界书关键词生成模板 (world-book.generate-keywords) =====
     const wbGenKeywordsEditableContent = `你是一个专业的关键词生成助手，正在为SillyTavern世界书（Lorebook）条目生成优化的关键词。
 

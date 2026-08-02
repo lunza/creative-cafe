@@ -5,10 +5,12 @@ import ChatHeader from './ChatHeader';
 import ChatMessageBubble from './ChatMessageBubble';
 import ChatInputBar from './ChatInputBar';
 import ChatTypingIndicator from './ChatTypingIndicator';
-import { VirtualizedMessageList, shouldVirtualize } from './VirtualizedMessageList';
+import { ChatMessageList } from '../../Common/ChatMessageList/ChatMessageList';
 import ConfigPanel from './ConfigPanel';
 import CharacterSelectorPanel from './CharacterSelectorPanel';
 import AssetManagerModal from './AssetManagerModal';
+import { CommandPalette, CommandPaletteItem } from '../../Common/CommandPalette';
+import type { SkillInfo } from '../../Common/SkillQuickAccess';
 import { useCharacterDialogueChat } from './CharacterDialogueChat.hooks';
 import { useFavoritesStore } from '../../../stores/favoritesStore';
 import { useExpressionStore } from '../../../stores/expressionStore';
@@ -92,6 +94,16 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
     handleTokenManagementConfigChange,
     handleStopOrganizing,
     getActiveEngineConfig,
+    sessions,
+    currentSessionId,
+    createNewSession,
+    switchToSession,
+    renameSession,
+    deleteSession,
+    tokenUsage,
+    compressContext,
+    isCompressing,
+    addToolCall,
   } = useCharacterDialogueChat(characterInfo);
   
   const { toggleFavorite, isFavorite, getFavoritePaths } = useFavoritesStore();
@@ -103,6 +115,10 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
   const [generatedReplyText, setGeneratedReplyText] = useState('');
   const [polishFlashKey, setPolishFlashKey] = useState(0);
   const [expressionManagerOpen, setExpressionManagerOpen] = useState(false);
+  const [commandPaletteVisible, setCommandPaletteVisible] = useState(false);
+  // 技能快捷调用状态（Spec: optimize-agent-interaction-from-openclaw / M1-Task4）
+  const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [invokingSkill, setInvokingSkill] = useState<string | null>(null);
   const favoritePaths = getFavoritePaths();
 
   // 表情系统订阅（Spec: add-character-expression-system / Task 10.3 + 12.1）
@@ -133,6 +149,101 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
     };
   }, [isFullscreen]);
 
+  // Ctrl+K 命令面板快捷键
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        setCommandPaletteVisible(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // 技能列表获取（Spec: optimize-agent-interaction-from-openclaw / M1-Task4）
+  // 组件挂载时获取 + 每 30 秒刷新一次（技能可能动态安装）
+  useEffect(() => {
+    let mounted = true;
+    const fetchSkills = async () => {
+      try {
+        const result = await window.electronAPI.skill.list();
+        if (mounted && result?.success && Array.isArray(result.skills)) {
+          // 过滤 userInvocable=true 的技能
+          const userSkills = result.skills.filter((s: any) => s.userInvocable !== false) as SkillInfo[];
+          setSkills(userSkills);
+        }
+      } catch {
+        // 静默失败，不影响主流程
+      }
+    };
+    fetchSkills();
+    const timer = setInterval(fetchSkills, 30000);
+    return () => { mounted = false; clearInterval(timer); };
+  }, []);
+
+  // 技能调用处理（Spec: optimize-agent-interaction-from-openclaw / M1-Task4.3）
+  // 结果以工具调用卡片形式展示在消息流中 + toast 即时反馈
+  const handleInvokeSkill = useCallback(async (skillName: string, args: string) => {
+    setInvokingSkill(skillName);
+    const toolCallId = `skill_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+    const startTime = Date.now();
+
+    // 创建 pending 状态的工具调用卡片
+    addToolCall({
+      id: toolCallId,
+      toolName: skillName,
+      args: { input: args },
+      status: 'pending',
+      startTime,
+    });
+
+    try {
+      const result = await window.electronAPI.skill.invoke({
+        skillName,
+        args: { input: args },
+        context: undefined,
+      });
+
+      if (result?.success) {
+        addToolCall({
+          id: toolCallId,
+          toolName: skillName,
+          args: { input: args },
+          status: 'success',
+          result: typeof result.content === 'string' ? result.content : JSON.stringify(result.content ?? ''),
+          startTime,
+          endTime: Date.now(),
+        });
+        message.success(`技能 "${skillName}" 调用成功`);
+      } else {
+        addToolCall({
+          id: toolCallId,
+          toolName: skillName,
+          args: { input: args },
+          status: 'error',
+          error: result?.error || '未知原因',
+          startTime,
+          endTime: Date.now(),
+        });
+        message.warning(`技能 "${skillName}" 调用未成功：${result?.error || '未知原因'}`);
+      }
+    } catch (err) {
+      addToolCall({
+        id: toolCallId,
+        toolName: skillName,
+        args: { input: args },
+        status: 'error',
+        error: err instanceof Error ? err.message : String(err),
+        startTime,
+        endTime: Date.now(),
+      });
+      message.error(`技能 "${skillName}" 调用失败：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setInvokingSkill(null);
+    }
+  }, [addToolCall]);
+
   // 预加载当前角色卡的表情包（Spec: add-character-expression-system / Task 12.1）
   // 触发条件：开启表情显示 + characterCardId 变化（含首次加载）
   // 加载完成后 imageCache 引用变化，触发下方 no-op effect 与消息列表重渲染
@@ -159,7 +270,7 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
   const engineCapabilities = useMemo(() => {
     const activeEngine = getActiveEngineConfig();
     if (!activeEngine) return undefined;
-    return activeEngine.capabilities || getDefaultEngineCapabilities(activeEngine.api_mode);
+    return activeEngine.capabilities || getDefaultEngineCapabilities();
   }, [getActiveEngineConfig]);
 
   const handleScroll = useCallback(() => {
@@ -324,6 +435,110 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
     updateConfig({ userReplyPerson: person });
   }, [updateConfig]);
 
+  // 命令面板命令列表
+  const commandPaletteItems = useMemo<CommandPaletteItem[]>(() => {
+    const items: CommandPaletteItem[] = [];
+
+    // 导航类
+    items.push({
+      key: 'nav-clear',
+      label: '清空对话',
+      description: '清除所有消息',
+      category: 'navigation',
+      shortcut: '',
+      onExecute: () => clearChat(),
+    });
+    items.push({
+      key: 'nav-fullscreen',
+      label: isFullscreen ? '退出全屏' : '进入全屏',
+      category: 'navigation',
+      onExecute: () => setIsFullscreen(prev => !prev),
+    });
+    items.push({
+      key: 'nav-export-copy',
+      label: '导出对话 - 复制到剪贴板',
+      category: 'navigation',
+      onExecute: () => handleExportMenuClick('copy'),
+    });
+    items.push({
+      key: 'nav-export-save',
+      label: '导出对话 - 保存为文件',
+      category: 'navigation',
+      onExecute: () => handleExportMenuClick('save'),
+    });
+
+    // 操作类
+    items.push({
+      key: 'action-retry',
+      label: '重新生成',
+      description: '重试上一条 AI 回复',
+      category: 'actions',
+      onExecute: () => {
+        const lastAssistantMsg = [...stateWithVersionInfo.messages].reverse().find(m => m.role === 'assistant');
+        if (lastAssistantMsg) {
+          retryMessage(lastAssistantMsg.id);
+        }
+      },
+    });
+    items.push({
+      key: 'action-continue',
+      label: '继续生成',
+      description: '续写上一条 AI 回复',
+      category: 'actions',
+      onExecute: () => continueConversation(),
+    });
+    items.push({
+      key: 'action-polish',
+      label: '润色输入',
+      description: '润色当前输入框文本',
+      category: 'actions',
+      onExecute: () => {
+        message.info('请在输入框中输入文本后点击润色按钮');
+      },
+    });
+    items.push({
+      key: 'action-ai-reply',
+      label: 'AI 回复',
+      description: '以当前用户人设生成对话回复',
+      category: 'actions',
+      onExecute: () => handleGenerateUserReply(),
+    });
+
+    // 会话管理（Spec: optimize-agent-interaction-from-openclaw / M2-Task7）
+    items.push({
+      key: 'session-new',
+      label: '新建会话',
+      description: '创建新的对话会话',
+      category: 'actions',
+      onExecute: () => createNewSession(),
+    });
+
+    // 技能类（Spec: optimize-agent-interaction-from-openclaw / M1-Task4.4）
+    skills.forEach(skill => {
+      items.push({
+        key: `skill-${skill.name}`,
+        label: `${skill.emoji || '\u{1F527}'} ${skill.title}`,
+        description: skill.description,
+        category: 'skills',
+        onExecute: () => handleInvokeSkill(skill.name, ''),
+      });
+    });
+
+    // 设置类
+    items.push({
+      key: 'settings-params',
+      label: '参数设置',
+      description: '打开参数面板',
+      category: 'settings',
+      onExecute: () => {
+        const panel = document.querySelector('[data-config-panel]') as HTMLElement;
+        if (panel) panel.scrollIntoView({ behavior: 'smooth' });
+      },
+    });
+
+    return items;
+  }, [clearChat, isFullscreen, handleExportMenuClick, retryMessage, continueConversation, handleGenerateUserReply, stateWithVersionInfo.messages, skills, handleInvokeSkill, createNewSession]);
+
   if (!open && !isFullscreen) return null;
 
   const fullscreenStyles = isFullscreen ? {
@@ -340,6 +555,38 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
   } : {};
 
   const showSelectorPanel = characters && characters.length > 0 && onCharacterSelect;
+
+  // 消息气泡渲染函数（复用 ChatMessageList 的 renderMessage 回调）
+  const renderMessageBubble = (msg: any, index: number) => {
+    // 计算 AI 回复序号：在当前消息之前所有 role=assistant 的消息数量 + 1
+    const aiSequenceNumber = msg.role === 'assistant'
+      ? stateWithVersionInfo.messages.slice(0, index).filter(m => m.role === 'assistant').length + 1
+      : 0;
+    return (
+      <ChatMessageBubble
+        key={msg.id}
+        message={msg}
+        characterName={characterInfo.characterCardName}
+        avatarPath={avatarPath}
+        expressionImage={
+          msg.role === 'assistant' && msg.emotion &&
+          !(stateWithVersionInfo.isStreaming && index === stateWithVersionInfo.messages.length - 1)
+            ? resolveExpressionImage(msg.emotion) ?? undefined
+            : undefined
+        }
+        onRetry={retryMessage}
+        onRetryFromVersion={retryMessageFromVersion}
+        onContinue={handleContinueConversation}
+        onEdit={editMessage}
+        onRollback={handleRollback}
+        isLastMessage={index === stateWithVersionInfo.messages.length - 1}
+        isStreaming={stateWithVersionInfo.isStreaming && index === stateWithVersionInfo.messages.length - 1 && msg.role === 'assistant'}
+        isGenerating={stateWithVersionInfo.isLoading && index === stateWithVersionInfo.messages.length - 1 && msg.role === 'assistant' && msg.status === 'sending'}
+        onSelectOption={handleSelectOption}
+        aiSequenceNumber={aiSequenceNumber}
+      />
+    );
+  };
 
   return (
     <Modal
@@ -415,6 +662,12 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
           isFavorite={isFavorite(characterInfo.characterCardId)}
           onToggleFavorite={handleToggleFavorite}
           onOpenExpressionManager={() => setExpressionManagerOpen(true)}
+          sessions={sessions}
+          currentSessionId={currentSessionId}
+          onCreateSession={createNewSession}
+          onSwitchSession={switchToSession}
+          onRenameSession={renameSession}
+          onDeleteSession={deleteSession}
         />
 
         <div
@@ -469,50 +722,13 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
             </div>
           )}
 
-          {(() => {
-            // Task 19 P6: 消息数超过阈值时启用虚拟化，否则走原 .map() 路径
-            const renderMessageBubble = (msg: any, index: number) => {
-              // 计算 AI 回复序号：在当前消息之前所有 role=assistant 的消息数量 + 1
-              const aiSequenceNumber = msg.role === 'assistant'
-                ? stateWithVersionInfo.messages.slice(0, index).filter(m => m.role === 'assistant').length + 1
-                : 0;
-              return (
-                <ChatMessageBubble
-                  key={msg.id}
-                  message={msg}
-                  characterName={characterInfo.characterCardName}
-                  avatarPath={avatarPath}
-                  expressionImage={
-                    msg.role === 'assistant' && msg.emotion &&
-                    !(stateWithVersionInfo.isStreaming && index === stateWithVersionInfo.messages.length - 1)
-                      ? resolveExpressionImage(msg.emotion) ?? undefined
-                      : undefined
-                  }
-                  onRetry={retryMessage}
-                  onRetryFromVersion={retryMessageFromVersion}
-                  onContinue={handleContinueConversation}
-                  onEdit={editMessage}
-                  onRollback={handleRollback}
-                  isLastMessage={index === stateWithVersionInfo.messages.length - 1}
-                  isStreaming={stateWithVersionInfo.isStreaming && index === stateWithVersionInfo.messages.length - 1 && msg.role === 'assistant'}
-                  isGenerating={stateWithVersionInfo.isLoading && index === stateWithVersionInfo.messages.length - 1 && msg.role === 'assistant' && msg.status === 'sending'}
-                  onSelectOption={handleSelectOption}
-                  aiSequenceNumber={aiSequenceNumber}
-                />
-              );
-            };
-
-            if (shouldVirtualize(stateWithVersionInfo.messages.length)) {
-              return (
-                <VirtualizedMessageList
-                  items={stateWithVersionInfo.messages}
-                  scrollElementRef={chatContainerRef}
-                  renderItem={renderMessageBubble}
-                />
-              );
-            }
-            return stateWithVersionInfo.messages.map((msg, index) => renderMessageBubble(msg, index));
-          })()}
+          <ChatMessageList
+            mode="character"
+            enableVirtualization={true}
+            messages={stateWithVersionInfo.messages}
+            scrollElementRef={chatContainerRef}
+            renderMessage={renderMessageBubble}
+          />
 
           {stateWithVersionInfo.isStreaming && stateWithVersionInfo.messages[stateWithVersionInfo.messages.length - 1]?.role === 'user' && (
             <ChatTypingIndicator
@@ -640,6 +856,83 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
           onPolishInput={handlePolishInput}
           isPolishingInput={isPolishingInput}
           polishFlashKey={polishFlashKey}
+          onRetry={() => {
+            const lastAssistant = [...stateWithVersionInfo.messages].reverse().find(m => m.role === 'assistant');
+            if (lastAssistant) retryMessage(lastAssistant.id);
+          }}
+          onContinue={continueConversation}
+          onClear={clearChat}
+          onReset={clearChat}
+          quickActionItems={{
+            dialogueActions: [
+              {
+                key: 'qa-retry',
+                label: '重新生成',
+                shortcut: '',
+                disabled: isGeneratingUserReply || isPolishingInput,
+                onClick: () => {
+                  const lastAssistant = [...stateWithVersionInfo.messages].reverse().find(m => m.role === 'assistant');
+                  if (lastAssistant) retryMessage(lastAssistant.id);
+                },
+              },
+              {
+                key: 'qa-continue',
+                label: '继续生成',
+                shortcut: '',
+                disabled: isGeneratingUserReply || isPolishingInput,
+                onClick: continueConversation,
+              },
+              {
+                key: 'qa-ai-reply',
+                label: 'AI 回复',
+                shortcut: '',
+                disabled: isGeneratingUserReply || isPolishingInput,
+                onClick: () => handleGenerateUserReply(),
+              },
+            ],
+            contentActions: [
+              {
+                key: 'qa-polish',
+                label: '润色输入',
+                shortcut: '',
+                disabled: isGeneratingUserReply || isPolishingInput,
+                onClick: () => handlePolishInput(''),
+              },
+              {
+                key: 'qa-compress',
+                label: '上下文压缩',
+                shortcut: '',
+                disabled: isCompressing,
+                onClick: compressContext,
+              },
+              {
+                key: 'qa-export',
+                label: '导出对话',
+                shortcut: '',
+                onClick: () => handleExportMenuClick('copy'),
+              },
+            ],
+            settingActions: [
+              {
+                key: 'qa-fullscreen',
+                label: isFullscreen ? '退出全屏' : '全屏',
+                shortcut: '',
+                onClick: () => setIsFullscreen(prev => !prev),
+              },
+              {
+                key: 'qa-clear',
+                label: '清空对话',
+                shortcut: '',
+                onClick: clearChat,
+              },
+            ],
+          }}
+          skills={skills}
+          onInvokeSkill={handleInvokeSkill}
+          invokingSkill={invokingSkill}
+          tokenUsage={tokenUsage}
+          onCompressContext={compressContext}
+          isCompressing={isCompressing}
         />
       </div>
 
@@ -697,6 +990,13 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
         characterScenario={characterInfo.scenario}
         avatarPath={avatarPath}
         onClose={() => setExpressionManagerOpen(false)}
+      />
+
+      {/* 命令面板（Ctrl+K） */}
+      <CommandPalette
+        visible={commandPaletteVisible}
+        onClose={() => setCommandPaletteVisible(false)}
+        items={commandPaletteItems}
       />
     </Modal>
   );

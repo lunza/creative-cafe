@@ -113,7 +113,7 @@ class StorageService {
               api_url: 'http://127.0.0.1:5000',
               api_key: '',
               model_name: 'llmfan46/Qwen3.5-27B-heretic-v3-no-think',
-              api_mode: 'text_completion',
+              api_mode: 'chat_completion',
               prompt_template: '',
               stop_words: '',
               max_generation_length: 1024,
@@ -253,7 +253,8 @@ class StorageService {
           memoryPath: this.resolvePath('__USER_DATA__/data/memories'),
           dashboardBackgroundImage: '',
           animationEnabled: true,
-          compactMode: false
+          compactMode: false,
+          fallbackProviders: []
         };
         this.storageManager.set('settings', defaultSetting);
         console.log('SETTINGS 初始化成功');
@@ -280,8 +281,8 @@ class StorageService {
       // 初始化元数据
       this.storageManager.initializeMetadata();
 
-      // 加载自定义路径到 pathService
-      await this.loadCustomPaths();
+      // 确保通用人设预设存在
+      await this.ensureGenericPersona();
 
       // 确保所有模块目录存在
       await this.ensureModuleDirectories();
@@ -292,45 +293,8 @@ class StorageService {
     }
   }
 
-  /**
-   * 从设置中加载自定义路径到 pathService
-   */
-  private async loadCustomPaths(): Promise<void> {
-    try {
-      const settingResult = this.storageManager.get('settings');
-      if (settingResult.data) {
-        const settings = settingResult.data;
-        const customPaths: Record<string, string> = {};
-        
-        const pathFields = ['characterPath', 'worldBookPath', 'avatarPath', 'creativePath', 'memoryPath'] as const;
-        const moduleMap: Record<string, string> = {
-          characterPath: 'character',
-          worldBookPath: 'worldbook',
-          avatarPath: 'avatar',
-          creativePath: 'creative',
-          memoryPath: 'memory',
-        };
-
-        for (const field of pathFields) {
-          const value = settings[field];
-          if (value) {
-            const resolved = value.startsWith('__USER_DATA__') 
-              ? value.replace('__USER_DATA__', getUserDataPath())
-              : value;
-            customPaths[moduleMap[field]] = resolved;
-          }
-        }
-
-        if (Object.keys(customPaths).length > 0) {
-          pathService.loadCustomPaths(customPaths);
-          console.log('[StorageService] Loaded custom paths:', customPaths);
-        }
-      }
-    } catch (error) {
-      console.error('[StorageService] Failed to load custom paths:', error);
-    }
-
-    // 确保通用人设预设存在
+  // 确保通用人设预设存在
+  async ensureInit() {
     await this.ensureGenericPersona();
   }
 

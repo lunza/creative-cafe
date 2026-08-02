@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useRef, useEffect } from 'react';
 import { message, Modal } from 'antd';
 import { useSettingStore } from '../../../stores/settingStore';
 import {
@@ -85,7 +85,27 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
     setIsGenerateModalOpen,
     setIsCreateModalOpen,
     setIsAddEntryModalOpen,
+    // 审核相关
+    setAuditingField,
+    setIsAuditingAll,
+    auditRequirements, setAuditRequirements,
+    setIsAuditModalOpen,
+    currentAuditField, setCurrentAuditField,
+    currentAuditText, setCurrentAuditText,
+    auditAllRequirements, setAuditAllRequirements,
+    setIsAuditAllModalOpen,
+    auditResult, setAuditResult,
+    setIsAuditResultModalOpen,
+    isAuditResultModalOpen,
   } = formState;
+
+  // 批量审核：跟踪用户是否已处理完当前条目的结果 Modal
+  const isAuditResultModalOpenRef = useRef(false);
+  const batchAppliedTextRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    isAuditResultModalOpenRef.current = isAuditResultModalOpen;
+  }, [isAuditResultModalOpen]);
 
   // 获取当前激活的AI引擎配置
   const getActiveEngineConfig = useCallback(() => {
@@ -117,8 +137,8 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
     addLog(`[WorldBook] translateText: 开始翻译, 长度=${text.length}字符, Mode=${apiMode}, Model=${modelName}, Transmission=${apiKeyTransmission}, MaxTokens=${maxTokens}, Temperature=${temperature}, TopP=${topP}`);
 
     let requestUrl;
-    let requestBody;
-    let requestHeaders = {
+    let requestBody: any;
+    let requestHeaders: Record<string, string> = {
       'Content-Type': 'application/json'
     };
 
@@ -140,61 +160,39 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
     }
 
     // 根据 API 模式构建请求 URL
-    if (apiMode === 'chat_completion') {
-      if (apiUrl.endsWith('/v1/chat/completions')) {
-        requestUrl = apiUrl;
-      } else {
-        // 确保 apiUrl 以 / 结尾，然后添加路径
-        const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
-        requestUrl = baseUrl + 'v1/chat/completions';
-      }
-
-      // 构建 chat_completion 模式的请求体
-      requestBody = {
-        model: modelName,
-        messages: [
-          {
-            role: 'system',
-            content: systemPrompt
-          },
-          {
-            role: 'user',
-            content: text
-          }
-        ],
-        max_tokens: maxTokens,
-        temperature: temperature,
-        top_p: topP,
-        n: 1,
-        stream: false,
-        stop: null,
-        extra_body: {
-          chat_template_kwargs: {
-            enable_thinking: false
-          }
-        }
-      };
+    if (apiUrl.endsWith('/v1/chat/completions')) {
+      requestUrl = apiUrl;
     } else {
-      if (apiUrl.endsWith('/v1/completions')) {
-        requestUrl = apiUrl;
-      } else {
-        // 确保 apiUrl 以 / 结尾，然后添加路径
-        const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
-        requestUrl = baseUrl + 'v1/completions';
-      }
-
-      // 构建 text_completion 模式的请求体
-      requestBody = {
-        model: modelName,
-        prompt: `${systemPrompt}\n\n${text}`,
-        max_tokens: maxTokens,
-        temperature: temperature,
-        top_p: topP,
-        n: 1,
-        stream: false,
-        stop: null
-      };
+      // 确保 apiUrl 以 / 结尾，然后添加路径
+      const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
+      requestUrl = baseUrl + 'v1/chat/completions';
     }
+
+    // 构建 chat_completion 模式的请求体
+    requestBody = {
+      model: modelName,
+      messages: [
+        {
+          role: 'system',
+          content: systemPrompt
+        },
+        {
+          role: 'user',
+          content: text
+        }
+      ],
+      max_tokens: maxTokens,
+      temperature: temperature,
+      top_p: topP,
+      n: 1,
+      stream: false,
+      stop: null,
+      extra_body: {
+        chat_template_kwargs: {
+          enable_thinking: false
+        }
+      }
+    };
 
     // 根据传输方式添加API密钥
     if (apiKey) {
@@ -236,7 +234,6 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
 
       // 尝试从不同的字段获取响应内容
       let translatedText = data.choices?.[0]?.message?.content?.trim() ||
-                        data.choices?.[0]?.text?.trim() ||
                         '';
 
       addLog(`[WorldBook] translateText: 收到响应, 原始长度=${translatedText.length}字符`);
@@ -296,7 +293,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
 
       // 发送请求
       const requestUrl = apiUrl + '/v1/chat/completions';
-      const requestBody = {
+      const requestBody: any = {
         model: modelName,
         messages: [
           { role: 'system', content: systemPrompt },
@@ -310,7 +307,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       };
 
       // 构建请求头
-      let requestHeaders = {
+      let requestHeaders: Record<string, string> = {
         'Content-Type': 'application/json'
       };
 
@@ -335,7 +332,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       }
 
       const data = result.data;
-      let aiResponse = data.choices?.[0]?.message?.content || data.choices?.[0]?.text || '';
+      let aiResponse = data.choices?.[0]?.message?.content || '';
 
       // 清理响应，提取标签
       aiResponse = aiResponse.trim();
@@ -359,8 +356,8 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
     addLog(`[WorldBook] polishText: 开始润色, 类型=${textType}, 长度=${text.length}字符, Mode=${apiMode}, Model=${modelName}, Transmission=${apiKeyTransmission}, MaxTokens=${maxTokens}, Temperature=${temperature}, TopP=${topP}`);
 
     let requestUrl;
-    let requestBody;
-    let requestHeaders = {
+    let requestBody: any;
+    let requestHeaders: Record<string, string> = {
       'Content-Type': 'application/json'
     };
 
@@ -387,61 +384,39 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
     }
 
     // 根据 API 模式构建请求 URL
-    if (apiMode === 'chat_completion') {
-      if (apiUrl.endsWith('/v1/chat/completions')) {
-        requestUrl = apiUrl;
-      } else {
-        // 确保 apiUrl 以 / 结尾，然后添加路径
-        const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
-        requestUrl = baseUrl + 'v1/chat/completions';
-      }
-
-      // 构建 chat_completion 模式的请求体
-      requestBody = {
-        model: modelName,
-        messages: [
-          {
-            role: 'system',
-            content: basePrompt
-          },
-          {
-            role: 'user',
-            content: text
-          }
-        ],
-        max_tokens: maxTokens,
-        temperature: temperature,
-        top_p: topP,
-        n: 1,
-        stream: false,
-        stop: null,
-        extra_body: {
-          chat_template_kwargs: {
-            enable_thinking: false
-          }
-        }
-      };
+    if (apiUrl.endsWith('/v1/chat/completions')) {
+      requestUrl = apiUrl;
     } else {
-      if (apiUrl.endsWith('/v1/completions')) {
-        requestUrl = apiUrl;
-      } else {
-        // 确保 apiUrl 以 / 结尾，然后添加路径
-        const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
-        requestUrl = baseUrl + 'v1/completions';
-      }
-
-      // 构建 text_completion 模式的请求体
-      requestBody = {
-        model: modelName,
-        prompt: `${basePrompt}\n\n${text}`,
-        max_tokens: maxTokens,
-        temperature: temperature,
-        top_p: topP,
-        n: 1,
-        stream: false,
-        stop: null
-      };
+      // 确保 apiUrl 以 / 结尾，然后添加路径
+      const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
+      requestUrl = baseUrl + 'v1/chat/completions';
     }
+
+    // 构建 chat_completion 模式的请求体
+    requestBody = {
+      model: modelName,
+      messages: [
+        {
+          role: 'system',
+          content: basePrompt
+        },
+        {
+          role: 'user',
+          content: text
+        }
+      ],
+      max_tokens: maxTokens,
+      temperature: temperature,
+      top_p: topP,
+      n: 1,
+      stream: false,
+      stop: null,
+      extra_body: {
+        chat_template_kwargs: {
+          enable_thinking: false
+        }
+      }
+    };
 
     // 根据传输方式添加API密钥
     if (apiKey) {
@@ -483,7 +458,6 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
 
       // 尝试从不同的字段获取响应内容
       let polishedText = data.choices?.[0]?.message?.content?.trim() ||
-                        data.choices?.[0]?.text?.trim() ||
                         '';
 
       addLog(`[WorldBook] polishText: 收到响应, 原始长度=${polishedText.length}字符`);
@@ -515,6 +489,143 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       return cleanedText || text;
     } catch (error) {
       addLog(`[WorldBook] 润色失败: ${error instanceof Error ? error.message : '未知错误'}`, 'error');
+      throw error;
+    }
+  };
+
+  // 辅助函数：审核单个文本
+  const auditText = async (text: string, apiUrl: string, apiKey: string, apiMode: string, modelName: string, apiKeyTransmission: string, requirements: string = '', worldBookDescription: string = '', maxTokens: number = 10240, temperature: number = 0.7, topP: number = 0.95, globalSystemPrompt: string = ''): Promise<{ passed: boolean; suggestions: string; revisedText: string }> => {
+    if (!text || text.trim() === '') {
+      return { passed: true, suggestions: '内容为空，无需审核', revisedText: text };
+    }
+
+    const startTime = Date.now();
+    addLog(`[WorldBook] auditText: 开始审核, 长度=${text.length}字符, Mode=${apiMode}, Model=${modelName}, Transmission=${apiKeyTransmission}, MaxTokens=${maxTokens}, Temperature=${temperature}, TopP=${topP}`);
+
+    let requestUrl;
+    let requestBody: any;
+    let requestHeaders: Record<string, string> = {
+      'Content-Type': 'application/json'
+    };
+
+    // 通过提示词模板构建系统提示词
+    const promptResult = await window.electronAPI.prompt.build('world-book.audit-content', {
+      audit_requirements: requirements || ''
+    });
+    if (!promptResult.success || !promptResult.data) {
+      throw new Error('获取审核提示词模板失败: ' + (promptResult.error || '未知错误'));
+    }
+    let basePrompt = promptResult.data.systemPrompt;
+
+    // 添加世界书描述
+    if (worldBookDescription) {
+      basePrompt += `\n\n【世界书背景】\n${worldBookDescription}`;
+    }
+
+    // 拼接全局system_prompt
+    if (globalSystemPrompt && globalSystemPrompt.trim()) {
+      basePrompt = globalSystemPrompt.trim() + '\n\n' + basePrompt;
+    }
+
+    // 根据 API 模式构建请求 URL
+    if (apiUrl.endsWith('/v1/chat/completions')) {
+      requestUrl = apiUrl;
+    } else {
+      const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
+      requestUrl = baseUrl + 'v1/chat/completions';
+    }
+
+    // 构建请求体
+    requestBody = {
+      model: modelName,
+      messages: [
+        {
+          role: 'system',
+          content: basePrompt
+        },
+        {
+          role: 'user',
+          content: text
+        }
+      ],
+      max_tokens: maxTokens,
+      temperature: temperature,
+      top_p: topP,
+      n: 1,
+      stream: false,
+      stop: null,
+      extra_body: {
+        chat_template_kwargs: {
+          enable_thinking: false
+        }
+      }
+    };
+
+    // API Key 传输
+    if (apiKey) {
+      if (apiKeyTransmission === 'header') {
+        const trimmedApiKey = apiKey.trim();
+        if (trimmedApiKey.startsWith('Bearer ')) {
+          requestHeaders['Authorization'] = trimmedApiKey;
+        } else {
+          requestHeaders['Authorization'] = `Bearer ${trimmedApiKey}`;
+        }
+      } else {
+        requestBody.api_key = apiKey;
+      }
+    }
+
+    addLog(`[WorldBook] auditText: 发送请求到 ${requestUrl}`);
+
+    try {
+      const result = await window.electronAPI.ai.request({
+        url: requestUrl,
+        method: 'POST',
+        headers: requestHeaders,
+        body: requestBody,
+      });
+
+      if (!result.success) {
+        addLog(`[WorldBook] auditText: API请求失败 ${result.error}`, 'error');
+        throw new Error(`API请求失败: ${result.error}`);
+      }
+
+      const data = result.data;
+      let rawResponse = data.choices?.[0]?.message?.content?.trim() || '';
+
+      addLog(`[WorldBook] auditText: 收到响应, 原始长度=${rawResponse.length}字符`);
+
+      // 清理思考过程标签
+      const thoughtPatterns = [
+        /思考[:：]\s*[^]*?(?=\n\n|$)/gi,
+        /Thought[:\s]+[^]*?(?=\n\n|$)/gi,
+        /Thinking[:\s]+[^]*?(?=\n\n|$)/gi,
+        /思考过程[:：]\s*[^]*?(?=\n\n|$)/gi,
+        /Reasoning:\s*[^]*?(?=\n\n|$)/gi,
+      ];
+      let cleanedResponse = rawResponse;
+      for (const pattern of thoughtPatterns) {
+        cleanedResponse = cleanedResponse.replace(pattern, '').trim();
+      }
+
+      // 解析 JSON 响应
+      const parsed = parseAIJsonResponse(cleanedResponse);
+      if (!parsed || typeof parsed.passed !== 'boolean') {
+        addLog(`[WorldBook] auditText: JSON解析失败, 原始响应: ${cleanedResponse.substring(0, 200)}`, 'warn');
+        return { passed: false, suggestions: 'AI返回格式解析失败，请重试', revisedText: text };
+      }
+
+      const endTime = Date.now();
+      const duration = (endTime - startTime) / 1000;
+      addLog(`[WorldBook] auditText: 审核完成, 耗时=${duration}秒, passed=${parsed.passed}`);
+
+      return {
+        passed: parsed.passed,
+        suggestions: parsed.suggestions || '',
+        revisedText: parsed.revisedText || text
+      };
+    } catch (error) {
+      addLog(`[WorldBook] 审核失败: ${error instanceof Error ? error.message : '未知错误'}`, 'error');
       throw error;
     }
   };
@@ -573,49 +684,29 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
     }
 
     // 根据 API 模式构建请求 URL
-    if (api_mode === 'chat_completion') {
-      if (api_url.endsWith('/v1/chat/completions')) {
-        requestUrl = api_url;
-      } else {
-        const baseUrl = api_url.endsWith('/') ? api_url : api_url + '/';
-        requestUrl = baseUrl + 'v1/chat/completions';
-      }
-
-      requestBody = {
-        model: model_name,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        max_tokens: maxTokensVal,
-        temperature: tempVal,
-        top_p: topPVal,
-        n: 1,
-        stream: false,
-        stop: null,
-        chat_template_kwargs: {
-          enable_thinking: false
-        }
-      };
+    if (api_url.endsWith('/v1/chat/completions')) {
+      requestUrl = api_url;
     } else {
-      if (api_url.endsWith('/v1/completions')) {
-        requestUrl = api_url;
-      } else {
-        const baseUrl = api_url.endsWith('/') ? api_url : api_url + '/';
-        requestUrl = baseUrl + 'v1/completions';
-      }
-
-      requestBody = {
-        model: model_name,
-        prompt: `${systemPrompt}\n\n${userPrompt}`,
-        max_tokens: maxTokensVal,
-        temperature: tempVal,
-        top_p: topPVal,
-        n: 1,
-        stream: false,
-        stop: null
-      };
+      const baseUrl = api_url.endsWith('/') ? api_url : api_url + '/';
+      requestUrl = baseUrl + 'v1/chat/completions';
     }
+
+    requestBody = {
+      model: model_name,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      max_tokens: maxTokensVal,
+      temperature: tempVal,
+      top_p: topPVal,
+      n: 1,
+      stream: false,
+      stop: null,
+      chat_template_kwargs: {
+        enable_thinking: false
+      }
+    };
 
     // 添加 API 密钥
     if (api_key) {
@@ -649,7 +740,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       }
 
       const data = result.data;
-      let aiResponse = data.choices?.[0]?.message?.content || data.choices?.[0]?.text || '';
+      let aiResponse = data.choices?.[0]?.message?.content || '';
 
       addLog(`[WorldBook] generateKeywords: 收到响应: ${aiResponse.substring(0, 200)}`);
 
@@ -836,7 +927,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       setTranslatingField(field);
 
       // 从状态获取当前值
-      const text = formValues[field as keyof typeof formValues];
+      const text = formValues[field as keyof typeof formValues] as string;
 
       if (!text) {
         message.warning('请先输入要翻译的内容');
@@ -1121,6 +1212,176 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
     setIsPolishAllModalOpen(true);
   };
 
+  // 一键审核选中条目
+  const handleAuditAll = () => {
+    addLog('[WorldBook] 准备一键审核选中条目');
+
+    if (!worldBookContent || !worldBookContent.entries) {
+      message.error('没有可审核的条目');
+      return;
+    }
+
+    if (selectedEntries.size === 0) {
+      message.warning('请先选择要审核的条目');
+      return;
+    }
+
+    const activeEngine = getActiveEngineConfig();
+
+    if (!activeEngine) {
+      message.error('请先在配置管理中设置AI引擎');
+      return;
+    }
+
+    if (!activeEngine.api_url) {
+      message.error('API地址不能为空');
+      return;
+    }
+
+    setAuditAllRequirements('');
+    setIsAuditAllModalOpen(true);
+  };
+
+  const performAuditAll = async () => {
+    const totalStartTime = Date.now();
+    addLog(`[WorldBook] 开始审核选中的 ${selectedEntries.size} 个条目`);
+    isProcessingRef.current = true;
+
+    if (!worldBookContent || !worldBookContent.entries) {
+      message.error('没有可审核的条目');
+      isProcessingRef.current = false;
+      return;
+    }
+
+    try {
+      setIsAuditingAll(true);
+      setIsAuditAllModalOpen(false);
+
+      const activeEngine = getActiveEngineConfig();
+
+      if (!activeEngine) {
+        message.error('请先在配置管理中设置AI引擎');
+        setIsAuditingAll(false);
+        isProcessingRef.current = false;
+        return;
+      }
+
+      const apiUrl = activeEngine.api_url;
+      const apiKey = activeEngine.api_key;
+      const apiMode = activeEngine.api_mode;
+      const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
+      const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
+      const maxTokens = (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240;
+      const temperature = (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : 0.7;
+      const topP = (typeof activeEngine.top_p === 'number' && activeEngine.top_p >= 0 && activeEngine.top_p <= 1) ? activeEngine.top_p : 0.95;
+
+      if (!apiUrl) {
+        message.error('API地址不能为空');
+        setIsAuditingAll(false);
+        isProcessingRef.current = false;
+        return;
+      }
+
+      const worldBookDescription = worldBookContent?.description || '';
+      const requirements = auditAllRequirements;
+
+      const allEntries = Object.values(worldBookContent.entries);
+      const entries = allEntries.filter((entry: any) => {
+        const uid = entry.uid;
+        return selectedEntries.has(uid) || selectedEntries.has(String(uid));
+      });
+      addLog(`[WorldBook] 共 ${entries.length} 个选中的条目需要审核`);
+
+      let auditedCount = 0;
+      let appliedCount = 0;
+
+      for (const entry of entries) {
+        if (!isProcessingRef.current) {
+          addLog(`[WorldBook] 一键审核已被用户中断`, 'warn');
+          message.info('已中断审核');
+          return;
+        }
+
+        const entryAny = entry as any;
+        const entryUid = entryAny.uid || entryAny.comment || '未知';
+
+        addLog(`[WorldBook] 审核条目 ${auditedCount + 1}/${entries.length}: UID=${entryUid}`);
+
+        // 仅审核 content 字段
+        if (entryAny.content) {
+          addLog(`[WorldBook] 审核内容: ${entryAny.content.length} 字符`);
+
+          // 设置当前审核字段为批量模式
+          setCurrentAuditField('content');
+          setCurrentAuditText(entryAny.content);
+
+          const result = await auditText(entryAny.content, apiUrl, apiKey, apiMode, modelName, apiKeyTransmission, requirements, worldBookDescription, maxTokens, temperature, topP, activeEngine.system_prompt || '');
+
+          if (!isProcessingRef.current) {
+            addLog(`[WorldBook] 一键审核已被用户中断`, 'warn');
+            message.info('已中断审核');
+            return;
+          }
+
+          auditedCount++;
+
+          // 弹出结果 Modal 供用户决策
+          setAuditResult(result);
+          setIsAuditResultModalOpen(true);
+          isAuditResultModalOpenRef.current = true;
+
+          // 等待用户处理（采用或关闭）
+          await new Promise<void>((resolve) => {
+            const checkClosed = () => {
+              if (!isAuditResultModalOpenRef.current) {
+                resolve();
+              } else {
+                setTimeout(checkClosed, 200);
+              }
+            };
+            checkClosed();
+          });
+
+          // 如果用户采用了审核文本（通过 applyAuditResultForBatch 设置），则更新条目
+          if (batchAppliedTextRef.current) {
+            entryAny.content = batchAppliedTextRef.current;
+            batchAppliedTextRef.current = null;
+            appliedCount++;
+
+            setWorldBookContent({ ...worldBookContent });
+            await window.electronAPI.worldBook.write(viewingItem!.path, worldBookContent);
+            addLog(`[WorldBook] 条目审核文本已采用并保存: UID=${entryUid}`);
+          }
+
+          message.success(`已审核 ${auditedCount}/${entries.length} 个条目`, 1);
+        }
+      }
+
+      // 重新读取世界书内容
+      const content = await window.electronAPI.worldBook.read(viewingItem!.path);
+      setWorldBookContent(content);
+
+      const totalEndTime = Date.now();
+      const totalDuration = (totalEndTime - totalStartTime) / 1000;
+      addLog(`[WorldBook] 一键审核全部完成: 共${auditedCount}个条目, 采用${appliedCount}个, 总耗时=${totalDuration}秒`, 'info');
+
+      message.success(`成功审核 ${auditedCount} 个条目（采用 ${appliedCount} 个），总耗时 ${totalDuration.toFixed(2)} 秒`);
+      isProcessingRef.current = false;
+    } catch (error) {
+      if (!isProcessingRef.current) {
+        addLog(`[WorldBook] 一键审核已被用户中断`, 'warn');
+        return;
+      }
+      addLog(`[WorldBook] 一键审核失败: ${error instanceof Error ? error.message : '未知错误'}`, 'error');
+      message.error(`一键审核失败: ${error instanceof Error ? error.message : '未知错误'}`);
+      isProcessingRef.current = false;
+    } finally {
+      setIsAuditingAll(false);
+      setCurrentAuditField(null);
+      setCurrentAuditText('');
+    }
+  };
+
   const performPolishAll = async () => {
     const totalStartTime = Date.now();
     addLog(`[WorldBook] 开始润色选中的 ${selectedEntries.size} 个条目`);
@@ -1241,7 +1502,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
     addLog(`[WorldBook] 准备润色字段: ${field}`);
 
     // 从状态获取当前值
-    const text = formValues[field as keyof typeof formValues];
+    const text = formValues[field as keyof typeof formValues] as string;
 
     if (!text) {
       message.warning('请先输入要润色的内容');
@@ -1268,6 +1529,131 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
     setCurrentPolishText(text);
     setPolishRequirements('');
     setIsPolishModalOpen(true);
+  };
+
+  const handleAudit = (field: string) => {
+    addLog(`[WorldBook] 准备审核字段: ${field}`);
+
+    const text = formValues[field as keyof typeof formValues] as string;
+
+    if (!text) {
+      message.warning('请先输入要审核的内容');
+      return;
+    }
+
+    addLog(`[WorldBook] 审核内容长度: ${text.length} 字符`);
+
+    const activeEngine = getActiveEngineConfig();
+
+    if (!activeEngine) {
+      message.error('请先在配置管理中设置AI引擎');
+      return;
+    }
+
+    if (!activeEngine.api_url) {
+      message.error('API地址不能为空');
+      return;
+    }
+
+    setCurrentAuditField(field);
+    setCurrentAuditText(text);
+    setAuditRequirements('');
+    setIsAuditModalOpen(true);
+  };
+
+  const performAudit = async () => {
+    if (!currentAuditField || !currentAuditText) {
+      return;
+    }
+
+    addLog(`[WorldBook] 开始审核字段: ${currentAuditField}`);
+    setAuditingField(currentAuditField);
+
+    try {
+      const activeEngine = getActiveEngineConfig();
+
+      if (!activeEngine) {
+        message.error('请先在配置管理中设置AI引擎');
+        setAuditingField(null);
+        setIsAuditModalOpen(false);
+        return;
+      }
+
+      const apiUrl = activeEngine.api_url;
+      const apiKey = activeEngine.api_key;
+      const apiMode = activeEngine.api_mode;
+      const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
+      const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
+      const maxTokens = (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240;
+      const temperature = (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : 0.7;
+      const topP = (typeof activeEngine.top_p === 'number' && activeEngine.top_p >= 0 && activeEngine.top_p <= 1) ? activeEngine.top_p : 0.95;
+
+      addLog(`[WorldBook] 审核API配置: URL=${apiUrl}, Model=${modelName}, Transmission=${apiKeyTransmission}`);
+
+      if (!apiUrl) {
+        message.error('API地址不能为空');
+        setAuditingField(null);
+        setIsAuditModalOpen(false);
+        return;
+      }
+
+      const worldBookDescription = worldBookContent?.description || '';
+
+      const result = await auditText(currentAuditText, apiUrl, apiKey, apiMode, modelName, apiKeyTransmission, auditRequirements, worldBookDescription, maxTokens, temperature, topP, activeEngine.system_prompt || '');
+
+      setAuditResult(result);
+      setIsAuditModalOpen(false);
+      setIsAuditResultModalOpen(true);
+
+      addLog(`[WorldBook] 审核完成: passed=${result.passed}, suggestions长度=${result.suggestions.length}`);
+    } catch (error) {
+      if (!isProcessingRef.current) {
+        addLog(`[WorldBook] 审核已被用户中断`, 'warn');
+        return;
+      }
+      addLog(`[WorldBook] 审核失败: ${error instanceof Error ? error.message : '未知错误'}`, 'error');
+      message.error(`审核失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    } finally {
+      setAuditingField(null);
+    }
+  };
+
+  const applyAuditResult = () => {
+    if (!auditResult || !currentAuditField) {
+      return;
+    }
+
+    // 单字段模式：更新 formValues
+    setFormValues(prev => ({ ...prev, [currentAuditField]: auditResult.revisedText }));
+    message.success('已采用审核文本');
+    setIsAuditResultModalOpen(false);
+    setAuditResult(null);
+    addLog(`[WorldBook] 用户采用审核文本, 字段=${currentAuditField}`);
+  };
+
+  const applyAuditResultForBatch = () => {
+    if (!auditResult) {
+      return;
+    }
+    batchAppliedTextRef.current = auditResult.revisedText;
+    isAuditResultModalOpenRef.current = false;
+    setIsAuditResultModalOpen(false);
+    setAuditResult(null);
+    message.success('已采用审核文本');
+  };
+
+  const closeAuditResult = () => {
+    batchAppliedTextRef.current = null;
+    isAuditResultModalOpenRef.current = false;
+    setIsAuditResultModalOpen(false);
+    setAuditResult(null);
+  };
+
+  const reAudit = () => {
+    setIsAuditResultModalOpen(false);
+    setAuditResult(null);
+    // 重新发起审核，保留原始文本和审核要求
+    performAudit();
   };
 
   const performPolish = async () => {
@@ -1430,60 +1816,40 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       }
 
       let requestUrl;
-      let requestBody;
-      let requestHeaders = {
+      let requestBody: any;
+      let requestHeaders: Record<string, string> = {
         'Content-Type': 'application/json'
       };
 
       // 根据 API 模式构建请求 URL
-      if (apiMode === 'chat_completion') {
-        if (apiUrl.endsWith('/v1/chat/completions')) {
-          requestUrl = apiUrl;
-        } else {
-          const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
-          requestUrl = baseUrl + 'v1/chat/completions';
-        }
-
-        requestBody = {
-          model: modelName,
-          messages: [
-            // 注意：原 WorldBookManager.tsx 在此行引用了未定义的 `finalSystemPrompt`，
-            // 会导致 ReferenceError。此处修正为 `systemPrompt`（变量名为 systemPrompt），
-            // 与其他函数中 finalSystemPrompt 的拼接逻辑保持等价效果。
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          max_tokens: maxTokens,
-          temperature: temperature,
-          top_p: topP,
-          n: 1,
-          stream: false,
-          stop: null,
-          extra_body: {
-            chat_template_kwargs: {
-              enable_thinking: false
-            }
-          }
-        };
+      if (apiUrl.endsWith('/v1/chat/completions')) {
+        requestUrl = apiUrl;
       } else {
-        if (apiUrl.endsWith('/v1/completions')) {
-          requestUrl = apiUrl;
-        } else {
-          const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
-          requestUrl = baseUrl + 'v1/completions';
-        }
-
-        requestBody = {
-          model: modelName,
-          prompt: `${systemPrompt}\n\n${userPrompt}`,
-          max_tokens: maxTokens,
-          temperature: temperature,
-          top_p: topP,
-          n: 1,
-          stream: false,
-          stop: null
-        };
+        const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
+        requestUrl = baseUrl + 'v1/chat/completions';
       }
+
+      requestBody = {
+        model: modelName,
+        messages: [
+          // 注意：原 WorldBookManager.tsx 在此行引用了未定义的 `finalSystemPrompt`，
+          // 会导致 ReferenceError。此处修正为 `systemPrompt`（变量名为 systemPrompt），
+          // 与其他函数中 finalSystemPrompt 的拼接逻辑保持等价效果。
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        max_tokens: maxTokens,
+        temperature: temperature,
+        top_p: topP,
+        n: 1,
+        stream: false,
+        stop: null,
+        extra_body: {
+          chat_template_kwargs: {
+            enable_thinking: false
+          }
+        }
+      };
 
       // 根据传输方式添加API密钥
       if (apiKey) {
@@ -1526,7 +1892,6 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
 
         // 获取响应内容
         let aiResponse = data.choices?.[0]?.message?.content?.trim() ||
-                         data.choices?.[0]?.text?.trim() ||
                          '';
 
         addLog(`[WorldBook] AI排序: 收到响应, 原始长度=${aiResponse.length}字符`);
@@ -1702,55 +2067,36 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
 
       // 发送请求
       let requestUrl;
-      let requestBody;
-      let requestHeaders = {
+      let requestBody: any;
+      let requestHeaders: Record<string, string> = {
         'Content-Type': 'application/json'
       };
 
       // 根据 API 模式构建请求 URL
-      if (apiMode === 'chat_completion') {
-        if (apiUrl.endsWith('/v1/chat/completions')) {
-          requestUrl = apiUrl;
-        } else {
-          const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
-          requestUrl = baseUrl + 'v1/chat/completions';
-        }
-
-        requestBody = {
-          model: modelName,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          max_tokens: maxTokens,
-          temperature: temperature,
-          top_p: topP,
-          n: 1,
-          stream: false,
-          extra_body: {
-            chat_template_kwargs: {
-              enable_thinking: false
-            }
-          }
-        };
+      if (apiUrl.endsWith('/v1/chat/completions')) {
+        requestUrl = apiUrl;
       } else {
-        if (apiUrl.endsWith('/v1/completions')) {
-          requestUrl = apiUrl;
-        } else {
-          const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
-          requestUrl = baseUrl + 'v1/completions';
-        }
-
-        requestBody = {
-          model: modelName,
-          prompt: `${systemPrompt}\n\n${userPrompt}`,
-          max_tokens: maxTokens,
-          temperature: temperature,
-          top_p: topP,
-          n: 1,
-          stream: false
-        };
+        const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
+        requestUrl = baseUrl + 'v1/chat/completions';
       }
+
+      requestBody = {
+        model: modelName,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        max_tokens: maxTokens,
+        temperature: temperature,
+        top_p: topP,
+        n: 1,
+        stream: false,
+        extra_body: {
+          chat_template_kwargs: {
+            enable_thinking: false
+          }
+        }
+      };
 
       // 根据传输方式添加API密钥
       if (apiKey) {
@@ -1784,7 +2130,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       }
 
       const data = result.data;
-      let aiResponse = data.choices?.[0]?.message?.content || data.choices?.[0]?.text || '';
+      let aiResponse = data.choices?.[0]?.message?.content || '';
 
       // 检测是否因 max_tokens 不足导致生成被截断
       const finishReason = data.choices?.[0]?.finish_reason;
@@ -1895,7 +2241,6 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
 
       const apiUrl = activeEngine.api_url;
       const apiKey = activeEngine.api_key;
-      const apiMode = activeEngine.api_mode;
       const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
       const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
       const maxTokens = (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240;
@@ -1925,35 +2270,22 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       }
 
       let requestUrl;
-      let requestBody;
-      let requestHeaders = { 'Content-Type': 'application/json' };
+      let requestBody: any;
+      let requestHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
 
-      if (apiMode === 'chat_completion') {
-        requestUrl = apiUrl.endsWith('/v1/chat/completions') ? apiUrl : (apiUrl.endsWith('/') ? apiUrl + 'v1/chat/completions' : apiUrl + '/v1/chat/completions');
-        requestBody = {
-          model: modelName,
-          messages: [
-            { role: 'system', content: finalSystemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          max_tokens: maxTokens,
-          temperature: temperature,
-          top_p: topP,
-          n: 1,
-          stream: false
-        };
-      } else {
-        requestUrl = apiUrl.endsWith('/v1/completions') ? apiUrl : (apiUrl.endsWith('/') ? apiUrl + 'v1/completions' : apiUrl + '/v1/completions');
-        requestBody = {
-          model: modelName,
-          prompt: finalSystemPrompt + '\n\n' + userPrompt,
-          max_tokens: maxTokens,
-          temperature: temperature,
-          top_p: topP,
-          n: 1,
-          stream: false
-        };
-      }
+      requestUrl = apiUrl.endsWith('/v1/chat/completions') ? apiUrl : (apiUrl.endsWith('/') ? apiUrl + 'v1/chat/completions' : apiUrl + '/v1/chat/completions');
+      requestBody = {
+        model: modelName,
+        messages: [
+          { role: 'system', content: finalSystemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        max_tokens: maxTokens,
+        temperature: temperature,
+        top_p: topP,
+        n: 1,
+        stream: false
+      };
 
       if (apiKey) {
         if (apiKeyTransmission === 'header') {
@@ -1983,7 +2315,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       }
 
       const data = result.data;
-      let aiResponse = data.choices?.[0]?.message?.content || data.choices?.[0]?.text || '';
+      let aiResponse = data.choices?.[0]?.message?.content || '';
 
       aiResponse = aiResponse.trim();
       aiResponse = aiResponse.replace(/^```json\s*|\s*```$/g, '');
@@ -2071,55 +2403,36 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
 
       // 发送请求
       let requestUrl;
-      let requestBody;
-      let requestHeaders = {
+      let requestBody: any;
+      let requestHeaders: Record<string, string> = {
         'Content-Type': 'application/json'
       };
 
       // 根据 API 模式构建请求 URL
-      if (apiMode === 'chat_completion') {
-        if (apiUrl.endsWith('/v1/chat/completions')) {
-          requestUrl = apiUrl;
-        } else {
-          const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
-          requestUrl = baseUrl + 'v1/chat/completions';
-        }
-
-        requestBody = {
-          model: modelName,
-          messages: [
-            { role: 'system', content: finalSystemPrompt },
-            { role: 'user', content: keywords }
-          ],
-          max_tokens: maxTokens,
-          temperature: temperature,
-          top_p: topP,
-          n: 1,
-          stream: false,
-          extra_body: {
-            chat_template_kwargs: {
-              enable_thinking: false
-            }
-          }
-        };
+      if (apiUrl.endsWith('/v1/chat/completions')) {
+        requestUrl = apiUrl;
       } else {
-        if (apiUrl.endsWith('/v1/completions')) {
-          requestUrl = apiUrl;
-        } else {
-          const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
-          requestUrl = baseUrl + 'v1/completions';
-        }
-
-        requestBody = {
-          model: modelName,
-          prompt: `${finalSystemPrompt}\n\n${keywords}`,
-          max_tokens: maxTokens,
-          temperature: temperature,
-          top_p: topP,
-          n: 1,
-          stream: false
-        };
+        const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
+        requestUrl = baseUrl + 'v1/chat/completions';
       }
+
+      requestBody = {
+        model: modelName,
+        messages: [
+          { role: 'system', content: finalSystemPrompt },
+          { role: 'user', content: keywords }
+        ],
+        max_tokens: maxTokens,
+        temperature: temperature,
+        top_p: topP,
+        n: 1,
+        stream: false,
+        extra_body: {
+          chat_template_kwargs: {
+            enable_thinking: false
+          }
+        }
+      };
 
       // 根据传输方式添加API密钥
       if (apiKey) {
@@ -2153,7 +2466,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       }
 
       const data = result.data;
-      let expandedKeywords = data.choices?.[0]?.message?.content || data.choices?.[0]?.text || '';
+      let expandedKeywords = data.choices?.[0]?.message?.content || '';
 
       expandedKeywords = expandedKeywords.trim();
       addLog(`[WorldBook] 关键词扩写成功: ${expandedKeywords}`, 'info');
@@ -2219,55 +2532,36 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
 
       // 发送请求
       let requestUrl;
-      let requestBody;
-      let requestHeaders = {
+      let requestBody: any;
+      let requestHeaders: Record<string, string> = {
         'Content-Type': 'application/json'
       };
 
       // 根据 API 模式构建请求 URL
-      if (apiMode === 'chat_completion') {
-        if (apiUrl.endsWith('/v1/chat/completions')) {
-          requestUrl = apiUrl;
-        } else {
-          const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
-          requestUrl = baseUrl + 'v1/chat/completions';
-        }
-
-        requestBody = {
-          model: modelName,
-          messages: [
-            { role: 'system', content: finalSystemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          max_tokens: maxTokens,
-          temperature: temperature,
-          top_p: topP,
-          n: 1,
-          stream: false,
-          extra_body: {
-            chat_template_kwargs: {
-              enable_thinking: false
-            }
-          }
-        };
+      if (apiUrl.endsWith('/v1/chat/completions')) {
+        requestUrl = apiUrl;
       } else {
-        if (apiUrl.endsWith('/v1/completions')) {
-          requestUrl = apiUrl;
-        } else {
-          const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
-          requestUrl = baseUrl + 'v1/completions';
-        }
-
-        requestBody = {
-          model: modelName,
-          prompt: `${finalSystemPrompt}\n\n${userPrompt}`,
-          max_tokens: maxTokens,
-          temperature: temperature,
-          top_p: topP,
-          n: 1,
-          stream: false
-        };
+        const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
+        requestUrl = baseUrl + 'v1/chat/completions';
       }
+
+      requestBody = {
+        model: modelName,
+        messages: [
+          { role: 'system', content: finalSystemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        max_tokens: maxTokens,
+        temperature: temperature,
+        top_p: topP,
+        n: 1,
+        stream: false,
+        extra_body: {
+          chat_template_kwargs: {
+            enable_thinking: false
+          }
+        }
+      };
 
       // 根据传输方式添加API密钥
       if (apiKey) {
@@ -2301,7 +2595,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       }
 
       const data = result.data;
-      let description = data.choices?.[0]?.message?.content || data.choices?.[0]?.text || '';
+      let description = data.choices?.[0]?.message?.content || '';
 
       description = description.trim();
       addLog(`[WorldBook] 描述生成成功: ${description.length} 字符`, 'info');
@@ -2331,7 +2625,6 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
 
       const apiUrl = activeEngine.api_url;
       const apiKey = activeEngine.api_key;
-      const apiMode = activeEngine.api_mode;
       const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
       const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
       const maxTokens = (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240;
@@ -2379,46 +2672,28 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
 
       // 构建请求
       let requestUrl;
-      let requestBody;
+      let requestBody: any;
       let requestHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
 
-      if (apiMode === 'chat_completion') {
-        if (apiUrl.endsWith('/v1/chat/completions')) {
-          requestUrl = apiUrl;
-        } else {
-          const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
-          requestUrl = baseUrl + 'v1/chat/completions';
-        }
-        requestBody = {
-          model: modelName,
-          messages: [
-            { role: 'system', content: finalSystemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          max_tokens: maxTokens,
-          temperature,
-          top_p: topP,
-          n: 1,
-          stream: false,
-          extra_body: { chat_template_kwargs: { enable_thinking: false } }
-        };
+      if (apiUrl.endsWith('/v1/chat/completions')) {
+        requestUrl = apiUrl;
       } else {
-        if (apiUrl.endsWith('/v1/completions')) {
-          requestUrl = apiUrl;
-        } else {
-          const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
-          requestUrl = baseUrl + 'v1/completions';
-        }
-        requestBody = {
-          model: modelName,
-          prompt: `${finalSystemPrompt}\n\n${userPrompt}`,
-          max_tokens: maxTokens,
-          temperature,
-          top_p: topP,
-          n: 1,
-          stream: false
-        };
+        const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
+        requestUrl = baseUrl + 'v1/chat/completions';
       }
+      requestBody = {
+        model: modelName,
+        messages: [
+          { role: 'system', content: finalSystemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        max_tokens: maxTokens,
+        temperature,
+        top_p: topP,
+        n: 1,
+        stream: false,
+        extra_body: { chat_template_kwargs: { enable_thinking: false } }
+      };
 
       if (apiKey) {
         if (apiKeyTransmission === 'header') {
@@ -2443,7 +2718,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       }
 
       const data = result.data;
-      let description = data.choices?.[0]?.message?.content || data.choices?.[0]?.text || '';
+      let description = data.choices?.[0]?.message?.content || '';
       // 清理可能的代码块标记和思考过程
       description = description.replace(/```[\s\S]*?\n/g, '').replace(/```/g, '').trim();
 
@@ -2616,7 +2891,6 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       // 获取引擎配置参数
       const apiUrl = activeEngine.api_url;
       const apiKey = activeEngine.api_key;
-      const apiMode = activeEngine.api_mode;
       const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
       const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
       const maxTokens = (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240;
@@ -2628,49 +2902,30 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       let requestBody: any;
       let requestHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
 
-      if (apiMode === 'chat_completion') {
-        if (apiUrl.endsWith('/v1/chat/completions')) {
-          requestUrl = apiUrl;
-        } else {
-          const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
-          requestUrl = baseUrl + 'v1/chat/completions';
-        }
-
-        requestBody = {
-          model: modelName,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          max_tokens: maxTokens,
-          temperature: temperature,
-          top_p: topP,
-          n: 1,
-          stream: false,
-          extra_body: {
-            chat_template_kwargs: {
-              enable_thinking: false
-            }
-          }
-        };
+      if (apiUrl.endsWith('/v1/chat/completions')) {
+        requestUrl = apiUrl;
       } else {
-        if (apiUrl.endsWith('/v1/completions')) {
-          requestUrl = apiUrl;
-        } else {
-          const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
-          requestUrl = baseUrl + 'v1/completions';
-        }
-
-        requestBody = {
-          model: modelName,
-          prompt: `${systemPrompt}\n\n${userPrompt}`,
-          max_tokens: maxTokens,
-          temperature: temperature,
-          top_p: topP,
-          n: 1,
-          stream: false
-        };
+        const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
+        requestUrl = baseUrl + 'v1/chat/completions';
       }
+
+      requestBody = {
+        model: modelName,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        max_tokens: maxTokens,
+        temperature: temperature,
+        top_p: topP,
+        n: 1,
+        stream: false,
+        extra_body: {
+          chat_template_kwargs: {
+            enable_thinking: false
+          }
+        }
+      };
 
       // 根据传输方式添加API密钥
       if (apiKey) {
@@ -2698,7 +2953,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       }
 
       const data = aiResult.data;
-      let aiResponse = data.choices?.[0]?.message?.content || data.choices?.[0]?.text || '';
+      let aiResponse = data.choices?.[0]?.message?.content || '';
 
       if (!aiResponse) {
         throw new Error('AI未返回有效内容');
@@ -2860,55 +3115,36 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
 
       // 发送请求
       let requestUrl;
-      let requestBody;
-      let requestHeaders = {
+      let requestBody: any;
+      let requestHeaders: Record<string, string> = {
         'Content-Type': 'application/json'
       };
 
       // 根据 API 模式构建请求 URL
-      if (apiMode === 'chat_completion') {
-        if (apiUrl.endsWith('/v1/chat/completions')) {
-          requestUrl = apiUrl;
-        } else {
-          const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
-          requestUrl = baseUrl + 'v1/chat/completions';
-        }
-
-        requestBody = {
-          model: modelName,
-          messages: [
-            { role: 'system', content: finalSystemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          max_tokens: maxTokens,
-          temperature: temperature,
-          top_p: topP,
-          n: n,
-          stream: false,
-          extra_body: {
-            chat_template_kwargs: {
-              enable_thinking: false
-            }
-          }
-        };
+      if (apiUrl.endsWith('/v1/chat/completions')) {
+        requestUrl = apiUrl;
       } else {
-        if (apiUrl.endsWith('/v1/completions')) {
-          requestUrl = apiUrl;
-        } else {
-          const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
-          requestUrl = baseUrl + 'v1/completions';
-        }
-
-        requestBody = {
-          model: modelName,
-          prompt: `${finalSystemPrompt}\n\n${userPrompt}`,
-          max_tokens: maxTokens,
-          temperature: temperature,
-          top_p: topP,
-          n: n,
-          stream: false
-        };
+        const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
+        requestUrl = baseUrl + 'v1/chat/completions';
       }
+
+      requestBody = {
+        model: modelName,
+        messages: [
+          { role: 'system', content: finalSystemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        max_tokens: maxTokens,
+        temperature: temperature,
+        top_p: topP,
+        n: n,
+        stream: false,
+        extra_body: {
+          chat_template_kwargs: {
+            enable_thinking: false
+          }
+        }
+      };
 
       // 根据传输方式添加API密钥
       if (apiKey) {
@@ -2942,7 +3178,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       }
 
       const data = result.data;
-      let aiResponse = data.choices?.[0]?.message?.content || data.choices?.[0]?.text || '';
+      let aiResponse = data.choices?.[0]?.message?.content || '';
 
       addLog(`[WorldBook] AI响应长度: ${aiResponse.length} 字符`, 'info');
 
@@ -3368,6 +3604,16 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
     handleCreateFromAI,
     handleGenerateNewEntries,
     handleSaveAddedEntries,
+    // 审核
+    auditText,
+    handleAudit,
+    performAudit,
+    handleAuditAll,
+    performAuditAll,
+    applyAuditResult,
+    applyAuditResultForBatch,
+    closeAuditResult,
+    reAudit,
   };
 }
 

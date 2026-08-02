@@ -76,7 +76,7 @@ export function useAiConfig(): UseAiConfigReturn {
       apiKey: activeEngine.api_key || '',
       apiUrl: activeEngine.api_url || 'http://127.0.0.1:5000',
       modelName,
-      apiMode: activeEngine.api_mode || 'text_completion',
+      apiMode: activeEngine.api_mode || 'chat_completion',
       engine: activeEngine,
     };
   };

@@ -92,18 +92,18 @@ const CharacterManager: React.FC = () => {
 
   const handleOpenFolder = useCallback(async () => {
     try {
-      const folderPath = setting?.characterPath || '__USER_DATA__/data/characters';
+      const folderPath = '__USER_DATA__/data/characters';
       const userDataPath = await window.electronAPI.app.getUserDataPath();
       const resolvedPath = folderPath.replace('__USER_DATA__', userDataPath);
       await window.electronAPI.file.openFolder(resolvedPath);
     } catch (error) {
       message.error('打开文件夹失败');
     }
-  }, [setting?.characterPath]);
+  }, []);
 
   const handleCopyPath = useCallback(async () => {
     try {
-      const folderPath = setting?.characterPath || '__USER_DATA__/data/characters';
+      const folderPath = '__USER_DATA__/data/characters';
       const userDataPath = await window.electronAPI.app.getUserDataPath();
       const resolvedPath = folderPath.replace('__USER_DATA__', userDataPath);
       await navigator.clipboard.writeText(resolvedPath);
@@ -111,7 +111,7 @@ const CharacterManager: React.FC = () => {
     } catch (error) {
       message.error('复制路径失败');
     }
-  }, [setting?.characterPath]);
+  }, []);
 
   const handleDelete = useCallback(async (path: string) => {
     addLog(`[Character] 删除角色卡: ${path}`);

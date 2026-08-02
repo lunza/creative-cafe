@@ -372,7 +372,7 @@ export async function processChat(
       apiKey: config?.apiKey || '',
       apiUrl: config?.apiUrl || 'http://127.0.0.1:5000',
       modelName: config?.modelName || (() => { throw new Error('未配置 AI 模型名称'); })(),
-      apiMode: config?.apiMode || 'text_completion'
+      apiMode: config?.apiMode || 'chat_completion'
     };
 
     addLog('使用 AI 配置:', 'debug');
@@ -383,14 +383,8 @@ export async function processChat(
 
     // 根据 API 模式设置正确的 API 端点
     let apiEndpoint = aiConfig.apiUrl;
-    if (aiConfig.apiMode === 'text_completion') {
-      if (!apiEndpoint.endsWith('/v1/completions')) {
-        apiEndpoint += '/v1/completions';
-      }
-    } else {
-      if (!apiEndpoint.endsWith('/v1/chat/completions')) {
-        apiEndpoint += '/v1/chat/completions';
-      }
+    if (!apiEndpoint.endsWith('/v1/chat/completions')) {
+      apiEndpoint += '/v1/chat/completions';
     }
     addLog(`最终 API 端点: ${apiEndpoint}`, 'debug');
 

@@ -1077,7 +1077,13 @@ export async function buildFinalSystemPrompt(
    * 注入位置：在"区域 1：相关背景知识"之后，"区域 3：记忆表格数据"之前
    * 注：区域编号变更：原"区域 2 记忆表格"→"区域 3"，原"区域 3 异步整理指令"→"区域 4"
    */
-  chatHistoryItems?: Array<{ content: string; score: number; timestamp: number }>
+  chatHistoryItems?: Array<{ content: string; score: number; timestamp: number }>,
+  /**
+   * 可用技能 prompt 片段（Spec: optimize-agent-interaction-from-openclaw / Task 12）
+   * 来源：SkillRegistry.buildSnapshot() → 格式化后的 <available_skills> XML 块
+   * 注入位置：在"区域 4：记忆表格异步整理指令"之后（区域 5）
+   */
+  skillPromptSnippet?: string
 ): Promise<string> {
   console.log('[PromptBuilder] buildFinalSystemPrompt 开始:');
   console.log('  - systemPrompt 长度:', systemPrompt.length);
@@ -1155,6 +1161,18 @@ export async function buildFinalSystemPrompt(
     result += `\n【区域 4 结束 - 以上为系统指令】`;
     result += `\n═══════════════════════════════════════════════════════`;
     console.log('  - 异步整理指令已追加到 system prompt, 最终长度:', result.length);
+  }
+
+  // 追加可用技能 prompt（区域 5）
+  if (skillPromptSnippet && skillPromptSnippet.trim()) {
+    result += `\n\n═══════════════════════════════════════════════════════`;
+    result += `\n【区域 5：可用技能】（以下为当前可用的技能列表，模型可根据任务描述选择使用）`;
+    result += `\n═══════════════════════════════════════════════════════\n\n`;
+    result += skillPromptSnippet;
+    result += `\n\n═══════════════════════════════════════════════════════`;
+    result += `\n【区域 5 结束 - 以上为可用技能列表】`;
+    result += `\n═══════════════════════════════════════════════════════`;
+    console.log('  - 可用技能 prompt 已追加, 最终长度:', result.length);
   }
 
   return result;
@@ -1428,7 +1446,12 @@ export async function buildSystemPrompt(
    * 由 hooks.ts::requestAIResponse 步骤 A2 调用 chatHistory.retrieve 获取，
    * 仅在对话历史 > 20 轮时传入（短对话跳过 RAG 检索）。
    */
-  chatHistoryItems?: Array<{ content: string; score: number; timestamp: number }>
+  chatHistoryItems?: Array<{ content: string; score: number; timestamp: number }>,
+  /**
+   * 可用技能 prompt 片段（Spec: optimize-agent-interaction-from-openclaw / Task 12）
+   * 来源：usePromptBuilder 通过 IPC skill:getPromptSnippet 获取。
+   */
+  skillPromptSnippet?: string
 ): Promise<string> {
   // 第四步：根据任务类型构建基础提示词
   const systemPrompt = promptType === 'continuation'
@@ -1436,7 +1459,7 @@ export async function buildSystemPrompt(
     : await buildDialoguePrompt(characterInfo, selectedPersona, organizeMode);
 
   // 第六步：将向量上下文和记忆表格数据追加到提示词末尾
-  return await buildFinalSystemPrompt(systemPrompt, vectorContextItems, memoryTableData, organizeMode, tableStructure, chatHistoryItems);
+  return await buildFinalSystemPrompt(systemPrompt, vectorContextItems, memoryTableData, organizeMode, tableStructure, chatHistoryItems, skillPromptSnippet);
 }
 
 // ==================== AI 表情生成：情绪 → SD 提示词映射 ====================

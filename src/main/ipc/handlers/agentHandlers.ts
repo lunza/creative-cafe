@@ -35,7 +35,7 @@
  *  - 遵循现有 IPC 模式（ipcMain.handle + event.sender.send）
  */
 
-import { ipcMain, type IpcMainInvokeEvent } from 'electron';
+import { ipcMain, BrowserWindow, type IpcMainInvokeEvent } from 'electron';
 import { AIService } from '../../services/AIService';
 import { createLogger } from '../../services/logger';
 import type { AgentRunIntent, AgentRunResult, ToolCallContext } from '../../services/agent/contracts';
@@ -44,6 +44,24 @@ import { AIServiceAdapter } from '../../services/agent/llm/llmProvider';
 import { CapabilityDetector, CONSERVATIVE_FALLBACK } from '../../services/agent/llm/capabilityDetector';
 import { getToolRegistry, registerUpdateStateTableTool, registerDialogueTools, registerWorldbookTools, type ITableEditExecutor, type IDialogueToolServices, type IWorldbookToolServices } from '../../services/agent/tools';
 import { initAgentBackendIfNeeded } from '../../services/agent/memory/sqliteBackend';
+import { agentModeService } from '../../services/agent/management/agentModeService';
+import { agentConfigService } from '../../services/agent/management/agentConfigService';
+import type { AgentModeOverride, AgentConfig } from '../../services/agent/management/agentConfigTypes';
+import { getStorageService } from '../../services/storageService';
+import { aiConfigProvider } from '../../services/ai/AIConfigProvider';
+import type { FallbackProvider } from '../../services/agent/failoverPolicy';
+import { getSkillRegistry } from '../../services/agent/skills/skillRegistry';
+import { loadBuiltinSkillsSync, loadWorkspaceSkills, importSkillFromDir, importSkillFromUrl, uninstallSkill, createSkill, editSkill } from '../../services/agent/skills/skillLoader';
+import { getUserDataPath } from '../../utils/appPath';
+import {
+  createSession,
+  listSessions,
+  switchSession,
+  deleteSession,
+  renameSession,
+  saveSessionMessages,
+  loadSessionMessages,
+} from '../../services/agent/sessionManager';
 
 const logger = createLogger('agent-handlers');
 
@@ -99,6 +117,48 @@ export function registerAgentHandlers(): void {
   registerSkillHandlers();
   registerMemorySearchHandler();
   registerLearningHandlers();
+  registerAgentModeHandlers();
+  registerAgentConfigHandlers();
+  registerSessionHandlers();
+  registerFailoverHandlers();
+
+  // 注册 agentModeService.onModeChanged 回调，广播到所有窗口（仅注册一次）
+  agentModeService.onModeChanged((status) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send('agent:modeChanged', status);
+      }
+    }
+  });
+
+  // 【重点标记 - 启动时根据缓存的能力清单初始化 Agent 模式状态】
+  // 修复系统模式显示错误：项目启动后自动读取上次配置的 capabilities 缓存，
+  // 正确初始化 agentModeService，使系统模式能正确显示为 Agent 或普通模式。
+  // 此前 agentModeService 默认状态为 active=false（普通模式），
+  // 即使缓存的能力清单中 supportsToolCalling=true，模式也不会更新。
+  try {
+    const storageService = getStorageService();
+    const settings = storageService.getSettings();
+    const activeEngineId = settings?.activeEngineId;
+    const aiEngines = settings?.aiEngines;
+    if (aiEngines && activeEngineId) {
+      const activeEngine = aiEngines.find((e: any) => e.id === activeEngineId);
+      if (activeEngine) {
+        agentModeService.reevaluate({
+          useAgent: activeEngine.useAgent ?? false,
+          agentModeOverride: activeEngine.agentModeOverride ?? 'auto',
+          capabilities: activeEngine.capabilities,
+        });
+        logger.info('AgentModeService initialized from cached settings', undefined, {
+          active: agentModeService.isAgentModeActive(),
+          override: activeEngine.agentModeOverride ?? 'auto',
+          supportsToolCalling: activeEngine.capabilities?.supportsToolCalling ?? false,
+        });
+      }
+    }
+  } catch (err) {
+    logger.warn('Failed to initialize AgentModeService from cached settings', err instanceof Error ? err.message : String(err));
+  }
 
   // 启动期懒初始化 agent SQLite 后端（幂等）。
   // 成功后 memory:search / EmbeddingCache 持久化 / learning 模块均可使用；
@@ -110,6 +170,15 @@ export function registerAgentHandlers(): void {
         // Task 18: 初始化 learning 模块（dreaming / goal / steer / feedback）
         // 依赖 SQLite backend + LLM provider + memory provider，三者就绪后才能启动
         initLearningServicesSafely();
+
+        // 初始化智能体配置服务（注册系统预置智能体，幂等）。
+        // agent-config:* IPC 依赖此初始化；失败时降级（IPC 返回错误，不崩溃）。
+        agentConfigService.init()
+          .then(() => logger.info('AgentConfigService initialized (system agents registered)'))
+          .catch((err) => logger.warn(
+            'AgentConfigService init failed (agent-config:* IPC will return errors)',
+            err instanceof Error ? err.message : String(err),
+          ));
       } else {
         logger.warn('Agent SQLite backend unavailable (degrading: memory:search returns empty, embedding cache in-memory only, learning module disabled)');
       }
@@ -118,7 +187,7 @@ export function registerAgentHandlers(): void {
       logger.warn('Agent SQLite backend init failed (degrading)', err instanceof Error ? err.message : String(err));
     });
 
-  logger.info('Agent IPC handlers registered (17 channels)');
+  logger.info('Agent IPC handlers registered (run/cancel/skill/memory/learning/mode/config/session/failover)');
 }
 
 // ==================== Learning 模块懒初始化 ====================
@@ -292,17 +361,14 @@ function registerAgentRunHandler(): void {
       });
 
       // 创建 AgentCore（工具提供方为 ToolRegistry，已注册 updateStateTable 工具）
+      // 注：不设置 onTextChunk —— 流式 token 已由 AIServiceAdapter.onStreamChunk 实时推送，
+      // 若同时设置 onTextChunk 会导致完整内容在 streamChat 返回后被二次推送（内容重复）。
       const agentCore = new AgentCore({
         llmProvider,
         toolProvider: getToolProvider(),
         capabilities,
         maxIterations: intent.maxIterations,
         timeoutMs: intent.timeoutMs,
-        onTextChunk: (chunk) => {
-          if (!event.sender.isDestroyed()) {
-            event.sender.send('agent:token', { chunk, timestamp: Date.now() });
-          }
-        },
         onToolCall: (info) => {
           if (!event.sender.isDestroyed()) {
             event.sender.send('agent:toolCall', {
@@ -381,24 +447,160 @@ function registerAgentCancelHandler(): void {
 /**
  * skill:list 和 skill:invoke 通道。
  *
- * 技能系统在阶段 3 实现（Task 14），此处注册占位 handler，
- * 返回「技能系统尚未初始化」提示，避免渲染进程调用时无响应。
+ * skill:list 每次调用都重新扫描技能目录（清空注册表后重新加载内置 + 工作区技能），
+ * 返回给前端用于技能配置面板。此前使用 skillsLoaded 布尔标志永久缓存，新增技能必须重启应用。
  */
 function registerSkillHandlers(): void {
   ipcMain.handle('skill:list', async () => {
-    // 阶段 3 接入：调用 skillRegistry.list()
-    return { success: true, skills: [] as Array<{ name: string; title?: string; description?: string }> };
+    try {
+      const registry = getSkillRegistry();
+      // 每次调用重新扫描：清空注册表后重新加载内置 + 工作区技能
+      registry.clear();
+      const builtinEntries = loadBuiltinSkillsSync();
+      const workspaceEntries = await loadWorkspaceSkills(getUserDataPath());
+      registry.registerAll([...builtinEntries, ...workspaceEntries]);
+
+      const entries = registry.list();
+      const skills = entries.map(entry => ({
+        name: entry.skill.name,
+        title: entry.frontmatter.title || entry.skill.name,
+        description: entry.skill.description,
+        emoji: entry.frontmatter.emoji,
+        source: entry.skill.source,
+        userInvocable: entry.exposure?.userInvocable ?? entry.invocation?.userInvocable ?? true,
+      }));
+      return { success: true, skills };
+    } catch (err) {
+      console.error('[SkillHandlers] skill:list error:', err);
+      return { success: false, skills: [], error: String(err) };
+    }
   });
 
   ipcMain.handle('skill:invoke', async (
     _event: IpcMainInvokeEvent,
     _args: { skillName: string; args: Record<string, unknown>; context?: ToolCallContext }
   ) => {
-    // 阶段 3 接入：调用 skillRegistry.invoke()
     return {
       success: false,
-      error: 'Skill system not yet initialized (planned for phase 3)',
+      error: 'Skill invocation not yet implemented. Use dedicated agent IPC channels (e.g. worldbookAgent:run) instead.',
     };
+  });
+
+  // skill:importFromDir — 从本地目录导入技能
+  ipcMain.handle('skill:importFromDir', async (_event: IpcMainInvokeEvent, dirPath: string) => {
+    try {
+      const entry = await importSkillFromDir(dirPath);
+      if (!entry) {
+        return { success: false, error: 'Failed to import skill from directory' };
+      }
+      return { success: true, skillName: entry.skill.name };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error('skill:importFromDir failed', message);
+      return { success: false, error: message };
+    }
+  });
+
+  // skill:importFromUrl — 从 URL 下载并导入技能
+  ipcMain.handle('skill:importFromUrl', async (_event: IpcMainInvokeEvent, url: string) => {
+    try {
+      const entry = await importSkillFromUrl(url);
+      if (!entry) {
+        return { success: false, error: 'Failed to import skill from URL' };
+      }
+      return { success: true, skillName: entry.skill.name };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error('skill:importFromUrl failed', message);
+      return { success: false, error: message };
+    }
+  });
+
+  // skill:uninstall — 卸载工作区技能（内置技能不允许卸载）
+  ipcMain.handle('skill:uninstall', async (_event: IpcMainInvokeEvent, skillName: string) => {
+    try {
+      const deleted = await uninstallSkill(skillName);
+      if (!deleted) {
+        // 区分内置技能和工作区不存在的技能
+        const builtinSkills = loadBuiltinSkillsSync();
+        const isBuiltin = builtinSkills.some(entry => entry.skill.name === skillName);
+        if (isBuiltin) {
+          return { success: false, error: '内置技能不允许卸载' };
+        }
+        return { success: false, error: `Skill '${skillName}' not found in workspace skills directory` };
+      }
+      return { success: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error('skill:uninstall failed', message);
+      return { success: false, error: message };
+    }
+  });
+
+  // skill:getDetail — 获取技能详情（SKILL.md body 内容）
+  ipcMain.handle('skill:getDetail', async (_event: IpcMainInvokeEvent, skillName: string) => {
+    try {
+      const entry = getSkillRegistry().get(skillName);
+      if (!entry) {
+        return { success: false, error: `Skill '${skillName}' not found` };
+      }
+      return {
+        success: true,
+        detail: {
+          name: entry.skill.name,
+          description: entry.skill.description,
+          body: entry.skill.body,
+          source: entry.skill.source,
+          filePath: entry.skill.filePath,
+        },
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error('skill:getDetail failed', message);
+      return { success: false, error: message };
+    }
+  });
+
+  // skill:create — 创建工作区技能（写入 SKILL.md）
+  ipcMain.handle('skill:create', async (_event: IpcMainInvokeEvent, args: { name: string; description: string; emoji?: string; body: string }) => {
+    try {
+      const entry = await createSkill(args);
+      if (!entry) {
+        return { success: false, error: 'Failed to create skill (invalid name, duplicate, or write error)' };
+      }
+      return { success: true, skillName: entry.skill.name };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error('skill:create failed', message);
+      return { success: false, error: message };
+    }
+  });
+
+  // skill:edit — 编辑工作区技能（更新 SKILL.md）
+  ipcMain.handle('skill:edit', async (_event: IpcMainInvokeEvent, args: { name: string; description: string; emoji?: string; body: string }) => {
+    try {
+      const entry = await editSkill(args);
+      if (!entry) {
+        return { success: false, error: 'Failed to edit skill (builtin skill, not found, or write error)' };
+      }
+      return { success: true, skillName: entry.skill.name };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error('skill:edit failed', message);
+      return { success: false, error: message };
+    }
+  });
+
+  // skill:getPromptSnippet — 获取格式化后的技能 prompt 片段（注入 system prompt 用）
+  ipcMain.handle('skill:getPromptSnippet', async () => {
+    try {
+      const registry = getSkillRegistry();
+      const prompt = registry.buildSnapshot();
+      return { success: true, prompt };
+    } catch (err) {
+      logger.error('skill:getPromptSnippet failed', err instanceof Error ? err.message : String(err));
+      return { success: false, prompt: '', error: String(err) };
+    }
   });
 }
 
@@ -894,4 +1096,478 @@ export function abortAllActiveAgentRuns(): void {
     }
   }
   activeRuns.clear();
+}
+
+// ==================== Agent 模式管理 IPC ====================
+
+/**
+ * 注册 Agent 模式管理 IPC handler（3 个通道）。
+ *
+ * 通道：
+ *  1. agent:isModeActive    - 查询 Agent 模式是否激活
+ *  2. agent:getModeStatus   - 获取完整模式状态
+ *  3. agent:setModeOverride - 设置覆盖开关并持久化到 settings.json
+ */
+function registerAgentModeHandlers(): void {
+  // agent:isModeActive — 查询 Agent 模式是否激活
+  ipcMain.handle('agent:isModeActive', async () => {
+    try {
+      return { ok: true, active: agentModeService.isAgentModeActive() };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error('agent:isModeActive failed', message);
+      return { ok: false, error: message };
+    }
+  });
+
+  // agent:getModeStatus — 获取完整模式状态
+  ipcMain.handle('agent:getModeStatus', async () => {
+    try {
+      return { ok: true, status: agentModeService.getStatus() };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error('agent:getModeStatus failed', message);
+      return { ok: false, error: message };
+    }
+  });
+
+  // agent:setModeOverride — 设置覆盖开关
+  ipcMain.handle(
+    'agent:setModeOverride',
+    async (_event: IpcMainInvokeEvent, args: { override: AgentModeOverride }) => {
+      try {
+        agentModeService.setOverride(args.override);
+
+        // 持久化 override 到 settings.json，使重载后仍保持用户选择
+        try {
+          const storageService = getStorageService();
+          const settings = storageService.getSettings();
+          const activeEngineId = settings?.activeEngineId;
+          const aiEngines = settings?.aiEngines;
+          if (aiEngines && activeEngineId) {
+            const activeEngine = aiEngines.find((e: any) => e.id === activeEngineId);
+            if (activeEngine) {
+              activeEngine.agentModeOverride = args.override;
+              storageService.setSettings(settings);
+            }
+          }
+        } catch (persistErr) {
+          logger.warn(
+            'Failed to persist agentModeOverride to settings',
+            persistErr instanceof Error ? persistErr.message : String(persistErr),
+          );
+        }
+
+        return { ok: true, status: agentModeService.getStatus() };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('agent:setModeOverride failed', message);
+        return { ok: false, error: message };
+      }
+    },
+  );
+
+  logger.info('Agent mode handlers registered (3 channels)');
+}
+
+// ==================== Agent 配置管理 IPC ====================
+
+/**
+ * 广播 agent-config:changed 事件到所有渲染进程。
+ *
+ * 配置变更（update / toggle / updateSkills）成功后调用，
+ * 通知所有窗口刷新智能体配置列表（useAgentConfigs 订阅此事件）。
+ */
+function broadcastConfigChanged(
+  agentId: string,
+  action: 'created' | 'updated' | 'deleted' | 'toggled' | 'skills-updated',
+): void {
+  const payload = { agentId, action };
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send('agent-config:changed', payload);
+    }
+  }
+}
+
+/**
+ * 注册 Agent 配置管理 IPC handler（7 个通道）。
+ *
+ * 通道：
+ *  1. agent-config:list          - 列出全部智能体配置
+ *  2. agent-config:get           - 获取单个智能体配置
+ *  3. agent-config:update        - 更新智能体配置（Partial<AgentConfig>）
+ *  4. agent-config:toggle        - 切换智能体启用/禁用状态
+ *  5. agent-config:updateSkills  - 更新技能白名单
+ *  6. agent-config:create        - 创建用户自定义智能体（强制 isSystem: false）
+ *  7. agent-config:delete        - 删除用户自定义智能体（系统预置不可删除）
+ *
+ * 【重点标记 - 参数结构陷阱】preload 将参数封装为对象（{ id } / { id, patch } /
+ * { id, skills }），因此 handler 第二参数为对象而非位置参数。若按位置参数
+ * （如 `(_event, id: string)`）接收，id 实际为 { id: '...' } 对象，
+ * 会导致 agentConfigService.getById({...}) 类型与运行时错误。
+ *
+ * 【重点标记 - 服务方法名】agentConfigService 实际方法名为 list / getById /
+ * update / toggleStatus / updateSkills，并非 listConfigs / getConfig /
+ * updateConfig。调用错误的方法名会导致编译失败。
+ *
+ * 写操作成功后通过 broadcastConfigChanged 广播 agent-config:changed 事件。
+ */
+function registerAgentConfigHandlers(): void {
+  // agent-config:list — 列出全部智能体配置
+  ipcMain.handle('agent-config:list', async () => {
+    try {
+      const configs = await agentConfigService.list();
+      return { ok: true, configs };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error('agent-config:list failed', message);
+      return { ok: false, error: message };
+    }
+  });
+
+  // agent-config:get — 获取单个智能体配置
+  ipcMain.handle(
+    'agent-config:get',
+    async (_event: IpcMainInvokeEvent, args: { id: string }) => {
+      try {
+        const config = await agentConfigService.getById(args.id);
+        return { ok: true, config };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('agent-config:get failed', message);
+        return { ok: false, error: message };
+      }
+    },
+  );
+
+  // agent-config:update — 更新智能体配置（Partial<AgentConfig>）
+  ipcMain.handle(
+    'agent-config:update',
+    async (_event: IpcMainInvokeEvent, args: { id: string; patch: Partial<AgentConfig> }) => {
+      try {
+        const config = await agentConfigService.update(args.id, args.patch);
+        broadcastConfigChanged(args.id, 'updated');
+        return { ok: true, config };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('agent-config:update failed', message);
+        return { ok: false, error: message };
+      }
+    },
+  );
+
+  // agent-config:toggle — 切换智能体启用/禁用状态
+  ipcMain.handle(
+    'agent-config:toggle',
+    async (_event: IpcMainInvokeEvent, args: { id: string }) => {
+      try {
+        const config = await agentConfigService.toggleStatus(args.id);
+        broadcastConfigChanged(args.id, 'toggled');
+        return { ok: true, config };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('agent-config:toggle failed', message);
+        return { ok: false, error: message };
+      }
+    },
+  );
+
+  // agent-config:updateSkills — 更新技能白名单
+  ipcMain.handle(
+    'agent-config:updateSkills',
+    async (_event: IpcMainInvokeEvent, args: { id: string; skills: string[] }) => {
+      try {
+        const config = await agentConfigService.updateSkills(args.id, args.skills);
+        broadcastConfigChanged(args.id, 'skills-updated');
+        return { ok: true, config };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('agent-config:updateSkills failed', message);
+        return { ok: false, error: message };
+      }
+    },
+  );
+
+  // agent-config:create — 创建用户自定义智能体
+  ipcMain.handle(
+    'agent-config:create',
+    async (_event: IpcMainInvokeEvent, args: { config: Omit<AgentConfig, 'id' | 'createdAt' | 'updatedAt' | 'isSystem'> }) => {
+      try {
+        // 强制 isSystem: false，防止前端伪造系统预置智能体
+        const config = await agentConfigService.create({
+          ...args.config,
+          isSystem: false,
+        });
+        broadcastConfigChanged(config.id, 'created');
+        return { ok: true, config };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('agent-config:create failed', message);
+        return { ok: false, error: message };
+      }
+    },
+  );
+
+  // agent-config:delete — 删除用户自定义智能体（系统预置不可删除，后端已有保护）
+  ipcMain.handle(
+    'agent-config:delete',
+    async (_event: IpcMainInvokeEvent, args: { id: string }) => {
+      try {
+        await agentConfigService.delete(args.id);
+        broadcastConfigChanged(args.id, 'deleted');
+        return { ok: true };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('agent-config:delete failed', message);
+        return { ok: false, error: message };
+      }
+    },
+  );
+
+  logger.info('Agent config handlers registered (7 channels)');
+}
+
+// ==================== Session 管理 IPC（Task 6） ====================
+
+/**
+ * 注册会话管理 IPC handler（7 个通道）。
+ *
+ * 通道：
+ *  1. session:create       - 创建新会话
+ *  2. session:list         - 列出当前角色所有会话
+ *  3. session:switch       - 切换会话（更新 lastActiveAt）
+ *  4. session:delete       - 删除会话（同时删除消息历史文件）
+ *  5. session:rename       - 重命名会话标题
+ *  6. session:saveMessages - 保存会话消息历史
+ *  7. session:loadMessages - 加载会话消息历史
+ *
+ * 持久化路径：
+ *  - 会话列表：{userDataPath}/sessions/{characterCardId}/sessions.json
+ *  - 消息历史：{userDataPath}/sessions/{characterCardId}/{sessionId}.json
+ */
+function registerSessionHandlers(): void {
+  // session:create — 创建新会话
+  ipcMain.handle(
+    'session:create',
+    async (_event: IpcMainInvokeEvent, args: { characterCardId: string; title?: string }) => {
+      try {
+        const result = await createSession(args.characterCardId, args.title);
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('session:create failed', message);
+        return { success: false, error: message };
+      }
+    },
+  );
+
+  // session:list — 列出当前角色所有会话
+  ipcMain.handle(
+    'session:list',
+    async (_event: IpcMainInvokeEvent, args: { characterCardId: string }) => {
+      try {
+        const result = await listSessions(args.characterCardId);
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('session:list failed', message);
+        return { success: false, sessions: [], error: message };
+      }
+    },
+  );
+
+  // session:switch — 切换会话
+  ipcMain.handle(
+    'session:switch',
+    async (_event: IpcMainInvokeEvent, args: { characterCardId: string; sessionId: string }) => {
+      try {
+        const result = await switchSession(args.characterCardId, args.sessionId);
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('session:switch failed', message);
+        return { success: false, error: message };
+      }
+    },
+  );
+
+  // session:delete — 删除会话
+  ipcMain.handle(
+    'session:delete',
+    async (_event: IpcMainInvokeEvent, args: { characterCardId: string; sessionId: string }) => {
+      try {
+        const result = await deleteSession(args.characterCardId, args.sessionId);
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('session:delete failed', message);
+        return { success: false, error: message };
+      }
+    },
+  );
+
+  // session:rename — 重命名会话标题
+  ipcMain.handle(
+    'session:rename',
+    async (
+      _event: IpcMainInvokeEvent,
+      args: { characterCardId: string; sessionId: string; newTitle: string },
+    ) => {
+      try {
+        const result = await renameSession(args.characterCardId, args.sessionId, args.newTitle);
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('session:rename failed', message);
+        return { success: false, error: message };
+      }
+    },
+  );
+
+  // session:saveMessages — 保存会话消息历史
+  ipcMain.handle(
+    'session:saveMessages',
+    async (
+      _event: IpcMainInvokeEvent,
+      args: {
+        characterCardId: string;
+        sessionId: string;
+        messages: Array<{ role: string; content: string; timestamp?: number; [key: string]: unknown }>;
+      },
+    ) => {
+      try {
+        const result = await saveSessionMessages(
+          args.characterCardId,
+          args.sessionId,
+          args.messages,
+        );
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('session:saveMessages failed', message);
+        return { success: false, error: message };
+      }
+    },
+  );
+
+  // session:loadMessages — 加载会话消息历史
+  ipcMain.handle(
+    'session:loadMessages',
+    async (_event: IpcMainInvokeEvent, args: { characterCardId: string; sessionId: string }) => {
+      try {
+        const result = await loadSessionMessages(args.characterCardId, args.sessionId);
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('session:loadMessages failed', message);
+        return { success: false, messages: [], error: message };
+      }
+    },
+  );
+
+  logger.info('Session handlers registered (7 channels)');
+}
+
+/**
+ * 根据当前 settings 重新评估 Agent 模式状态。
+ *
+ * 供 settingHandlers 在保存设置后调用，确保引擎切换或能力更新后
+ * agentModeService 状态与缓存的能力清单保持同步。
+ */
+export function reevaluateAgentModeFromSettings(settings: any): void {
+  try {
+    const activeEngineId = settings?.activeEngineId;
+    const aiEngines = settings?.aiEngines;
+    if (aiEngines && activeEngineId) {
+      const activeEngine = aiEngines.find((e: any) => e.id === activeEngineId);
+      if (activeEngine) {
+        agentModeService.reevaluate({
+          useAgent: activeEngine.useAgent ?? false,
+          agentModeOverride: activeEngine.agentModeOverride ?? 'auto',
+          capabilities: activeEngine.capabilities,
+        });
+      }
+    }
+  } catch (err) {
+    logger.warn('reevaluateAgentModeFromSettings failed', err instanceof Error ? err.message : String(err));
+  }
+}
+
+// ==================== 故障转移 IPC（Task 10） ====================
+
+/**
+ * 故障转移事件类型。
+ */
+export interface FailoverEvent {
+  /** 事件类型：retry（重试）/ switch（切换 provider） */
+  type: 'retry' | 'switch';
+  /** 原 provider 标识 */
+  fromProvider?: string;
+  /** 目标 provider 标识 */
+  toProvider?: string;
+  /** 目标模型名称 */
+  toModel?: string;
+  /** 故障原因（错误消息） */
+  reason: string;
+  /** 重试次数（type=retry 时有效） */
+  attempt?: number;
+  /** 时间戳 */
+  timestamp: number;
+}
+
+/**
+ * 广播故障转移事件到所有渲染窗口。
+ *
+ * 当发生重试或 provider 切换时调用，前端通过 `ai:failover` 事件订阅，
+ * 展示 toast 通知（如"已切换到备用模型 {model}"）。
+ *
+ * @param event 故障转移事件详情
+ */
+export function broadcastFailoverEvent(event: FailoverEvent): void {
+  logger.info('Failover event broadcast', undefined, event);
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send('ai:failover', event);
+    }
+  }
+}
+
+/**
+ * 注册故障转移相关 IPC handler（Task 10.5）。
+ *
+ * 2 个 IPC 通道 + 1 个事件广播：
+ *  1. ai:getFallbackProviders - 获取备用 provider 列表（ipcMain.handle）
+ *  2. ai:setFallbackProviders - 设置备用 provider 列表（ipcMain.handle）
+ *  3. ai:failover             - 故障转移事件广播（broadcastFailoverEvent 推送）
+ */
+function registerFailoverHandlers(): void {
+  // ai:getFallbackProviders — 获取备用 provider 列表
+  ipcMain.handle('ai:getFallbackProviders', async () => {
+    try {
+      const providers = aiConfigProvider.getFallbackProviders();
+      return { success: true, providers };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error('ai:getFallbackProviders failed', message);
+      return { success: false, providers: [], error: message };
+    }
+  });
+
+  // ai:setFallbackProviders — 设置备用 provider 列表
+  ipcMain.handle(
+    'ai:setFallbackProviders',
+    async (_event: IpcMainInvokeEvent, args: { providers: FallbackProvider[] }) => {
+      try {
+        aiConfigProvider.setFallbackProviders(args.providers);
+        return { success: true };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('ai:setFallbackProviders failed', message);
+        return { success: false, error: message };
+      }
+    },
+  );
+
+  logger.info('Failover handlers registered (2 channels + 1 broadcast event)');
 }

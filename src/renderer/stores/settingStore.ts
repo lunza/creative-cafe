@@ -63,7 +63,7 @@ export const useSettingStore = create<SettingState>((set, get) => ({
 
       // 如果没有保存的设置，使用默认设置
       addLog('没有找到保存的设置，使用默认设置', 'info');
-      const defaultSetting = AppSetting.defaultSetting as AppSettingType;
+      const defaultSetting = AppSetting.defaultSetting as unknown as AppSettingType;
 
       // 保存默认设置到主进程
       const saveResult = await window.electronAPI.setting.save(defaultSetting);
@@ -131,7 +131,7 @@ export const useSettingStore = create<SettingState>((set, get) => ({
   testConnection: async (setting) => {
     set({ loading: true, error: null });
     const startTime = new Date();
-    let testRequest: { url: string; method: string; headers?: Record<string, string>; body?: any; timeout?: number } | undefined;
+    let testRequest: { url: string; method: string; headers: Record<string, string>; body: any; timeout?: number } | undefined;
     
     try {
       const startTimeStr = startTime.toISOString();
@@ -189,22 +189,12 @@ export const useSettingStore = create<SettingState>((set, get) => ({
 
       let testUrl;
       const apiUrl = activeEngine.api_url;
-      const apiMode = activeEngine.api_mode || 'chat_completion';
 
-      if (apiMode === 'chat_completion') {
-        if (apiUrl.endsWith('/v1/chat/completions')) {
-          testUrl = apiUrl;
-        } else {
-          const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
-          testUrl = baseUrl + 'v1/chat/completions';
-        }
+      if (apiUrl.endsWith('/v1/chat/completions')) {
+        testUrl = apiUrl;
       } else {
-        if (apiUrl.endsWith('/v1/completions')) {
-          testUrl = apiUrl;
-        } else {
-          const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
-          testUrl = baseUrl + 'v1/completions';
-        }
+        const baseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
+        testUrl = baseUrl + 'v1/chat/completions';
       }
 
       testRequest = {
@@ -213,7 +203,7 @@ export const useSettingStore = create<SettingState>((set, get) => ({
         headers: {
           'Content-Type': 'application/json'
         },
-        body: apiMode === 'chat_completion' ? {
+        body: {
           model: activeEngine.model_name,
           messages: [
             {
@@ -225,11 +215,6 @@ export const useSettingStore = create<SettingState>((set, get) => ({
               content: '测试连接'
             }
           ],
-          max_tokens: activeEngine.max_tokens ?? 1,
-          temperature: activeEngine.temperature ?? 0.7
-        } : {
-          model: activeEngine.model_name,
-          prompt: '测试连接',
           max_tokens: activeEngine.max_tokens ?? 1,
           temperature: activeEngine.temperature ?? 0.7
         },
@@ -318,7 +303,7 @@ export const useSettingStore = create<SettingState>((set, get) => ({
           success: true, 
           responseTime, 
           model: activeEngine.model_name,
-          details: `耗时 ${responseTime}ms, 模型: ${activeEngine.model_name || '未设置'}, API模式: ${apiMode}`
+          details: `耗时 ${responseTime}ms, 模型: ${activeEngine.model_name || '未设置'}, API模式: chat_completion`
         };
       } else {
         addLog('测试连通性 - 连接失败', 'error', {
@@ -399,7 +384,7 @@ export const useSettingStore = create<SettingState>((set, get) => ({
   restoreDefault: async () => {
     set({ loading: true, error: null });
     try {
-      const defaultSetting = AppSetting.defaultSetting as AppSettingType;
+      const defaultSetting = AppSetting.defaultSetting as unknown as AppSettingType;
       const result = await window.electronAPI.setting.save(defaultSetting);
       if (result.success) {
         set({ setting: defaultSetting, loading: false });

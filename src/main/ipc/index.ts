@@ -24,6 +24,7 @@ import { registerLoraHandlers } from './handlers/loraHandlers';
 import { registerCharacterLoraHandlers } from './handlers/characterLoraHandlers';
 import './handlers/aiHandlers';
 import { registerAgentHandlers } from './handlers/agentHandlers';
+import { registerWebSearchHandlers } from './handlers/webSearchHandlers';
 import { getStorageService } from '../services/storageService';
 import { embeddingService } from '../services/EmbeddingService';
 import { embeddingWorkerService } from '../services/EmbeddingWorkerService';
@@ -83,6 +84,9 @@ export function setupIpcHandlers() {
   // 暴露 agent:run / agent:cancel / agent:token / agent:toolCall / agent:done
   //       + skill:list / skill:invoke + memory:search + learning:dream 共 9 个通道
   registerAgentHandlers();
+
+  // Web 搜索 IPC（webSearch:test / webSearch:search）
+  registerWebSearchHandlers();
 
   embeddingService.initialize();
   embeddingService.registerIpcHandlers();

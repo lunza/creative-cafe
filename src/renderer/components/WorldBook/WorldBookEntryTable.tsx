@@ -8,7 +8,8 @@ import {
   TagOutlined,
   SaveOutlined,
   SortAscendingOutlined,
-  StopOutlined
+  StopOutlined,
+  SafetyCertificateOutlined
 } from '@ant-design/icons';
 import type { UseWorldBookFormStateReturn } from './hooks/useWorldBookFormState';
 
@@ -49,6 +50,8 @@ export interface WorldBookEntryTableProps {
   onTranslateAll: () => void | Promise<void>;
   /** 一键润色选中条目 */
   onPolishAll: () => void;
+  /** 一键审核选中条目 */
+  onAuditAll: () => void;
   /** 中断 AI 请求 */
   onCancelAIRequest: () => void;
   /** 关闭 Modal 时额外清理（formState 中的状态本组件已处理） */
@@ -76,6 +79,7 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
   onGenerateKeywordsAll,
   onTranslateAll,
   onPolishAll,
+  onAuditAll,
   onCancelAIRequest,
   onClose,
   onOpenAddEntryModal,
@@ -101,6 +105,7 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
     setPageSize,
     isTranslatingAll,
     isPolishingAll,
+    isAuditingAll,
     isAISorting,
     isGeneratingKeywordsAll,
     generatingKeywordsUid,
@@ -241,7 +246,7 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
           icon={isGeneratingKeywordsAll ? <StopOutlined /> : <TagOutlined />}
           danger={isGeneratingKeywordsAll}
           onClick={isGeneratingKeywordsAll ? onCancelAIRequest : onGenerateKeywordsAll}
-          disabled={!isGeneratingKeywordsAll && (isTranslatingAll || isPolishingAll)}
+          disabled={!isGeneratingKeywordsAll && (isTranslatingAll || isPolishingAll || isAuditingAll)}
           style={{ marginRight: 8 }}
         >
           {isGeneratingKeywordsAll ? '中断生成' : 'AI生成关键词'}
@@ -252,7 +257,7 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
           icon={isTranslatingAll ? <StopOutlined /> : <TranslationOutlined />}
           danger={isTranslatingAll}
           onClick={isTranslatingAll ? onCancelAIRequest : onTranslateAll}
-          disabled={!isTranslatingAll && (isPolishingAll || isGeneratingKeywordsAll || selectedEntries.size === 0)}
+          disabled={!isTranslatingAll && (isPolishingAll || isGeneratingKeywordsAll || isAuditingAll || selectedEntries.size === 0)}
           style={{ marginRight: 8 }}
         >
           {isTranslatingAll ? '中断翻译' : `一键翻译选中条目 (${selectedEntries.size})`}
@@ -263,10 +268,21 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
           icon={isPolishingAll ? <StopOutlined /> : <EditOutlined />}
           danger={isPolishingAll}
           onClick={isPolishingAll ? onCancelAIRequest : onPolishAll}
-          disabled={!isPolishingAll && (isTranslatingAll || isGeneratingKeywordsAll || selectedEntries.size === 0)}
+          disabled={!isPolishingAll && (isTranslatingAll || isGeneratingKeywordsAll || isAuditingAll || selectedEntries.size === 0)}
           style={{ marginRight: 8 }}
         >
           {isPolishingAll ? '中断润色' : `一键润色选中条目 (${selectedEntries.size})`}
+        </Button>
+        <Button
+          key="auditAll"
+          type="primary"
+          icon={isAuditingAll ? <StopOutlined /> : <SafetyCertificateOutlined />}
+          danger={isAuditingAll}
+          onClick={isAuditingAll ? onCancelAIRequest : onAuditAll}
+          disabled={!isAuditingAll && (isTranslatingAll || isPolishingAll || isGeneratingKeywordsAll || selectedEntries.size === 0)}
+          style={{ marginRight: 8 }}
+        >
+          {isAuditingAll ? '中断审核' : `一键审核选中条目 (${selectedEntries.size})`}
         </Button>
       </Space>
       <Space>
@@ -297,10 +313,10 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ), [
     worldBookContent, actualViewingItem, selectedEntries,
-    isTranslatingAll, isPolishingAll, isAISorting, isGeneratingKeywordsAll,
+    isTranslatingAll, isPolishingAll, isAISorting, isGeneratingKeywordsAll, isAuditingAll,
     addLog, handleSave, handleDeleteSelectedClick, handleOrganizeClick,
     handleClose, onOpenAddEntryModal, onOpenTagManager, onCancelAIRequest,
-    onGenerateKeywordsAll, onTranslateAll, onPolishAll,
+    onGenerateKeywordsAll, onTranslateAll, onPolishAll, onAuditAll,
   ]);
 
   // entry 列表 + 分组渲染（保持与原实现完全一致的视觉与行为）

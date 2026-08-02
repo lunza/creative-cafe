@@ -66,6 +66,38 @@ function buildScanText(
   return parts.join('\n');
 }
 
+/**
+ * 文本分词（中文按字符，英文按空格）。
+ */
+function tokenize(text: string): Set<string> {
+  // 中文按字符分词，英文按空格分词
+  const tokens = new Set<string>();
+  // 英文单词
+  const englishWords = text.toLowerCase().match(/[a-z]+/g) || [];
+  englishWords.forEach(w => tokens.add(w));
+  // 中文字符（每2个字一组，滑动窗口）
+  const chineseChars = text.match(/[\u4e00-\u9fa5]/g) || [];
+  for (let i = 0; i < chineseChars.length - 1; i++) {
+    tokens.add(chineseChars[i] + chineseChars[i + 1]);
+  }
+  // 单字也加入
+  chineseChars.forEach(c => tokens.add(c));
+  return tokens;
+}
+
+/**
+ * Jaccard 相似度（交集/并集）。
+ */
+function jaccardSimilarity(setA: Set<string>, setB: Set<string>): number {
+  if (setA.size === 0 && setB.size === 0) return 0;
+  let intersection = 0;
+  for (const token of setA) {
+    if (setB.has(token)) intersection++;
+  }
+  const union = setA.size + setB.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
 export class ContextManager {
   async retrieveContext(
     conversation: Message[],
@@ -235,6 +267,212 @@ export class ContextManager {
     }
   }
 
+  /**
+   * 混合检索：向量检索 + 关键词检索合并，MMR 去重 + 时间衰减。
+   *
+   * 参考 openclaw 混合检索策略：
+   *  - 向量检索（权重 0.7）+ 关键词检索（权重 0.3）合并
+   *  - MMR 去重：MMR = λ * sim(query, doc) - (1-λ) * max(sim(doc, selected_docs))，λ=0.7
+   *  - 时间衰减：score *= exp(-daysSinceLastAccess / 30)，30 天半衰期
+   *  - 统一检索 memory + worldbook + chatHistory 三源
+   *
+   * @param query 查询文本
+   * @param options 检索选项（topK/minScore/sources/scopeIds/filter）
+   * @returns 混合检索结果（按 score 降序，经 MMR 去重 + 时间衰减）
+   */
+  async retrieveWithHybrid(
+    query: string,
+    options: RetrieveOptions & {
+      /** MMR lambda 参数（默认 0.7，越大越注重相关性，越小越注重多样性） */
+      mmrLambda?: number;
+      /** 时间衰减半衰期（天，默认 30） */
+      timeDecayHalfLife?: number;
+      /** 是否启用关键词匹配（默认 true） */
+      enableKeywordMatch?: boolean;
+      /** 扫描深度（关键词匹配用，最近N条消息，默认4） */
+      scanDepth?: number;
+      /** 全局扫描数据（关键词匹配用） */
+      globalScanData?: {
+        personaDescription?: string;
+        characterDescription?: string;
+        characterPersonality?: string;
+        characterDepthPrompt?: string;
+        scenario?: string;
+        creatorNotes?: string;
+      };
+      /** 对话历史（关键词匹配用） */
+      conversation?: Message[];
+    }
+  ): Promise<ContextItem[]> {
+    try {
+      const topK = options.topK || 5;
+      const minScore = options.minScore || 0;
+      const mmrLambda = options.mmrLambda ?? 0.7;
+      const halfLife = options.timeDecayHalfLife ?? 30;
+      const enableKeywordMatch = options.enableKeywordMatch !== false;
+      const scanDepth = options.scanDepth || 4;
+
+      const vectorWeight = 0.7;
+      const keywordWeight = 0.3;
+
+      // ========== 步骤 1：向量检索（权重 0.7） ==========
+      const vectorItems: ContextItem[] = [];
+      const embedResult = await embeddingService.generateEmbedding(query);
+      if (embedResult.success && embedResult.vector) {
+        const queryVector = embedResult.vector;
+        let filter: Record<string, any> = {};
+        if (options.filter) {
+          filter = options.filter;
+        }
+        if (options.sources && options.sources.length > 0) {
+          filter.source = options.sources;
+        }
+
+        // 多取一倍用于 MMR 筛选
+        const results = await vectorStoreService.search(queryVector, topK * 2, filter, {
+          scopeIds: options.scopeIds
+        });
+
+        for (const r of results) {
+          if (r.score >= minScore) {
+            vectorItems.push({
+              id: r.id,
+              source: r.metadata.source || 'unknown',
+              content: r.metadata.text || '',
+              score: r.score * vectorWeight,
+              metadata: r.metadata
+            });
+          }
+        }
+      }
+
+      // ========== 步骤 2：关键词检索（权重 0.3） ==========
+      const keywordItems: ContextItem[] = [];
+      if (enableKeywordMatch && options.scopeIds && options.scopeIds.length > 0) {
+        try {
+          const scanText = buildScanText(
+            options.conversation || [],
+            scanDepth,
+            options.globalScanData
+          );
+
+          const keywordResult = await worldBookService.matchKeywords(scanText, options.scopeIds, {
+            caseSensitive: false,
+            matchWholeWords: false,
+            maxResults: topK
+          });
+
+          if (keywordResult.success && keywordResult.matches.length > 0) {
+            for (const match of keywordResult.matches) {
+              // 去除与向量结果重复的条目（按 metadata.entryUid 去重）
+              const alreadyExists = vectorItems.some(vi =>
+                vi.metadata && vi.metadata.entryUid === String(match.entry.uid)
+              );
+
+              if (!alreadyExists) {
+                keywordItems.push({
+                  id: `keyword_${match.entry.uid}_${match.matchScore}`,
+                  source: 'worldbook_keyword',
+                  content: match.content,
+                  score: Math.min(match.matchScore / 100, 1.0) * keywordWeight,
+                  metadata: {
+                    source: 'worldbook',
+                    text: match.content,
+                    entryUid: match.entry.uid,
+                    matchedKeys: match.matchedKeys,
+                    matchType: match.matchType,
+                    matchScore: match.matchScore,
+                    entryName: match.name,
+                    entryComment: match.comment,
+                  }
+                });
+              }
+            }
+          }
+        } catch (error) {
+          console.error('[ContextManager] 混合检索关键词匹配失败:', error);
+        }
+      }
+
+      // ========== 步骤 3：合并候选集 ==========
+      const candidates: ContextItem[] = [...vectorItems, ...keywordItems];
+
+      if (candidates.length === 0) {
+        return [];
+      }
+
+      // ========== 步骤 4：时间衰减 ==========
+      const now = Date.now();
+      for (const item of candidates) {
+        const timestamp = item.metadata?.timestamp || item.metadata?.createdAt;
+        if (timestamp) {
+          const daysSinceLastAccess = (now - timestamp) / (1000 * 60 * 60 * 24);
+          item.score *= Math.exp(-daysSinceLastAccess / halfLife);
+        }
+      }
+
+      // ========== 步骤 5：MMR 去重选择 ==========
+      // 预计算每个候选条目的 token 集合
+      const candidateTokens = candidates.map(c => tokenize(c.content));
+      const selected: ContextItem[] = [];
+      const selectedIndices: number[] = [];
+      const selectedTokens: Set<string>[] = [];
+
+      // 第一条直接选 score 最高的
+      let bestIdx = 0;
+      for (let i = 1; i < candidates.length; i++) {
+        if (candidates[i].score > candidates[bestIdx].score) {
+          bestIdx = i;
+        }
+      }
+      selected.push(candidates[bestIdx]);
+      selectedIndices.push(bestIdx);
+      selectedTokens.push(candidateTokens[bestIdx]);
+
+      // 迭代选择剩余条目
+      while (selected.length < topK && selectedIndices.length < candidates.length) {
+        let bestMmrScore = -Infinity;
+        let bestCandidateIdx = -1;
+
+        for (let i = 0; i < candidates.length; i++) {
+          if (selectedIndices.includes(i)) continue;
+
+          const relevanceScore = candidates[i].score;
+          // 计算与已选条目的最大相似度
+          let maxSimilarity = 0;
+          for (const selTokens of selectedTokens) {
+            const sim = jaccardSimilarity(candidateTokens[i], selTokens);
+            if (sim > maxSimilarity) {
+              maxSimilarity = sim;
+            }
+          }
+
+          const mmrScore = mmrLambda * relevanceScore - (1 - mmrLambda) * maxSimilarity;
+
+          if (mmrScore > bestMmrScore) {
+            bestMmrScore = mmrScore;
+            bestCandidateIdx = i;
+          }
+        }
+
+        if (bestCandidateIdx === -1) break;
+
+        selected.push(candidates[bestCandidateIdx]);
+        selectedIndices.push(bestCandidateIdx);
+        selectedTokens.push(candidateTokens[bestCandidateIdx]);
+      }
+
+      // ========== 步骤 6：返回结果 ==========
+      // 按最终 score 降序排列
+      selected.sort((a, b) => b.score - a.score);
+
+      return selected.slice(0, topK);
+    } catch (error) {
+      console.error('[ContextManager] 混合检索失败:', error);
+      return [];
+    }
+  }
+
   buildPromptWithSystem(
     systemPrompt: string,
     context: ContextItem[]
@@ -332,6 +570,15 @@ export class ContextManager {
       try {
         const compressed = await this.compressContext(items, maxTokens);
         return { success: true, compressed };
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+      }
+    });
+
+    ipcMain.handle('context:retrieveWithHybrid', async (_event, { query, options }: { query: string; options: any }) => {
+      try {
+        const items = await this.retrieveWithHybrid(query, options);
+        return { success: true, items };
       } catch (error) {
         return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
       }

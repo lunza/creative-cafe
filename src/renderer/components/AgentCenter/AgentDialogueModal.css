@@ -1,0 +1,152 @@
+/* AgentDialogueModal 美化样式 — 对标 CharacterDialogueChat 设计标准 */
+
+@keyframes agentFadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes agentBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes agentPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* 背景装饰层 */
+.agent-chat-area-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+  border-radius: 16px;
+  transition: background 0.3s ease;
+}
+
+.agent-chat-area-bg::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 20% 20%, var(--chat-area-radial-1) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 60%, var(--chat-area-radial-2) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 90%, var(--chat-area-radial-3) 0%, transparent 40%),
+    var(--chat-dialog-bg-gradient);
+}
+
+.agent-chat-area-bg::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 70% 30%, var(--chat-area-radial-4) 0%, transparent 45%),
+    radial-gradient(ellipse at 30% 70%, var(--chat-area-radial-5) 0%, transparent 50%);
+}
+
+.agent-chat-bg-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.4;
+}
+
+.agent-chat-bg-orb:nth-child(1) {
+  width: 300px;
+  height: 300px;
+  top: -100px;
+  right: -50px;
+  background: radial-gradient(circle, var(--chat-area-radial-1) 0%, transparent 70%);
+}
+
+.agent-chat-bg-orb:nth-child(2) {
+  width: 250px;
+  height: 250px;
+  bottom: 10%;
+  left: -80px;
+  background: radial-gradient(circle, var(--chat-area-radial-5) 0%, transparent 70%);
+}
+
+.agent-chat-bg-orb:nth-child(3) {
+  width: 200px;
+  height: 200px;
+  top: 40%;
+  right: 20%;
+  background: radial-gradient(circle, var(--chat-area-radial-6) 0%, transparent 70%);
+}
+
+.agent-chat-bg-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(circle at 1px 1px, var(--chat-bg-grid-color) 1px, transparent 0);
+  background-size: 32px 32px;
+  pointer-events: none;
+  z-index: 0;
+  transition: background-image 0.3s ease;
+}
+
+/* 自定义滚动条 */
+.agent-chat-messages::-webkit-scrollbar {
+  width: 6px;
+}
+
+.agent-chat-messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.agent-chat-messages::-webkit-scrollbar-thumb {
+  background: var(--chat-scrollbar-thumb);
+  border-radius: 3px;
+  transition: background 0.3s ease;
+}
+
+.agent-chat-messages::-webkit-scrollbar-thumb:hover {
+  background: var(--chat-scrollbar-thumb-hover);
+}
+
+.agent-chat-messages {
+  scrollbar-width: thin;
+  scrollbar-color: var(--chat-scrollbar-thumb) transparent;
+}
+
+/* 隐藏 textarea 滚动条 */
+.agent-chat-textarea::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.agent-chat-textarea {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+/* antd Modal 覆盖样式 */
+.agent-dialogue-modal .ant-modal {
+  top: 0;
+  padding: 0;
+}
+
+.agent-dialogue-modal .ant-modal-content {
+  border-radius: 16px;
+  overflow: hidden;
+  background: transparent;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.4);
+}
+
+.agent-dialogue-modal .ant-modal-body {
+  padding: 0;
+}
+
+.agent-dialogue-modal .ant-modal-close {
+  z-index: 10;
+  color: var(--chat-header-text-secondary, #8c8c8c);
+}

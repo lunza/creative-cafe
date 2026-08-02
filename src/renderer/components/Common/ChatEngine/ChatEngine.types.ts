@@ -1,6 +1,6 @@
 // 聊天引擎类型定义
 
-import { ChatMessage } from '../Character/CharacterDialogueChat/CharacterDialogueChat.types';
+import { ChatMessage } from '@renderer/components/Character/CharacterDialogueChat';
 
 /**
  * AI 后端能力探测字段。
@@ -28,7 +28,7 @@ export interface AIEngineConfig {
   api_key?: string;
   model_name: string;
   api_key_transmission?: 'header' | 'body';
-  api_mode?: 'chat_completion' | 'text_completion';
+  api_mode?: 'chat_completion';
   max_tokens?: number;
   temperature?: number;
   system_prompt?: string;
@@ -97,6 +97,21 @@ export interface AIEngineConfig {
    *           确保对话功能不受影响。
    */
   useAgent?: boolean;
+  /**
+   * 智能体模式运行时激活状态（由 useAgentMode 共享状态计算得出）。
+   *
+   * Spec: add-agent-mode-management-and-center
+   * 替代旧 useAgent 布尔开关：useAgent 是引擎配置的静态字段，
+   * agentModeActive 是运行时由 agentModeService 综合引擎 agentModeOverride
+   * 三态开关 + 引擎能力计算后的最终激活状态，由调用方（hooks.ts）通过
+   * useAgentMode().isActive 获取并注入。
+   *
+   * 一致性要求：此开关仅在模型 `supportsToolCalling === true` 时才生效。
+   *   - agentModeActive=true 且 supportsToolCalling=true  → 走 agent:run IPC（AgentCore 循环）
+   *   - agentModeActive=true 但 supportsToolCalling!=true → 降级为纯文本聊天（旧路径）
+   *   - agentModeActive!=true                             → 纯文本聊天（旧路径）
+   */
+  agentModeActive?: boolean;
   /**
    * 工具集（OpenAI function-calling schema 数组）。
    *
@@ -189,26 +204,15 @@ export interface IChatEngine {
  * 按引擎 api_mode 推断默认后端能力。
  *
  * Spec: optimize-chat-ai-intelligence / Task 3.3 / Task 6.2
- * 按 engine type / api_mode 预设默认 capabilities：
- *   - chat_completion（OpenAI-compatible / Anthropic 等）：
- *       supportsStopArray=true, supportsRepPen=false, supportsDrySampler=false
- *   - text_completion（textgen-webui / koboldcpp / aphrodite 等）：
- *       supportsStopArray=true, supportsRepPen=true, supportsDrySampler=true
- *   - 未知 / 缺省：默认 supportsStopArray=true，其余 false
- *     （spec 明确"若不确定默认传数组"，rep_pen / DRY 保守关闭避免向后端发送不支持字段）
+ * 仅支持 chat_completion 模式：
+ *   supportsStopArray=true, supportsRepPen=false, supportsDrySampler=false
  *
- * 注意：此为基于 api_mode 的启发式推断；用户可在设置 UI 中通过引擎
- * `capabilities` 字段显式覆盖（Task 6.2 在 shared/settings.ts 默认引擎已注入）。
+ * 注意：用户可在设置 UI 中通过引擎 `capabilities` 字段显式覆盖。
  */
-export function getDefaultEngineCapabilities(apiMode?: string): EngineCapabilities {
-  // 当前所有已知 api_mode（chat_completion / text_completion）均支持 stop 数组；
-  // 未知 api_mode 也默认 true（spec 明确"若不确定默认传数组"）。
+export function getDefaultEngineCapabilities(): EngineCapabilities {
   const supportsStopArray = true;
-  // text_completion 模式后端（textgen-webui / koboldcpp / aphrodite）通常支持
-  // repetition_penalty 与 DRY 采样；chat_completion 模式（OpenAI / Anthropic）不支持。
-  const isTextCompletion = apiMode === 'text_completion';
-  const supportsRepPen = isTextCompletion;
-  const supportsDrySampler = isTextCompletion;
+  const supportsRepPen = false;
+  const supportsDrySampler = false;
   return { supportsStopArray, supportsRepPen, supportsDrySampler, supportsVision: false, supportsThinking: false, supportsToolCalling: false };
 }
 
@@ -261,7 +265,7 @@ export function buildSamplingExtras(
     | 'api_mode'>,
   capabilities?: EngineCapabilities
 ): Record<string, number> {
-  const caps = capabilities || config.capabilities || getDefaultEngineCapabilities(config.api_mode);
+  const caps = capabilities || config.capabilities || getDefaultEngineCapabilities();
   const extras: Record<string, number> = {};
 
   if (caps.supportsRepPen === true) {

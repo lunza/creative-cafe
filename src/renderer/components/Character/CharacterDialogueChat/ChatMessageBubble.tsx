@@ -3,6 +3,7 @@ import { Tooltip } from 'antd';
 import { CopyOutlined, CheckOutlined, ReloadOutlined, DoubleRightOutlined, RetweetOutlined, LoadingOutlined, EditOutlined, TableOutlined, WarningOutlined, RollbackOutlined } from '@ant-design/icons';
 import { MessageRenderer } from './MessageRenderer';
 import { ChatMessage, ChatMessageVersionInfo } from './CharacterDialogueChat.types';
+import ToolCallCard from './ToolCallCard';
 import './ChatMessageBubble.css';
 import { formatTimestamp } from './CharacterDialogueChat.utils';
 
@@ -487,6 +488,14 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
               </div>
             ) : (
               <>
+                {/* 工具调用卡片（Spec: optimize-agent-interaction-from-openclaw / M2-Task5） */}
+                {!isUser && message.toolCalls && message.toolCalls.length > 0 && (
+                  <div style={{ marginBottom: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {message.toolCalls.map(tc => (
+                      <ToolCallCard key={tc.id} toolCall={tc} />
+                    ))}
+                  </div>
+                )}
                 <MessageRenderer
                   content={String(message.content)}
                   charName={characterName}

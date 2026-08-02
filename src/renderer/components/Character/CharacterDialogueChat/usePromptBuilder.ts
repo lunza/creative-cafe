@@ -59,7 +59,17 @@ export function usePromptBuilder(
     const basePrompt = promptType === 'continuation'
       ? await buildContinuationPrompt(organizeMode)
       : await buildDialoguePrompt(organizeMode);
-    return await buildFinalSystemPrompt(basePrompt, vectorContextItems);
+    // 获取技能 prompt 片段（注入 system prompt）
+    let skillPromptSnippet: string | undefined;
+    try {
+      const result = await window.electronAPI.skill.getPromptSnippet();
+      if (result?.success && result.prompt) {
+        skillPromptSnippet = result.prompt;
+      }
+    } catch (e) {
+      console.warn('[usePromptBuilder] 获取技能 prompt 失败:', e);
+    }
+    return await buildFinalSystemPrompt(basePrompt, vectorContextItems, undefined, organizeMode, undefined, undefined, skillPromptSnippet);
   }, [buildDialoguePrompt, buildContinuationPrompt]);
 
   const buildCompleteSystemPrompt = useCallback(async (
@@ -85,7 +95,17 @@ export function usePromptBuilder(
     }
     console.log('  - organizeMode:', organizeMode);
     console.log('  - tableStructure sheets:', tableStructure?.sheets);
-    const result = await buildSystemPromptPure(characterInfoRef, personaRef, promptType, vectorContextItems, memoryTableData, organizeMode, tableStructure, chatHistoryItems);
+    // 获取技能 prompt 片段（注入 system prompt）
+    let skillPromptSnippet: string | undefined;
+    try {
+      const skillResult = await window.electronAPI.skill.getPromptSnippet();
+      if (skillResult?.success && skillResult.prompt) {
+        skillPromptSnippet = skillResult.prompt;
+      }
+    } catch (e) {
+      console.warn('[usePromptBuilder] 获取技能 prompt 失败:', e);
+    }
+    const result = await buildSystemPromptPure(characterInfoRef, personaRef, promptType, vectorContextItems, memoryTableData, organizeMode, tableStructure, chatHistoryItems, skillPromptSnippet);
     console.log('  - 最终 system prompt 长度:', result.length);
     console.log('  - 最终 system prompt 末尾 300 字符:', result.substring(Math.max(0, result.length - 300)));
     return result;

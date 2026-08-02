@@ -56,6 +56,7 @@ const GeneralSettingsPanel: React.FC<GeneralSettingsPanelProps> = ({
               options={[
                 { label: '亮色', value: 'light' },
                 { label: '暗色', value: 'dark' },
+                { label: '跟随系统', value: 'auto' },
               ]}
             />
           </Form.Item>

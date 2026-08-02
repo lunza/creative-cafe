@@ -30,6 +30,18 @@ export interface AIConfig {
   apiKeyTransmission: 'header' | 'body';
   model: string;
   systemPrompt?: string;
+  /** 引擎配置的采样温度 */
+  temperature?: number;
+  /** 引擎配置的最大输出 token 数 */
+  maxTokens?: number;
+  /** 引擎配置的 top_p（核采样） */
+  topP?: number;
+  /** 引擎配置的 frequency_penalty */
+  frequencyPenalty?: number;
+  /** 引擎配置的 presence_penalty */
+  presencePenalty?: number;
+  /** 引擎配置的 enable_chain_of_thought */
+  enableChainOfThought?: boolean;
 }
 
 export interface EngineConfig {
@@ -147,7 +159,13 @@ export class AIConfigProvider {
       apiKey: engine?.api_key || settings?.ai?.apiKey || '',
       apiKeyTransmission: engine?.api_key_transmission || 'header',
       model: engine.model_name,
-      systemPrompt: engine?.system_prompt || ''
+      systemPrompt: engine?.system_prompt || '',
+      temperature: engine?.temperature,
+      maxTokens: engine?.max_tokens,
+      topP: engine?.top_p,
+      frequencyPenalty: engine?.frequency_penalty,
+      presencePenalty: engine?.presence_penalty,
+      enableChainOfThought: engine?.enable_chain_of_thought
     };
   }
 
@@ -298,6 +316,17 @@ export class AIService {
       stream,
     };
 
+    // 从引擎配置注入采样参数（与非 Agent 路径 useWorldBookAIOperations / CharacterDialogueChat 一致）
+    if (config.topP !== undefined && config.topP !== null) {
+      requestBody.top_p = config.topP;
+    }
+    if (config.frequencyPenalty !== undefined && config.frequencyPenalty !== null) {
+      requestBody.frequency_penalty = config.frequencyPenalty;
+    }
+    if (config.presencePenalty !== undefined && config.presencePenalty !== null) {
+      requestBody.presence_penalty = config.presencePenalty;
+    }
+
     if (config.apiKey) {
       if (config.apiKeyTransmission === 'header') {
         const authValue = config.apiKey.trim().startsWith('Bearer ') ? config.apiKey : `Bearer ${config.apiKey}`;
@@ -381,6 +410,11 @@ export class AIService {
       config
     });
 
+    // 与 useWorldBookAIOperations 统一：默认禁用推理模型思考过程，
+    // 避免 reasoning_content 占据 token 导致 content 为空。
+    // 仅当引擎配置显式开启 enable_chain_of_thought 时才启用。
+    requestBody.enable_thinking = config.enableChainOfThought === true;
+
     const controller = new AbortController();
     const timeoutId = timeoutMs && timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null;
 
@@ -398,7 +432,9 @@ export class AIService {
       }
 
       const data = await response.json();
-      const content = data.choices?.[0]?.message?.content;
+      const message = data.choices?.[0]?.message;
+      // 优先取 content；若为空（推理模型可能将内容放在 reasoning_content），取 reasoning_content
+      const content = message?.content || message?.reasoning_content;
 
       if (!content) {
         throw new Error('AI 返回内容为空');
@@ -465,6 +501,10 @@ export class AIService {
       parallelToolCalls,
       supportsToolCalling,
     });
+
+    // 与 callChatAPI 统一：默认禁用推理模型思考过程，
+    // 仅当引擎配置显式开启 enable_chain_of_thought 时才启用。
+    requestBody.enable_thinking = config.enableChainOfThought === true;
 
     let lastError: Error | null = null;
 

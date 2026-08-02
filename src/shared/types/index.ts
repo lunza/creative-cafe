@@ -48,6 +48,9 @@ export * from './writing.types';
 // Prompt 模板类型
 export * from './promptTemplate.types';
 
+// 智能体中心类型（AgentModeStatus / AgentModeOverride / AgentConfig 等）
+export * from './agent-center.types';
+
 // 游戏模式类型（单一真源）
 // GameTableData 与 WritingTableData 同构（type alias），无命名冲突。
 // GameTableConfig 与 WritingTableConfig 字段名不同（organizeMode 类型不同），

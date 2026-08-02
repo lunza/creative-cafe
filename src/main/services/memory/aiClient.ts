@@ -45,18 +45,12 @@ export function buildOrganizeConfig(
     apiKey: config?.apiKey || '',
     apiUrl: config?.apiUrl || 'http://127.0.0.1:5000',
     modelName: config?.modelName || (() => { throw new Error('未配置 AI 模型名称'); })(),
-    apiMode: config?.apiMode || 'text_completion'
+    apiMode: config?.apiMode || 'chat_completion'
   };
 
   let apiEndpoint = aiConfig.apiUrl;
-  if (aiConfig.apiMode === 'text_completion') {
-    if (!apiEndpoint.endsWith('/v1/completions')) {
-      apiEndpoint += '/v1/completions';
-    }
-  } else {
-    if (!apiEndpoint.endsWith('/v1/chat/completions')) {
-      apiEndpoint += '/v1/chat/completions';
-    }
+  if (!apiEndpoint.endsWith('/v1/chat/completions')) {
+    apiEndpoint += '/v1/chat/completions';
   }
 
   return { aiConfig, apiEndpoint };

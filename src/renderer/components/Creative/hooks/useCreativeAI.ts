@@ -59,7 +59,6 @@ export const useCreativeAI = (): UseCreativeAIReturn => {
   }, [getActiveEngine]);
 
   const buildRequestBody = useCallback((engine: any, messages: any[], customPrompt?: string) => {
-    const apiMode = engine.api_mode || 'chat_completion';
     const modelName = engine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
     const apiKey = engine.api_key;
     const apiKeyTransmission = engine.api_key_transmission || 'body';
@@ -73,22 +72,12 @@ export const useCreativeAI = (): UseCreativeAIReturn => {
       ? engine.temperature
       : 0.7;
 
-    let requestBody: any;
-    if (apiMode === 'chat_completion') {
-      requestBody = {
-        model: modelName,
-        messages,
-        max_tokens: maxTokens,
-        temperature
-      };
-    } else {
-      requestBody = {
-        model: modelName,
-        prompt: messages.map((m: any) => `${m.role}: ${m.content}`).join('\n\n'),
-        max_tokens: maxTokens,
-        temperature
-      };
-    }
+    const requestBody: any = {
+      model: modelName,
+      messages,
+      max_tokens: maxTokens,
+      temperature
+    };
 
     if (apiKey) {
       const trimmedApiKey = apiKey.trim();
@@ -99,7 +88,7 @@ export const useCreativeAI = (): UseCreativeAIReturn => {
       }
     }
 
-    return { requestHeaders, requestBody, apiUrl: buildEngineApiUrl(engine), apiMode };
+    return { requestHeaders, requestBody, apiUrl: buildEngineApiUrl(engine), apiMode: engine.api_mode || 'chat_completion' };
   }, []);
 
   const sendRequest = useCallback(async (engine: any, messages: any[], customPrompt?: string, streaming = false) => {
@@ -297,10 +286,8 @@ ${userRequirements.trim()}`;
 
         let finalContent = tempContent;
         if (!finalContent && data?.data) {
-          if (engine.api_mode === 'chat_completion' && data.data.choices?.[0]) {
+          if (data.data.choices?.[0]) {
             finalContent = data.data.choices[0].message?.content || '';
-          } else if (engine.api_mode === 'text_completion' && data.data.choices?.[0]) {
-            finalContent = data.data.choices[0].text || '';
           }
         }
         onStreamComplete?.({ content: finalContent, data: data.data });
@@ -328,10 +315,8 @@ ${userRequirements.trim()}`;
 
       if (result.success) {
         let generated = '';
-        if (engine.api_mode === 'chat_completion' && result.data?.choices?.[0]) {
+        if (result.data?.choices?.[0]) {
           generated = result.data.choices[0].message?.content || '';
-        } else if (engine.api_mode === 'text_completion' && result.data?.choices?.[0]) {
-          generated = result.data.choices[0].text || '';
         } else {
           generated = JSON.stringify(result.data);
         }
@@ -382,10 +367,8 @@ ${userRequirements.trim()}`;
 
       if (result.success) {
         let optimized = '';
-        if (engine.api_mode === 'chat_completion' && result.data?.choices?.[0]) {
+        if (result.data?.choices?.[0]) {
           optimized = result.data.choices[0].message?.content || '';
-        } else if (engine.api_mode === 'text_completion' && result.data?.choices?.[0]) {
-          optimized = result.data.choices[0].text || '';
         } else {
           optimized = JSON.stringify(result.data);
         }

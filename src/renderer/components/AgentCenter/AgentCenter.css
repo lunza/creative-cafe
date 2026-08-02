@@ -1,0 +1,190 @@
+/*
+ * AgentCenter Styles
+ * 智能体管理中心页面样式
+ */
+
+/* ===== 页面容器 ===== */
+.agent-center {
+  padding: var(--spacing-lg, 24px);
+}
+
+/* ===== 页面头部 ===== */
+.agent-center-header {
+  margin-bottom: var(--spacing-lg, 24px);
+}
+
+.agent-center-title {
+  margin-bottom: var(--spacing-xs, 8px);
+  font-size: var(--font-size-xxl, 20px);
+  font-weight: var(--font-weight-semibold, 600);
+}
+
+.agent-center-subtitle {
+  margin: 0;
+  color: var(--text-secondary, #94a3b8);
+  font-size: var(--font-size-sm, 13px);
+}
+
+/* ===== 加载状态 ===== */
+.agent-center-loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 300px;
+}
+
+/* ===== 智能体名称单元格 ===== */
+.agent-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-emoji {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.agent-name-text {
+  font-weight: 500;
+}
+
+.agent-system-badge {
+  margin-left: 4px;
+}
+
+/* ===== 表格通用样式（对齐项目 list-common.css 风格） ===== */
+.agent-center .ant-table {
+  border-radius: var(--radius-card, 8px);
+  overflow: hidden;
+}
+
+.agent-center .ant-table th {
+  background-color: #f5f5f5;
+  font-weight: var(--font-weight-semibold, 600);
+  white-space: nowrap;
+}
+
+.agent-center .ant-table td {
+  white-space: nowrap;
+}
+
+/* ===== 暗色主题 ===== */
+.agent-center.dark .ant-table th {
+  background-color: rgba(255, 255, 255, 0.04);
+}
+
+.agent-center.dark .agent-center-subtitle {
+  color: var(--text-secondary, #94a3b8);
+}
+
+/* ===== 详情抽屉 ===== */
+.agent-detail-info {
+  margin-bottom: 24px;
+}
+
+.agent-detail-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-detail-emoji {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.agent-detail-skills {
+  margin-top: 24px;
+}
+
+/* ===== 技能配置面板 ===== */
+.skill-config-panel {
+  margin-top: 8px;
+}
+
+.skill-config-title {
+  margin-bottom: 12px;
+}
+
+.skill-config-loading {
+  display: flex;
+  justify-content: center;
+  padding: 24px;
+}
+
+/* 技能行头部（Collapse header 内） */
+.skill-row-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.skill-name {
+  flex: 1;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-emoji {
+  margin-right: 2px;
+}
+
+.skill-order-btns {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.skill-order-btns .ant-btn {
+  padding: 0 4px;
+  height: 24px;
+}
+
+/* 技能详情（Collapse content） */
+.skill-detail {
+  padding: 4px 0;
+}
+
+.skill-detail-item {
+  margin-bottom: 8px !important;
+}
+
+.skill-detail-item:last-child {
+  margin-bottom: 0 !important;
+}
+
+/* ===== 暗色主题 - 详情抽屉 ===== */
+.agent-center.dark .ant-descriptions-bordered .ant-descriptions-view {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.agent-center.dark .ant-descriptions-bordered .ant-descriptions-item-label,
+.agent-center.dark .ant-descriptions-bordered .ant-descriptions-item-content {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.agent-center.dark .ant-descriptions-bordered .ant-descriptions-item-label {
+  background-color: rgba(255, 255, 255, 0.04);
+}
+
+.agent-center.dark .ant-collapse {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.agent-center.dark .ant-collapse > .ant-collapse-item {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.agent-center.dark .ant-collapse > .ant-collapse-item > .ant-collapse-header {
+  color: var(--text-primary, #e2e8f0);
+}
+
+.agent-center.dark .ant-collapse-content {
+  background-color: rgba(255, 255, 255, 0.02);
+  border-color: rgba(255, 255, 255, 0.08);
+}

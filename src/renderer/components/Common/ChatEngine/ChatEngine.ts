@@ -60,9 +60,9 @@ export class ChatEngine implements IChatEngine {
       const chatHistory = this.sanitizeChatHistory(messages);
 
       // ============================================================
-      // Task 16.2: 智能体模式（useAgent）灰度开关
+      // Task 16.2: 智能体模式（agentModeActive）运行时开关
       // ============================================================
-      // 当 useAgent=true && supportsToolCalling=true 时，对话走 AgentCore.run()
+      // 当 agentModeActive=true && supportsToolCalling=true 时，对话走 AgentCore.run()
       // （通过 agent:run IPC），AI 可自主调用对话组工具：
       //   - searchWorldbook：向量检索世界书
       //   - searchHistory：搜索对话历史
@@ -70,11 +70,11 @@ export class ChatEngine implements IChatEngine {
       //   - addMemoryNote：记录记忆笔记
       //
       // 降级保护：
-      //   1. useAgent 未启用 → 旧路径（streamChatAPI）
+      //   1. agentModeActive 未启用 → 旧路径（streamChatAPI）
       //   2. supportsToolCalling !== true → 旧路径（模型不支持工具调用）
       //   3. AgentCore 异常 → 自动回退旧路径（catch 中继续执行旧逻辑）
       const useAgentEnabled =
-        config.useAgent === true &&
+        config.agentModeActive === true &&
         config.capabilities?.supportsToolCalling === true;
 
       if (useAgentEnabled) {
@@ -112,7 +112,6 @@ export class ChatEngine implements IChatEngine {
         ? config.max_tokens
         : undefined;
       const temperature = Number(config.temperature) ?? 0.8;
-      const apiMode = config.api_mode || 'chat_completion';
 
       const requestBody: any = {
         model: config.model_name,
@@ -124,19 +123,10 @@ export class ChatEngine implements IChatEngine {
         requestBody.max_tokens = maxTokens;
       }
 
-      if (apiMode === 'chat_completion') {
-        requestBody.messages = [
-          { role: 'system', content: systemPrompt },
-          ...chatHistory,
-        ];
-      } else {
-        // text_completion 模式：将 systemPrompt + 对话历史拼接为单一 prompt
-        let prompt = `${systemPrompt}\n\n`;
-        chatHistory.forEach(msg => {
-          prompt += `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}\n`;
-        });
-        requestBody.prompt = prompt;
-      }
+      requestBody.messages = [
+        { role: 'system', content: systemPrompt },
+        ...chatHistory,
+      ];
 
       // 可选采样参数（仅当配置中显式提供时才写入请求体）
       if (config.top_p !== undefined) {
@@ -253,7 +243,7 @@ export class ChatEngine implements IChatEngine {
         method: 'POST',
         headers: requestHeaders,
         body: requestBody,
-        timeout: 300000, // 默认 300 秒超时（AI 生成通常较长）
+        timeout: undefined, // 由主进程读取用户设置的 request_timeout
         streaming: true,
       });
 

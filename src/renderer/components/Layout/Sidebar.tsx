@@ -8,6 +8,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { useSettingStore } from '../../stores/settingStore';
 import { AppSetting } from '../../settings';
 import { getMenuRoutes, RouteConfig } from '../../routeConfig';
+import { useAgentMode } from '../../hooks/useAgentMode';
 import './Sidebar.css';
 
 const { Sider } = Layout;
@@ -47,9 +48,12 @@ const Sidebar: React.FC = () => {
   const { activeTab, setActiveTab, sidebarCollapsed, toggleSidebar, theme } = useUIStore();
   const { setting } = useSettingStore();
   const debugMode = setting?.debugMode || false;
+  const { isActive: isAgentModeActive } = useAgentMode();
 
   const menuRoutes = getMenuRoutes(debugMode);
-  const menuItems = menuRoutes.map((route) => buildMenuItem(route, false));
+  // Agent 模式关闭时隐藏智能体中心菜单
+  const visibleRoutes = menuRoutes.filter(route => route.key !== 'agent-center' || isAgentModeActive);
+  const menuItems = visibleRoutes.map((route) => buildMenuItem(route, false));
 
   // 根据主题设置背景色
   const isDark = theme === 'dark';

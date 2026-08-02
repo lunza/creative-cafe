@@ -132,17 +132,8 @@ describe('buildSamplingExtras — supportsRepPen 显隐', () => {
   });
 });
 
-describe('buildSamplingExtras — capabilities 缺省时按 api_mode 推断', () => {
-  it('api_mode=text_completion → supportsRepPen=true / supportsDrySampler=true（注入全部字段）', () => {
-    const extras = buildSamplingExtras({ api_mode: 'text_completion' });
-    expect(extras).toHaveProperty('repetition_penalty');
-    expect(extras).toHaveProperty('dry_multiplier');
-    expect(extras).toHaveProperty('dry_base');
-    expect(extras).toHaveProperty('dry_allowed_length');
-    expect(extras).toHaveProperty('no_repeat_ngram_size');
-  });
-
-  it('api_mode=chat_completion → supportsRepPen=false / supportsDrySampler=false（不注入字段）', () => {
+describe('buildSamplingExtras — capabilities 缺省时使用默认值', () => {
+  it('默认 → supportsRepPen=false / supportsDrySampler=false（不注入字段）', () => {
     const extras = buildSamplingExtras({ api_mode: 'chat_completion' });
     expect(extras).not.toHaveProperty('repetition_penalty');
     expect(extras).not.toHaveProperty('dry_multiplier');
@@ -154,9 +145,7 @@ describe('buildSamplingExtras — capabilities 缺省时按 api_mode 推断', ()
     expect(Object.keys(extras)).toHaveLength(0);
   });
 
-  it('config.capabilities 优先于 api_mode 推断', () => {
-    // api_mode=chat_completion 默认会推断为 false/false，
-    // 但 config.capabilities 显式指定 supportsDrySampler=true 时应优先使用
+  it('config.capabilities 优先于默认推断', () => {
     const extras = buildSamplingExtras({
       api_mode: 'chat_completion',
       capabilities: {
@@ -170,38 +159,17 @@ describe('buildSamplingExtras — capabilities 缺省时按 api_mode 推断', ()
   });
 });
 
-describe('getDefaultEngineCapabilities — 按 api_mode 预设（Spec: Task 6.2）', () => {
-  it('api_mode=text_completion → textgen-webui 类后端：rep_pen=true, dry=true', () => {
-    const caps = getDefaultEngineCapabilities('text_completion');
-    expect(caps.supportsStopArray).toBe(true);
-    expect(caps.supportsRepPen).toBe(true);
-    expect(caps.supportsDrySampler).toBe(true);
-  });
-
-  it('api_mode=chat_completion → OpenAI 类后端：rep_pen=false, dry=false', () => {
-    const caps = getDefaultEngineCapabilities('chat_completion');
+describe('getDefaultEngineCapabilities — 默认能力（Spec: Task 6.2）', () => {
+  it('默认 → supportsStopArray=true, rep_pen=false, dry=false', () => {
+    const caps = getDefaultEngineCapabilities();
     expect(caps.supportsStopArray).toBe(true);
     expect(caps.supportsRepPen).toBe(false);
     expect(caps.supportsDrySampler).toBe(false);
   });
 
-  it('api_mode 缺省/未知 → 保守策略：rep_pen=false, dry=false', () => {
-    const caps1 = getDefaultEngineCapabilities(undefined);
-    expect(caps1.supportsStopArray).toBe(true);
-    expect(caps1.supportsRepPen).toBe(false);
-    expect(caps1.supportsDrySampler).toBe(false);
-
-    const caps2 = getDefaultEngineCapabilities('unknown_mode');
-    expect(caps2.supportsStopArray).toBe(true);
-    expect(caps2.supportsRepPen).toBe(false);
-    expect(caps2.supportsDrySampler).toBe(false);
-  });
-
-  it('所有 api_mode 的 supportsStopArray 均为 true（spec 约定：默认传数组）', () => {
-    for (const mode of ['text_completion', 'chat_completion', undefined, 'unknown']) {
-      const caps = getDefaultEngineCapabilities(mode);
-      expect(caps.supportsStopArray).toBe(true);
-    }
+  it('supportsStopArray 始终为 true（spec 约定：默认传数组）', () => {
+    const caps = getDefaultEngineCapabilities();
+    expect(caps.supportsStopArray).toBe(true);
   });
 });
 

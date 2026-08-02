@@ -121,6 +121,28 @@ export function useWorldBookFormState() {
   const [polishAllRequirements, setPolishAllRequirements] = useState<string>('');
   const [isPolishAllModalOpen, setIsPolishAllModalOpen] = useState<boolean>(false);
 
+  // ===== 审核 Modal =====
+  // 跟踪正在审核的字段
+  const [auditingField, setAuditingField] = useState<string | null>(null);
+  // 跟踪是否正在一键审核所有条目
+  const [isAuditingAll, setIsAuditingAll] = useState(false);
+  // 单字段审核要求
+  const [auditRequirements, setAuditRequirements] = useState<string>('');
+  // 单字段审核 Modal 开关
+  const [isAuditModalOpen, setIsAuditModalOpen] = useState<boolean>(false);
+  // 当前审核字段
+  const [currentAuditField, setCurrentAuditField] = useState<string | null>(null);
+  // 当前审核文本
+  const [currentAuditText, setCurrentAuditText] = useState<string>('');
+  // 一键审核要求
+  const [auditAllRequirements, setAuditAllRequirements] = useState<string>('');
+  // 一键审核 Modal 开关
+  const [isAuditAllModalOpen, setIsAuditAllModalOpen] = useState<boolean>(false);
+  // 审核结果（{ passed, suggestions, revisedText }）
+  const [auditResult, setAuditResult] = useState<{ passed: boolean; suggestions: string; revisedText: string } | null>(null);
+  // 审核结果 Modal 开关
+  const [isAuditResultModalOpen, setIsAuditResultModalOpen] = useState<boolean>(false);
+
   // ===== 标签管理 =====
   const [isTagManagerOpen, setIsTagManagerOpen] = useState(false);
   const [isEditEntryTagsModalOpen, setIsEditEntryTagsModalOpen] = useState(false);
@@ -227,6 +249,18 @@ export function useWorldBookFormState() {
     currentPolishText, setCurrentPolishText,
     polishAllRequirements, setPolishAllRequirements,
     isPolishAllModalOpen, setIsPolishAllModalOpen,
+
+    // 审核
+    auditingField, setAuditingField,
+    isAuditingAll, setIsAuditingAll,
+    auditRequirements, setAuditRequirements,
+    isAuditModalOpen, setIsAuditModalOpen,
+    currentAuditField, setCurrentAuditField,
+    currentAuditText, setCurrentAuditText,
+    auditAllRequirements, setAuditAllRequirements,
+    isAuditAllModalOpen, setIsAuditAllModalOpen,
+    auditResult, setAuditResult,
+    isAuditResultModalOpen, setIsAuditResultModalOpen,
 
     // 标签
     isTagManagerOpen, setIsTagManagerOpen,

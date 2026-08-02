@@ -1,7 +1,7 @@
-import React, { useMemo } from 'react';
-import { Button, Space, Tooltip, Dropdown } from 'antd';
+import React, { useMemo, useState } from 'react';
+import { Button, Space, Tooltip, Dropdown, Modal, Input } from 'antd';
 import type { MenuProps } from 'antd';
-import { ClearOutlined, ExportOutlined, CloseOutlined, RobotOutlined, FullscreenOutlined, FullscreenExitOutlined, UserOutlined, HeartOutlined, HeartFilled, QuestionCircleOutlined, DownOutlined, SmileOutlined } from '@ant-design/icons';
+import { ClearOutlined, ExportOutlined, CloseOutlined, RobotOutlined, FullscreenOutlined, FullscreenExitOutlined, UserOutlined, HeartOutlined, HeartFilled, QuestionCircleOutlined, DownOutlined, SmileOutlined, PlusOutlined } from '@ant-design/icons';
 
 interface ChatHeaderProps {
   characterName: string;
@@ -21,6 +21,18 @@ interface ChatHeaderProps {
   onToggleFavorite?: () => void;
   /** 打开表情管理弹窗（Spec: add-character-expression-system / Task 8.1） */
   onOpenExpressionManager?: () => void;
+  /** 会话列表（Spec: optimize-agent-interaction-from-openclaw / M2-Task7） */
+  sessions?: Array<{ sessionId: string; title: string; lastActiveAt: number; messageCount: number }>;
+  /** 当前会话 ID */
+  currentSessionId?: string | null;
+  /** 新建会话回调 */
+  onCreateSession?: () => void;
+  /** 切换会话回调 */
+  onSwitchSession?: (sessionId: string) => void;
+  /** 重命名会话回调 */
+  onRenameSession?: (sessionId: string, newTitle: string) => void;
+  /** 删除会话回调 */
+  onDeleteSession?: (sessionId: string) => void;
 }
 
 const ChatHeader: React.FC<ChatHeaderProps> = ({
@@ -40,8 +52,69 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
   isFavorite = false,
   onToggleFavorite,
   onOpenExpressionManager,
+  sessions,
+  currentSessionId,
+  onCreateSession,
+  onSwitchSession,
+  onRenameSession,
+  onDeleteSession,
 }) => {
   const hasCharacterList = !!characters && characters.length > 0;
+
+  // 会话重命名 Modal 状态（Spec: optimize-agent-interaction-from-openclaw / M2-Task7）
+  const [renameModalOpen, setRenameModalOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
+
+  // 会话切换菜单项（Spec: optimize-agent-interaction-from-openclaw / M2-Task7）
+  const sessionMenuItems = useMemo<MenuProps['items']>(() => {
+    if (!sessions || sessions.length === 0) return [];
+    const items: MenuProps['items'] = sessions.map(s => ({
+      key: `session-${s.sessionId}`,
+      label: (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', minWidth: '200px' }}>
+          <span style={{
+            fontWeight: s.sessionId === currentSessionId ? 600 : 400,
+            color: s.sessionId === currentSessionId ? '#6366f1' : 'inherit',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            maxWidth: '160px',
+          }}>
+            {s.title}
+          </span>
+          <span style={{ fontSize: '11px', color: '#8c8c8c', flexShrink: 0 }}>
+            {s.messageCount} 条
+          </span>
+        </div>
+      ),
+    }));
+    // 添加分隔线和管理选项
+    if (currentSessionId) {
+      items.push({ type: 'divider' });
+      items.push({ key: 'rename-current', label: '重命名当前会话' });
+      items.push({ key: 'delete-current', label: '删除当前会话', danger: true });
+    }
+    return items;
+  }, [sessions, currentSessionId]);
+
+  const handleSessionMenuClick = ({ key }: { key: string }) => {
+    if (key === 'rename-current') {
+      const currentSession = sessions?.find(s => s.sessionId === currentSessionId);
+      if (currentSession) {
+        setRenameValue(currentSession.title);
+        setRenameModalOpen(true);
+      }
+    } else if (key === 'delete-current') {
+      if (currentSessionId) {
+        onDeleteSession?.(currentSessionId);
+      }
+    } else if (key.startsWith('session-')) {
+      const sessionId = key.replace('session-', '');
+      onSwitchSession?.(sessionId);
+    }
+  };
+
+  const currentSessionTitle = sessions?.find(s => s.sessionId === currentSessionId)?.title;
 
   const characterMenuItems = useMemo<MenuProps['items']>(() => {
     if (!hasCharacterList) return [];
@@ -142,9 +215,41 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
               </p>
             </div>
           </Dropdown>
+          {/* 会话切换（Spec: optimize-agent-interaction-from-openclaw / M2-Task7） */}
+          {sessions && sessions.length > 0 && (
+            <Dropdown
+              menu={{ items: sessionMenuItems, onClick: handleSessionMenuClick }}
+              trigger={['click']}
+            >
+              <div style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                <span style={{
+                  fontSize: '11px',
+                  color: 'var(--chat-header-text-secondary, #8c8c8c)',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  maxWidth: '120px',
+                }}>
+                  {currentSessionTitle || '新对话'}
+                </span>
+                <DownOutlined style={{ fontSize: '10px', color: 'var(--chat-header-text-secondary, #8c8c8c)' }} />
+              </div>
+            </Dropdown>
+          )}
       </div>
 
       <Space size="small">
+        {onCreateSession && (
+          <Tooltip title="新建会话">
+            <Button
+              type="text"
+              icon={<PlusOutlined />}
+              size="small"
+              onClick={onCreateSession}
+              style={{ color: 'var(--chat-header-btn-color, #8c8c8c)' }}
+            />
+          </Tooltip>
+        )}
         {selectedPersona && (
           <div style={{
             display: 'flex',
@@ -239,6 +344,32 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
           />
         </Tooltip>
       </Space>
+      {/* 会话重命名 Modal（Spec: optimize-agent-interaction-from-openclaw / M2-Task7） */}
+      <Modal
+        title="重命名会话"
+        open={renameModalOpen}
+        onOk={() => {
+          if (currentSessionId && renameValue.trim()) {
+            onRenameSession?.(currentSessionId, renameValue.trim());
+          }
+          setRenameModalOpen(false);
+        }}
+        onCancel={() => setRenameModalOpen(false)}
+        okText="确定"
+        cancelText="取消"
+      >
+        <Input
+          value={renameValue}
+          onChange={e => setRenameValue(e.target.value)}
+          placeholder="请输入新的会话标题"
+          onPressEnter={() => {
+            if (currentSessionId && renameValue.trim()) {
+              onRenameSession?.(currentSessionId, renameValue.trim());
+            }
+            setRenameModalOpen(false);
+          }}
+        />
+      </Modal>
     </div>
   );
 };

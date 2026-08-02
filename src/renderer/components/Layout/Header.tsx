@@ -1,8 +1,9 @@
 import React from 'react';
 import { Layout, Button, Space, Tooltip } from 'antd';
-import { MoonOutlined, SunOutlined, ReloadOutlined, EditOutlined, EyeOutlined, BulbOutlined, ToolOutlined } from '@ant-design/icons';
+import { MoonOutlined, SunOutlined, DesktopOutlined, ReloadOutlined, EditOutlined, EyeOutlined, BulbOutlined, ToolOutlined, RobotOutlined } from '@ant-design/icons';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingStore } from '../../stores/settingStore';
+import { useAgentMode } from '../../hooks/useAgentMode';
 import './Header.css';
 
 const { Header: AntHeader } = Layout;
@@ -36,6 +37,7 @@ const AppLogo: React.FC = () => (
 const Header: React.FC = () => {
   const { theme, setTheme } = useUIStore();
   const { setting } = useSettingStore();
+  const { isActive, status } = useAgentMode();
   const activeEngine = setting?.aiEngines?.find((e) => e.id === setting?.activeEngineId);
   const capabilities = activeEngine?.capabilities;
   const supportsVision = capabilities?.supportsVision === true;
@@ -43,8 +45,22 @@ const Header: React.FC = () => {
   const supportsToolCalling = capabilities?.supportsToolCalling === true;
   const hasCapabilityData = capabilities !== undefined;
 
+  // Agent 模式原因文案映射
+  const reasonText: Record<string, string> = {
+    'tool-calling-supported': '模型支持工具调用',
+    'force-on': '用户强制开启',
+    'force-off': '用户强制关闭',
+    'tool-calling-unsupported': '当前模型不支持工具调用',
+  };
+
+  // Agent 模式 Tooltip 详情：模式名称 + 原因
+  const agentModeTooltip = isActive
+    ? `智能体模式（${reasonText[status?.reason ?? 'tool-calling-supported'] ?? ''}）`
+    : `普通模式（${reasonText[status?.reason ?? 'tool-calling-unsupported'] ?? ''}）`;
+
   const toggleTheme = () => {
-    setTheme(theme === 'light' ? 'dark' : 'light');
+    const next = theme === 'light' ? 'dark' : theme === 'dark' ? 'auto' : 'light';
+    setTheme(next);
   };
 
   return (
@@ -57,20 +73,22 @@ const Header: React.FC = () => {
             <span className="app-subtitle">Creative Café</span>
           </div>
           {/*
-            模型能力标识 — 实时显示当前 AI 引擎的能力组合
+            模型能力 + Agent 模式标识图标组
             ============================================================
-            数据来源：settingStore -> setting.activeEngineId -> setting.aiEngines.find(...) -> capabilities
-            4 种图标分别代表：
-              - EditOutlined  (铅笔)：文本生成能力，作为基础能力常驻显示
-              - EyeOutlined   (眼睛)：视觉/图片识别能力 (supportsVision=true 时显示)
-              - BulbOutlined  (灯泡)：思维链/推理能力   (supportsThinking=true 时显示)
-              - ToolOutlined  (工具)：工具调用能力      (supportsToolCalling=true 时显示)
-            触发条件：仅当对应能力 === true 时显示对应图标
-            未检测时的行为：capabilities 为 undefined（即用户尚未测试连通性）时，
-              仅显示编辑图标，鼠标悬停 Tooltip 提示「请先测试连通性以检测模型能力」。
-            图标尺寸统一 14px，使用内联样式与现有 header 风格保持一致。
+            Agent 模式图标（RobotOutlined）：
+              - 激活：绿色 #52c41a，Tooltip "智能体模式（原因）"
+              - 未激活：灰色 var(--text-secondary)，Tooltip "普通模式（原因）"
+            能力图标：
+              - EditOutlined  (铅笔)：文本生成，常驻
+              - EyeOutlined   (眼睛)：视觉/图片识别
+              - BulbOutlined  (灯泡)：思维链/推理
+              - ToolOutlined  (工具)：工具调用
+            所有图标统一 14px，风格一致。
           */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 8 }}>
+            <Tooltip title={agentModeTooltip}>
+              <RobotOutlined style={{ fontSize: 14, color: isActive ? '#52c41a' : 'var(--text-secondary, #94a3b8)' }} />
+            </Tooltip>
             <Tooltip title={hasCapabilityData ? '文本生成' : '请先测试连通性以检测模型能力'}>
               <EditOutlined style={{ fontSize: 14, color: 'var(--text-secondary, #94a3b8)' }} />
             </Tooltip>
@@ -103,10 +121,10 @@ const Header: React.FC = () => {
           </Button>
           <Button
             type="text"
-            icon={theme === 'light' ? <MoonOutlined /> : <SunOutlined />}
+            icon={theme === 'light' ? <MoonOutlined /> : theme === 'dark' ? <DesktopOutlined /> : <SunOutlined />}
             onClick={toggleTheme}
           >
-            {theme === 'light' ? '暗色' : '亮色'}
+            {theme === 'light' ? '暗色' : theme === 'dark' ? '跟随系统' : '亮色'}
           </Button>
         </Space>
       </div>
