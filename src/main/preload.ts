@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { BatchFixRequest } from '../shared/types/writing.types';
+import type { CharacterTraitManifestV2 } from '../shared/types/characterTrait.types';
 import type {
   GameMeta,
   GameSaveData,
@@ -237,8 +238,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     listModels: (params: { apiUrl?: string; apiKey?: string; apiKeyTransmission?: string }) =>
       ipcRenderer.invoke('ai:listModels', params),
     // AI 辅助角色特征生成（Spec: add-asset-and-trait-management / Task 12）
-    // 基于角色卡 description/personality/scenario 调用 LLM 生成视觉特征 tag 列表 + 角色外观描述
-    // 返回 { success, traits?: string[], appearanceDescription?: string, error?: string }，traits 可能为空数组
+    // 基于角色卡 description/personality/scenario 调用 LLM 生成「带分类」视觉特征列表 + 角色外观描述
+    // 返回 { success, traits?: CategorizedTrait[], appearanceDescription?: string, error?: string }，traits 可能为空数组
+    // 【重点标记 - AI 自动归类增强】traits 由 string[] 升级为 CategorizedTrait[]（{ text, categoryId }），
+    // 使 AI 生成的特征直接携带系统分类信息，进入 store 后无需用户手动归类
     generateCharacterTraits: (args: {
       characterCardId: string;
       description: string;
@@ -247,15 +250,40 @@ contextBridge.exposeInMainWorld('electronAPI', {
       includeImage?: boolean;
     }) => ipcRenderer.invoke('ai:generateCharacterTraits', args),
     // AI 图片识别特征提取（Spec: add-model-capability-detection-and-image-recognition / Task 6）
-    // 通过多模态模型识别角色卡 PNG 图片，提取视觉特征 tag 列表 + 角色外观描述
+    // 通过多模态模型识别角色卡 PNG 图片，提取「带分类」视觉特征列表 + 角色外观描述
     // 前置条件：当前 AI 引擎 supportsVision=true（由前端判断）
-    // 返回 { success, traits?: string[], appearanceDescription?: string, error?: string }，traits 可能为空数组
+    // 返回 { success, traits?: CategorizedTrait[], appearanceDescription?: string, error?: string }，traits 可能为空数组
     recognizeImageTraits: (args: { characterCardPath: string; characterName?: string }) =>
       ipcRenderer.invoke('ai:recognizeImageTraits', args),
+    // 动态场景提示词生成（Spec: add-dynamic-scene-prompt-generation / Task 3）
+    // 将自然语言指令解析为三组英文 SD tag（服装/动作/场景），未提及的维度返回空字符串
+    // 入参：{ naturalLanguageInput: string, baseTraits?: string }
+    // 返回：{ success, clothing?, pose?, scene?, error? } —— 三个字段均为逗号分隔的英文 tag 字符串
+    // 错误场景：空输入（不调用 LLM）/ AI 引擎未配置 / 调用失败 / 解析失败
+    generateDynamicScenePrompts: (args: {
+      naturalLanguageInput: string;
+      baseTraits?: string;
+    }) => ipcRenderer.invoke('ai:generateDynamicScenePrompts', args),
     // 探测 AI 模型能力（Spec: add-model-capability-detection-and-image-recognition / Task 3）
     // 并行探测 vision / thinking / tool-calling，返回 { success, capabilities?, error? }
     probeCapabilities: (args: { apiUrl: string; apiKey: string; apiKeyTransmission: string; modelName: string }) =>
-      ipcRenderer.invoke('ai:probeCapabilities', args)
+      ipcRenderer.invoke('ai:probeCapabilities', args),
+
+    // 故障转移 API（Spec: optimize-agent-interaction-from-openclaw / Task 10）
+    // 2 个 IPC 通道 + 1 个事件订阅：
+    //   - ai:getFallbackProviders  获取备用 provider 列表
+    //   - ai:setFallbackProviders  设置备用 provider 列表
+    //   - ai:failover              故障转移事件订阅（主进程 → 渲染进程）
+    failover: {
+      getProviders: () => ipcRenderer.invoke('ai:getFallbackProviders'),
+      setProviders: (providers: any[]) =>
+        ipcRenderer.invoke('ai:setFallbackProviders', { providers }),
+      onFailover: (callback: (data: any) => void) => {
+        const subscription = (_event: unknown, data: any) => callback(data);
+        ipcRenderer.on('ai:failover', subscription);
+        return () => ipcRenderer.removeListener('ai:failover', subscription);
+      },
+    },
   },
   // 创意数据 API
   creative: {
@@ -746,9 +774,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 存储路径：{userData}/data/character-traits/{sha256(characterCardId).slice(0,16)}/traits.json
   characterTrait: {
     // 读取角色卡视觉特征 tag 数组；文件不存在时返回 []（不抛异常）
+    // @deprecated 改用 loadData 获取完整 v2 数据
     list: (characterCardId: string) =>
       ipcRenderer.invoke('character-trait:list', characterCardId),
     // 覆盖保存角色卡视觉特征 tag 数组（可附带外观描述）
+    // @deprecated 改用 saveData 保存完整 v2 数据
     save: (args: { characterCardId: string; traits: string[]; appearanceDescription?: string }) =>
       ipcRenderer.invoke('character-trait:save', args),
     // 读取角色卡外观描述（中文自然语言）；不存在时返回空串
@@ -756,7 +786,35 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('character-trait:loadDescription', characterCardId),
     // 清除角色卡视觉特征文件（删除 traits.json，幂等）
     clear: (characterCardId: string) =>
-      ipcRenderer.invoke('character-trait:clear', characterCardId)
+      ipcRenderer.invoke('character-trait:clear', characterCardId),
+    // 读取角色卡完整 v2 数据（含分类/组合/启用状态）；文件不存在返回空白 v2，v1 数据自动迁移
+    // Spec: add-trait-category-grouping / Task 3
+    loadData: (characterCardId: string) =>
+      ipcRenderer.invoke('character-trait:loadData', characterCardId),
+    // 覆盖保存角色卡完整 v2 数据（version 强制为 2，含分类/组合/启用状态）
+    // Spec: add-trait-category-grouping / Task 3
+    saveData: (args: { characterCardId: string; data: CharacterTraitManifestV2 }) =>
+      ipcRenderer.invoke('character-trait:saveData', args)
+  },
+  // ============================================================================
+  // 全局特征分类字典 API（Spec: fix-asset-trait-and-scene-defects / Task 3）
+  // ============================================================================
+  // 跨角色卡共享的自定义分类字典，持久化到 {userData}/data/trait-categories.json
+  // 取代 CharacterTraitManifestV2.customCategories 作为分类的唯一读取源
+  // 系统分类（SYSTEM_TRAIT_CATEGORIES）仍由代码常量提供，不写入此字典
+  categoryDictionary: {
+    // 读取全局分类字典；文件不存在或损坏时返回空白字典（categories=[]）
+    load: () => ipcRenderer.invoke('category-dictionary:load'),
+    // 新增自定义分类（重名时返回既有分类，不创建副本）
+    add: (args: { name: string; icon?: string }) =>
+      ipcRenderer.invoke('category-dictionary:add', args),
+    // 按 id 删除自定义分类（幂等：id 不存在视为成功）
+    delete: (args: { id: string }) => ipcRenderer.invoke('category-dictionary:delete', args),
+    // 按 id 重命名自定义分类（newName 为空或重名时返回 success=false）
+    rename: (args: { id: string; newName: string }) =>
+      ipcRenderer.invoke('category-dictionary:rename', args),
+    // 检查全局字典中是否已存在指定名称的分类（大小写不敏感）
+    has: (args: { name: string }) => ipcRenderer.invoke('category-dictionary:has', args),
   },
   // ============================================================================
   // 角色卡 LoRA 管理 API（2026-07-29 bug 修复 - 按角色独立存储）
@@ -941,22 +999,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
         const listener = (_event: any, data: any) => callback(data);
         ipcRenderer.on('agent-config:changed', listener);
         return () => ipcRenderer.removeListener('agent-config:changed', listener);
-      },
-    },
-
-    // 故障转移 API（Spec: optimize-agent-interaction-from-openclaw / Task 10）
-    // 2 个 IPC 通道 + 1 个事件订阅：
-    //   - ai:getFallbackProviders  获取备用 provider 列表
-    //   - ai:setFallbackProviders  设置备用 provider 列表
-    //   - ai:failover              故障转移事件订阅（主进程 → 渲染进程）
-    failover: {
-      getProviders: () => ipcRenderer.invoke('ai:getFallbackProviders'),
-      setProviders: (providers: any[]) =>
-        ipcRenderer.invoke('ai:setFallbackProviders', { providers }),
-      onFailover: (callback: (data: any) => void) => {
-        const subscription = (_event: unknown, data: any) => callback(data);
-        ipcRenderer.on('ai:failover', subscription);
-        return () => ipcRenderer.removeListener('ai:failover', subscription);
       },
     },
   },

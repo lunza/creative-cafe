@@ -20,6 +20,7 @@ import { registerCharacterTraitHandlers } from './handlers/characterTraitHandler
 import { registerAssetHandlers } from './handlers/assetHandlers';
 import { registerSdGenerationHandlers } from './handlers/sdGenerationHandlers';
 import { registerCharacterTraitAIHandlers } from './handlers/characterTraitAIHandlers';
+import { registerCategoryDictionaryHandlers } from './handlers/categoryDictionaryHandlers';
 import { registerLoraHandlers } from './handlers/loraHandlers';
 import { registerCharacterLoraHandlers } from './handlers/characterLoraHandlers';
 import './handlers/aiHandlers';
@@ -70,9 +71,16 @@ export function setupIpcHandlers() {
   // generateAllExpressions / cancelGeneration），取代 Task 6 的 sdHandlers.ts
   registerSdGenerationHandlers();
   // AI 辅助角色特征生成 IPC（Spec: add-asset-and-trait-management / Task 12）
-  // 暴露 ai:generateCharacterTraits 通道，调用 LLM 从角色描述提取视觉特征 tag
+  // 暴露 ai:generateCharacterTraits / ai:recognizeImageTraits 通道，
+  // 调用 LLM 从角色描述或角色卡 PNG 图片提取视觉特征 tag
+  // （Spec: add-dynamic-scene-prompt-generation / Task 3）追加
+  // ai:generateDynamicScenePrompts 通道，将自然语言指令解析为三组英文 SD tag
   // 与 aiHandlers.ts 的 ai:request（低层 HTTP 转发）不同，本通道是高层业务通道
   registerCharacterTraitAIHandlers();
+  // 全局分类字典 IPC（Spec: fix-asset-trait-and-scene-defects / Task 3）
+  // 暴露 category-dictionary:load / add / delete / rename / has 共 5 个通道，
+  // 持久化到 {userData}/data/trait-categories.json，跨角色卡共享自定义分类
+  registerCategoryDictionaryHandlers();
   // LoRA 模型列表获取 IPC（Spec: add-lora-model-selection / Task 3）
   // 暴露 lora:list 通道，调用 loraService.fetchLoraList 获取可用 LoRA 列表
   registerLoraHandlers();

@@ -46,8 +46,9 @@ import { create } from 'zustand';
 /** 素材类型：illustration（立绘）/ general（通用素材）/ three-view（三视图） */
 export type AssetType = 'illustration' | 'general' | 'three-view';
 
-/** 三视图槽位：front（正视图）/ side（侧视图）/ back（背视图） */
-export type ThreeViewSlot = 'front' | 'side' | 'back';
+/** 三视图槽位：front（正视图）/ side（侧视图）/ back（背视图）
+ * 含裸体变体：front-nude / side-nude / back-nude（生成时自动过滤 clothing 分类特征） */
+export type ThreeViewSlot = 'front' | 'side' | 'back' | 'front-nude' | 'side-nude' | 'back-nude';
 
 /** 素材条目：记录某个 assetId 对应的图片信息（manifest.assets[assetId]） */
 export interface AssetEntry {

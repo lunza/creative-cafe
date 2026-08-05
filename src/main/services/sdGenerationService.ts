@@ -148,6 +148,51 @@ export interface SDGenerationOptions {
   characterTraits?: string[];
 
   /**
+   * 人物数量约束 tag（Spec: fix-asset-trait-and-scene-defects / Task 2）。
+   *
+   * 【重点标记 - 高分辨率约束】
+   * 当分辨率 ≥ 1024×1024 时由 `AssetGenerateModal.buildSdOptions` 自动填充，
+   * 值为 `'1girl'` 或 `'1boy'`，由 `applyTraitsAndLora` 注入到 prompt 开头
+   * （紧随 `{traits}` 替换位置之后，避免与已有 tag 重复）。
+   * 高分辨率生成时 SD 模型倾向生成多个角色，此 tag 约束人物数量为单个。
+   * 低分辨率或无法判断性别时为 `undefined`，不注入。
+   */
+  characterGenderTag?: string;
+
+  /**
+   * 动态场景服装提示词（Spec: add-dynamic-scene-prompt-generation / Task 8）。
+   *
+   * 【重点标记 - 动态场景字段】Spec: add-dynamic-scene-prompt-generation / Task 8
+   * 由 `AssetGenerateModal.buildSdOptions` 从 store 的激活动态场景方案中读取并填充：
+   * - 英文 SD tag 字符串，逗号分隔（如 `"gothic dress, black lace, choker"`）
+   * - 无激活动态场景方案时为 `undefined`，由 `applyTraitsAndLora` 替换 `{clothing}` 为空字符串
+   * - 仅 illustration / general 模板含 `{clothing}` 占位符（three-view 模板不含）
+   */
+  dynamicClothing?: string;
+  /**
+   * 动态场景动作提示词（Spec: add-dynamic-scene-prompt-generation / Task 8）。
+   *
+   * 【重点标记 - 动态场景字段】Spec: add-dynamic-scene-prompt-generation / Task 8
+   * - 英文 SD tag 字符串，逗号分隔（如 `"riding motorcycle, leaning forward"`）
+   * - 无激活动态场景方案时为 `undefined`；立绘模式由 `buildSdOptions` 兜底为 `"standing"`，
+   *   保持原模板行为（与原 `full body, standing, ...` 一致）
+   * - 由 `applyTraitsAndLora` 替换提示词模板中的 `{pose}` 占位符
+   */
+  dynamicPose?: string;
+  /**
+   * 动态场景环境提示词（Spec: add-dynamic-scene-prompt-generation / Task 8）。
+   *
+   * 【重点标记 - 动态场景字段】Spec: add-dynamic-scene-prompt-generation / Task 8
+   * - 英文 SD tag 字符串，逗号分隔（如 `"highway, motion blur, sunset"`）
+   * - 无激活动态场景方案时为 `undefined`：
+   *   - 立绘模式由 `buildSdOptions` 兜底为 `"simple background"`（保持原模板行为）
+   *   - 一般图像模式由 `buildSdOptions` 回退到用户输入的 `userScene`
+   *   - 三视图不使用此字段（模板不含 `{scene}` 占位符）
+   * - 由 `applyTraitsAndLora` 替换提示词模板中的 `{scene}` 占位符
+   */
+  dynamicScene?: string;
+
+  /**
    * ADetailer 高级参数（Spec: add-ai-expression-generation / Task 6 扩展，2026-07-27）
    *
    * 【重点标记 - ADetailer-Neo 兼容性】
@@ -738,10 +783,58 @@ class SDGenerationService {
       .map((t) => (typeof t === 'string' ? t.trim() : ''))
       .filter((t) => t.length > 0)
       .join(', ');
+    // 【Bug 修复 - tag 数量不符】日志记录输入特征数与最终拼接字符串，
+    // 便于用户对照「特征生成阶段 tag 数」与「图片生成阶段 tag 数」是否一致
+    const nonEmptyTraitCount = traitsRaw.filter(
+      (t) => typeof t === 'string' && t.trim().length > 0,
+    ).length;
+    console.log(
+      '[sdGenerationService] applyTraitsAndLora: 输入特征',
+      nonEmptyTraitCount,
+      '条，拼接为:',
+      traitsStr || '(空)',
+    );
     result = result.replace(/\{traits\}/g, () => traitsStr);
 
-    // 清理 {traits} 替换后可能产生的多余逗号与空格
-    // 场景：模板 `portrait, {traits}, looking at viewer` + 空 traits → `portrait, , looking at viewer`
+    // ===== {clothing} / {pose} / {scene} 占位符替换 =====
+    // 【重点标记 - 动态场景占位符】Spec: add-dynamic-scene-prompt-generation / Task 8
+    // - 读取 SDGenerationOptions.dynamicClothing / dynamicPose / dynamicScene
+    // - 任一字段为 undefined / null 时替换为空字符串（兜底由 buildSdOptions 处理，本方法保持通用）
+    // - 仅 illustration / general 模板含这些占位符（three-view 模板不含，无副作用）
+    // - 替换后由下方统一的逗号清理逻辑处理空替换产生的多余逗号（与 {traits} 共用清理路径）
+    const clothingStr = options.dynamicClothing ?? '';
+    const poseStr = options.dynamicPose ?? '';
+    const sceneStr = options.dynamicScene ?? '';
+    console.log(
+      '[sdGenerationService] applyTraitsAndLora: 动态场景字段',
+      'clothing=', clothingStr || '(空)',
+      'pose=', poseStr || '(空)',
+      'scene=', sceneStr || '(空)',
+    );
+    result = result.replace(/\{clothing\}/g, () => clothingStr);
+    result = result.replace(/\{pose\}/g, () => poseStr);
+    result = result.replace(/\{scene\}/g, () => sceneStr);
+
+    // ===== 注入人物数量约束 tag（高分辨率时防止生成多角色）=====
+    // 【重点标记 - 高分辨率约束】Spec: fix-asset-trait-and-scene-defects / Task 2
+    // 当 options.characterGenderTag 存在时（由 buildSdOptions 在分辨率 ≥ 1024×1024 时填充），
+    // 将 `1girl` / `1boy` 注入到 prompt 开头（SD 对位置不敏感，开头优先级更高）。
+    // 仅当 prompt 中尚未包含该 tag 时注入，避免重复。
+    // 注：此处在逗号清理之前执行，确保任何多余逗号由下方统一清理逻辑处理。
+    if (options.characterGenderTag) {
+      const genderTag = options.characterGenderTag;
+      if (!result.includes(genderTag)) {
+        result = `${genderTag}, ${result}`;
+        console.log(
+          '[sdGenerationService] applyTraitsAndLora: 注入人物数量约束 tag:',
+          genderTag,
+        );
+      }
+    }
+
+    // 清理 {traits} / {clothing} / {pose} / {scene} 替换后可能产生的多余逗号与空格
+    // 场景：模板 `portrait, {traits}, {clothing}, looking at viewer` + 空 traits + 空 clothing
+    //       → `portrait, , , looking at viewer`
     let prevPrompt: string;
     do {
       prevPrompt = result;

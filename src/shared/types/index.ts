@@ -57,6 +57,11 @@ export * from './agent-center.types';
 // 由各模块自行 import 自身的 Config 类型，避免联合类型。
 export * from './game.types';
 
+// 角色特征管理类型（Spec: add-trait-category-grouping / Task 1）
+// CharacterTraitManifestV2 / CharacterTraitItem / TraitCategory / TraitCombination
+// + SYSTEM_TRAIT_CATEGORIES / UNCATEGORIZED_CATEGORY_ID / UNCATEGORIZED_CATEGORY / genTraitId
+export * from './characterTrait.types';
+
 // === 冲突消解 ===
 // 显式 re-export 优先于 export *，解决 vector.types 与 writing.types 之间的同名冲突。
 // 优先暴露向量检索语义的版本（向量相关类型为本任务 14 的合并重点）。

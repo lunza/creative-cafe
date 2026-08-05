@@ -1,5 +1,5 @@
 // Spec: add-ai-expression-generation / Task 4
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal,
   Progress,
@@ -39,7 +39,7 @@ import SizeSelector from './SizeSelector';
  * 职责：
  * - 通过 Stable Diffusion WebUI img2img 自动生成角色卡表情图片
  * - 支持两种模式：
- *   - batch：一次性生成全部 30 个预置情绪表情，带进度条与统计
+ *   - batch：一次性生成全部 31 个预置情绪表情，带进度条与统计
  *   - single：生成单个情绪表情，支持预览 / 保存 / 重新生成
  * - 复用 `expressionStore.saveExpression` 将生成结果持久化到角色卡表情目录
  * - 复用 `PromptBuilder.buildExpressionGenerationPrompt` 构建情绪提示词
@@ -79,7 +79,7 @@ export interface ExpressionGenerateModalProps {
   characterName: string;
   /** 默认头像路径（用于预览） */
   avatarPath?: string;
-  /** 生成模式：batch=批量生成 30 个预置情绪 / single=生成单个情绪 */
+  /** 生成模式：batch=批量生成 31 个预置情绪 / single=生成单个情绪 */
   mode: 'batch' | 'single';
   /** 单个模式必需：目标情绪键名 */
   targetEmotionKey?: string;
@@ -234,6 +234,16 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
     loadTraits: loadStoreTraits,
   } = useCharacterTraitStore();
 
+  // 【Spec: add-trait-category-grouping / Task 6 下游适配】
+  // store.traits 升级为 CharacterTraitItem[] 后，下游 PromptBuilder / sdGenerationService
+  // 仍接收 string[]。这里派生「启用特征的 text 数组」，与 AssetGenerateModal 一致，
+  // 覆盖表情生成（single-expression / batch-expression）两条路径。
+  // 仅 enabled=true 的特征 text 被拼接为 SD 提示词，实现跨分类组合选择。
+  const enabledTraitTexts = useMemo(
+    () => characterTraits.filter((t) => t.enabled).map((t) => t.text),
+    [characterTraits],
+  );
+
   // ====== 基础状态 ======
   /** SD WebUI 配置（来自 setting.load()） */
   const [sdConfig, setSdConfig] = useState<SDWebuiConfig>(DEFAULT_SD_CONFIG);
@@ -385,14 +395,14 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
           nlPromptTemplate: sdConfig.nlPromptTemplate,
           customNegativePrompt: sdConfig.customNegativePrompt,
           customLabel,
-          characterTraits,
+          characterTraits: enabledTraitTexts,
           modelType: sdConfig.modelType,
         })
       : buildExpressionGenerationPrompt(targetEmotionKey, {
           positivePromptTemplate: sdConfig.positivePromptTemplate,
           customNegativePrompt: sdConfig.customNegativePrompt,
           customLabel,
-          characterTraits,
+          characterTraits: enabledTraitTexts,
         });
     // 初始化可编辑提示词（用户可在此基础上修改后再生）
     setSinglePositivePrompt(prompt);
@@ -406,7 +416,7 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
     sdConfig.nlPromptTemplate,
     sdConfig.positivePromptTemplate,
     sdConfig.customNegativePrompt,
-    characterTraits,
+    enabledTraitTexts,
   ]);
 
   // ====== 重置状态（关闭时） ======
@@ -454,14 +464,14 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
             nlPromptTemplate: sdConfig.nlPromptTemplate,
             customNegativePrompt: sdConfig.customNegativePrompt,
             customLabel: label,
-            characterTraits,
+            characterTraits: enabledTraitTexts,
             modelType: sdConfig.modelType,
           })
         : buildExpressionGenerationPrompt(emotionKey, {
             positivePromptTemplate: sdConfig.positivePromptTemplate,
             customNegativePrompt: sdConfig.customNegativePrompt,
             customLabel: label,
-            characterTraits,
+            characterTraits: enabledTraitTexts,
           });
       return { key: emotionKey, prompt, negativePrompt };
     },
@@ -470,7 +480,7 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
       sdConfig.nlPromptTemplate,
       sdConfig.positivePromptTemplate,
       sdConfig.customNegativePrompt,
-      characterTraits,
+      enabledTraitTexts,
     ],
   );
 
@@ -526,7 +536,7 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
       // 【角色特征缓存 Bug 修复（2026-07-29）】
       // 原为 undefined（遗留 TODO），导致表情生成不携带角色特征。
       // 现从 characterTraitStore 读取，与 AssetManagerModal 特征 Tab 共享 state。
-      characterTraits,
+      characterTraits: enabledTraitTexts,
       // LoRA 模型选择（Spec: add-lora-model-selection / Task 6）
       // 【重点标记 - 按角色独立存储 LoRA（2026-07-29 bug 修复）】
       // 使用角色卡专属的 LoRA 列表，而非全局 setting.sdWebui.selectedLoras，
@@ -548,7 +558,7 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
       // 【img2img 高清模式】透传模式选择
       img2imgHiresMode: sdConfig.img2imgHiresMode,
     };
-  }, [sdConfig, characterLoras, selectedSize, characterTraits]);
+  }, [sdConfig, characterLoras, selectedSize, enabledTraitTexts]);
 
   // ====== 批量生成：开始 ======
   const handleBatchStart = useCallback(async () => {
@@ -575,7 +585,7 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
     setBatchSummary(null);
     setBatchStage('generating');
 
-    // 1. 为全部 30 个预置情绪构建提示词
+    // 1. 为全部 31 个预置情绪构建提示词
     const emotions = EMOTION_PRESETS.map(({ key, label }) =>
       buildEmotionPrompt(key, label),
     );
@@ -1174,10 +1184,10 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
         <Alert
           type="info"
           showIcon
-          message="批量生成 30 个预置情绪表情"
+          message="批量生成 31 个预置情绪表情"
           description={
             <div style={{ fontSize: 12 }}>
-              将为该角色生成全部 30 个预置情绪（default / admiration / ... / cheerfulness）的表情图片，
+              将为该角色生成全部 31 个预置情绪（default / admiration / ... / cheerfulness）的表情图片，
               每张生成成功后会立即保存到角色卡表情目录。
               <br />
               预计耗时取决于 SD 速度，通常每张约 5-15 秒。

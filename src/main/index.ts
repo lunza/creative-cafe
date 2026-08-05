@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import path from 'path';
 import { setupIpcHandlers } from './ipc';
 import { abortAllActiveRequests, abortActiveWritingAgent } from './ipc/handlers/writingHandlers';
+import { abortAllAIRequests } from './ipc/handlers/aiHandlers';
 
 // ========== 全局异常处理器（防止未捕获的 Promise rejection / 同步异常导致主进程崩溃） ==========
 // 【重点标记】修复：增量向量化等 fire-and-forget 调用若产生逃逸异常，Node.js 16+ 默认会退出进程，
@@ -133,6 +134,12 @@ app.on('before-quit', (event) => {
 
   // Task 15.2: 退出前取消活跃的写作智能体编排（避免后台孤儿任务持续调用 AI）
   abortActiveWritingAgent();
+
+  // 中止所有活跃的 AI HTTP 请求（世界书翻译/润色/审核等），避免退出后孤儿请求继续执行
+  const cancelledAICount = abortAllAIRequests();
+  if (cancelledAICount > 0) {
+    console.log(`[App] before-quit: aborted ${cancelledAICount} active AI request(s)`);
+  }
 
   // 阻止退出，先执行异步持久化
   event.preventDefault();

@@ -1,5 +1,5 @@
 // Spec: add-asset-and-trait-management / Task 10
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal,
   Progress,
@@ -11,6 +11,8 @@ import {
   Tag,
   Space,
   Tooltip,
+  Collapse,
+  Select,
   message,
 } from 'antd';
 import {
@@ -21,9 +23,17 @@ import {
   LoadingOutlined,
   SettingOutlined,
   EyeOutlined,
+  EditOutlined,
+  CheckOutlined,
+  CloseOutlined,
+  UndoOutlined,
+  PlusOutlined,
+  LeftOutlined,
+  RightOutlined,
 } from '@ant-design/icons';
 import {
   EMOTION_PRESETS,
+  buildAssetPromptTemplate,
   buildExpressionGenerationPrompt,
   buildNLExpressionPrompt,
 } from './PromptBuilder';
@@ -32,6 +42,12 @@ import { useAssetStore } from '../../../stores/assetStore';
 import { useSettingStore } from '../../../stores/settingStore';
 import { useCharacterLoraStore } from '../../../stores/characterLoraStore';
 import { useCharacterTraitStore } from '../../../stores/characterTraitStore';
+import {
+  SYSTEM_TRAIT_CATEGORIES,
+  UNCATEGORIZED_CATEGORY,
+  genTraitId,
+} from '@shared/types';
+import type { CategorizedTrait, CharacterTraitItem, TraitCategory } from '@shared/types';
 import type { SDWebuiConfig } from '../../../types/setting';
 import LoraSelectModal from './LoraSelectModal';
 import SizeSelector from './SizeSelector';
@@ -41,13 +57,13 @@ import SizeSelector from './SizeSelector';
  *
  * 职责：
  * - 扩展自 ExpressionGenerateModal，支持四种素材类型生成：
- *   - batch-expression：批量生成 30 个预置情绪表情（沿用原 ExpressionGenerateModal 逻辑）
+ *   - batch-expression：批量生成 31 个预置情绪表情（沿用原 ExpressionGenerateModal 逻辑）
  *   - single-expression：生成单个情绪表情（沿用原逻辑）
  *   - illustration：生成角色立绘（full body, standing）
- *   - general：生成一般场景图像（userScene 由用户输入）
+ *   - general：生成一般场景图像（场景由动态场景方案下拉选择，Spec: fix-asset-trait-and-scene-defects / Task 6+7）
  *   - three-view：生成三视图（front / side / back，由 targetSlot 指定）
  * - 所有生成都自动携带角色特征（characterTraits），通过 `window.electronAPI.characterTrait.list`
- *   读取后传入 `sd.generateExpression` 的 options.characterTraits 字段
+ *   读取后透传到 options.characterTraits（generateExpression 与 generateTxt2Img 均读取）
  * - 生成成功后根据 mode 调用对应 store 保存：
  *   - 表情模式 → expressionStore.saveExpression
  *   - 立绘 / 一般图像 / 三视图 → assetStore.saveAsset
@@ -56,17 +72,19 @@ import SizeSelector from './SizeSelector';
  *   打开弹窗 → 加载 SD 设置 / 读取 characterTraits / 检测 SD 状态
  *   → 根据 mode 构建提示词模板（含 {traits} 占位符）
  *   → 用户点击「开始生成」
- *   → 调用 `window.electronAPI.sd.generateExpression`（复用表情生成 IPC，
- *     emotionKey 传占位值，实际提示词由 prompt 字段控制）
+ *   → 按 mode 分流 IPC：
+ *     - single-expression → sd.generateExpression（img2img，提取角色卡基底图变换表情）
+ *     - illustration / general / three-view → sd.generateTxt2Img（纯文生图，提示词 + 角色 LoRA）
  *   → 监听 `sd:generationProgress` / `sd:generationComplete` 事件（仅 batch 模式）
  *   → 单次模式：等待 Promise resolve，展示结果预览
  *   → 完成后调用 onGenerated?.() 通知父组件刷新
  *
- * 【重点标记 - 复用 sd.generateExpression IPC】
- * Task 10 实现约束：不新增 IPC。原 `sd:generateExpression` 的 emotionKey 仅用于日志，
- * 实际生成由 prompt 字段控制（sdGenerationService.generateExpression 接收预构建 prompt）。
- * 因此非表情模式（illustration / general / three-view）复用此 IPC，emotionKey 传 'neutral'
- * 占位值，prompt 由本组件按 mode 构建模板。
+ * 【重点标记 - 素材生成走 txt2img（prompt + LoRA），不走 img2img】
+ * illustration / general / three-view 直接调用 sd.generateTxt2Img，完全由提示词 +
+ * 角色 LoRA 驱动，不使用角色卡基底图片作为图像参考（与立绘生成行为一致）。
+ * 仅 single-expression 复用 sd.generateExpression（img2img）——表情生成需在已有
+ * 角色图基础上变换表情，img2img 才能保持人物一致性。两条路径均由
+ * sdGenerationService 内部调用 applyTraitsAndLora 处理 {traits} 占位符 + LoRA 注入。
  *
  * 【重点标记 - 特征携带机制】
  * 组件打开时通过 `window.electronAPI.characterTrait.list(characterCardId)` 读取角色特征，
@@ -94,7 +112,7 @@ export interface AssetGenerateModalProps {
   /** 角色名（用于标题展示） */
   characterName: string;
   /** 生成模式：
-   *  - batch-expression：批量生成 30 个预置情绪表情
+   *  - batch-expression：批量生成 31 个预置情绪表情
    *  - single-expression：生成单个情绪表情
    *  - illustration：生成角色立绘
    *  - general：生成一般场景图像（需用户输入场景描述）
@@ -109,8 +127,8 @@ export interface AssetGenerateModalProps {
   targetEmotionKey?: string;
   /** single-expression 模式：自定义情绪的中文标签（自定义情绪必填，预置情绪可不传） */
   targetEmotionLabel?: string;
-  /** three-view 模式：目标槽位 */
-  targetSlot?: 'front' | 'side' | 'back';
+  /** three-view 模式：目标槽位（含裸体变体，nude 后缀时自动过滤 clothing 分类特征） */
+  targetSlot?: 'front' | 'side' | 'back' | 'front-nude' | 'side-nude' | 'back-nude';
   onClose: () => void;
   /** 生成成功后的回调（供父组件刷新） */
   onGenerated?: () => void;
@@ -212,54 +230,19 @@ const DEFAULT_SD_CONFIG: SDWebuiConfig = {
 /** data URI 前缀（用于在浏览器中展示 base64 图片） */
 const PNG_DATA_URI_PREFIX = 'data:image/png;base64,';
 
-/**
- * 根据 mode 与目标构建素材生成的正面提示词模板（不含表情）。
- *
- * 【重点标记 - 提示词模板】
- * - 立绘（illustration）：`full body, standing, {traits}, simple background, high quality, best quality, masterpiece`
- * - 一般图像（general）：`{traits}, {userScene}, high quality, best quality`（{userScene} 由用户输入替换）
- * - 三视图（three-view）：根据 targetSlot 选择 front / side / back view 模板
- *
- * 注：{traits} 占位符由 sdGenerationService.generateExpression 内部替换为
- * options.characterTraits 拼接后的字符串（与表情模式一致）。
- *
- * @param mode 生成模式
- * @param targetSlot 三视图模式下的目标槽位
- * @param userScene 一般图像模式下的用户场景描述
- * @returns 提示词模板字符串
- */
-function buildAssetPromptTemplate(
-  mode: 'illustration' | 'general' | 'three-view',
-  targetSlot?: 'front' | 'side' | 'back',
-  userScene?: string,
-): string {
-  switch (mode) {
-    case 'illustration':
-      // 立绘模板：full body + standing + 特征 + 简单背景 + 高质量
-      return 'full body, standing, {traits}, simple background, high quality, best quality, masterpiece';
-    case 'general': {
-      // 一般图像模板：特征 + 用户场景 + 高质量
-      // {userScene} 在此处替换为用户输入（已 trim），若为空则使用默认占位 "looking at viewer"
-      const scene = (userScene && userScene.trim()) || 'looking at viewer';
-      return `{traits}, ${scene}, high quality, best quality`;
-    }
-    case 'three-view': {
-      // 三视图模板：根据 targetSlot 选择 front / side / back
-      const viewName = targetSlot || 'front';
-      return `${viewName} view, full body, {traits}, character sheet, white background, high quality`;
-    }
-    default:
-      return '{traits}, high quality, best quality';
-  }
-}
+// 注：`buildAssetPromptTemplate` 已迁移至 `./PromptBuilder`（Spec: add-dynamic-scene-prompt-generation / Task 7）
+// 该函数扩展了 {clothing} / {pose} / {scene} 占位符，由 sdGenerationService.applyTraitsAndLora 替换（Task 8）
 
 /**
  * 三视图槽位的中英文标签映射。
  */
-const THREE_VIEW_SLOT_LABELS: Record<'front' | 'side' | 'back', string> = {
+const THREE_VIEW_SLOT_LABELS: Record<'front' | 'side' | 'back' | 'front-nude' | 'side-nude' | 'back-nude', string> = {
   front: '正视图',
   side: '侧视图',
   back: '背视图',
+  'front-nude': '正视图（裸体）',
+  'side-nude': '侧视图（裸体）',
+  'back-nude': '背视图（裸体）',
 };
 
 /**
@@ -272,6 +255,43 @@ const MODE_TITLE_MAP: Record<AssetGenerateModalProps['mode'], string> = {
   general: '生成一般图像',
   'three-view': '生成三视图',
 };
+
+/**
+ * 从基础特征推断人物数量约束 tag（Spec: fix-asset-trait-and-scene-defects / Task 2）。
+ *
+ * 【重点标记 - 高分辨率约束】
+ * 高分辨率（≥1024×1024）生成时 SD 模型倾向生成多个角色，需从基础特征推断性别
+ * 并注入 `1girl` / `1boy` 约束人物数量为单个。
+ *
+ * 检测顺序（优先级从高到低）：
+ *  1. 直接匹配 `1girl` / `1boy`（已是 SD 标准格式）
+ *  2. 匹配 `female` / `male` → 转换为 `1girl` / `1boy`
+ *  3. 匹配 `girl` / `boy` → 转换为 `1girl` / `1boy`
+ *
+ * 仅从 `categoryId='basic'` 的特征中查找，避免误匹配服装/场景中的关键词。
+ * 返回 null 表示无法判断性别，调用方应不注入约束。
+ *
+ * @param traits 角色特征列表（含 enabled / categoryId 字段）
+ * @returns `'1girl'` / `'1boy'` / `null`
+ */
+function detectGenderTag(traits: CharacterTraitItem[]): '1girl' | '1boy' | null {
+  const basicTraits = traits.filter((t) => t.categoryId === 'basic' && t.enabled);
+  const texts = basicTraits.map((t) => t.text.toLowerCase());
+
+  // 优先级 1: 直接匹配
+  if (texts.includes('1girl')) return '1girl';
+  if (texts.includes('1boy')) return '1boy';
+
+  // 优先级 2: female/male
+  if (texts.includes('female')) return '1girl';
+  if (texts.includes('male')) return '1boy';
+
+  // 优先级 3: girl/boy
+  if (texts.includes('girl')) return '1girl';
+  if (texts.includes('boy')) return '1boy';
+
+  return null;
+}
 
 // ==================== 组件实现 ====================
 
@@ -315,12 +335,63 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
   // 与 AssetManagerModal 特征 Tab 共享同一 store state，实时同步未保存的修改。
   // init useEffect 中仅当 store 的 currentCharacterCardId 与当前角色不一致时才 loadTraits，
   // 避免覆盖 AssetManagerModal 中已加载（可能含未保存修改）的 traits。
+  //
+  // 【重点标记 - 动态场景字段订阅】Spec: add-dynamic-scene-prompt-generation / Task 8
+  // 额外订阅 dynamicScenePrompts / activeDynamicScenePromptId，供 buildSdOptions 查找
+  // 当前激活动态场景方案并填充 dynamicClothing / dynamicPose / dynamicScene 选项。
+  // 【重点标记 - 动态场景下拉 UI】Spec: fix-asset-trait-and-scene-defects / Task 6
+  // 额外订阅 applyDynamicScenePrompt action，供生成弹窗内的 <Select> 下拉切换激活方案，
+  // 用户无需返回 AssetManagerModal 即可在生成时选择已保存的动态场景方案。
   const {
     traits: characterTraits,
+    // 【Bug 修复 - Spec: fix-asset-trait-and-scene-defects §5.7】原订阅 customCategories（旧字段，
+    // Task 4 后 store 不再写入新值），导致 renderTraitsPanel 的 allCategories 派生不包含新建的自定义分类。
+    // 修复：改订阅 globalCategories（Task 4 引入的全局分类字典 state）。
+    globalCategories: traitGlobalCategories,
     currentCharacterCardId: traitStoreCardId,
+    dynamicScenePrompts,
+    activeDynamicScenePromptId,
+    applyDynamicScenePrompt,
     loadTraits: loadStoreTraits,
     setTraits: setStoreTraits,
   } = useCharacterTraitStore();
+
+  // ====== 临时编辑态（不持久化）======
+  // editedTraits 是 store characterTraits 的「工作副本」：
+  //  - 弹窗打开时从 store 深拷贝初始化（仅复制对象，text 可被用户临时修改）
+  //  - 用户在「携带角色特征」面板内修改 text / 切换 enabled / 新增临时标签 / 删除标签
+  //    仅影响本次生成，不回写 store
+  //  - null 表示尚未初始化（弹窗未打开 / 特征未加载），此时 effectiveTraits 回退为 store 原值
+  //  - 关闭弹窗时置 null，下次打开重新从 store 同步（丢弃上次临时编辑 + 临时标签）
+  const [editedTraits, setEditedTraits] = useState<CharacterTraitItem[] | null>(null);
+  // 当前正在编辑文本的 trait id（进入行内 Input 模式）
+  const [editingTraitId, setEditingTraitId] = useState<string | null>(null);
+  // 行内 Input 的当前文本（编辑中暂存，Enter 提交 / Esc 取消）
+  const [editingText, setEditingText] = useState<string>('');
+  // 新增临时标签：正在输入的分类 id（null 表示无分类处于新增模式）
+  const [addingCategoryId, setAddingCategoryId] = useState<string | null>(null);
+  // 新增临时标签：Input 暂存的文本（Enter 提交 / Esc 取消）
+  const [addingText, setAddingText] = useState<string>('');
+
+  // effectiveTraits：实际用于 SD 生成与 UI 展示的特征列表
+  //  - editedTraits 非空时使用工作副本（含用户临时编辑）
+  //  - 否则回退到 store characterTraits（与原行为一致）
+  const effectiveTraits: CharacterTraitItem[] = editedTraits ?? characterTraits;
+
+  // 【Spec: add-trait-category-grouping / Task 6】characterTraits 现已是结构化 CharacterTraitItem[]，
+  // 下游 SD 生成仅拼接 enabled=true 项的 text。此处派生 enabled 特征文本数组供
+  // buildSdOptions / buildExpressionGenerationPrompt / buildNLExpressionPrompt 共用。
+  // 【临时编辑支持】改用 effectiveTraits 派生，使临时修改的 text / enabled 生效于本次生成。
+  // 【裸体三视图支持】当 targetSlot 为 *-nude 时，自动过滤 categoryId='clothing' 的特征，
+  //   确保裸体版不携带衣物 tag（species / body / head 等基础特征保留）。
+  const isNudeSlot = mode === 'three-view' && !!targetSlot?.endsWith('-nude');
+  const enabledTraitTexts = useMemo(
+    () =>
+      effectiveTraits
+        .filter((t) => t.enabled && (!isNudeSlot || t.categoryId !== 'clothing'))
+        .map((t) => t.text),
+    [effectiveTraits, isNudeSlot],
+  );
 
   // ====== 基础状态 ======
   /** SD WebUI 配置（来自 setting.load()） */
@@ -364,15 +435,29 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
 
   // ====== 单次生成状态（single-expression / illustration / general / three-view） ======
   const [singleStage, setSingleStage] = useState<SingleStage>('idle');
-  /** 生成的图片 base64（含 data URI 前缀，可直接用于 <img src>） */
-  const [generatedImage, setGeneratedImage] = useState<string | null>(null);
+  /**
+   * 生成图片历史（base64，含 data URI 前缀，可直接用于 <img src>）。
+   * 每次生成成功追加一张，支持上一张/下一张浏览。关闭弹窗时清空。
+   */
+  const [generatedImages, setGeneratedImages] = useState<string[]>([]);
+  /** 当前预览的图片在 generatedImages 中的索引（-1 = 无图片） */
+  const [currentImageIndex, setCurrentImageIndex] = useState<number>(-1);
+  /** 当前预览的图片（派生值，兼容旧代码中所有引用 generatedImage 的位置） */
+  const generatedImage = generatedImages[currentImageIndex] ?? null;
   /** 单次生成的错误信息 */
   const [singleError, setSingleError] = useState<string | null>(null);
   /** 可编辑的正面提示词（用户可修改后再生） */
   const [positivePrompt, setPositivePrompt] = useState<string>('');
   /** 可编辑的负面提示词（用户可修改后再生） */
   const [negativePrompt, setNegativePrompt] = useState<string>('');
-  /** general 模式下用户输入的场景描述 */
+  /**
+   * general 模式下用户输入的场景描述。
+   *
+   * @deprecated Spec: fix-asset-trait-and-scene-defects / Task 7
+   *   由动态场景下拉选择替代，不再由用户输入。保留 state 声明（默认空字符串）仅作为
+   *   `buildAssetPromptTemplate` 的兼容参数传递，避免破坏调用方签名。state 不再由
+   *   用户输入更新（userScene 文本输入框已移除，由动态场景 <Select> 下拉替代）。
+   */
   const [userScene, setUserScene] = useState<string>('');
   /** LoRA 选择弹窗开关（Spec: add-lora-model-selection / Task 5） */
   const [loraModalOpen, setLoraModalOpen] = useState(false);
@@ -506,7 +591,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
             nlPromptTemplate: sdConfig.nlPromptTemplate,
             customNegativePrompt: sdConfig.customNegativePrompt,
             customLabel,
-            characterTraits,
+            characterTraits: enabledTraitTexts,
             modelType: sdConfig.modelType,
           })
         : buildExpressionGenerationPrompt(
@@ -515,7 +600,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
               positivePromptTemplate: sdConfig.positivePromptTemplate,
               customNegativePrompt: sdConfig.customNegativePrompt,
               customLabel,
-              characterTraits,
+              characterTraits: enabledTraitTexts,
             },
           );
       setPositivePrompt(prompt);
@@ -546,7 +631,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
     sdConfig.customNegativePrompt,
     sdConfig.modelType,
     sdConfig.nlPromptTemplate,
-    characterTraits,
+    enabledTraitTexts,
   ]);
 
   // ====== general 模式：userScene 变化时重新构建提示词 ======
@@ -567,7 +652,8 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
       setStats({ success: 0, failed: 0, skipped: 0 });
       statsRef.current = { success: 0, failed: 0, skipped: 0 };
       setSingleStage('idle');
-      setGeneratedImage(null);
+      setGeneratedImages([]);
+      setCurrentImageIndex(-1);
       setSingleError(null);
       setPositivePrompt('');
       setNegativePrompt('');
@@ -579,8 +665,29 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
       setImageRecognizing(false);
       // 重置自定义尺寸为默认值（2026-07-29 新增）
       setSelectedSize({ width: 1024, height: 1024 });
+      // 【临时编辑态】关闭弹窗时丢弃工作副本与编辑态，下次打开重新从 store 同步
+      setEditedTraits(null);
+      setEditingTraitId(null);
+      setEditingText('');
+      setAddingCategoryId(null);
+      setAddingText('');
     }
   }, [open]);
+
+  // ====== 临时编辑态：初始化（弹窗打开 + store 特征加载后首次同步） ======
+  // 仅在弹窗打开且 editedTraits 尚未初始化（null）时从 store 深拷贝一次。
+  // 之后用户在面板内的编辑保留在 editedTraits 中，不随 store 变化覆盖（避免丢失临时修改）。
+  // 用户可通过「重置」按钮手动重新同步。
+  // 【0 特征支持】用 traitStoreCardId === characterCardId 判断 store 是否已加载当前角色的
+  // 特征数据（而非 characterTraits.length > 0），确保即使角色卡 0 特征也能初始化为 []，
+  // 允许用户在空分类下新增临时标签。
+  useEffect(() => {
+    if (open && editedTraits === null && traitStoreCardId === characterCardId) {
+      setEditedTraits(
+        characterTraits.map((t) => ({ ...t })),
+      );
+    }
+  }, [open, characterTraits, editedTraits, traitStoreCardId, characterCardId]);
 
   // ====== 卸载时清理 IPC 监听器 ======
   useEffect(() => {
@@ -605,24 +712,84 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
             nlPromptTemplate: sdConfig.nlPromptTemplate,
             customNegativePrompt: sdConfig.customNegativePrompt,
             customLabel: label,
-            characterTraits,
+            characterTraits: enabledTraitTexts,
             modelType: sdConfig.modelType,
           })
         : buildExpressionGenerationPrompt(emotionKey, {
             positivePromptTemplate: sdConfig.positivePromptTemplate,
             customNegativePrompt: sdConfig.customNegativePrompt,
             customLabel: label,
-            characterTraits,
+            characterTraits: enabledTraitTexts,
           });
       return { key: emotionKey, prompt, negativePrompt: neg };
     },
-    [sdConfig.positivePromptTemplate, sdConfig.customNegativePrompt, sdConfig.modelType, sdConfig.nlPromptTemplate, characterTraits],
+    [sdConfig.positivePromptTemplate, sdConfig.customNegativePrompt, sdConfig.modelType, sdConfig.nlPromptTemplate, enabledTraitTexts],
   );
 
   // ====== 构建 SD 生成选项（传给 IPC 的 options 字段） ======
   // 【重点标记 - 特征携带机制】透传 characterTraits 到 options，
   // 由 sdGenerationService.generateExpression 内部替换 {traits} 占位符
+  // 【Spec: add-trait-category-grouping / Task 6】characterTraits 改为传 enabled=true 项的 text 扁平化 string[]
+  //
+  // 【重点标记 - 动态场景字段透传】Spec: add-dynamic-scene-prompt-generation / Task 8
+  // - 从 store 的 dynamicScenePrompts / activeDynamicScenePromptId 查找激活动态场景方案
+  // - illustration 模式无激活方案时兜底：dynamicPose='standing' / dynamicScene='simple background'
+  //   （保持与原模板 `full body, standing, ..., simple background` 一致的行为）
+  // - general 模式无激活方案时：dynamicScene 保持 undefined（{scene} 替换为空字符串）
+  //   【重点标记 - 移除 userScene 回退】Spec: fix-asset-trait-and-scene-defects / Task 7
+  //   原 Task 8 引入的 `dynamicScene = userScene.trim()` 回退已移除：userScene 文本输入框
+  //   已由动态场景下拉选择替代，无激活方案时 {scene} 占位符替换为空字符串（由
+  //   applyTraitsAndLora 的字面替换 + 逗号清理处理），不再回退到用户输入的 userScene。
+  // - three-view 模式：模板不含 {clothing} / {pose} / {scene} 占位符，三个字段透传 undefined 无副作用
+  // - applyTraitsAndLora 仅做字面替换（undefined → 空字符串 + 逗号清理），兜底逻辑集中在此处
   const buildSdOptions = useCallback(() => {
+    // 查找当前激活动态场景方案
+    const activeDynamicScheme = activeDynamicScenePromptId
+      ? dynamicScenePrompts.find((p) => p.id === activeDynamicScenePromptId)
+      : undefined;
+
+    // 从激活动态方案读取 clothing / pose / scene（无激活方案时为 undefined）
+    let dynamicClothing = activeDynamicScheme?.clothing || undefined;
+    let dynamicPose = activeDynamicScheme?.pose || undefined;
+    let dynamicScene = activeDynamicScheme?.scene || undefined;
+
+    // 模式特定的兜底逻辑（仅对含 {clothing} / {pose} / {scene} 占位符的模板生效）
+    if (mode === 'illustration' && !activeDynamicScheme) {
+      // 立绘模式无激活方案：兜底为 standing / simple background（保持原模板行为）
+      // Spec MODIFIED Requirements: 「{pose} 兜底为 standing, {scene} 兜底为 simple background」
+      if (!dynamicPose) dynamicPose = 'standing';
+      if (!dynamicScene) dynamicScene = 'simple background';
+    }
+    // 【重点标记 - 移除 userScene 回退】Spec: fix-asset-trait-and-scene-defects / Task 7
+    // 原 `else if (mode === 'general' && !dynamicScene && userScene.trim())` 分支已移除：
+    // general 模式无激活方案时 dynamicScene 保持 undefined，{scene} 替换为空字符串。
+
+    // ===== 高分辨率人物数量约束检测 =====
+    // 【重点标记 - 高分辨率约束】Spec: fix-asset-trait-and-scene-defects / Task 2
+    // 当分辨率 ≥ 1024×1024 时，SD 模型倾向生成多个角色，需从基础特征推断性别
+    // 并注入 `1girl` / `1boy` 约束人物数量为单个。
+    // - 使用 effectiveTraits（含用户临时编辑）确保与实际生成特征一致
+    // - 基础特征已包含目标 tag 时不重复注入（避免 duplicate）
+    // - 无法判断性别时仅记录警告日志，不注入（避免错误约束）
+    let characterGenderTag: string | undefined;
+    const pixelCount = selectedSize.width * selectedSize.height;
+    if (pixelCount >= 1024 * 1024) {
+      const genderTag = detectGenderTag(effectiveTraits);
+      if (genderTag) {
+        // 检查基础特征是否已包含该 tag（避免重复注入）
+        const basicTraitTexts = effectiveTraits
+          .filter((t) => t.categoryId === 'basic' && t.enabled)
+          .map((t) => t.text.toLowerCase());
+        if (!basicTraitTexts.includes(genderTag)) {
+          characterGenderTag = genderTag;
+        }
+      } else {
+        console.warn(
+          '[AssetGenerateModal] 无法从基础特征推断性别，跳过人物数量约束注入',
+        );
+      }
+    }
+
     return {
       endpoint: sdConfig.endpoint,
       denoisingStrength: sdConfig.denoisingStrength,
@@ -633,8 +800,18 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
       clipSkip: sdConfig.clipSkip,
       adetailerEnabled: sdConfig.adetailerEnabled,
       model: sdConfig.model || undefined,
-      // 【重点标记 - 特征携带机制】注入角色特征 tag 数组
-      characterTraits,
+      // 【重点标记 - 特征携带机制】注入启用的角色特征 tag 数组（v2：仅 enabled=true 项的 text）
+      characterTraits: enabledTraitTexts,
+      // 【重点标记 - 高分辨率约束】Spec: fix-asset-trait-and-scene-defects / Task 2
+      // 当分辨率 ≥ 1024×1024 时由上方 detectGenderTag 推断填充，
+      // 由 sdGenerationService.applyTraitsAndLora 注入到 prompt 开头（避免重复）。
+      characterGenderTag,
+      // 【重点标记 - 动态场景字段透传】Spec: add-dynamic-scene-prompt-generation / Task 8
+      // - undefined 时由 applyTraitsAndLora 替换为空字符串并清理多余逗号
+      // - 已在上方根据 mode 与 activeDynamicScheme 完成兜底填充
+      dynamicClothing,
+      dynamicPose,
+      dynamicScene,
       // ADetailer 高级参数（仅当 adetailerEnabled=true 时由 sdGenerationService 读取）
       adModel: sdConfig.adModel,
       adConfidence: sdConfig.adConfidence,
@@ -686,7 +863,13 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
       // 【img2img 高清模式】透传模式选择（direct / two-step）
       img2imgHiresMode: sdConfig.img2imgHiresMode,
     };
-  }, [sdConfig, characterTraits, characterLoras, selectedSize]);
+    // 【重点标记 - 动态场景依赖】Spec: add-dynamic-scene-prompt-generation / Task 8
+    // 新增 dynamicScenePrompts / activeDynamicScenePromptId / mode 依赖：
+    // - 用户在 AssetManagerModal 或本弹窗下拉切换激活动态场景方案 → 此处感知 → buildSdOptions 重算
+    // - mode 决定兜底策略（illustration: standing/simple background; general: 无兜底）
+    // 【重点标记 - 移除 userScene 依赖】Spec: fix-asset-trait-and-scene-defects / Task 7
+    // userScene 不再作为 {scene} fallback 来源，从依赖数组中移除。
+  }, [sdConfig, enabledTraitTexts, effectiveTraits, characterLoras, selectedSize, mode, dynamicScenePrompts, activeDynamicScenePromptId]);
 
   // ====== 保存生成的素材（非表情模式） ======
   // 【重点标记 - assetId 生成规则】
@@ -698,7 +881,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
     async (
       assetType: 'illustration' | 'general' | 'three-view',
       imageBase64: string,
-      slot?: 'front' | 'side' | 'back',
+      slot?: 'front' | 'side' | 'back' | 'front-nude' | 'side-nude' | 'back-nude',
     ): Promise<{ success: boolean; error?: string }> => {
       if (!characterCardId) {
         return { success: false, error: '未指定角色卡 ID' };
@@ -757,7 +940,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
     setBatchSummary(null);
     setBatchStage('generating');
 
-    // 1. 为全部 30 个预置情绪构建提示词
+    // 1. 为全部 31 个预置情绪构建提示词
     const emotions = EMOTION_PRESETS.map(({ key, label }) =>
       buildEmotionPrompt(key, label),
     );
@@ -878,10 +1061,13 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
       return;
     }
 
-    // general 模式应输入场景描述（仅警告，不阻断——使用默认占位）
-    if (mode === 'general' && !userScene.trim()) {
+    // general 模式无激活动态场景方案时仅警告，不阻断生成（{scene} 占位符替换为空字符串）
+    // 【重点标记 - 移除 userScene 检查】Spec: fix-asset-trait-and-scene-defects / Task 7
+    // 原 userScene.trim() 检查已移除（userScene 已废弃，始终为空字符串），
+    // 改为检查 activeDynamicScenePromptId：无激活方案时 {scene} 替换为空字符串。
+    if (mode === 'general' && !activeDynamicScenePromptId) {
       console.warn(
-        '[AssetGenerateModal] general 模式未输入场景描述，将使用默认占位 "looking at viewer"',
+        '[AssetGenerateModal] general 模式未激活动态场景方案，{scene} 占位符将替换为空字符串',
       );
     }
 
@@ -891,7 +1077,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
     }
 
     setSingleStage('generating');
-    setGeneratedImage(null);
+    // 不清空图片历史 — 重新生成时保留之前的图片供用户前后浏览
     setSingleError(null);
 
     try {
@@ -912,25 +1098,29 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
         negativePromptToUse = negativePrompt;
       }
 
-      // 【重点标记 - 立绘生成强制 txt2img】
-      // illustration 模式直接调用 sd.generateTxt2Img，明确禁用 img2img 技术路径。
+      // 【重点标记 - 素材生成强制 txt2img（prompt + LoRA）】
+      // illustration / general / three-view 三种素材模式直接调用 sd.generateTxt2Img，
+      // 明确禁用 img2img 技术路径——不使用角色卡基底图片作为图像参考，完全由
+      // 提示词 + 角色特征 tag + 角色 LoRA 驱动生成，与立绘生成行为一致。
       // sdGenerationService.generateTxt2Img 内部调用 applyTraitsAndLora 处理
       // {traits} 占位符替换 + LoRA 标签注入，确保角色特征 tag 和 LoRA 被准确应用。
-      // 其他模式（single-expression / general / three-view）仍走 sd.generateExpression，
-      // 由其内部按 modelType 分流到 txt2img 或 img2img。
+      // 仅 single-expression 仍走 sd.generateExpression（img2img），因为表情生成
+      // 本质是在已有角色图基础上变换表情，img2img 才能保持人物一致性。
       let result: { success: boolean; imageBase64?: string; error?: string; warning?: string };
 
-      if (mode === 'illustration') {
-        result = await window.electronAPI.sd.generateTxt2Img({
-          endpoint: sdConfig.endpoint,
+      if (mode === 'single-expression') {
+        // 表情模式：img2img，从角色卡提取基底图后基于表情 prompt 变换
+        result = await window.electronAPI.sd.generateExpression({
+          characterCardPath,
+          emotionKey: mode, // 仅用于日志识别
           prompt: promptToUse,
           negativePrompt: negativePromptToUse,
           options: buildSdOptions(),
         });
       } else {
-        result = await window.electronAPI.sd.generateExpression({
-          characterCardPath,
-          emotionKey: mode, // 仅用于日志识别
+        // 素材模式（illustration / general / three-view）：纯文生图（prompt + LoRA）
+        result = await window.electronAPI.sd.generateTxt2Img({
+          endpoint: sdConfig.endpoint,
           prompt: promptToUse,
           negativePrompt: negativePromptToUse,
           options: buildSdOptions(),
@@ -941,7 +1131,9 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
         const dataUrl = result.imageBase64.startsWith(PNG_DATA_URI_PREFIX)
           ? result.imageBase64
           : PNG_DATA_URI_PREFIX + result.imageBase64;
-        setGeneratedImage(dataUrl);
+        // 追加到图片历史并切换到最新一张
+        setGeneratedImages((prev) => [...prev, dataUrl]);
+        setCurrentImageIndex((prev) => prev + 1);
         setSingleStage('success');
       } else {
         setSingleError(result?.error || '生成失败');
@@ -959,7 +1151,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
     targetEmotionKey,
     targetEmotionLabel,
     targetSlot,
-    userScene,
+    activeDynamicScenePromptId,
     sdStatus,
     sdConfig.endpoint,
     positivePrompt,
@@ -1078,16 +1270,32 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
 
   // ====== 单次生成：重新生成 ======
   const handleRegenerate = useCallback(() => {
-    setGeneratedImage(null);
+    // 不清空图片历史 — 新生成的图片会追加到历史末尾，用户可前后浏览
     setSingleError(null);
     setSingleStage('idle');
     // 直接调用生成（复用当前提示词与配置）
     handleSingleGenerate();
   }, [handleSingleGenerate]);
 
+  // ====== 图片历史浏览：上一张 / 下一张 ======
+  const handlePrevImage = useCallback(() => {
+    setCurrentImageIndex((prev) => Math.max(0, prev - 1));
+  }, []);
+
+  const handleNextImage = useCallback(() => {
+    setCurrentImageIndex((prev) =>
+      Math.min(generatedImages.length - 1, prev + 1),
+    );
+  }, [generatedImages.length]);
+
   // ====== AI 图片识别特征提取（Spec: add-model-capability-detection-and-image-recognition / Task 7） ======
   // 调用 ai.recognizeImageTraits 识别角色卡 PNG 图片，提取视觉特征 tag，
   // 追加到现有 characterTraits（大小写不敏感去重）。前置条件：supportsVision=true。
+  // 【Spec: add-trait-category-grouping / Task 6】characterTraits 现已是 CharacterTraitItem[]，
+  // 此处取出全部 text 用于去重，再通过 setStoreTraits（MERGE 语义）合并新特征。
+  // 【重点标记 - AI 自动归类增强】result.traits 现为 CategorizedTrait[]（含 categoryId），
+  // setStoreTraits 入参也升级为 CategorizedTrait[]。merged 数组中现有 trait 透传其原 categoryId
+  // （MERGE 策略对已分类项原样保留、对未分类项保持原状），新增 trait 携带 AI 的 categoryId 直接入对应分类。
   const handleImageRecognize = useCallback(async () => {
     if (!characterCardId) return;
     setImageRecognizing(true);
@@ -1097,13 +1305,28 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
         characterName,
       });
       if (result?.success && result.traits) {
-        // 追加到现有特征，大小写不敏感去重
-        const existing = new Set(characterTraits.map((t) => t.toLowerCase()));
-        const newTraits = result.traits.filter(
-          (t) => !existing.has(t.toLowerCase()),
+        // 取出现有全部特征的 text（小写），用于大小写不敏感去重
+        const existingLower = new Set(
+          characterTraits.map((t) => t.text.toLowerCase()),
         );
-        const updated = [...characterTraits, ...newTraits];
-        setStoreTraits(updated);
+        // AI 返回中不在现有 text 集合的新特征（按 text 去重，保留 AI 的 categoryId）
+        const newTraits: CategorizedTrait[] = result.traits.filter(
+          (t) => !existingLower.has(t.text.toLowerCase()),
+        );
+        // 通过 setStoreTraits 合并：传入「现有 trait (text, categoryId) + 新增 trait (text, categoryId)」
+        // store 的 MERGE 策略：
+        //  - 现有已分类项（categoryId != uncategorized）→ 原样保留（无论是否在 merged 中）
+        //  - 现有未分类项 + 在 merged 中 → 用 merged 中的 categoryId 更新（此处传其自身 categoryId，等价保留原状）
+        //  - 现有未分类项不在 merged 中 → 移除（此处全部现有未分类项均在 merged 中，不会被移除）
+        //  - merged 中不在现有 text 集合的新特征 → 追加为 { id, text, categoryId: AI's, enabled: true }
+        const merged: CategorizedTrait[] = [
+          ...characterTraits.map((t) => ({
+            text: t.text,
+            categoryId: t.categoryId,
+          })),
+          ...newTraits,
+        ];
+        setStoreTraits(merged);
         message.success(
           `识别到 ${newTraits.length} 个新特征标签（共 ${result.traits.length} 个）`,
         );
@@ -1118,6 +1341,124 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
       setImageRecognizing(false);
     }
   }, [characterCardId, characterName, characterTraits, setStoreTraits]);
+
+  // ====== 临时编辑态：操作 handlers（仅修改 editedTraits，不回写 store） ======
+
+  /**
+   * 重置工作副本为 store 当前值（丢弃所有临时编辑 + 临时新增/删除）。
+   * 用户点击「重置」按钮时调用，从 characterTraits 重新深拷贝。
+   */
+  const handleResetTraits = useCallback(() => {
+    setEditedTraits(characterTraits.map((t) => ({ ...t })));
+    setEditingTraitId(null);
+    setEditingText('');
+    setAddingCategoryId(null);
+    setAddingText('');
+  }, [characterTraits]);
+
+  /**
+   * 进入行内编辑模式：记录目标 trait id，用其当前 text 初始化 Input 暂存值。
+   */
+  const handleStartEditTrait = useCallback((traitId: string, currentText: string) => {
+    setEditingTraitId(traitId);
+    setEditingText(currentText);
+  }, []);
+
+  /**
+   * 确认编辑：将 Input 暂存值写入 editedTraits 对应 trait 的 text 字段。
+   * trim 后非空才写入；空串保留原值（避免空 tag 进入 SD 提示词）。
+   */
+  const handleConfirmEditTrait = useCallback(() => {
+    if (!editingTraitId) return;
+    const trimmed = editingText.trim();
+    if (!trimmed) {
+      // 空串不写入，静默退出编辑
+      setEditingTraitId(null);
+      setEditingText('');
+      return;
+    }
+    setEditedTraits((prev) =>
+      prev
+        ? prev.map((t) =>
+            t.id === editingTraitId ? { ...t, text: trimmed } : t,
+          )
+        : prev,
+    );
+    setEditingTraitId(null);
+    setEditingText('');
+  }, [editingTraitId, editingText]);
+
+  /**
+   * 取消编辑：丢弃 Input 暂存值，退出行内编辑模式。
+   */
+  const handleCancelEditTrait = useCallback(() => {
+    setEditingTraitId(null);
+    setEditingText('');
+  }, []);
+
+  /**
+   * 临时切换特征启用状态（仅影响本次生成，不回写 store）。
+   * 用户点击特征 Tag 时触发。
+   */
+  const handleToggleTraitEnabledLocal = useCallback((traitId: string) => {
+    setEditedTraits((prev) =>
+      prev
+        ? prev.map((t) =>
+            t.id === traitId ? { ...t, enabled: !t.enabled } : t,
+          )
+        : prev,
+    );
+  }, []);
+
+  /**
+   * 临时删除特征（仅从 editedTraits 移除，不回写 store）。
+   * 对 store 特征：重置后恢复；对临时新增的特征：永久移除（直到重置）。
+   */
+  const handleDeleteTrait = useCallback((traitId: string) => {
+    setEditedTraits((prev) =>
+      prev ? prev.filter((t) => t.id !== traitId) : prev,
+    );
+  }, []);
+
+  /**
+   * 进入新增临时标签模式：记录目标分类 id，清空 Input 暂存值。
+   */
+  const handleStartAddTrait = useCallback((categoryId: string) => {
+    setAddingCategoryId(categoryId);
+    setAddingText('');
+  }, []);
+
+  /**
+   * 确认新增：将 Input 暂存值作为新 trait 追加到 editedTraits。
+   * trim 后非空才追加；id 用 genTraitId() 生成（与 store 一致，但不会写入磁盘）。
+   */
+  const handleConfirmAddTrait = useCallback(() => {
+    if (!addingCategoryId) return;
+    const trimmed = addingText.trim();
+    if (!trimmed) {
+      // 空串静默退出
+      setAddingCategoryId(null);
+      setAddingText('');
+      return;
+    }
+    const newTrait: CharacterTraitItem = {
+      id: genTraitId(),
+      text: trimmed,
+      categoryId: addingCategoryId,
+      enabled: true,
+    };
+    setEditedTraits((prev) => (prev ? [...prev, newTrait] : prev));
+    setAddingCategoryId(null);
+    setAddingText('');
+  }, [addingCategoryId, addingText]);
+
+  /**
+   * 取消新增：丢弃 Input 暂存值，退出新增模式。
+   */
+  const handleCancelAddTrait = useCallback(() => {
+    setAddingCategoryId(null);
+    setAddingText('');
+  }, []);
 
   // ====== 渲染辅助 ======
 
@@ -1222,9 +1563,9 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
                 (sdConfig.positivePromptTemplate.length > 60 ? '...' : '')
               : '（使用默认提示词模板）'
             : mode === 'illustration'
-            ? '立绘模板: full body, standing, {traits}, ...'
+            ? '立绘模板: full body, {pose}, {traits}, {clothing}, {scene}, ...'
             : mode === 'general'
-            ? '一般图像模板: {traits}, {userScene}, high quality'
+            ? '一般图像模板: {traits}, {clothing}, {pose}, {scene}, ...'
             : `三视图模板: ${targetSlot || 'front'} view, full body, {traits}, character sheet`}
         </div>
       </div>
@@ -1244,74 +1585,335 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
   );
 
   /** 角色特征展示区（让用户知道携带了哪些特征） */
-  const renderTraitsPanel = () => (
-    <div
-      style={{
-        marginBottom: 16,
-        padding: 10,
-        background: 'rgba(99, 102, 241, 0.05)',
-        borderRadius: 8,
-        border: '1px solid rgba(99, 102, 241, 0.15)',
-        fontSize: 12,
-      }}
-    >
+  // 【Spec: add-trait-category-grouping / Task 6】characterTraits 现已是 CharacterTraitItem[]，
+  // 展示时区分 enabled / disabled（disabled 项灰显），并显示启用统计「启用 X/Y」。
+  // 【临时编辑支持】改用 effectiveTraits（editedTraits ?? characterTraits）驱动展示与编辑，
+  // 用户可临时修改 text（如 sitting → standing）或切换 enabled，仅影响本次生成不回写 store。
+  // 特征按分类分组展示（系统分类 + 自定义分类 + 未分类），与素材管理面板一致。
+  // 【临时新增/删除支持】每个分类下可新增临时标签（genTraitId 生成，不写入磁盘），
+  // 也可临时删除任意标签（store 特征重置后恢复，临时特征永久移除）。
+  const renderTraitsPanel = () => {
+    const traits = effectiveTraits;
+    const enabledCount = traits.filter((t) => t.enabled).length;
+    // store 原始数据索引：用于检测临时修改 / 临时新增 / 临时删除
+    const storeTextById = new Map(characterTraits.map((t) => [t.id, t.text]));
+    const storeIds = new Set(characterTraits.map((t) => t.id));
+
+    // 构建分类列表（系统分类 + 自定义分类 + 未分类），按 order 升序
+    // 【Bug 修复 - Spec: fix-asset-trait-and-scene-defects §5.7】原使用 traitCustomCategories
+    // （旧字段，Task 4 后不再更新），改用 traitGlobalCategories（全局分类字典 state），
+    // 使新建的自定义分类（如「武器」「纹身」）能在折叠面板中正确显示。
+    const allCategories: TraitCategory[] = [
+      ...SYSTEM_TRAIT_CATEGORIES,
+      ...traitGlobalCategories,
+      UNCATEGORIZED_CATEGORY,
+    ].sort((a, b) => a.order - b.order);
+
+    // 按分类分组特征
+    const traitsByCategory = new Map<string, CharacterTraitItem[]>();
+    for (const trait of traits) {
+      const list = traitsByCategory.get(trait.categoryId);
+      if (list) {
+        list.push(trait);
+      } else {
+        traitsByCategory.set(trait.categoryId, [trait]);
+      }
+    }
+
+    // 检查是否有任何临时修改（text 编辑 / 临时新增 / 临时删除），控制「重置」按钮可用性
+    const hasTempAdditions = traits.some((t) => !storeIds.has(t.id));
+    const hasTempDeletions = characterTraits.some(
+      (st) => !traits.some((t) => t.id === st.id),
+    );
+    const hasTextEdits = traits.some(
+      (t) => storeIds.has(t.id) && storeTextById.get(t.id) !== t.text,
+    );
+    const hasEdits = hasTempAdditions || hasTempDeletions || hasTextEdits;
+
+    return (
       <div
         style={{
-          color: 'var(--text-secondary, #94a3b8)',
-          marginBottom: 6,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          flexWrap: 'wrap',
+          marginBottom: 16,
+          padding: 10,
+          background: 'rgba(99, 102, 241, 0.05)',
+          borderRadius: 8,
+          border: '1px solid rgba(99, 102, 241, 0.15)',
+          fontSize: 12,
         }}
       >
-        <span>携带角色特征（{characterTraits.length}）：</span>
-        {traitsError && (
-          <Tag color="orange" style={{ margin: 0, fontSize: 11 }}>
-            读取失败
-          </Tag>
-        )}
-        {/* 【Spec: add-model-capability-detection-and-image-recognition / Task 7】
-            仅当当前 AI 引擎 supportsVision=true 时显示「AI 图片识别」按钮；
-            不支持时显示提示文案引导用户切换模型 */}
-        {supportsVision ? (
+        <div
+          style={{
+            color: 'var(--text-secondary, #94a3b8)',
+            marginBottom: 6,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            flexWrap: 'wrap',
+          }}
+        >
+          <span>
+            携带角色特征（启用 {enabledCount}/{traits.length}）：
+          </span>
+          <Tooltip title="点击特征可临时启用/禁用；点击编辑图标可临时修改文本（如 sitting → standing）；点击 × 可临时删除；分类下方可新增临时标签。所有修改仅影响本次生成，不保存到角色卡。">
+            <Tag color="blue" style={{ margin: 0, fontSize: 11, cursor: 'help' }}>
+              可临时编辑
+            </Tag>
+          </Tooltip>
+          {hasEdits && (
+            <Tag color="orange" style={{ margin: 0, fontSize: 11 }}>
+              有未保存的临时修改
+            </Tag>
+          )}
+          {traitsError && (
+            <Tag color="red" style={{ margin: 0, fontSize: 11 }}>
+              读取失败
+            </Tag>
+          )}
+          {/* 重置按钮：丢弃所有临时编辑 + 临时新增/删除，从 store 重新同步 */}
           <Button
             size="small"
-            icon={<EyeOutlined />}
-            loading={imageRecognizing}
-            onClick={handleImageRecognize}
+            icon={<UndoOutlined />}
+            onClick={handleResetTraits}
+            disabled={!hasEdits}
             style={{
-              marginLeft: 'auto',
               fontSize: 11,
               borderColor: 'rgba(99, 102, 241, 0.4)',
               color: '#a5b4fc',
             }}
           >
-            AI 图片识别
+            重置
           </Button>
+          {/* 【Spec: add-model-capability-detection-and-image-recognition / Task 7】
+              仅当当前 AI 引擎 supportsVision=true 时显示「AI 图片识别」按钮；
+              不支持时显示提示文案引导用户切换模型 */}
+          {supportsVision ? (
+            <Button
+              size="small"
+              icon={<EyeOutlined />}
+              loading={imageRecognizing}
+              onClick={handleImageRecognize}
+              style={{
+                marginLeft: 'auto',
+                fontSize: 11,
+                borderColor: 'rgba(99, 102, 241, 0.4)',
+                color: '#a5b4fc',
+              }}
+            >
+              AI 图片识别
+            </Button>
+          ) : (
+            <Tooltip title="当前 AI 模型不支持图片识别，请在设置中切换到多模态模型">
+              <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-tertiary, #6b7280)' }}>
+                图片识别不可用
+              </span>
+            </Tooltip>
+          )}
+        </div>
+        {editedTraits === null ? (
+          <span style={{ color: 'var(--text-secondary, #94a3b8)', fontSize: 11 }}>
+            特征加载中...
+          </span>
         ) : (
-          <Tooltip title="当前 AI 模型不支持图片识别，请在设置中切换到多模态模型">
-            <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-tertiary, #6b7280)' }}>
-              图片识别不可用
-            </span>
-          </Tooltip>
+          <Collapse
+            size="small"
+            defaultActiveKey={allCategories.map((c) => c.id)}
+            style={{ marginTop: 4 }}
+          >
+            {allCategories.map((category) => {
+              const catTraits = traitsByCategory.get(category.id) || [];
+              const enabledInCat = catTraits.filter((t) => t.enabled).length;
+              const isAdding = addingCategoryId === category.id;
+              return (
+                <Collapse.Panel
+                  key={category.id}
+                  header={
+                    <span style={{ fontSize: 12 }}>
+                      {category.name}
+                      <span
+                        style={{
+                          marginLeft: 6,
+                          color: 'var(--text-tertiary, #6b7280)',
+                          fontSize: 11,
+                        }}
+                      >
+                        {enabledInCat}/{catTraits.length}
+                      </span>
+                    </span>
+                  }
+                >
+                  <Space size={[4, 4]} wrap>
+                    {catTraits.map((trait) => {
+                      const isStoreTrait = storeIds.has(trait.id);
+                      const isEdited =
+                        isStoreTrait &&
+                        storeTextById.get(trait.id) !== trait.text;
+                      const isEditing = editingTraitId === trait.id;
+                      // 颜色策略：
+                      //  - 临时新增（非 store）+ enabled → cyan（青色，区分 store 特征）
+                      //  - 临时新增 + disabled → default（灰显）
+                      //  - store 特征 + enabled + 已修改 → orange
+                      //  - store 特征 + enabled + 原始 → purple
+                      //  - store 特征 + disabled → default（灰显）
+                      const tagColor = !trait.enabled
+                        ? 'default'
+                        : !isStoreTrait
+                          ? 'cyan'
+                          : isEdited
+                            ? 'orange'
+                            : 'purple';
+
+                      if (isEditing) {
+                        // 行内编辑模式：Input + 确认/取消按钮
+                        return (
+                          <span
+                            key={trait.id}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 2,
+                            }}
+                          >
+                            <Input
+                              size="small"
+                              autoFocus
+                              value={editingText}
+                              onChange={(e) => setEditingText(e.target.value)}
+                              onPressEnter={handleConfirmEditTrait}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Escape') {
+                                  e.preventDefault();
+                                  handleCancelEditTrait();
+                                }
+                              }}
+                              style={{
+                                width: 140,
+                                fontSize: 11,
+                              }}
+                            />
+                            <Button
+                              size="small"
+                              type="text"
+                              icon={<CheckOutlined />}
+                              onClick={handleConfirmEditTrait}
+                              style={{ color: '#22c55e', fontSize: 11 }}
+                            />
+                            <Button
+                              size="small"
+                              type="text"
+                              icon={<CloseOutlined />}
+                              onClick={handleCancelEditTrait}
+                              style={{ color: '#ef4444', fontSize: 11 }}
+                            />
+                          </span>
+                        );
+                      }
+
+                      return (
+                        <Tag
+                          key={trait.id}
+                          color={tagColor}
+                          closable
+                          onClose={(e) => {
+                            e.preventDefault();
+                            handleDeleteTrait(trait.id);
+                          }}
+                          style={{
+                            margin: 0,
+                            opacity: trait.enabled ? 1 : 0.45,
+                            cursor: 'pointer',
+                            userSelect: 'none',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 2,
+                          }}
+                          // 点击 Tag 切换启用状态（临时）
+                          onClick={() =>
+                            handleToggleTraitEnabledLocal(trait.id)
+                          }
+                        >
+                          {trait.text}
+                          {/* 编辑图标：点击进入行内编辑（stopPropagation 避免触发 toggle） */}
+                          <EditOutlined
+                            style={{
+                              fontSize: 10,
+                              marginLeft: 2,
+                              opacity: 0.7,
+                            }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleStartEditTrait(trait.id, trait.text);
+                            }}
+                          />
+                        </Tag>
+                      );
+                    })}
+                    {/* 新增临时标签入口 */}
+                    {isAdding ? (
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 2,
+                        }}
+                      >
+                        <Input
+                          size="small"
+                          autoFocus
+                          placeholder="输入临时标签"
+                          value={addingText}
+                          onChange={(e) => setAddingText(e.target.value)}
+                          onPressEnter={handleConfirmAddTrait}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Escape') {
+                              e.preventDefault();
+                              handleCancelAddTrait();
+                            }
+                          }}
+                          style={{ width: 140, fontSize: 11 }}
+                        />
+                        <Button
+                          size="small"
+                          type="text"
+                          icon={<CheckOutlined />}
+                          onClick={handleConfirmAddTrait}
+                          style={{ color: '#22c55e', fontSize: 11 }}
+                        />
+                        <Button
+                          size="small"
+                          type="text"
+                          icon={<CloseOutlined />}
+                          onClick={handleCancelAddTrait}
+                          style={{ color: '#ef4444', fontSize: 11 }}
+                        />
+                      </span>
+                    ) : (
+                      <Tag
+                        onClick={() => handleStartAddTrait(category.id)}
+                        style={{
+                          margin: 0,
+                          cursor: 'pointer',
+                          borderStyle: 'dashed',
+                          background: 'transparent',
+                          color: 'var(--text-tertiary, #6b7280)',
+                          fontSize: 11,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 2,
+                        }}
+                      >
+                        <PlusOutlined style={{ fontSize: 10 }} />
+                        新增临时标签
+                      </Tag>
+                    )}
+                  </Space>
+                </Collapse.Panel>
+              );
+            })}
+          </Collapse>
         )}
       </div>
-      {characterTraits.length === 0 ? (
-        <span style={{ color: 'var(--text-secondary, #94a3b8)', fontSize: 11 }}>
-          （未配置角色特征，可在角色卡编辑界面添加）
-        </span>
-      ) : (
-        <Space size={[4, 4]} wrap>
-          {characterTraits.map((trait, idx) => (
-            <Tag key={`${trait}-${idx}`} color="purple" style={{ margin: 0 }}>
-              {trait}
-            </Tag>
-          ))}
-        </Space>
-      )}
-    </div>
-  );
+    );
+  };
 
   /** SD 不可用警告 */
   const renderSdUnavailableAlert = () => {
@@ -1441,7 +2043,12 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
           {sdConfig.adetailerEnabled && ` · ${sdConfig.adModel}`}
           {sdConfig.adetailerEnabled && ` · 去噪${sdConfig.adDenoisingStrength}`}
         </Tag>
-        <Tag color="purple">特征：{characterTraits.length} 项</Tag>
+        <Tag color="purple">特征：启用 {enabledTraitTexts.length}/{effectiveTraits.length}</Tag>
+        {isNudeSlot && (
+          <Tag color="pink">
+            裸体模式：已过滤衣物特征
+          </Tag>
+        )}
         <Tag
           color="cyan"
           style={{ cursor: 'pointer' }}
@@ -1589,10 +2196,10 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
         <Alert
           type="info"
           showIcon
-          message="批量生成 30 个预置情绪表情"
+          message="批量生成 31 个预置情绪表情"
           description={
             <div style={{ fontSize: 12 }}>
-              将为该角色生成全部 30 个预置情绪（default / admiration / ... /
+              将为该角色生成全部 31 个预置情绪（default / admiration / ... /
               cheerfulness）的表情图片，每张生成成功后会立即保存到角色卡表情目录。
               <br />
               预计耗时取决于 SD 速度，通常每张约 5-15 秒。
@@ -1622,43 +2229,222 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
     );
   };
 
-  /** 单次生成模式主体 UI（single-expression / illustration / general / three-view） */
-  const renderSingleMode = () => {
+  /**
+   * 单次模式参数面板（左栏内容）
+   * 包含 Alert + 动态场景下拉 + 参数概览 + 正/负面提示词 + 生成按钮
+   * 由 Modal body 的左栏容器包裹（与 renderHeader / renderTraitsPanel / SizeSelector 等并列）
+   */
+  const renderParamsColumn = () => {
+    const idleTitle =
+      mode === 'single-expression'
+        ? `生成「${singleEmotionLabel}」表情`
+        : mode === 'illustration'
+        ? '生成角色立绘'
+        : mode === 'general'
+        ? '生成一般图像'
+        : `生成${threeViewSlotLabel}三视图`;
+
+    const idleDesc =
+      mode === 'single-expression'
+        ? '点击「生成」按钮，将通过 SD img2img 基于角色卡基底图片生成该情绪表情。'
+        : mode === 'illustration'
+        ? '点击「生成」按钮，将通过 SD 文生图（提示词 + 角色 LoRA）生成角色立绘（full body, standing），不使用图像参考。'
+        : mode === 'general'
+        ? '在左侧选择动态场景方案（可选），点击「生成」按钮通过 SD 文生图（提示词 + 角色 LoRA）生成一般场景图像，不使用图像参考。'
+        : `点击「生成」按钮，将通过 SD 文生图（提示词 + 角色 LoRA）生成${threeViewSlotLabel}三视图（character sheet 风格），不使用图像参考。`;
+
+    const isGenerating = singleStage === 'generating';
+
+    return (
+      <>
+        <Alert type="info" showIcon message={idleTitle} description={idleDesc} />
+
+        {/* 动态场景方案选择下拉（Spec: fix-asset-trait-and-scene-defects / Task 6）
+            * 替代原 userScene 文本输入框（Task 7 已移除）。用户可在生成弹窗内直接选择
+            * 已保存的动态场景方案，无需返回 AssetManagerModal 激活。
+            * - 选项来自 store.dynamicScenePrompts（与 AssetManagerModal 共享同一 state）
+            * - 当前激活方案作为 Select 的 value（activeDynamicScenePromptId）
+            * - onChange 调用 applyDynamicScenePrompt(id) 立即激活并持久化
+            * - 空状态（无方案）：Select disabled + placeholder 提示去素材管理添加
+            * - 允许清除（allowClear）：清除后 activeDynamicScenePromptId 保持原值
+            *   （applyDynamicScenePrompt 仅在 id 为非空字符串时调用，清除为 no-op）
+            * - 三视图模式：模板不含 {clothing}/{pose}/{scene} 占位符，选择方案无副作用
+            * - 表情模式：模板不含动态场景占位符，下拉仅作便捷入口（不阻塞生成）
+            * - 生成中（isGenerating）时 Select disabled，避免生成期间切换方案 */}
+        <div>
+          <div
+            style={{
+              color: 'var(--text-secondary, #94a3b8)',
+              fontSize: 12,
+              marginBottom: 6,
+            }}
+          >
+            动态场景方案：
+          </div>
+          <Select
+            value={activeDynamicScenePromptId ?? undefined}
+            onChange={(id) => {
+              // allowClear 触发时 id 为 undefined，此时不调用 applyDynamicScenePrompt
+              // （store 的 activeDynamicScenePromptId 保持原值，用户需在 AssetManagerModal
+              //   显式删除方案才会重置为 null；此处清除为 no-op，避免误清空激活状态）
+              if (typeof id === 'string' && id) {
+                applyDynamicScenePrompt(id);
+              }
+            }}
+            placeholder="选择动态场景方案"
+            style={{
+              width: '100%',
+              background: 'rgba(15, 15, 26, 0.6)',
+              color: 'var(--text-primary, #e2e8f0)',
+              borderColor: 'rgba(255, 255, 255, 0.1)',
+            }}
+            allowClear
+            disabled={dynamicScenePrompts.length === 0 || isGenerating}
+            options={dynamicScenePrompts.map((p) => ({ label: p.name, value: p.id }))}
+            notFoundContent={
+              dynamicScenePrompts.length === 0
+                ? '暂无动态场景方案，请在素材管理中添加'
+                : undefined
+            }
+          />
+          <div
+            style={{
+              color: 'var(--text-secondary, #94a3b8)',
+              fontSize: 11,
+              marginTop: 4,
+            }}
+          >
+            选择已保存的动态场景方案后，其服装/动作/场景 tag 会自动替换提示词模板中的{' '}
+            {'{clothing}'} / {'{pose}'} / {'{scene}'} 占位符。无方案时占位符替换为空字符串。
+          </div>
+        </div>
+
+        {/* 参数概览 */}
+        {renderParamsOverview()}
+
+        {/* 正面提示词（可编辑，生成中 disabled） */}
+        <div>
+          <div
+            style={{
+              color: 'var(--text-secondary, #94a3b8)',
+              fontSize: 12,
+              marginBottom: 6,
+            }}
+          >
+            正面提示词（可编辑）：
+          </div>
+          <Input.TextArea
+            value={positivePrompt}
+            onChange={(e) => setPositivePrompt(e.target.value)}
+            autoSize={{ minRows: 3, maxRows: 6 }}
+            disabled={isGenerating}
+            style={{
+              background: 'rgba(15, 15, 26, 0.6)',
+              color: 'var(--text-primary, #e2e8f0)',
+              borderColor: 'rgba(255, 255, 255, 0.1)',
+            }}
+          />
+        </div>
+
+        {/* 负面提示词（可编辑，生成中 disabled） */}
+        <div>
+          <div
+            style={{
+              color: 'var(--text-secondary, #94a3b8)',
+              fontSize: 12,
+              marginBottom: 6,
+            }}
+          >
+            负面提示词（可编辑）：
+          </div>
+          <Input.TextArea
+            value={negativePrompt}
+            onChange={(e) => setNegativePrompt(e.target.value)}
+            autoSize={{ minRows: 2, maxRows: 4 }}
+            disabled={isGenerating}
+            style={{
+              background: 'rgba(15, 15, 26, 0.6)',
+              color: 'var(--text-primary, #e2e8f0)',
+              borderColor: 'rgba(255, 255, 255, 0.1)',
+            }}
+          />
+        </div>
+
+        <div style={{ textAlign: 'center' }}>
+          <Button
+            type="primary"
+            size="large"
+            icon={<ThunderboltOutlined />}
+            onClick={handleSingleGenerate}
+            disabled={sdStatus !== 'available' || isGenerating}
+            loading={isGenerating || initializing}
+            style={{
+              background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+              borderColor: 'transparent',
+            }}
+          >
+            {isGenerating ? '生成中...' : '生成'}
+          </Button>
+        </div>
+      </>
+    );
+  };
+
+  /**
+   * 单次模式状态面板（右栏内容）
+   * 根据 singleStage 互斥显示：idle 引导 / generating Spin / success 图片预览 / failed 错误
+   * 由 Modal body 的右栏容器包裹
+   */
+  const renderStatusColumn = () => {
+    const successTitle =
+      mode === 'single-expression'
+        ? `已生成「${singleEmotionLabel}」表情`
+        : mode === 'illustration'
+        ? '已生成角色立绘'
+        : mode === 'general'
+        ? '已生成一般图像'
+        : `已生成${threeViewSlotLabel}三视图`;
+
+    const generatingTip =
+      mode === 'single-expression'
+        ? '正在生成表情图片...'
+        : mode === 'illustration'
+        ? '正在生成角色立绘...'
+        : mode === 'general'
+        ? '正在生成一般图像...'
+        : `正在生成${threeViewSlotLabel}三视图...`;
+
+    const isGenerating = singleStage === 'generating';
+
     // 生成成功 - 展示结果预览
     if (singleStage === 'success' && generatedImage) {
-      const successTitle =
-        mode === 'single-expression'
-          ? `已生成「${singleEmotionLabel}」表情`
-          : mode === 'illustration'
-          ? '已生成角色立绘'
-          : mode === 'general'
-          ? '已生成一般图像'
-          : `已生成${threeViewSlotLabel}三视图`;
-
       return (
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 16,
-            padding: '12px 0',
-          }}
-        >
+        <>
           <div
             style={{
               display: 'flex',
+              alignItems: 'center',
               justifyContent: 'center',
+              gap: 8,
               padding: 12,
               background:
                 'var(--chat-bubble-assistant-bg, rgba(30, 30, 46, 0.5))',
               borderRadius: 8,
             }}
           >
+            {/* 上一张按钮：第一张时禁用 */}
+            <Button
+              shape="circle"
+              icon={<LeftOutlined />}
+              disabled={currentImageIndex <= 0}
+              onClick={handlePrevImage}
+              style={{ flexShrink: 0 }}
+            />
             <Image
               src={generatedImage}
               alt={successTitle}
-              width={256}
-              height={256}
+              width={384}
+              height={384}
               style={{
                 objectFit: 'cover',
                 borderRadius: 8,
@@ -1666,16 +2452,37 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
               }}
               preview={{ mask: '点击查看大图' }}
             />
+            {/* 下一张按钮：最后一张时禁用 */}
+            <Button
+              shape="circle"
+              icon={<RightOutlined />}
+              disabled={currentImageIndex >= generatedImages.length - 1}
+              onClick={handleNextImage}
+              style={{ flexShrink: 0 }}
+            />
           </div>
+
+          {/* 图片计数器：仅有多张时显示 */}
+          {generatedImages.length > 1 && (
+            <div
+              style={{
+                textAlign: 'center',
+                fontSize: 12,
+                color: 'var(--text-secondary, #94a3b8)',
+              }}
+            >
+              {currentImageIndex + 1} / {generatedImages.length}
+            </div>
+          )}
 
           <Alert
             type="success"
             showIcon
             message={successTitle}
-            description="点击「保存」将图片写入角色卡素材目录；点击「重新生成」将丢弃当前结果重新生成。"
+            description="点击「保存」将当前预览图片写入角色卡素材目录；点击「重新生成」将追加一张新图到历史。可用左右按钮浏览本次会话已生成的所有图片。"
           />
 
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 12, flexWrap: 'wrap' }}>
             <Button
               type="primary"
               icon={<CheckCircleOutlined />}
@@ -1692,21 +2499,14 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
             </Button>
             <Button onClick={onClose}>关闭</Button>
           </div>
-        </div>
+        </>
       );
     }
 
     // 生成失败
     if (singleStage === 'failed') {
       return (
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 16,
-            padding: '12px 0',
-          }}
-        >
+        <>
           <Alert
             type="error"
             showIcon
@@ -1717,7 +2517,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
               </div>
             }
           />
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 12, flexWrap: 'wrap' }}>
             <Button
               type="primary"
               icon={<RobotOutlined />}
@@ -1727,172 +2527,49 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
             </Button>
             <Button onClick={onClose}>关闭</Button>
           </div>
-        </div>
+        </>
       );
     }
 
     // 生成中
-    if (singleStage === 'generating') {
-      const generatingTip =
-        mode === 'single-expression'
-          ? '正在生成表情图片...'
-          : mode === 'illustration'
-          ? '正在生成角色立绘...'
-          : mode === 'general'
-          ? '正在生成一般图像...'
-          : `正在生成${threeViewSlotLabel}三视图...`;
-
+    if (isGenerating) {
       return (
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: 16,
-            padding: '40px 0',
-          }}
-        >
+        <>
           <Spin
-            indicator={<LoadingOutlined style={{ fontSize: 40 }} />}
+            indicator={<LoadingOutlined style={{ fontSize: 48 }} />}
             tip={generatingTip}
           >
-            <div style={{ width: 256, height: 256 }} />
+            <div style={{ width: 384, height: 384 }} />
           </Spin>
-          <div style={{ color: 'var(--text-secondary, #94a3b8)', fontSize: 12 }}>
-            SD img2img 生成中，请稍候（通常 5-15 秒）...
+          <div style={{ color: 'var(--text-secondary, #94a3b8)', fontSize: 12, textAlign: 'center' }}>
+            {mode === 'single-expression'
+              ? 'SD img2img 生成中，请稍候（通常 5-15 秒）...'
+              : 'SD 文生图生成中，请稍候（通常 5-15 秒）...'}
           </div>
-        </div>
+        </>
       );
     }
 
-    // 待开始：展示提示词预览 + 生成按钮
-    const idleTitle =
-      mode === 'single-expression'
-        ? `生成「${singleEmotionLabel}」表情`
-        : mode === 'illustration'
-        ? '生成角色立绘'
-        : mode === 'general'
-        ? '生成一般图像'
-        : `生成${threeViewSlotLabel}三视图`;
-
-    const idleDesc =
-      mode === 'single-expression'
-        ? '点击「生成」按钮，将通过 SD img2img 基于角色卡基底图片生成该情绪表情。'
-        : mode === 'illustration'
-        ? '点击「生成」按钮，将通过 SD img2img 基于角色卡基底图片生成角色立绘（full body, standing）。'
-        : mode === 'general'
-        ? '在下方输入场景描述（userScene），点击「生成」按钮通过 SD img2img 生成一般场景图像。'
-        : `点击「生成」按钮，将通过 SD img2img 生成${threeViewSlotLabel}三视图（character sheet 风格）。`;
-
+    // 待开始：右侧显示提示，等待用户点击左栏的「生成」按钮
     return (
       <div
         style={{
           display: 'flex',
           flexDirection: 'column',
-          gap: 16,
-          padding: '12px 0',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 12,
+          padding: '24px 12px',
+          color: 'var(--text-secondary, #94a3b8)',
+          fontSize: 13,
+          textAlign: 'center',
+          flex: 1,
         }}
       >
-        <Alert type="info" showIcon message={idleTitle} description={idleDesc} />
-
-        {/* general 模式：用户输入场景描述 */}
-        {mode === 'general' && (
-          <div>
-            <div
-              style={{
-                color: 'var(--text-secondary, #94a3b8)',
-                fontSize: 12,
-                marginBottom: 6,
-              }}
-            >
-              场景描述（userScene）：
-            </div>
-            <Input
-              value={userScene}
-              onChange={(e) => setUserScene(e.target.value)}
-              placeholder="例如：sitting on a chair, reading a book, indoor"
-              style={{
-                background: 'rgba(15, 15, 26, 0.6)',
-                color: 'var(--text-primary, #e2e8f0)',
-                borderColor: 'rgba(255, 255, 255, 0.1)',
-              }}
-            />
-            <div
-              style={{
-                color: 'var(--text-secondary, #94a3b8)',
-                fontSize: 11,
-                marginTop: 4,
-              }}
-            >
-              场景描述会拼接到提示词模板的 {userScene} 位置，与角色特征共同构成完整提示词。
-            </div>
-          </div>
-        )}
-
-        {/* 参数概览 */}
-        {renderParamsOverview()}
-
-        {/* 正面提示词（可编辑） */}
-        <div>
-          <div
-            style={{
-              color: 'var(--text-secondary, #94a3b8)',
-              fontSize: 12,
-              marginBottom: 6,
-            }}
-          >
-            正面提示词（可编辑）：
-          </div>
-          <Input.TextArea
-            value={positivePrompt}
-            onChange={(e) => setPositivePrompt(e.target.value)}
-            autoSize={{ minRows: 3, maxRows: 6 }}
-            style={{
-              background: 'rgba(15, 15, 26, 0.6)',
-              color: 'var(--text-primary, #e2e8f0)',
-              borderColor: 'rgba(255, 255, 255, 0.1)',
-            }}
-          />
-        </div>
-
-        {/* 负面提示词（可编辑） */}
-        <div>
-          <div
-            style={{
-              color: 'var(--text-secondary, #94a3b8)',
-              fontSize: 12,
-              marginBottom: 6,
-            }}
-          >
-            负面提示词（可编辑）：
-          </div>
-          <Input.TextArea
-            value={negativePrompt}
-            onChange={(e) => setNegativePrompt(e.target.value)}
-            autoSize={{ minRows: 2, maxRows: 4 }}
-            style={{
-              background: 'rgba(15, 15, 26, 0.6)',
-              color: 'var(--text-primary, #e2e8f0)',
-              borderColor: 'rgba(255, 255, 255, 0.1)',
-            }}
-          />
-        </div>
-
-        <div style={{ textAlign: 'center' }}>
-          <Button
-            type="primary"
-            size="large"
-            icon={<ThunderboltOutlined />}
-            onClick={handleSingleGenerate}
-            disabled={sdStatus !== 'available'}
-            loading={initializing}
-            style={{
-              background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-              borderColor: 'transparent',
-            }}
-          >
-            生成
-          </Button>
+        <RobotOutlined style={{ fontSize: 40, opacity: 0.4 }} />
+        <div>点击左侧「生成」按钮开始</div>
+        <div style={{ fontSize: 11, opacity: 0.7 }}>
+          生成过程中参数面板始终可见，可随时查看与调整
         </div>
       </div>
     );
@@ -1906,7 +2583,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
       title={modalTitle}
       open={open}
       onCancel={onClose}
-      width={620}
+      width={1200}
       style={{ top: 20 }}
       styles={{
         body: {
@@ -1946,21 +2623,66 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
 
       {/* 主体内容 */}
       {!initializing && (
-        <>
-          {renderHeader()}
-          {renderTraitsPanel()}
-          {/* 2026-07-29 新增 - 用户自定义输出尺寸选择器（所有生成模式可见） */}
-          <SizeSelector
-            width={selectedSize.width}
-            height={selectedSize.height}
-            onChange={(w, h) => setSelectedSize({ width: w, height: h })}
-          />
-          {renderSdUnavailableAlert()}
-          {renderAdetailerWarning()}
-          {mode === 'batch-expression'
-            ? renderBatchMode()
-            : renderSingleMode()}
-        </>
+        mode === 'batch-expression' ? (
+          // 批量生成模式：保持原上下式布局（批量模式无「参数 + 状态」并行需求）
+          <>
+            {renderHeader()}
+            {renderTraitsPanel()}
+            {/* 2026-07-29 新增 - 用户自定义输出尺寸选择器（所有生成模式可见） */}
+            <SizeSelector
+              width={selectedSize.width}
+              height={selectedSize.height}
+              onChange={(w, h) => setSelectedSize({ width: w, height: h })}
+            />
+            {renderSdUnavailableAlert()}
+            {renderAdetailerWarning()}
+            {renderBatchMode()}
+          </>
+        ) : (
+          // 单次生成模式（single-expression / illustration / general / three-view）：
+          // 左右两栏布局 — 左栏包含所有参数区域（renderHeader + renderTraitsPanel + SizeSelector
+          // + 警告 + 参数面板），永远显示不被遮挡；右栏显示状态/图片（idle 提示 / generating
+          // Spin / success 图片预览 / failed 错误），根据 singleStage 互斥切换。
+          // 【Spec: fix-asset-trait-and-scene-defects §5.8】
+          <div style={{ display: 'flex', gap: 0, alignItems: 'stretch' }}>
+            {/* 左栏：所有参数区域（携带角色特征等永远可见） */}
+            <div
+              style={{
+                flex: '1 1 50%',
+                minWidth: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12,
+                padding: '0 12px 0 0',
+                borderRight: '1px solid rgba(255, 255, 255, 0.06)',
+              }}
+            >
+              {renderHeader()}
+              {renderTraitsPanel()}
+              <SizeSelector
+                width={selectedSize.width}
+                height={selectedSize.height}
+                onChange={(w, h) => setSelectedSize({ width: w, height: h })}
+              />
+              {renderSdUnavailableAlert()}
+              {renderAdetailerWarning()}
+              {renderParamsColumn()}
+            </div>
+            {/* 右栏：状态/图片（idle/generating/success/failed 互斥显示） */}
+            <div
+              style={{
+                flex: '1 1 50%',
+                minWidth: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12,
+                padding: '0 0 0 12px',
+              }}
+            >
+              {renderStatusColumn()}
+            </div>
+          </div>
+        )
       )}
 
       {/* LoRA 模型选择弹窗（Spec: add-lora-model-selection / Task 5） */}

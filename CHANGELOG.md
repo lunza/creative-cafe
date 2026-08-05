@@ -1,5 +1,185 @@
 # Changelog
 
+## [Bug 修复 + 功能增强] - 2026-08-06 - 素材/特征/动态场景缺陷修复（Spec: fix-asset-trait-and-scene-defects / Task 1-9）
+
+修复近期完成的三个 spec（`add-asset-and-trait-management` / `add-trait-category-grouping` / `add-dynamic-scene-prompt-generation`）引入的若干缺陷与体验缺口。**重点标记三个 bug 修复**（详见 `docs/FIX_RECORDS.md` §5.1 / §5.2 / §5.3）：
+
+1. **动态场景选择缺失**（Task 6+7，§5.1）：`AssetGenerateModal` 缺少动态场景方案选择 UI，用户必须返回 `AssetManagerModal` 激活方案
+2. **AI 不生成自定义分类 tag**（Task 5，§5.2）：系统提示词硬编码 7 个系统分类，LLM 不知道用户自定义分类（如「纹身」「武器装备」）；解析器端 `validCategoryIds` 也仅含系统分类 id，双端缺陷
+3. **高分辨率多角色**（Task 2，§5.3）：SD 模型在 ≥1024×1024 时缺少 `1girl`/`1boy` 人物数量约束，倾向生成多个角色
+
+### Fixed — 三个重点 bug
+
+- **Task 6 + Task 7 — 动态场景选择 UI 缺失**（§5.1）：在 `AssetGenerateModal` 新增 `<Select>` 下拉，options 来自 `dynamicScenePrompts`，`onChange` 调用 `applyDynamicScenePrompt(id)`；移除 `userScene` 文本输入框（保留 state 兼容 + `@deprecated` JSDoc 标记）；`buildSdOptions` 移除 userScene 回退分支
+- **Task 5 — AI 不生成自定义分类 tag**（§5.2）：新增 `buildDynamicTraitSystemPrompt(globalCategories)` / `buildDynamicImageTraitSystemPrompt(globalCategories)` 方法动态构建提示词；`generateCharacterTraits` / `recognizeImageTraits` 构建 messages 前调用 `categoryDictionaryService.loadDictionary()` 读取全局分类；`parseTraitsFromContent` 的 `validCategoryIds` 合并全局字典自定义分类 id。双端同步演进（提示词 + 解析器）；原 `CHARACTER_TRAIT_SYSTEM_PROMPT` / `IMAGE_TRAIT_SYSTEM_PROMPT` 改为 `export` 基线参考
+- **Task 2 — 高分辨率多角色**（§5.3）：新增 `detectGenderTag(traits)` 工具函数从基础特征推断性别；`buildSdOptions` 在 `pixelCount >= 1024 * 1024` 时自动填充 `characterGenderTag`；`SDGenerationOptions` 新增 `characterGenderTag?: string` 字段；`applyTraitsAndLora` 在 `{traits}` 替换后注入 `characterGenderTag`（双重重复防护）
+- **§5.7 — Task 5 半成品 bug 后续修复**（用户反馈）：`characterTraitStore.setTraits` 的 `validCategoryIds` 没有合并 `globalCategories`，导致 AI 返回的 `weapon:gun` 在解析阶段正确但在 store 二次校验时被兜底为 `uncategorized`；同时 `AssetGenerateModal.renderTraitsPanel` 仍订阅旧字段 `customCategories`（Task 4 后永远为 `[]`）导致「携带角色特征」面板不显示自定义分类。修复：`setTraits` 合并 `get().globalCategories`；`AssetGenerateModal` 订阅改为 `globalCategories`、`allCategories` 派生改用 `traitGlobalCategories`
+- **§5.8 — 生成中参数面板被 loading 遮挡**（用户反馈，两轮）：第一轮只把 `renderSingleMode` 内部改为左右两栏；第二轮用户澄清要做**整个参数区域**（包括携带角色特征、SizeSelector、警告等所有参数）与图片的左右布局。修复：删除 `renderSingleMode`，提取 `renderParamsColumn` + `renderStatusColumn` 为顶层方法；Modal body（single 模式）重构为左右两栏——左栏 60% 放所有参数区域（renderHeader + renderTraitsPanel + SizeSelector + 警告 + 参数面板，永远显示不被遮挡），右栏 40% 放状态/图片（idle 提示 / generating Spin / success 图片预览 / failed 错误，根据 `singleStage` 互斥切换）。`Modal width: 620 → 960`
+
+### Added — 增强功能
+
+- **Task 1 — 裸体版三视图固定 nude tag 常量化**（§5.5）：新增 `NUDE_FIXED_TAGS: readonly string[] = ['nude', 'naked', 'bare skin', 'completely naked', 'no clothes', 'nsfw']` 常量数组；three-view 模板 `*-nude` 槽位使用 `NUDE_FIXED_TAGS.join(', ')` 替代硬编码字符串
+- **Task 3 — 全局分类字典服务**（§5.4）：新建 `categoryDictionaryService.ts`（持久化到 `{userData}/data/trait-categories.json`）+ IPC handlers + preload + electron.d.ts 类型声明；新建 `GlobalTraitCategoryDictionary` 共享类型
+- **Task 4 — store 重构 + 既有数据迁移**（§5.4）：`characterTraitStore` 新增 `globalCategories` state + 异步 `createCategory` / `renameCategory` / `deleteCategory` actions；`characterTraitService.loadTraitData` v2 分支调用 `migrateFromManifest` 合并旧 `customCategories` 到全局字典（幂等，按 name 去重）；`AssetManagerModal.tsx` 订阅与 CRUD handler 适配
+
+### Verified
+
+- **Task 8 端到端静态验证（PASS）**：illustration / general / three-view 三种模式下 `{clothing}` / `{pose}` / `{scene}` 占位符替换正确；无激活方案兜底（illustration: `standing` / `simple background`；general: 空字符串）；空逗号清理 do-while 循环正常工作
+- **Task 9.1 tsc 验证（PASS）**：`npx tsc --noEmit` 对所有 spec 修改文件零新增错误；项目预存在错误（`ipcMain` unused / `off` 方法类型 / `writing/PromptBuilder.ts` unused imports / `CharacterDialogueChat/PromptBuilder.ts:703` `parseMesExample` 类型收窄）与本次修改无关 — 经 git stash + git diff 验证
+- **端到端追踪验证**：自定义分类「纹身」(id=`tattoo`) + 「武器装备」(id=`weapon`) → 动态 prompt 包含 9 项分类 → LLM 返回 `tattoo:dragon tattoo, weapon:katana, head:white hair` → `parseTraitsFromContent` 正确解析为 `[{ text: 'dragon tattoo', categoryId: 'tattoo' }, { text: 'katana', categoryId: 'weapon' }, { text: 'white hair', categoryId: 'head' }]`
+
+### Files Modified
+
+- `src/renderer/components/Character/CharacterDialogueChat/PromptBuilder.ts` — `NUDE_FIXED_TAGS` 常量（Task 1）+ three-view 模板修改 + `userScene` `@deprecated` JSDoc（Task 7）
+- `src/renderer/components/Character/CharacterDialogueChat/AssetGenerateModal.tsx` — `detectGenderTag` + 高分辨率检测（Task 2）+ 动态场景 `<Select>` 下拉（Task 6）+ 移除 userScene Input UI + 回退逻辑（Task 7）
+- `src/main/services/sdGenerationService.ts` — `characterGenderTag?: string` 字段 + `applyTraitsAndLora` 注入逻辑（Task 2）
+- `src/main/services/characterTraitAIService.ts` — `buildDynamicTraitSystemPrompt` / `buildDynamicImageTraitSystemPrompt` + `parseTraitsFromContent` 扩展 `validCategoryIds`（Task 5）
+- `src/main/services/categoryDictionaryService.ts` — 新建全局字典服务（Task 3，新建文件）
+- `src/main/ipc/handlers/categoryDictionaryHandlers.ts` — 新建 IPC handlers（Task 3，新建文件）
+- `src/main/ipc/index.ts` — 注册 `registerCategoryDictionaryHandlers()`（Task 3）
+- `src/main/preload.ts` — 暴露 `categoryDictionary` 命名空间（Task 3）
+- `src/renderer/types/electron.d.ts` — 补全 `categoryDictionary` 类型声明（Task 3）
+- `src/shared/types/characterTrait.types.ts` — 新增 `GlobalTraitCategoryDictionary` 接口（Task 3，新建文件）
+- `src/main/services/characterTraitService.ts` — `loadTraitData` 新增迁移逻辑（Task 4）
+- `src/renderer/stores/characterTraitStore.ts` — `globalCategories` state + 异步 actions + `moveTrait` / `clear` 更新（Task 4）
+- `src/renderer/components/Character/CharacterDialogueChat/AssetManagerModal.tsx` — 订阅 + CRUD handler 适配（Task 4）
+- `CODE_WIKI.md` — Task 5 重点标记条目（lines 1208, 1213）+ Task 1/2/3/4 架构描述
+- `docs/FIX_RECORDS.md` — §5.1（Task 6+7）+ §5.2（Task 5）+ §5.3（Task 2）+ §5.4（Task 3+4）+ §5.5（Task 1）+ §5.6（Task 8+9 验证）
+
+## [功能增强] - 2026-08-05 - 动态场景提示词生成（Spec: add-dynamic-scene-prompt-generation / Task 1-9）
+
+为角色特征管理系统新增「动态场景提示词生成」能力，让用户通过自然语言指令（如「让角色穿上一套哥特风的衣服，骑着摩托驰骋在高速公路上」）让 AI 解析为三组独立的英文 SD tag（`clothing` / `pose` / `scene`），保存为命名方案后可在生成图片时一键切换，与基础特征组合后注入 SD 生成流程。该能力独立于角色「固有」基础特征，不污染基础特征数据。本条目整合 Task 1-9 的全部改动（之前以 Task 3 / 5 / 6 / 7 四个独立条目分散记录，现统一为单条版本条目）。
+
+### Added
+- **Task 1：`DynamicScenePrompt` 共享类型** 在 `src/shared/types/characterTrait.types.ts` 新增 `DynamicScenePrompt` 接口（`id` / `name` / `clothing` / `pose` / `scene` / `sourceCommand` / `createdAt` / `updatedAt` 共 8 字段），并扩展 `CharacterTraitManifestV2` 新增 `dynamicScenePrompts: DynamicScenePrompt[]`（默认 `[]`）与 `activeDynamicScenePromptId: string | null`（默认 `null`）两字段。`genTraitId()` 复用基础特征 ID 生成器，避免引入新 ID 命名空间。设计为「存储可选、内存必填」语义：磁盘旧 v2 文件可能缺失，由 service 层兜底补全。
+- **Task 2：主进程 AI 服务扩展** 在 `src/main/services/characterTraitAIService.ts` 新增 `generateDynamicScenePrompts(params)` 方法 + `GenerateDynamicScenePromptsParams` / `GenerateDynamicScenePromptsResult` 接口 + `DYNAMIC_SCENE_SYSTEM_PROMPT` 常量（指导 LLM 输出 `---CLOTHING---` / `---POSE---` / `---SCENE---` 分隔的三组 tag）+ `parseDynamicSceneResponse(content)` 私有解析方法。复用 `getEngineRuntimeConfig` / `enrichSystemPrompt` / 非流式调用模式，与项目「禁止 AI 参数默认值」规则一致。错误兜底链：空输入 → 「请输入动态场景指令」；AI 引擎未配置 → 「AI 引擎未配置，请先在设置中配置 API」；调用失败 → 「AI 调用失败：<具体原因>」；解析失败 → 「AI 返回内容无法解析为动态场景 tag」。
+- **Task 3：IPC 通道扩展** 新增 `ai:generateDynamicScenePrompts` 通道（沿用现有 `ai:` 命名空间，与 `generateCharacterTraits` / `recognizeImageTraits` 同组），入参 `{ naturalLanguageInput, baseTraits? }`，返回 `Promise<{ success, clothing?, pose?, scene?, error? }>`。`characterTraitAIHandlers.ts` 注册 handler（外层 try/catch 兜底，日志前缀 `[CharacterTraitAIHandler]`），`preload.ts` 在 `ai:` 命名空间追加方法（内联类型签名，与现有方法一致不引用主进程类型），`electron.d.ts` 同步类型声明，`ipc/index.ts` 仅更新注释（无代码改动）。详见 `docs/FIX_RECORDS.md` §4.7。
+- **Task 4：持久化服务扩展** 在 `src/main/services/characterTraitService.ts` 扩展 `loadTraitData()` 用 `Array.isArray` / `typeof === 'string'` 兜底 `dynamicScenePrompts=[]` / `activeDynamicScenePromptId=null`（v2 迁移兼容，v1→v2 迁移时显式补默认）；`saveTraitData()` 完整写入两字段（同样兜底后写入，保证下次加载无需再次兜底）；`emptyV2Manifest()` 初始化时补 `[]` / `null`。
+- **Task 5：前端 store 扩展** 在 `src/renderer/stores/characterTraitStore.ts`（v2 Zustand store）新增 `dynamicScenePrompts` / `activeDynamicScenePromptId` 两个 state 字段与 4 个管理 action：`saveDynamicScenePrompt`（创建方案并**自动激活**，立即调用 `get().saveTraits()` 持久化）/ `applyDynamicScenePrompt`（设置激活 ID）/ `updateDynamicScenePrompt`（合并 updates，bump `updatedAt`）/ `deleteDynamicScenePrompt`（**删除激活方案时重置为 null**）。`saveTraits` 签名 `characterCardId` 改可选（缺省取 `get().currentCharacterCardId`，向后兼容），修复 Task 1 扩展 `CharacterTraitManifestV2` 类型后引入的 TS2739。失败回滚扩展覆盖两新字段。
+- **Task 6：UI 区域新增** 在 `AssetManagerModal.tsx` 的 `CharacterTraitTabContent` 底部新增「动态场景指令」折叠面板（紫色边框 + `ThunderboltOutlined` 图标，**默认折叠**与特征分类面板默认展开形成对比）。面板含：NL 输入 TextArea + 「AI 解析」按钮（紫色渐变，`loading` 状态）+ 三组可编辑 TextArea（服装/动作/场景，标签色蓝/绿/橙，允许覆盖 AI 原始结果）+ 完整提示词预览（只读 monospace，`useMemo` 派生）+ 方案保存/切换/删除（方案名输入 + `Select` 下拉 + `Modal.confirm` 二次确认）。激活方案变化时通过 `useEffect` 自动同步三组 TextArea 内容。
+- **Task 7：提示词模板扩展** 在 `src/renderer/components/Character/CharacterDialogueChat/PromptBuilder.ts` 新增导出 `buildAssetPromptTemplate` 函数（从 `AssetGenerateModal.tsx` 迁出并改为导出）。illustration 模板由 `full body, standing, {traits}, simple background, high quality, best quality, masterpiece` 改为 `full body, {pose}, {traits}, {clothing}, {scene}, high quality, best quality, masterpiece`；general 模板由 `{traits}, ${scene}, high quality, best quality` 改为 `{traits}, {clothing}, {pose}, {scene}, high quality, best quality`；three-view 模板不改（不使用动态场景占位符）。`userScene` 参数保留在签名中（前缀 `_` 标识未使用）供 Task 8 `buildSdOptions` 读取作为 `{scene}` fallback。
+- **Task 8：SD 生成链路扩展** 在 `src/main/services/sdGenerationService.ts` 的 `SDGenerationOptions` 新增 `dynamicClothing?` / `dynamicPose?` / `dynamicScene?` 三个可选字段；`applyTraitsAndLora` 在 `{traits}` 替换后新增 `{clothing}` / `{pose}` / `{scene}` 替换（读取 options 三字段，空则替换为空串，与 `{traits}` 共用逗号清理路径）；`AssetGenerateModal.buildSdOptions` 从 store 读取激活动态场景方案填充三字段，并实现兜底：illustration 模式无激活方案时 `dynamicPose='standing'` / `dynamicScene='simple background'`（保持原模板行为）；general 模式无动态场景时 `dynamicScene` 回退到用户输入 `userScene`。
+- **Task 9：集成验证** `npx tsc --noEmit` 724 baseline 错误，12 修改文件零新增错误（3 个预存在错误：`ipc/index.ts` `ipcMain` unused / `preload.ts` `off` 方法类型 / `PromptBuilder.ts` `parseMesExample`）。5 端到端流程静态验证全部通过（类型流 / IPC 流 / 持久化流 / SD 生成流 / 兜底流）。`CODE_WIKI.md` 新增综述章节 + Task 1/2/4/9 详细章节，`docs/FIX_RECORDS.md` §4.7 已记录 Task 3 实施细节，本条目整合 CHANGELOG 4 个分散条目为单条版本条目。
+
+### Changed
+- **`characterTraitStore.ts` `saveTraits` 签名变更** 第一个参数 `characterCardId` 改为可选（`characterCardId?: string`），缺省取 `get().currentCharacterCardId`，供动态场景 action 链式调用 `get().saveTraits()`；原有调用方 `AssetManagerModal.tsx` 的 `saveTraits(characterCardId, editingDescription)` 向后兼容
+- **`characterTraitStore.ts` `loadTraits` / `clear` 扩展** 同步处理 `dynamicScenePrompts` / `activeDynamicScenePromptId`（IPC 兜底 / 重置为初始值）
+- **`characterTraitStore.ts` `saveTraits` 失败回滚** 扩展覆盖 `dynamicScenePrompts` / `activeDynamicScenePromptId`，保证本地 state 与磁盘一致
+- **`AssetGenerateModal.tsx` `buildAssetPromptTemplate` 调用方式变更** 原本地非导出函数改为从 `./PromptBuilder` 导入（Task 7 迁移）
+- **`CODE_WIKI.md` 新增「动态场景提示词生成（Spec: add-dynamic-scene-prompt-generation）— 综述」章节** 含五层架构图 + 各 Task 实施要点表 + Task 1 / 2 / 4 / 9 详细章节，与既有 Task 3 / 5 / 6 三个独立章节互补
+- **`docs/FIX_RECORDS.md` §4.7 已记录 Task 3 实施细节** 含设计决策（沿用 `ai:` 命名空间、内联类型签名策略、日志前缀选择、错误兜底模式）
+- **本条目合并 CHANGELOG 4 个分散条目** 原 Task 3 / 5 / 6 / 7 各自独立条目（2026-08-05）合并为单条版本条目，便于版本追踪
+
+### Files Modified
+- `src/shared/types/characterTrait.types.ts` — 新增 `DynamicScenePrompt` 接口 + 扩展 `CharacterTraitManifestV2`（Task 1，新建文件）
+- `src/main/services/characterTraitAIService.ts` — 新增 `generateDynamicScenePrompts()` + `DYNAMIC_SCENE_SYSTEM_PROMPT` + `parseDynamicSceneResponse()` + 两个接口（Task 2）
+- `src/main/services/characterTraitService.ts` — `loadTraitData` / `saveTraitData` / `emptyV2Manifest` 扩展两新字段（Task 4）
+- `src/main/ipc/handlers/characterTraitAIHandlers.ts` — 注册 `ai:generateDynamicScenePrompts` handler（Task 3）
+- `src/main/ipc/index.ts` — 仅更新注释，说明 `registerCharacterTraitAIHandlers()` 已涵盖三个通道（Task 3，无代码改动）
+- `src/main/preload.ts` — `ai:` 命名空间追加 `generateDynamicScenePrompts` 方法（Task 3）
+- `src/renderer/types/electron.d.ts` — `ai:` 接口追加 `generateDynamicScenePrompts` 类型声明（Task 3）
+- `src/renderer/stores/characterTraitStore.ts` — state 接口 + 初始 state 新增 2 字段；`loadTraits` / `saveTraits` / `clear` 扩展；新增 4 个动态场景 action；`saveTraits` 签名 `characterCardId` 改可选；修复 TS2739（Task 5）
+- `src/renderer/components/Character/CharacterDialogueChat/AssetManagerModal.tsx` — `CharacterTraitTabContent` 新增动态场景指令折叠面板（Task 6）
+- `src/renderer/components/Character/CharacterDialogueChat/PromptBuilder.ts` — 新增导出 `buildAssetPromptTemplate`，illustration / general 模板加占位符（Task 7）
+- `src/renderer/components/Character/CharacterDialogueChat/AssetGenerateModal.tsx` — 移除本地 `buildAssetPromptTemplate` 改为 import（Task 7）+ `buildSdOptions` 透传 `dynamicClothing` / `dynamicPose` / `dynamicScene` + 兜底逻辑（Task 8）
+- `src/main/services/sdGenerationService.ts` — `SDGenerationOptions` 新增 3 字段 + `applyTraitsAndLora` 替换 `{clothing}` / `{pose}` / `{scene}` 占位符（Task 8）
+- `CODE_WIKI.md` — 新增综述章节 + Task 1 / 2 / 4 / 9 详细章节（Task 9）
+- `docs/FIX_RECORDS.md` — §4.7 已记录 Task 3 实施细节（Task 3）
+- `.trae/specs/add-dynamic-scene-prompt-generation/tasks.md` — Task 1-9 全部子任务标记 `[x]`（Task 9）
+- `.trae/specs/add-dynamic-scene-prompt-generation/checklist.md` — 全部 checklist 项验证标记（Task 9）
+
+### Verified
+- `npx tsc --noEmit` 总错误数 724（与 baseline 一致），12 修改文件零新增错误（3 个预存在错误均位于未修改区域，详见 `CODE_WIKI.md` Task 9 章节）
+- 5 端到端流程静态验证全部通过（详见 `CODE_WIKI.md` Task 9 章节）：类型流 / IPC 流 / 持久化流 / SD 生成流 / 兜底流
+- 占位符名一致：`PromptBuilder.ts` 中 `{clothing}` / `{pose}` / `{scene}` 与 `sdGenerationService.applyTraitsAndLora` 替换的占位符完全匹配
+- 兜底行为：无激活方案时 illustration 模式 `dynamicPose='standing'` / `dynamicScene='simple background'`，general 模式回退 `userScene`，与 spec 前行为一致
+
+### Deviations
+- **未订阅 `updateDynamicScenePrompt` action（Task 6）** 当前 UI 无「更新现有方案」入口（保存始终创建新方案），`tsconfig.json` 开启 `noUnusedLocals: true` 会触发未使用错误。仅订阅实际使用的 3 个 action + 2 个 state，`updateDynamicScenePrompt` 留待未来「编辑现有方案」UI 时再订阅
+- **保存后清空 parsed 字段交由 useEffect 同步（Task 6）** 任务描述要求「After save, clear the NL input + parsed fields」，但因 `saveDynamicScenePrompt` 自动激活新方案 → `activeDynamicScenePromptId` 变化 → useEffect 触发同步，parsed 字段会被立即重新填充为新方案内容。实现中保存 handler 仅清空 `dynamicInput` 与 `schemeName`，parsed 字段交由 useEffect 同步，最终效果一致
+- **Task 7 函数迁移最小程度突破 Task 7 指令** Task 7 描述称 `buildAssetPromptTemplate` 位于 `PromptBuilder.ts`，但实际代码位于 `AssetGenerateModal.tsx`（非导出）。为对齐 spec 意图并使模板变更生效，将函数迁移至 `PromptBuilder.ts` 并在 `AssetGenerateModal.tsx` 改为导入。仅替换函数定义为 import，未触碰 `buildSdOptions` 或其它 Task 8 逻辑
+- **类型声明策略跟随现有模式（Task 3）** spec 提示可选方案 (a) 共享类型重导出 / (b) 内联类型。现有 `generateCharacterTraits` / `recognizeImageTraits` 均使用内联类型（不引用主进程类型），Task 3 跟随此模式使用方案 (b)，未做共享类型重构。未来若需要类型共享可移至 `src/shared/types/characterTrait.types.ts`
+
+### Removed
+- **CHANGELOG 4 个分散 Task 条目合并为单条** 原 `## [功能增强] - 2026-08-05 - 动态场景指令 UI 区域（Spec: add-dynamic-scene-prompt-generation / Task 6）`、`## [功能增强] - 2026-08-05 - 动态场景提示词 store 扩展（Spec: add-dynamic-scene-prompt-generation / Task 5）`、`## [功能增强] - 2026-08-05 - 动态场景提示词生成 IPC 通道扩展（Spec: add-dynamic-scene-prompt-generation / Task 3）`、`## [功能增强] - 2026-08-05 - 提示词模板扩展动态场景占位符（Spec: add-dynamic-scene-prompt-generation / Task 7）` 四条目合并为本条目（避免同一 spec 在 CHANGELOG 中以 Task 维度分散记录）
+## [功能增强] - 2026-08-05 - 三视图支持穿衣/裸体两组
+
+### Added
+- **三视图扩展为 6 个槽位** 新增裸体变体 `front-nude` / `side-nude` / `back-nude`，与原有 `front` / `side` / `back`（穿衣版）并列
+- **裸体版自动过滤衣物特征** 生成裸体三视图时自动排除 `categoryId='clothing'` 的特征 tag（保留 species / body / head 等基础特征），同时在提示词模板追加 `nude, naked, bare skin`
+- **三视图 Tab 分组展示** UI 分为「穿衣版」与「裸体版」两个区块，各含 3 个槽位，裸体版区块标题提示「生成时自动过滤衣物配饰分类特征」
+- **生成弹窗状态指示** 裸体模式下在状态栏显示粉色 Tag「裸体模式：已过滤衣物特征」
+
+### Changed
+- `ThreeViewSlot` 类型从 `'front' | 'side' | 'back'` 扩展为含 6 个值的联合类型（`assetStore.ts` / `assetService.ts` / `electron.d.ts` 同步）
+- `THREE_VIEW_ALLOWED_SLOTS` 白名单扩展为 6 个值
+- `buildAssetPromptTemplate('three-view', targetSlot)` — 裸体变体剥离 `-nude` 后缀取 viewName，追加 `nude, naked, bare skin` 提示词
+- `enabledTraitTexts` 派生逻辑增加 `isNudeSlot` 条件过滤
+- `THREE_VIEW_SLOT_LABELS` / `handleAssetSave` / `openGenerateModal` 等参数类型同步扩展
+
+### Files Modified
+- `src/renderer/stores/assetStore.ts` — `ThreeViewSlot` 类型
+- `src/main/services/assetService.ts` — 类型 + `THREE_VIEW_ALLOWED_SLOTS`
+- `src/renderer/types/electron.d.ts` — IPC 类型声明
+- `src/renderer/components/Character/CharacterDialogueChat/AssetManagerModal.tsx` — `THREE_VIEW_SLOTS` + UI 分组
+- `src/renderer/components/Character/CharacterDialogueChat/AssetGenerateModal.tsx` — 类型 + 特征过滤 + 提示词模板 + UI Tag
+
+### Verified
+- `npx tsc --noEmit` — 所有修改文件零新增错误
+- 数据流：点击裸体正面 → `openGenerateModal('three-view', { targetSlot: 'front-nude' })` → `isNudeSlot=true` → `enabledTraitTexts` 排除 clothing 分类 → 提示词 `front view, full body, {traits without clothing}, nude, naked, bare skin, ...`
+
+## [功能增强] - 2026-08-05 - 素材管理图片预览支持上一张/下一张导航
+
+### Added
+- **可复用 `ImagePreviewModal` 组件** 在 `AssetManagerModal.tsx` 中新增，封装全尺寸预览弹窗 + `<` / `>` 圆形导航按钮 + `标签（X / Y）`计数器，供三个 Tab 共用
+- **表情 Tab 预览导航** 点击表情卡片眼睛图标预览时，可用 `<` / `>` 在已上传的表情图片间浏览（预置 31 情绪 + 自定义情绪，按网格顺序）
+- **立绘/一般图像 Tab 预览导航** 点击素材卡片眼睛图标预览时，可用 `<` / `>` 在当前类型的所有素材间浏览
+- **三视图 Tab 预览导航** 点击槽位眼睛图标预览时，可用 `<` / `>` 在正/侧/背三张图间浏览
+
+### Changed
+- 三个 Tab 组件的 `previewImage: string | null` 单值状态 → `previewIndex: number`（-1 = 关闭）+ `previewableImages` 列表（`useMemo` 派生）
+- 点击预览时通过 URL 在 `previewableImages` 中 `findIndex` 定位索引
+- `AssetGridTabContent` 的数据计算（`manifest` / `typeImageCache` / `assetIds` / `previewableImages`）提前到 handlers 之前，解决 `previewableImages` 在 `handlePreview` 中「used before declaration」的 TS2448 错误
+
+### Verified
+- `npx tsc --noEmit` — `AssetManagerModal.tsx` 零错误
+- 三个 Tab 均可通过 `<` / `>` 按钮在已上传图片间导航，第一张/最后一张时对应按钮禁用
+
+## [功能增强] - 2026-08-05 - 图片预览支持上一张/下一张历史浏览
+
+### Added
+- **图片历史浏览** 在 `AssetGenerateModal` 的单次生成预览区域左右两侧添加 `<` / `>` 圆形按钮，支持在本次会话生成的所有图片间前后浏览：
+  - `generatedImage: string | null` 单值状态 → `generatedImages: string[]` + `currentImageIndex: number`（-1 = 无图片）
+  - `generatedImage` 派生为 `generatedImages[currentImageIndex] ?? null`，兼容旧代码所有读取位置（save handler / render 条件等）
+  - 每次生成成功追加到数组末尾并自动切换到最新一张
+  - 「重新生成」不再清空历史 — 新图追加，旧图保留供浏览
+  - 仅有多张图片时显示 `X / Y` 计数器
+  - `<` 在第一张时禁用，`>` 在最后一张时禁用
+  - 关闭弹窗时清空整个历史
+
+### Changed
+- `handleSingleGenerate`：移除 `setGeneratedImage(null)`，不再在生成开始时清空旧图
+- `handleRegenerate`：移除 `setGeneratedImage(null)`，保留历史供浏览
+- Alert 描述文案更新：「点击保存将当前预览图片写入...；点击重新生成将追加一张新图到历史。可用左右按钮浏览本次会话已生成的所有图片。」
+
+### Verified
+- `npx tsc --noEmit` — `AssetGenerateModal.tsx` 零新增错误
+- 数据流：生成图 A → 重新生成图 B → `<` 回到 A → `>` 前进到 B → 保存当前预览的 B → 正确保存 B
+
+## [功能增强] - 2026-08-05 - 新增预置表情「发情」（in_heat）
+
+### Added
+- **新增预置情绪 `in_heat`（发情）** 在 `src/renderer/components/Character/CharacterDialogueChat/PromptBuilder.ts` 的三个映射表中同步新增：
+  - `EMOTION_PRESETS`：新增 `{ key: 'in_heat', label: '发情' }`（第 31 个预置情绪）
+  - `EMOTION_PROMPT_MAP`（SDXL tag 风格）：positive = `smile, open mouth, saliva, drooling, tongue, tongue out, blush, looking at viewer, sweat, half-closed eyes, in heat, heavy breathing, heart`
+  - `EMOTION_NL_PROMPT_MAP`（自然语言风格）：`an expression of being in heat with an open smiling mouth, drooling saliva, tongue out, blushing cheeks, heavy breathing, half-closed eyes, sweating, and heart symbols`
+- **批量生成计数更新** `AssetGenerateModal.tsx` / `ExpressionGenerateModal.tsx` 中「30 个预置情绪」→「31 个预置情绪」（注释 + 用户提示文案）
+
+### Verified
+- `npx tsc --noEmit` — `PromptBuilder.ts` / `AssetGenerateModal.tsx` / `ExpressionGenerateModal.tsx` 零新增错误
+- 三个映射表 key 严格对齐（`in_heat` 均已添加）
+- 批量生成遍历 `EMOTION_PRESETS.map(...)` 自动包含新情绪，无需改动循环逻辑
+
 ## [功能增强] - 2026-08-03 - useWorldBookFormState 新增审核相关状态
 
 ### Added

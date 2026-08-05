@@ -77,6 +77,7 @@ export const EMOTION_PRESETS: ReadonlyArray<{ key: string; label: string }> = [
   { key: 'sadness', label: '悲伤' },
   { key: 'surprise', label: '惊讶' },
   { key: 'cheerfulness', label: '快乐' },
+  { key: 'in_heat', label: '发情' },
 ];
 
 // ==================== 底层工具函数 ====================
@@ -1468,45 +1469,46 @@ export async function buildSystemPrompt(
 // 与上方 `buildExpressionPrompt`（让 AI 在回复文本中输出情绪标记）为两套独立机制。
 
 /**
- * 30 种预置情绪 → Stable Diffusion 提示词映射（Spec: add-ai-expression-generation / Task 3）。
+ * 31 种预置情绪 → Stable Diffusion 提示词映射（Spec: add-ai-expression-generation / Task 3）。
  *
  * 用于 AI 表情生成：以角色卡基底图片 + img2img + 情绪提示词生成对应表情。
  * positive 为情绪正面提示词（英文，SD 语义），negative 为该情绪特有的负面提示词（可选）。
  *
- * 键名严格对齐 `EMOTION_PRESETS` 的 30 个 key（default / admiration / ... / cheerfulness），
+ * 键名严格对齐 `EMOTION_PRESETS` 的 31 个 key（default / admiration / ... / cheerfulness / in_heat），
  * 自定义情绪（不在预置清单内）由 `buildExpressionGenerationPrompt` 通过 customLabel 兜底处理。
  */
 export const EMOTION_PROMPT_MAP: Record<string, { positive: string; negative?: string }> = {
   default: { positive: 'neutral expression, calm face, gentle look, serene' },
-  admiration: { positive: 'admiring expression, awestruck, starry eyes, inspired, reverent' },
-  amusement: { positive: 'amused, playful smile, twinkling eyes, lighthearted, cheerful grin' },
-  anger: { positive: 'angry expression, furrowed brows, intense glare, clenched teeth, furious' },
-  annoyance: { positive: 'annoyed expression, slight frown, irritated look, displeased' },
-  approval: { positive: 'approving nod, satisfied smile, warm expression, agreeable' },
-  caring: { positive: 'caring expression, tender look, soft smile, worried eyes, compassionate' },
-  confusion: { positive: 'confused expression, tilted head, raised eyebrow, puzzled, uncertain' },
-  curiosity: { positive: 'curious expression, wide eyes, eager look, leaning forward, inquisitive' },
-  desire: { positive: 'desiring expression, longing gaze, intense eyes, yearning' },
-  disappointment: { positive: 'disappointed expression, downcast eyes, sad smile, let down' },
-  disapproval: { positive: 'disapproving look, frown, stern expression, shaking head' },
-  disgust: { positive: 'disgusted expression, wrinkled nose, grimace, revulsed' },
-  embarrassment: { positive: 'embarrassed expression, blushing cheeks, averted gaze, flustered' },
-  excitement: { positive: 'excited expression, wide grin, sparkling eyes, energetic, thrilled' },
-  fear: { positive: 'fearful expression, wide eyes, pale face, trembling, terrified' },
-  gratitude: { positive: 'grateful expression, warm smile, thankful eyes, appreciative' },
-  grief: { positive: 'grief expression, teary eyes, sorrowful face, mourning, devastated' },
-  joy: { positive: 'joyful expression, bright smile, radiant, happy tears, elated' },
-  love: { positive: 'loving expression, tender gaze, warm smile, affectionate, heart eyes' },
-  nervousness: { positive: 'nervous expression, biting lip, anxious eyes, fidgeting, uneasy' },
-  neutral: { positive: 'neutral expression, calm, composed face, impassive' },
-  optimism: { positive: 'optimistic expression, hopeful smile, bright outlook, positive' },
-  pride: { positive: 'proud expression, confident smile, chin up, chest out, triumphant' },
-  realization: { positive: 'realization expression, widened eyes, open mouth, eureka moment' },
-  relief: { positive: 'relieved expression, sigh, relaxed shoulders, gentle smile, at ease' },
-  remorse: { positive: 'remorseful expression, guilty look, downcast, apologetic, regretful' },
-  sadness: { positive: 'sad expression, teary eyes, downturned mouth, melancholic, sorrowful' },
-  surprise: { positive: 'surprised expression, wide eyes, open mouth, shocked, astonished' },
-  cheerfulness: { positive: 'cheerful expression, bright smile, sunny disposition, joyful laugh, beaming' },
+  admiration: { positive: 'admiring expression, awestruck, starry eyes, flushed cheeks, longing gaze, aroused' },
+  amusement: { positive: 'amused, playful sultry smile, twinkling eyes, teasing look, biting lip, sensual' },
+  anger: { positive: 'angry expression, furrowed brows, intense lustful glare, clenched teeth, frustrated arousal, heavy breathing' },
+  annoyance: { positive: 'annoyed expression, slight frown, blushing, irritated but aroused, tsundere look' },
+  approval: { positive: 'approving nod, satisfied sultry smile, warm longing expression, bedroom eyes' },
+  caring: { positive: 'caring expression, tender lustful look, soft smile, flushed face, possessive gaze' },
+  confusion: { positive: 'confused expression, tilted head, blushing, puzzled by arousal, parted lips' },
+  curiosity: { positive: 'curious expression, wide eyes, eager longing look, leaning forward, inquisitive and aroused' },
+  desire: { positive: 'intense desiring expression, hungry gaze, dilated pupils, yearning, heavy panting, saliva' },
+  disappointment: { positive: 'disappointed expression, downcast eyes, sad but aroused smile, longing for touch' },
+  disapproval: { positive: 'disapproving look, frown, stern expression, blushing, conflicting desires' },
+  disgust: { positive: 'disgusted expression, wrinkled nose, grimace, aroused despite repulsion, flushed skin' },
+  embarrassment: { positive: 'embarrassed expression, deep blushing, averted gaze, flustered, shy arousal, biting lip' },
+  excitement: { positive: 'excited expression, wide grin, sparkling eyes, hyper-aroused, panting, sweat' },
+  fear: { positive: 'fearful expression, wide eyes, trembling with pleasure, pale face, submissive arousal' },
+  gratitude: { positive: 'grateful expression, warm sultry smile, thankful eyes, flushed face, affectionate' },
+  grief: { positive: 'grief expression, teary eyes, sorrowful face, mixing sadness with lust, longing' },
+  joy: { positive: 'joyful expression, bright radiant smile, happy tears, elated and aroused, flushed' },
+  love: { positive: 'loving expression, tender passionate gaze, warm smile, affectionate, heart eyes, deep lust' },
+  nervousness: { positive: 'nervous expression, biting lip, anxious aroused eyes, fidgeting, trembling' },
+  neutral: { positive: 'neutral expression, calm face, hidden desire, half-closed eyes, suppressed arousal' },
+  optimism: { positive: 'optimistic expression, hopeful sultry smile, bright outlook, eager for intimacy' },
+  pride: { positive: 'proud expression, confident sultry smile, chin up, dominant look, smug arousal' },
+  realization: { positive: 'realization expression, widened eyes, open mouth, sudden arousal, blushing' },
+  relief: { positive: 'relieved expression, sigh, relaxed shoulders, gentle sultry smile, satisfied arousal' },
+  remorse: { positive: 'remorseful expression, guilty look, downcast, apologetic but aroused, flushed' },
+  sadness: { positive: 'sad expression, teary eyes, downturned mouth, melancholic longing, sensual sadness' },
+  surprise: { positive: 'surprised expression, wide eyes, open mouth, shocked by pleasure, heavy breathing, blushing' },
+  cheerfulness: { positive: 'cheerful expression, bright smile, sunny disposition, joyful laugh, aroused and beaming' },
+  in_heat: { positive: 'smile, open mouth, saliva, drooling, tongue, tongue out, blush, looking at viewer, sweat, half-closed eyes, in heat, heavy breathing, heart, extreme arousal' },
 };
 
 /**
@@ -1636,10 +1638,10 @@ export function buildExpressionGenerationPrompt(
 // 与上方 `buildExpressionGenerationPrompt`（SDXL tag 风格）为两套独立机制。
 
 /**
- * 30 种预置情绪 → 自然语言描述映射（Spec: integrate-nl-driven-sd-models / Task 4.1）。
+ * 31 种预置情绪 → 自然语言描述映射（Spec: integrate-nl-driven-sd-models / Task 4.1）。
  *
  * 用于 NL 驱动 SD 模型：以自然语言句子描述表情，替代 SDXL 的 tag 风格提示词。
- * 键名严格对齐 `EMOTION_PRESETS` 的 30 个 key。
+ * 键名严格对齐 `EMOTION_PRESETS` 的 31 个 key。
  */
 export const EMOTION_NL_PROMPT_MAP: Record<string, string> = {
   default: 'a calm and neutral expression with a serene face',
@@ -1672,6 +1674,7 @@ export const EMOTION_NL_PROMPT_MAP: Record<string, string> = {
   sadness: 'a sad expression with teary eyes and a downturned mouth',
   surprise: 'a surprised expression with wide eyes and an open mouth',
   cheerfulness: 'a cheerful expression with a bright smile and a sunny disposition',
+  in_heat: 'an expression of being in heat with an open smiling mouth, drooling saliva, tongue out, blushing cheeks, heavy breathing, half-closed eyes, sweating, and heart symbols',
 };
 
 /**
@@ -1755,4 +1758,112 @@ export function buildNLExpressionPrompt(
     || 'blurry, low quality, distorted, deformed, disfigured, bad anatomy, watermark, text';
 
   return { prompt, negativePrompt };
+}
+
+// ==================== 素材生成提示词模板（illustration / general / three-view）====================
+// Spec: add-asset-and-trait-management / Task 10（原始实现，原位于 AssetGenerateModal.tsx）
+// Spec: add-dynamic-scene-prompt-generation / Task 7（迁移至本文件 + 扩展 {clothing} / {pose} / {scene} 占位符）
+
+/**
+ * 裸体版三视图固定 tag 列表（Spec: fix-asset-trait-and-scene-defects / Task 1）。
+ *
+ * 【重点标记 - 固定包含】这些 tag 在生成 *-nude 槽位三视图时强制拼接，
+ * 不可被用户配置覆盖，确保生成结果始终包含裸体特征。
+ *
+ * 扩展原因：原 spec 仅硬编码 `nude, naked, bare skin` 三个 tag，覆盖面不足，
+ * 补充 `completely naked` / `no clothes` / `nsfw` 增强 SD 模型对裸体语义的理解。
+ *
+ * 本常量是 nude tag 的唯一数据源（single source of truth），`buildAssetPromptTemplate`
+ * 的 three-view 分支通过 `NUDE_FIXED_TAGS.join(', ')` 拼接，禁止在其它位置重复硬编码。
+ */
+export const NUDE_FIXED_TAGS: readonly string[] = [
+  'nude',
+  'naked',
+  'bare skin',
+  'completely naked',
+  'no clothes',
+  'nsfw',
+];
+
+/**
+ * 根据 mode 与目标构建素材生成的正面提示词模板（不含表情）。
+ *
+ * 【重点标记 - 函数迁移说明（Spec: add-dynamic-scene-prompt-generation / Task 7）】
+ * 原实现位于 `AssetGenerateModal.tsx` 内部（非导出函数），Task 7 将其迁移至 `PromptBuilder.ts`
+ * 并改为导出函数，与其它 build* 工具函数集中管理。`AssetGenerateModal.tsx` 改为从本文件导入。
+ *
+ * 【重点标记 - 提示词模板 - 动态场景占位符（Spec: add-dynamic-scene-prompt-generation / Task 7）】
+ * - 立绘（illustration）：`full body, {pose}, {traits}, {clothing}, {scene}, high quality, best quality, masterpiece`
+ *   （原模板 `full body, standing, {traits}, simple background, ...` 中的 `standing` 与 `simple background`
+ *   改为 `{pose}` / `{scene}` 占位符，由动态场景方案填充；无激活方案时由 Task 8 兜底为 `standing` / `simple background`）
+ * - 一般图像（general）：`{traits}, {clothing}, {pose}, {scene}, high quality, best quality`
+ *   （原模板 `${scene}` JS 模板字符串插值改为 `{scene}` 字面占位符，由 sdGenerationService.applyTraitsAndLora 替换）
+ * - 三视图（three-view）：根据 targetSlot 选择 front / side / back view 模板（不改）
+ *   （已有穿衣/裸体分组逻辑，不使用动态场景占位符——Spec: add-dynamic-scene-prompt-generation / Scenario: 三视图不携带动态场景）
+ *
+ * 【重点标记 - 固定包含（Spec: fix-asset-trait-and-scene-defects / Task 1）】
+ * 三视图的 `*-nude` 槽位（front-nude / side-nude / back-nude）会强制拼接 `NUDE_FIXED_TAGS`
+ * 常量数组中的全部 tag（`nude, naked, bare skin, completely naked, no clothes, nsfw`），
+ * **固定包含，不可被用户配置覆盖**，确保生成结果始终包含裸体特征。
+ * `NUDE_FIXED_TAGS` 是 nude tag 的唯一数据源（single source of truth），禁止在其它位置重复硬编码。
+ *
+ * 【占位符替换链路】
+ * `{traits}` / `{clothing}` / `{pose}` / `{scene}` 占位符均由 `sdGenerationService.applyTraitsAndLora`
+ * （Spec: add-dynamic-scene-prompt-generation / Task 8）在 SD 调用前统一替换：
+ *   - `{traits}`：options.characterTraits 拼接字符串（已有逻辑，Spec: add-asset-and-trait-management / Task 5）
+ *   - `{clothing}`：options.dynamicClothing（来自 store 激活动态场景方案；空则替换为空串并清理多余逗号）
+ *   - `{pose}`：options.dynamicPose（同上；立绘模式空时由 Task 8 兜底为 `standing`，保持原行为）
+ *   - `{scene}`：options.dynamicScene（同上；一般图像模式空时由 Task 8 buildSdOptions 透传 undefined → 空字符串）
+ *     【重点标记】Spec: fix-asset-trait-and-scene-defects / Task 7.3 已移除 userScene 回退：无激活方案时 {scene} 替换为空字符串
+ *
+ * 【userScene 参数保留说明】
+ * `userScene` 参数在 Task 7 后不再用于本函数内部模板插值（原 `${scene}` 已改为 `{scene}` 字面占位符），
+ * 但保留在函数签名中以避免破坏调用方（AssetGenerateModal.tsx 的两处调用点按位置传参）。
+ *
+ * 【重点标记 - userScene 参数废弃】Spec: fix-asset-trait-and-scene-defects / Task 7
+ * 原 Task 8 的 `AssetGenerateModal.buildSdOptions` 会从 React state 读取 `userScene` 作为
+ * `{scene}` 占位符的 fallback 值（无激活动态场景方案时使用）。Task 7.3 已移除该回退逻辑：
+ * userScene 文本输入框已由动态场景下拉选择替代，无激活方案时 `{scene}` 占位符替换为空字符串
+ * （由 applyTraitsAndLora 的字面替换 + 逗号清理处理）。`userScene` 参数标记为 `@deprecated`，
+ * 保留签名以避免破坏调用方，但不再作为 {scene} 的来源。
+ *
+ * 参数名加下划线前缀（`_userScene`）以符合 TypeScript `noUnusedParameters` 规约，标识为有意保留未使用。
+ *
+ * @param mode 生成模式（illustration / general / three-view）
+ * @param targetSlot 三视图模式下的目标槽位（front / side / back / front-nude / side-nude / back-nude）
+ * @param _userScene @deprecated Spec: fix-asset-trait-and-scene-defects / Task 7
+ *   由动态场景下拉选择替代，不再由用户输入。保留参数签名避免破坏调用方。
+ *   （原保留供 Task 8 buildSdOptions 读取作为 {scene} fallback；Task 7.3 已移除该回退，
+ *    无激活方案时 {scene} 替换为空字符串。本函数内部不再使用此参数。）
+ * @returns 提示词模板字符串（含 {traits} / {clothing} / {pose} / {scene} 占位符）
+ */
+export function buildAssetPromptTemplate(
+  mode: 'illustration' | 'general' | 'three-view',
+  targetSlot?: 'front' | 'side' | 'back' | 'front-nude' | 'side-nude' | 'back-nude',
+  _userScene?: string,
+): string {
+  switch (mode) {
+    case 'illustration':
+      // 立绘模板：full body + {pose}（动态姿势，无激活方案时由 Task 8 兜底为 "standing"）+ 特征 + {clothing} + {scene}（无激活方案时兜底为 "simple background"）+ 高质量
+      // 原 `standing` / `simple background` 字面量改为占位符，由 sdGenerationService.applyTraitsAndLora 替换
+      return 'full body, {pose}, {traits}, {clothing}, {scene}, high quality, best quality, masterpiece';
+    case 'general': {
+      // 一般图像模板：特征 + {clothing} + {pose} + {scene}（无激活方案时由 Task 8 兜底到 userScene）+ 高质量
+      // 注：原 `${scene}` JS 模板字符串插值已改为 `{scene}` 字面占位符，由 sdGenerationService.applyTraitsAndLora 替换
+      // _userScene 参数保留供 Task 8 buildSdOptions 读取作为 {scene} fallback，本函数内部不使用
+      return '{traits}, {clothing}, {pose}, {scene}, high quality, best quality';
+    }
+    case 'three-view': {
+      // 三视图模板：根据 targetSlot 选择 front / side / back（不改，已有穿衣/裸体分组逻辑）
+      // 裸体变体（*-nude）剥离后缀取 viewName，并拼接 NUDE_FIXED_TAGS 常量数组（Spec: fix-asset-trait-and-scene-defects / Task 1）
+      // 注：三视图不使用动态场景占位符（Spec: add-dynamic-scene-prompt-generation / Scenario: 三视图不携带动态场景）
+      // 注：NUDE_FIXED_TAGS 为 nude tag 的唯一数据源，固定包含不可被用户配置覆盖
+      const isNude = !!targetSlot?.endsWith('-nude');
+      const viewName = (isNude ? targetSlot!.replace('-nude', '') : targetSlot) || 'front';
+      const nudeTags = isNude ? `, ${NUDE_FIXED_TAGS.join(', ')}` : '';
+      return `${viewName} view, full body, {traits}${nudeTags}, character sheet, white background, high quality`;
+    }
+    default:
+      return '{traits}, high quality, best quality';
+  }
 }

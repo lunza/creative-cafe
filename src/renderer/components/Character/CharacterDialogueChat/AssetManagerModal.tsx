@@ -24,8 +24,8 @@
  * 表情 Tab 直接复用其核心逻辑（30 预置情绪 + 自定义情绪网格 + 上传/删除/裁剪流程）。
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Modal, Button, Input, message, Spin, Empty, Tooltip, Tabs, Tag } from 'antd';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Modal, Button, Input, message, Spin, Empty, Tooltip, Tabs, Tag, Collapse, Select, Dropdown } from 'antd';
 import {
   UploadOutlined,
   DeleteOutlined,
@@ -36,7 +36,17 @@ import {
   SaveOutlined,
   EyeOutlined,
   SwapOutlined,
+  FolderAddOutlined,
+  EditOutlined,
+  LeftOutlined,
+  RightOutlined,
 } from '@ant-design/icons';
+import {
+  SYSTEM_TRAIT_CATEGORIES,
+  UNCATEGORIZED_CATEGORY,
+  UNCATEGORIZED_CATEGORY_ID,
+} from '@shared/types';
+import type { CharacterTraitItem, TraitCategory } from '@shared/types';
 import { EMOTION_PRESETS } from './PromptBuilder';
 import ImageCropperModal from './ImageCropperModal';
 import AssetGenerateModal from './AssetGenerateModal';
@@ -91,12 +101,113 @@ interface AssetManagerModalProps {
 /** 自定义情绪英文键校验正则（与主进程 expressionService 保持一致） */
 const KEY_PATTERN = /^[a-z][a-z0-9_]*$/;
 
-/** 三视图槽位元数据：用于 ThreeViewTabContent 渲染 */
-const THREE_VIEW_SLOTS: ReadonlyArray<{ slot: ThreeViewSlot; label: string }> = [
-  { slot: 'front', label: '正面' },
-  { slot: 'side', label: '侧面' },
-  { slot: 'back', label: '背面' },
+/** 三视图槽位元数据：用于 ThreeViewTabContent 渲染（穿衣 3 + 裸体 3 = 6 个槽位） */
+const THREE_VIEW_SLOTS: ReadonlyArray<{ slot: ThreeViewSlot; label: string; nude: boolean }> = [
+  { slot: 'front', label: '正面', nude: false },
+  { slot: 'side', label: '侧面', nude: false },
+  { slot: 'back', label: '背面', nude: false },
+  { slot: 'front-nude', label: '正面', nude: true },
+  { slot: 'side-nude', label: '侧面', nude: true },
+  { slot: 'back-nude', label: '背面', nude: true },
 ];
+
+// ==================== 子组件：ImagePreviewModal（可复用全尺寸预览弹窗，支持上一张/下一张） ====================
+
+interface PreviewableImage {
+  url: string;
+  label: string;
+}
+
+interface ImagePreviewModalProps {
+  /** 可预览的图片列表（按显示顺序） */
+  images: PreviewableImage[];
+  /** 当前预览索引（-1 = 关闭） */
+  index: number;
+  /** 索引变更回调（传入 -1 表示关闭） */
+  onChange: (index: number) => void;
+}
+
+/**
+ * 全尺寸图片预览弹窗（支持上一张/下一张导航）。
+ *
+ * 左右两侧显示 `<` / `>` 圆形按钮，多张时底部显示「标签（X / Y）」计数器。
+ * 用于 ExpressionTabContent / AssetGridTabContent / ThreeViewTabContent 的图片预览。
+ */
+const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
+  images,
+  index,
+  onChange,
+}) => {
+  const open = index >= 0 && index < images.length;
+  const current = open ? images[index] : null;
+
+  return (
+    <Modal
+      open={open}
+      onCancel={() => onChange(-1)}
+      footer={null}
+      title={null}
+      centered
+      width="auto"
+      style={{ maxWidth: '95vw', padding: 0 }}
+      styles={{ body: { padding: 0 } }}
+      closable
+      destroyOnClose
+    >
+      {current && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+          }}
+        >
+          {/* 上一张按钮 */}
+          <Button
+            shape="circle"
+            icon={<LeftOutlined />}
+            disabled={index <= 0}
+            onClick={() => onChange(Math.max(0, index - 1))}
+            style={{ flexShrink: 0 }}
+          />
+          <div style={{ textAlign: 'center' }}>
+            <img
+              src={current.url}
+              alt={current.label}
+              style={{
+                maxWidth: '85vw',
+                maxHeight: '85vh',
+                display: 'block',
+                borderRadius: 8,
+              }}
+            />
+            {/* 计数器 + 标签（仅多张时显示） */}
+            {images.length > 1 && (
+              <div
+                style={{
+                  marginTop: 8,
+                  color: 'var(--text-secondary, #94a3b8)',
+                  fontSize: 12,
+                }}
+              >
+                {current.label}（{index + 1} / {images.length}）
+              </div>
+            )}
+          </div>
+          {/* 下一张按钮 */}
+          <Button
+            shape="circle"
+            icon={<RightOutlined />}
+            disabled={index >= images.length - 1}
+            onClick={() => onChange(Math.min(images.length - 1, index + 1))}
+            style={{ flexShrink: 0 }}
+          />
+        </div>
+      )}
+    </Modal>
+  );
+};
 
 // ==================== 子组件：ExpressionTabContent ====================
 
@@ -160,6 +271,10 @@ const ExpressionTabContent: React.FC<ExpressionTabContentProps> = ({
   const [newCustomKey, setNewCustomKey] = useState<string>('');
   const [newCustomLabel, setNewCustomLabel] = useState<string>('');
   const [addCustomLoading, setAddCustomLoading] = useState<boolean>(false);
+
+  // ====== 全尺寸预览状态（与 AssetGridTabContent / ThreeViewTabContent 一致：缩略图 hover 眼睛图标预览） ======
+  // 支持上一张/下一张导航：previewIndex 跟踪当前预览位置，-1 = 关闭
+  const [previewIndex, setPreviewIndex] = useState<number>(-1);
 
   // 隐藏的 file input ref（用于触发文件选择对话框）
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -397,6 +512,22 @@ const ExpressionTabContent: React.FC<ExpressionTabContentProps> = ({
   const customEmotions: CustomEmotion[] = manifest?.customEmotions ?? [];
   const hasCharacter = !!characterCardId;
 
+  // ====== 可预览图片列表（预置 + 自定义情绪中已上传的图片，按显示顺序排列） ======
+  const previewableImages = useMemo<PreviewableImage[]>(() => {
+    const items: PreviewableImage[] = [];
+    for (const e of EMOTION_PRESETS) {
+      const isDefault = e.key === 'default';
+      const label = isDefault ? '默认（角色卡头像）' : e.label;
+      const url = isDefault ? avatarPath : imageCache[e.key];
+      if (url) items.push({ url, label });
+    }
+    for (const e of customEmotions) {
+      const url = imageCache[e.key];
+      if (url) items.push({ url, label: e.label });
+    }
+    return items;
+  }, [imageCache, customEmotions, avatarPath]);
+
   /**
    * 渲染单个情绪卡片。
    * - isDefault：default 卡片，仅展示 avatarPath，无上传/删除按钮
@@ -407,6 +538,8 @@ const ExpressionTabContent: React.FC<ExpressionTabContentProps> = ({
     (emotionKey: string, label: string, isCustom: boolean, isDefault: boolean) => {
       const imagePath = imageCache[emotionKey];
       const hasImage = !!imagePath;
+      // 可预览的图片 URL：默认头像取 avatarPath，已上传情绪取 imagePath，未上传则无（不显示预览覆盖层）
+      const previewUrl: string | undefined = isDefault ? avatarPath : hasImage ? imagePath : undefined;
 
       // 缩略图内容
       let thumbnail: React.ReactNode;
@@ -496,9 +629,10 @@ const ExpressionTabContent: React.FC<ExpressionTabContentProps> = ({
             e.currentTarget.style.borderColor = baseBorder;
           }}
         >
-          {/* 缩略图（正方形） */}
+          {/* 缩略图（正方形，含 hover 预览眼睛图标 - 与其他 Tab 一致） */}
           <div
             style={{
+              position: 'relative',
               width: '100%',
               aspectRatio: '1 / 1',
               borderRadius: 6,
@@ -509,8 +643,47 @@ const ExpressionTabContent: React.FC<ExpressionTabContentProps> = ({
               justifyContent: 'center',
               border: !hasImage && !isDefault ? '1px dashed rgba(255, 255, 255, 0.15)' : 'none',
             }}
+            onMouseEnter={(e) => {
+              const overlay = e.currentTarget.querySelector('.thumbnail-hover-overlay') as HTMLElement;
+              if (overlay) overlay.style.opacity = '1';
+            }}
+            onMouseLeave={(e) => {
+              const overlay = e.currentTarget.querySelector('.thumbnail-hover-overlay') as HTMLElement;
+              if (overlay) overlay.style.opacity = '0';
+            }}
           >
             {thumbnail}
+            {/* hover 预览覆盖层（仅当存在可预览图片时显示，点击打开全尺寸预览 Modal） */}
+            {previewUrl && (
+              <div
+                className="thumbnail-hover-overlay"
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: 'rgba(0, 0, 0, 0.5)',
+                  opacity: 0,
+                  transition: 'opacity 0.25s ease',
+                  cursor: 'pointer',
+                }}
+                onClick={() => {
+                  const idx = previewableImages.findIndex(
+                    (item) => item.url === previewUrl,
+                  );
+                  if (idx >= 0) setPreviewIndex(idx);
+                }}
+              >
+                <Tooltip title="预览大图">
+                  <Button
+                    type="text"
+                    icon={<EyeOutlined style={{ fontSize: 22, color: '#fff' }} />}
+                    style={{ background: 'transparent' }}
+                  />
+                </Tooltip>
+              </div>
+            )}
           </div>
 
           {/* 标签 + key */}
@@ -849,6 +1022,13 @@ const ExpressionTabContent: React.FC<ExpressionTabContentProps> = ({
           </div>
         </div>
       </Modal>
+
+      {/* 全尺寸预览弹窗（支持上一张/下一张导航） */}
+      <ImagePreviewModal
+        images={previewableImages}
+        index={previewIndex}
+        onChange={setPreviewIndex}
+      />
     </>
   );
 };
@@ -912,13 +1092,29 @@ const AssetGridTabContent: React.FC<AssetGridTabContentProps> = ({
   const [cropperImageSrc, setCropperImageSrc] = useState<string | null>(null);
 
   // ====== 全尺寸预览状态（Task 3：缩略图 hover 眼睛图标预览） ======
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  // 支持上一张/下一张导航：previewIndex 跟踪当前预览位置，-1 = 关闭
+  const [previewIndex, setPreviewIndex] = useState<number>(-1);
 
   // ====== 角色卡图片替换状态（Task 2：立绘替换角色卡原图） ======
   const [replacingCardImage, setReplacingCardImage] = useState<boolean>(false);
 
   // 隐藏的 file input ref
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // ====== 数据计算（提前到 handlers 之前，因 handlePreview 依赖 previewableImages） ======
+  const manifest = manifests[assetType];
+  const typeImageCache = imageCache[assetType] || {};
+  const assetIds = manifest ? Object.keys(manifest.assets) : [];
+
+  // ====== 可预览图片列表（当前 assetType 下所有已上传的素材，按 assetIds 顺序） ======
+  const previewableImages = useMemo<PreviewableImage[]>(() => {
+    return assetIds
+      .map((id, i) => {
+        const url = typeImageCache[id];
+        return url ? { url, label: `${tabLabel} ${i + 1}` } : null;
+      })
+      .filter((item): item is PreviewableImage => item !== null);
+  }, [assetIds, typeImageCache, tabLabel]);
 
   // ====== 打开 Tab 时加载素材（顶层 AssetManagerModal 已统一加载，此处兜底） ======
   useEffect(() => {
@@ -1013,9 +1209,14 @@ const AssetGridTabContent: React.FC<AssetGridTabContentProps> = ({
   );
 
   // ====== 全尺寸预览（Task 3：缩略图 hover 眼睛图标 → 点击打开预览 Modal） ======
-  const handlePreview = useCallback((dataUrl: string) => {
-    setPreviewImage(dataUrl);
-  }, []);
+  // 支持上一张/下一张：通过 URL 在 previewableImages 中查找索引
+  const handlePreview = useCallback(
+    (dataUrl: string) => {
+      const idx = previewableImages.findIndex((item) => item.url === dataUrl);
+      if (idx >= 0) setPreviewIndex(idx);
+    },
+    [previewableImages],
+  );
 
   // ====== 角色卡图片替换（Task 2：立绘设为角色卡原图） ======
   // 【重点标记 - 确认机制防误操作】
@@ -1094,9 +1295,6 @@ const AssetGridTabContent: React.FC<AssetGridTabContentProps> = ({
   }, [characterCardId, onAIGenerate]);
 
   // ====== 渲染 ======
-  const manifest = manifests[assetType];
-  const typeImageCache = imageCache[assetType] || {};
-  const assetIds = manifest ? Object.keys(manifest.assets) : [];
   const hasCharacter = !!characterCardId;
 
   return (
@@ -1340,35 +1538,12 @@ const AssetGridTabContent: React.FC<AssetGridTabContentProps> = ({
         onCancel={handleCropperCancel}
       />
 
-      {/* 全尺寸预览弹窗（Task 3：点击眼睛图标展示完整尺寸图片） */}
-      <Modal
-        open={previewImage !== null}
-        onCancel={() => setPreviewImage(null)}
-        footer={null}
-        title={null}
-        centered
-        width="auto"
-        style={{ maxWidth: '95vw', padding: 0 }}
-        styles={{
-          content: { padding: 0 },
-          body: { padding: 0 },
-        }}
-        closable
-        destroyOnClose
-      >
-        {previewImage && (
-          <img
-            src={previewImage}
-            alt="预览"
-            style={{
-              maxWidth: '90vw',
-              maxHeight: '85vh',
-              display: 'block',
-              borderRadius: 8,
-            }}
-          />
-        )}
-      </Modal>
+      {/* 全尺寸预览弹窗（支持上一张/下一张导航） */}
+      <ImagePreviewModal
+        images={previewableImages}
+        index={previewIndex}
+        onChange={setPreviewIndex}
+      />
     </>
   );
 };
@@ -1414,7 +1589,8 @@ const ThreeViewTabContent: React.FC<ThreeViewTabContentProps> = ({
   const [cropperTargetSlot, setCropperTargetSlot] = useState<ThreeViewSlot | null>(null);
 
   // ====== 全尺寸预览状态（Task 3：缩略图 hover 眼睛图标预览） ======
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  // 支持上一张/下一张导航：previewIndex 跟踪当前预览位置，-1 = 关闭
+  const [previewIndex, setPreviewIndex] = useState<number>(-1);
 
   // 隐藏的 file input ref（共享，每次点击时记录目标 slot）
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1531,6 +1707,16 @@ const ThreeViewTabContent: React.FC<ThreeViewTabContentProps> = ({
   const typeImageCache = imageCache[assetType] || {};
   const hasCharacter = !!characterCardId;
 
+  // ====== 可预览图片列表（三视图 6 个槽位中已上传的图片：穿衣 3 + 裸体 3） ======
+  const previewableImages = useMemo<PreviewableImage[]>(() => {
+    return THREE_VIEW_SLOTS
+      .map(({ slot, label }) => {
+        const url = typeImageCache[slot];
+        return url ? { url, label } : null;
+      })
+      .filter((item): item is PreviewableImage => item !== null);
+  }, [typeImageCache]);
+
   const renderSlot = (slot: ThreeViewSlot, label: string) => {
     const dataUrl = typeImageCache[slot];
     const hasImage = !!dataUrl;
@@ -1611,7 +1797,12 @@ const ThreeViewTabContent: React.FC<ThreeViewTabContentProps> = ({
                   transition: 'opacity 0.25s ease',
                   cursor: 'pointer',
                 }}
-                onClick={() => setPreviewImage(dataUrl)}
+                onClick={() => {
+                  const idx = previewableImages.findIndex(
+                    (item) => item.url === dataUrl,
+                  );
+                  if (idx >= 0) setPreviewIndex(idx);
+                }}
               >
                 <Tooltip title="预览大图">
                   <Button
@@ -1716,14 +1907,69 @@ const ThreeViewTabContent: React.FC<ThreeViewTabContentProps> = ({
           </span>
         </div>
       ) : (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(3, 1fr)',
-            gap: 12,
-          }}
-        >
-          {THREE_VIEW_SLOTS.map(({ slot, label }) => renderSlot(slot, label))}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* 穿衣版三视图 */}
+          <div>
+            <div
+              style={{
+                fontSize: 14,
+                fontWeight: 600,
+                marginBottom: 8,
+                color: 'var(--text-primary, #e2e8f0)',
+                borderLeft: '3px solid var(--primary-color, #6366f1)',
+                paddingLeft: 8,
+              }}
+            >
+              穿衣版
+            </div>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(3, 1fr)',
+                gap: 12,
+              }}
+            >
+              {THREE_VIEW_SLOTS.filter((s) => !s.nude).map(({ slot, label }) =>
+                renderSlot(slot, label),
+              )}
+            </div>
+          </div>
+          {/* 裸体版三视图（生成时自动过滤 clothing 分类特征） */}
+          <div>
+            <div
+              style={{
+                fontSize: 14,
+                fontWeight: 600,
+                marginBottom: 8,
+                color: 'var(--text-primary, #e2e8f0)',
+                borderLeft: '3px solid #ec4899',
+                paddingLeft: 8,
+              }}
+            >
+              裸体版
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 400,
+                  color: 'var(--text-secondary, #94a3b8)',
+                  marginLeft: 8,
+                }}
+              >
+                生成时自动过滤「衣物配饰」分类特征
+              </span>
+            </div>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(3, 1fr)',
+                gap: 12,
+              }}
+            >
+              {THREE_VIEW_SLOTS.filter((s) => s.nude).map(({ slot, label }) =>
+                renderSlot(slot, label),
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -1742,35 +1988,12 @@ const ThreeViewTabContent: React.FC<ThreeViewTabContentProps> = ({
         onCancel={handleCropperCancel}
       />
 
-      {/* 全尺寸预览弹窗（Task 3：点击眼睛图标展示完整尺寸图片） */}
-      <Modal
-        open={previewImage !== null}
-        onCancel={() => setPreviewImage(null)}
-        footer={null}
-        title={null}
-        centered
-        width="auto"
-        style={{ maxWidth: '95vw', padding: 0 }}
-        styles={{
-          content: { padding: 0 },
-          body: { padding: 0 },
-        }}
-        closable
-        destroyOnClose
-      >
-        {previewImage && (
-          <img
-            src={previewImage}
-            alt="预览"
-            style={{
-              maxWidth: '90vw',
-              maxHeight: '85vh',
-              display: 'block',
-              borderRadius: 8,
-            }}
-          />
-        )}
-      </Modal>
+      {/* 全尺寸预览弹窗（支持上一张/下一张导航） */}
+      <ImagePreviewModal
+        images={previewableImages}
+        index={previewIndex}
+        onChange={setPreviewIndex}
+      />
     </>
   );
 };
@@ -1778,19 +2001,28 @@ const ThreeViewTabContent: React.FC<ThreeViewTabContentProps> = ({
 // ==================== 子组件：CharacterTraitTabContent ====================
 
 /**
- * 角色特征 Tab 内容（Spec: add-asset-and-trait-management / Task 9.5）
+ * 角色特征 Tab 内容（Spec: add-asset-and-trait-management / Task 9.5 + add-trait-category-grouping / Task 5）
  *
- * 特征 Tag 编辑器：
- * - 顶部工具栏：「AI 生成特征」按钮 + 「保存」按钮
- * - 特征列表：antd Tag 展示每个特征，closable 删除（characterTraitStore.removeTrait）
- * - 添加特征：底部 Input + 「添加」按钮（characterTraitStore.addTrait）
- * - 编辑特征：点击 Tag 文字进入编辑态（Input 输入框）+ 回车保存（characterTraitStore.updateTrait）
- *   - Esc 取消编辑
- *   - 失焦自动保存
- * - 「保存」按钮：characterTraitStore.saveTraits(characterCardId, traits) 持久化
- * - 「AI 生成特征」按钮：placeholder（Task 13 接入）
+ * 重构为「分类分组面板 + 组合方案工具栏」（Task 5）：
+ * - 顶部工具栏：「AI 生成特征」+「保存」+「组合方案」下拉（切换/保存当前为方案/删除方案）+ 启用统计
+ * - 分类分组面板：系统分类 + 自定义分类 + 未分类，按 order 升序；每分类可折叠，展示该分类下特征 chip
+ * - 特征 chip 交互：
+ *   - 启用/禁用切换（点击左侧圆点 → toggleTraitEnabled，enabled=亮色/disabled=灰色半透明）
+ *   - 编辑文字（点击文字进入编辑态 → updateTrait，回车保存 / Esc 取消 / 失焦自动保存）
+ *   - 删除（关闭按钮 → removeTrait）
+ *   - 移动到分类（SwapOutlined 下拉 → moveTrait）
+ * - 分类头操作：自定义分类支持重命名/删除；工具栏附近提供「新建分类」入口
+ * - 底部添加区：输入框 + 目标分类下拉（默认未分类）+ 「添加」按钮
+ * - 保留：角色外观描述编辑区 / LoRA 模型配置 / AI 生成特征（含多模态）
  *
  * 打开 Tab 时 useEffect 调 characterTraitStore.loadTraits(characterCardId)
+ *
+ * v2 升级要点（Task 5 / 修复 Task 4 遗留 TS 错误）：
+ * - editingIndex:number → editingTraitId:string|null（v2 按 id 定位，index 在分类面板中不稳定）
+ * - removeTrait(index) → removeTrait(traitId)
+ * - updateTrait(index, value) → updateTrait(traitId, newValue)
+ * - saveTraits(cardId, traits, desc) → saveTraits(cardId, appearanceDescription?)
+ * - 渲染 {trait} → {trait.text}（traits 现为 CharacterTraitItem[]）
  */
 const CharacterTraitTabContent: React.FC<{
   characterCardId: string;
@@ -1801,8 +2033,17 @@ const CharacterTraitTabContent: React.FC<{
   /** 角色场景，供 Task 13 AI 生成特征使用 */
   characterScenario?: string;
 }> = ({ characterCardId, characterDescription, characterPersonality, characterScenario }) => {
+  // ====== v2 store state + actions（Task 4 升级后的完整 API） ======
+  // 【重点标记 - 全局分类字典】Spec: fix-asset-trait-and-scene-defects / Task 4
+  // - 订阅 `globalCategories`（跨角色卡共享，由 categoryDictionary.load() 填充）
+  // - 不再订阅 `customCategories`（已废弃，永远为 []）
+  // - 分类 CRUD 改为异步 actions：createCategory / renameCategory / deleteCategory
+  //   （通过 IPC 写入全局字典 trait-categories.json，不再写入角色卡 manifest）
   const {
     traits,
+    globalCategories,
+    combinations,
+    activeCombinationId,
     appearanceDescription,
     loading,
     error: storeError,
@@ -1813,6 +2054,23 @@ const CharacterTraitTabContent: React.FC<{
     updateTrait,
     setTraits,
     setAppearanceDescription,
+    createCategory,
+    renameCategory,
+    deleteCategory,
+    moveTrait,
+    toggleTraitEnabled,
+    saveCombination,
+    applyCombination,
+    deleteCombination,
+    // 【动态场景指令】Spec: add-dynamic-scene-prompt-generation / Task 6
+    // - dynamicScenePrompts / activeDynamicScenePromptId：方案列表 + 当前激活 id（用于下拉与同步）
+    // - saveDynamicScenePrompt / applyDynamicScenePrompt / deleteDynamicScenePrompt：方案 CRUD
+    //   （updateDynamicScenePrompt 暂未在 UI 中使用，故不订阅以避免 noUnusedLocals 报错）
+    dynamicScenePrompts,
+    activeDynamicScenePromptId,
+    saveDynamicScenePrompt,
+    applyDynamicScenePrompt,
+    deleteDynamicScenePrompt,
   } = useCharacterTraitStore();
 
   // ====== 检测当前 AI 引擎是否支持视觉（图片识别） ======
@@ -1825,8 +2083,10 @@ const CharacterTraitTabContent: React.FC<{
 
   // ====== 本地编辑状态 ======
   const [newTrait, setNewTrait] = useState<string>('');
-  /** 当前正在编辑的特征 index；null 表示无编辑态 */
-  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  /** 底部添加区目标分类（默认未分类） */
+  const [newTraitCategoryId, setNewTraitCategoryId] = useState<string>(UNCATEGORIZED_CATEGORY_ID);
+  /** 当前正在编辑的特征 traitId；null 表示无编辑态（v2 改用 id 定位，index 在分类面板中不稳定） */
+  const [editingTraitId, setEditingTraitId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState<string>('');
   const [saving, setSaving] = useState<boolean>(false);
   /** AI 生成特征中标志（Task 13 接入 ai:generateCharacterTraits IPC） */
@@ -1835,11 +2095,53 @@ const CharacterTraitTabContent: React.FC<{
   const [editingDescription, setEditingDescription] = useState<string>('');
   /** LoRA 选择弹窗开关 */
   const [loraModalOpen, setLoraModalOpen] = useState<boolean>(false);
+  /** 折叠面板折叠集合（按分类 id；不在集合中则展开，新增分类自动展开） */
+  const [collapsedCategoryIds, setCollapsedCategoryIds] = useState<Set<string>>(new Set());
+
+  // ====== 动态场景指令本地状态（Spec: add-dynamic-scene-prompt-generation / Task 6） ======
+  /** 自然语言指令输入（TextArea 值，AI 解析的源文本） */
+  const [dynamicInput, setDynamicInput] = useState<string>('');
+  /** 解析结果预览 - 服装（可编辑，覆盖 AI 原始结果） */
+  const [parsedClothing, setParsedClothing] = useState<string>('');
+  /** 解析结果预览 - 动作（可编辑，覆盖 AI 原始结果） */
+  const [parsedPose, setParsedPose] = useState<string>('');
+  /** 解析结果预览 - 场景（可编辑，覆盖 AI 原始结果） */
+  const [parsedScene, setParsedScene] = useState<string>('');
+  /** AI 解析中标志（控制「AI 解析」按钮 loading） */
+  const [parsing, setParsing] = useState<boolean>(false);
+  /** 方案名输入（保存为方案时使用） */
+  const [schemeName, setSchemeName] = useState<string>('');
+
+  // ====== 通用文本输入弹窗（新建分类 / 重命名分类 / 保存组合方案 复用） ======
+  const [promptModal, setPromptModal] = useState<{
+    open: boolean;
+    title: string;
+    label: string;
+    placeholder: string;
+    value: string;
+    confirmText: string;
+    onOk: (value: string) => void;
+  }>({ open: false, title: '', label: '', placeholder: '', value: '', confirmText: '确定', onOk: () => {} });
 
   // 当 store 中的外观描述变化时（加载完成 / AI 生成后），同步到本地编辑态
   useEffect(() => {
     setEditingDescription(appearanceDescription || '');
   }, [appearanceDescription]);
+
+  // ====== 动态场景指令：激活动态场景方案变化时同步解析字段（Spec: add-dynamic-scene-prompt-generation / Task 6） ======
+  // 当 activeDynamicScenePromptId 变化时（用户切换方案 / 保存新方案自动激活），
+  // 从 store 中查找方案并填充 parsedClothing / parsedPose / parsedScene，
+  // 让用户在切换方案后立即看到方案内容（Spec Scenario: 切换激活的动态场景方案）。
+  // 无激活方案（null）时不强制清空，保留用户当前编辑或 AI 解析结果。
+  useEffect(() => {
+    if (!activeDynamicScenePromptId) return;
+    const scheme = dynamicScenePrompts.find((p) => p.id === activeDynamicScenePromptId);
+    if (scheme) {
+      setParsedClothing(scheme.clothing || '');
+      setParsedPose(scheme.pose || '');
+      setParsedScene(scheme.scene || '');
+    }
+  }, [activeDynamicScenePromptId, dynamicScenePrompts]);
 
   // 编辑输入框 ref（用于聚焦）
   const editingInputRef = useRef<HTMLInputElement | null>(null);
@@ -1852,25 +2154,85 @@ const CharacterTraitTabContent: React.FC<{
     }
   }, [characterCardId, loadTraits, loadCharacterLoras]);
 
-  // ====== 添加特征 ======
+  // ====== 派生数据：全部分类（系统 + 全局自定义 + 未分类），按 order 升序 ======
+  // 【重点标记 - 使用 globalCategories】Spec: fix-asset-trait-and-scene-defects / Task 4
+  // - 自定义分类来源改为 `globalCategories`（跨角色卡共享的全局字典缓存）
+  // - 系统分类由 `SYSTEM_TRAIT_CATEGORIES` 常量提供，未分类由 `UNCATEGORIZED_CATEGORY` 提供
+  const allCategories = useMemo<TraitCategory[]>(
+    () =>
+      [...SYSTEM_TRAIT_CATEGORIES, ...globalCategories, UNCATEGORIZED_CATEGORY].sort(
+        (a, b) => a.order - b.order
+      ),
+    [globalCategories],
+  );
+
+  // ====== 派生数据：按分类分组特征 ======
+  const traitsByCategory = useMemo<Record<string, CharacterTraitItem[]>>(() => {
+    const map: Record<string, CharacterTraitItem[]> = {};
+    for (const cat of allCategories) {
+      map[cat.id] = [];
+    }
+    for (const trait of traits) {
+      if (!map[trait.categoryId]) {
+        // 防御：categoryId 不在已知分类中（理论上不会发生），归入未分类
+        map[UNCATEGORIZED_CATEGORY_ID] = map[UNCATEGORIZED_CATEGORY_ID] || [];
+        map[UNCATEGORIZED_CATEGORY_ID].push(trait);
+      } else {
+        map[trait.categoryId].push(trait);
+      }
+    }
+    return map;
+  }, [allCategories, traits]);
+
+  // ====== 派生数据：已启用特征数（SubTask 5.1 启用统计） ======
+  const enabledCount = useMemo(() => traits.filter((t) => t.enabled).length, [traits]);
+
+  // ====== 派生数据：基础特征拼接（动态场景指令 Task 6 用于 IPC baseTraits 参数 + 完整预览） ======
+  // 仅拼接 enabled=true 的特征 text，逗号分隔
+  const baseTraitsText = useMemo(
+    () => traits.filter((t) => t.enabled).map((t) => t.text).join(', '),
+    [traits],
+  );
+
+  // ====== 派生数据：完整提示词预览（基础特征 + clothing + pose + scene，跳过空值） ======
+  // 随 parsedClothing / parsedPose / parsedScene 编辑实时更新
+  const fullPromptPreview = useMemo(() => {
+    const parts: string[] = [];
+    if (baseTraitsText) parts.push(baseTraitsText);
+    const c = parsedClothing.trim();
+    const p = parsedPose.trim();
+    const s = parsedScene.trim();
+    if (c) parts.push(c);
+    if (p) parts.push(p);
+    if (s) parts.push(s);
+    return parts.join(', ');
+  }, [baseTraitsText, parsedClothing, parsedPose, parsedScene]);
+
+  // ====== 派生数据：折叠面板 activeKey（全部分类 id 减去折叠集合） ======
+  const expandedCategoryKeys = useMemo(
+    () => allCategories.map((c) => c.id).filter((id) => !collapsedCategoryIds.has(id)),
+    [allCategories, collapsedCategoryIds],
+  );
+
+  // ====== 添加特征（带目标分类，SubTask 5.5） ======
   const handleAddTrait = useCallback(() => {
     const trimmed = newTrait.trim();
     if (!trimmed) {
       message.warning('特征不能为空');
       return;
     }
-    const result = addTrait(trimmed);
+    const result = addTrait(trimmed, newTraitCategoryId);
     if (result.success) {
       setNewTrait('');
     } else {
       message.warning(result.error || '添加特征失败');
     }
-  }, [newTrait, addTrait]);
+  }, [newTrait, newTraitCategoryId, addTrait]);
 
-  // ====== 删除特征 ======
+  // ====== 删除特征（v2 改用 traitId） ======
   const handleRemoveTrait = useCallback(
-    (index: number) => {
-      const result = removeTrait(index);
+    (traitId: string) => {
+      const result = removeTrait(traitId);
       if (!result.success) {
         message.error(result.error || '移除特征失败');
       }
@@ -1878,11 +2240,12 @@ const CharacterTraitTabContent: React.FC<{
     [removeTrait],
   );
 
-  // ====== 编辑特征 ======
+  // ====== 编辑特征（v2 改用 traitId） ======
   const handleStartEdit = useCallback(
-    (index: number) => {
-      setEditingIndex(index);
-      setEditingValue(traits[index] || '');
+    (traitId: string) => {
+      const target = traits.find((t) => t.id === traitId);
+      setEditingTraitId(traitId);
+      setEditingValue(target?.text || '');
       // 等下一帧聚焦，确保 input 已渲染
       setTimeout(() => {
         editingInputRef.current?.focus();
@@ -1893,15 +2256,15 @@ const CharacterTraitTabContent: React.FC<{
   );
 
   const handleCancelEdit = useCallback(() => {
-    setEditingIndex(null);
+    setEditingTraitId(null);
     setEditingValue('');
   }, []);
 
   const handleSaveEdit = useCallback(
-    (index: number) => {
-      const result = updateTrait(index, editingValue);
+    (traitId: string) => {
+      const result = updateTrait(traitId, editingValue);
       if (result.success) {
-        setEditingIndex(null);
+        setEditingTraitId(null);
         setEditingValue('');
       } else {
         message.warning(result.error || '更新特征失败');
@@ -1910,13 +2273,37 @@ const CharacterTraitTabContent: React.FC<{
     [editingValue, updateTrait],
   );
 
-  // ====== 保存特征 ======
+  // ====== 切换特征启用（SubTask 5.3，进入手动模式由 store 处理） ======
+  const handleToggleEnabled = useCallback(
+    (traitId: string) => {
+      const result = toggleTraitEnabled(traitId);
+      if (!result.success) {
+        message.warning(result.error || '切换启用状态失败');
+      }
+    },
+    [toggleTraitEnabled],
+  );
+
+  // ====== 移动特征到分类（SubTask 5.3） ======
+  const handleMoveTrait = useCallback(
+    (traitId: string, targetCategoryId: string) => {
+      const result = moveTrait(traitId, targetCategoryId);
+      if (!result.success) {
+        message.warning(result.error || '移动特征失败');
+      }
+    },
+    [moveTrait],
+  );
+
+  // ====== 保存特征（v2 签名：saveTraits(cardId, appearanceDescription?)） ======
   const handleSaveTraits = useCallback(async () => {
     if (!characterCardId) return;
     setSaving(true);
     try {
-      // 保存时同时持久化特征 tag 和角色外观描述
-      const result = await saveTraits(characterCardId, traits, editingDescription);
+      // 保存时持久化完整 v2 数据（traits / combinations / activeCombinationId + 外观描述 + 动态场景方案）
+      // 注：customCategories 字段固定为 []（Spec: fix-asset-trait-and-scene-defects / Task 4），
+      // 自定义分类由全局字典 trait-categories.json 独立持久化，不通过 saveTraits 写入
+      const result = await saveTraits(characterCardId, editingDescription);
       if (result.success) {
         message.success('特征已保存');
       } else {
@@ -1925,7 +2312,7 @@ const CharacterTraitTabContent: React.FC<{
     } finally {
       setSaving(false);
     }
-  }, [characterCardId, traits, editingDescription, saveTraits]);
+  }, [characterCardId, editingDescription, saveTraits]);
 
   // ====== AI 生成特征（Task 13 接入 ai:generateCharacterTraits IPC） ======
   // 【重点标记 - 多模态综合特征提取】当 AI 引擎 supportsVision=true 时，
@@ -1940,12 +2327,12 @@ const CharacterTraitTabContent: React.FC<{
       return;
     }
 
-    // 已有特征时二次确认覆盖
+    // 已有特征时二次确认（v2 setTraits 采用 MERGE 策略：仅替换未分类项，已归类项保留）
     if (traits.length > 0) {
       const confirmed = await new Promise<boolean>((resolve) => {
         Modal.confirm({
-          title: 'AI 生成将覆盖现有特征',
-          content: `当前已有 ${traits.length} 个特征，AI 生成将替换全部内容。是否继续？`,
+          title: 'AI 生成将替换未分类特征',
+          content: `当前已有 ${traits.length} 个特征，AI 生成将替换「未分类」中的特征（已手动归类的特征保留）。是否继续？`,
           okText: '继续生成',
           // 注：antd v6 移除了 okType: 'warning'，改用 okButtonProps.danger 标红以表达破坏性
           okButtonProps: { danger: true },
@@ -1969,7 +2356,7 @@ const CharacterTraitTabContent: React.FC<{
       });
 
       if (result?.success && Array.isArray(result.traits)) {
-        // 仅更新本地 state，用户可继续编辑后点击「保存」持久化
+        // 仅更新本地 state（MERGE 策略保留已分类项），用户可继续编辑后点击「保存」持久化
         const setResult = setTraits(result.traits);
         // 【重点标记 - 角色外观描述】AI 生成特征时同时返回外观描述，写入 store 本地 state
         if (result.appearanceDescription) {
@@ -2005,11 +2392,440 @@ const CharacterTraitTabContent: React.FC<{
     supportsVision,
   ]);
 
+  // ====== 组合方案：应用（SubTask 5.1） ======
+  // 选择「手动模式」（__manual__）时不调 applyCombination，仅展示
+  // （手动模式由 toggleTraitEnabled 自动触发 activeCombinationId=null）
+  const handleApplyCombination = useCallback(
+    (combinationId: string) => {
+      if (combinationId === '__manual__') return;
+      const result = applyCombination(combinationId);
+      if (!result.success) {
+        message.warning(result.error || '应用组合失败');
+      }
+    },
+    [applyCombination],
+  );
+
+  // ====== 组合方案：保存当前启用集合为方案（SubTask 5.1） ======
+  const handleOpenSaveCombination = useCallback(() => {
+    if (enabledCount === 0) {
+      message.warning('当前没有启用的特征，无法保存为方案');
+      return;
+    }
+    setPromptModal({
+      open: true,
+      title: '保存组合方案',
+      label: '方案名称',
+      placeholder: '输入方案名称，如「日常出街」「战斗形态」',
+      value: '',
+      confirmText: '保存',
+      onOk: (name) => {
+        const trimmed = name.trim();
+        if (!trimmed) {
+          message.warning('方案名不能为空');
+          return;
+        }
+        const result = saveCombination(trimmed);
+        if (result.success) {
+          message.success(`方案「${trimmed}」已保存`);
+          setPromptModal((s) => ({ ...s, open: false }));
+        } else {
+          message.warning(result.error || '保存组合失败');
+        }
+      },
+    });
+  }, [enabledCount, saveCombination]);
+
+  // ====== 组合方案：删除当前方案（SubTask 5.1） ======
+  const handleDeleteCombination = useCallback(() => {
+    if (!activeCombinationId) return;
+    const combination = combinations.find((c) => c.id === activeCombinationId);
+    if (!combination) return;
+    Modal.confirm({
+      title: '删除组合方案',
+      content: `确认删除方案「${combination.name}」？此操作不影响特征本身，仅移除方案。`,
+      okText: '删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: () => {
+        const result = deleteCombination(activeCombinationId);
+        if (!result.success) {
+          message.error(result.error || '删除组合失败');
+        } else {
+          message.success('方案已删除');
+        }
+      },
+    });
+  }, [activeCombinationId, combinations, deleteCombination]);
+
+  // ==================== 动态场景指令 handlers（Spec: add-dynamic-scene-prompt-generation / Task 6） ====================
+
+  // ====== AI 解析自然语言为服装/动作/场景三组 SD tag（SubTask 6.2） ======
+  // 调用 window.electronAPI.ai.generateDynamicScenePrompts IPC，传入 NL 输入与基础特征上下文。
+  // 成功后填充 parsedClothing / parsedPose / parsedScene 供用户编辑预览。
+  const handleParseDynamicScene = useCallback(async () => {
+    const trimmed = dynamicInput.trim();
+    if (!trimmed) {
+      message.warning('请输入动态场景指令');
+      return;
+    }
+    setParsing(true);
+    try {
+      const result = await window.electronAPI.ai.generateDynamicScenePrompts({
+        naturalLanguageInput: trimmed,
+        baseTraits: baseTraitsText || undefined,
+      });
+      if (result?.success) {
+        setParsedClothing(result.clothing || '');
+        setParsedPose(result.pose || '');
+        setParsedScene(result.scene || '');
+        message.success('AI 解析完成，可在下方编辑后保存为方案');
+      } else {
+        message.error(result?.error || 'AI 解析失败');
+      }
+    } catch (error) {
+      console.error('[CharacterTraitTabContent] AI 解析动态场景失败:', error);
+      message.error(error instanceof Error ? error.message : 'AI 解析失败');
+    } finally {
+      setParsing(false);
+    }
+  }, [dynamicInput, baseTraitsText]);
+
+  // ====== 保存为方案（SubTask 6.5） ======
+  // 调用 store.saveDynamicScenePrompt，创建方案并自动激活。
+  // sourceCommand 透传原始 NL 输入，用于溯源。保存成功后清空 NL 输入与方案名。
+  // 注：parsedClothing / pose / scene 由 useEffect（activeDynamicScenePromptId 变化）自动同步为新方案内容。
+  const handleSaveDynamicScene = useCallback(async () => {
+    const trimmedName = schemeName.trim();
+    if (!trimmedName) {
+      message.warning('请输入方案名');
+      return;
+    }
+    const result = await saveDynamicScenePrompt(
+      trimmedName,
+      parsedClothing.trim(),
+      parsedPose.trim(),
+      parsedScene.trim(),
+      dynamicInput.trim(),
+    );
+    if (result.success) {
+      message.success(`方案「${trimmedName}」已保存并激活`);
+      // 清空 NL 输入与方案名（parsed* 字段会被 useEffect 同步为新激活方案的内容）
+      setSchemeName('');
+      setDynamicInput('');
+    } else {
+      message.error(result.error || '保存方案失败');
+    }
+  }, [schemeName, parsedClothing, parsedPose, parsedScene, dynamicInput, saveDynamicScenePrompt]);
+
+  // ====== 切换激活动态场景方案（SubTask 6.5） ======
+  // Select onChange 回调，调用 store.applyDynamicScenePrompt 持久化激活 id。
+  const handleApplyDynamicScene = useCallback(
+    async (id: string) => {
+      const result = await applyDynamicScenePrompt(id);
+      if (!result.success) {
+        message.warning(result.error || '应用方案失败');
+      }
+    },
+    [applyDynamicScenePrompt],
+  );
+
+  // ====== 删除当前激活动态场景方案（SubTask 6.5） ======
+  // Modal.confirm 二次确认后调用 store.deleteDynamicScenePrompt。
+  // store 内部会在删除激活方案时自动重置 activeDynamicScenePromptId 为 null。
+  const handleDeleteDynamicScene = useCallback(() => {
+    if (!activeDynamicScenePromptId) return;
+    const scheme = dynamicScenePrompts.find((p) => p.id === activeDynamicScenePromptId);
+    if (!scheme) return;
+    Modal.confirm({
+      title: '删除动态场景方案',
+      content: `确认删除方案「${scheme.name}」？若它是当前激活方案，将重置为无激活状态。`,
+      okText: '删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        const result = await deleteDynamicScenePrompt(activeDynamicScenePromptId);
+        if (result.success) {
+          message.success('方案已删除');
+        } else {
+          message.error(result.error || '删除方案失败');
+        }
+      },
+    });
+  }, [activeDynamicScenePromptId, dynamicScenePrompts, deleteDynamicScenePrompt]);
+
+  // ====== 分类 CRUD（SubTask 5.4） ======
+  // 【重点标记 - 异步 IPC actions】Spec: fix-asset-trait-and-scene-defects / Task 4
+  // - 旧实现调用同步 `addCategory` / `updateCategory` / `deleteCategory`（仅改本地 state，需再调 saveTraits 持久化到角色卡 manifest）
+  // - 新实现调用异步 `createCategory` / `renameCategory` / `deleteCategory`（通过 IPC 直接写入全局字典 trait-categories.json，跨角色卡共享）
+  // - onOk 改为 async 函数，await 异步结果后再决定 message / 关闭弹窗
+  const handleOpenAddCategory = useCallback(() => {
+    setPromptModal({
+      open: true,
+      title: '新建分类',
+      label: '分类名称',
+      placeholder: '输入分类名称，如「武器装备」「特殊标记」',
+      value: '',
+      confirmText: '创建',
+      onOk: async (name) => {
+        const trimmed = name.trim();
+        if (!trimmed) {
+          message.warning('分类名不能为空');
+          return;
+        }
+        const result = await createCategory(trimmed);
+        if (result.success) {
+          message.success(`分类「${trimmed}」已创建`);
+          setPromptModal((s) => ({ ...s, open: false }));
+        } else {
+          message.warning(result.error || '添加分类失败');
+        }
+      },
+    });
+  }, [createCategory]);
+
+  const handleOpenRenameCategory = useCallback(
+    (category: TraitCategory) => {
+      setPromptModal({
+        open: true,
+        title: '重命名分类',
+        label: '分类名称',
+        placeholder: '输入新的分类名称',
+        value: category.name,
+        confirmText: '保存',
+        onOk: async (name) => {
+          const trimmed = name.trim();
+          if (!trimmed) {
+            message.warning('分类名不能为空');
+            return;
+          }
+          const result = await renameCategory(category.id, trimmed);
+          if (result.success) {
+            message.success('分类已重命名');
+            setPromptModal((s) => ({ ...s, open: false }));
+          } else {
+            message.warning(result.error || '重命名失败');
+          }
+        },
+      });
+    },
+    [renameCategory],
+  );
+
+  const handleDeleteCategory = useCallback(
+    (category: TraitCategory) => {
+      const count = traits.filter((t) => t.categoryId === category.id).length;
+      Modal.confirm({
+        title: '删除分类',
+        content: `删除分类「${category.name}」后，其下 ${count} 个特征将回退到「未分类」（特征本身不删除）。是否继续？`,
+        okText: '删除',
+        okButtonProps: { danger: true },
+        cancelText: '取消',
+        onOk: async () => {
+          const result = await deleteCategory(category.id);
+          if (!result.success) {
+            message.error(result.error || '删除分类失败');
+          } else {
+            message.success('分类已删除');
+          }
+        },
+      });
+    },
+    [traits, deleteCategory],
+  );
+
+  // ====== 折叠面板切换（SubTask 5.2，本地维护折叠状态，默认全部展开） ======
+  const handleCollapseChange = useCallback(
+    (keys: string | string[]) => {
+      const expanded = Array.isArray(keys) ? keys : [keys];
+      const expandedSet = new Set(expanded);
+      // 折叠集合 = 全部分类 id 减去当前展开集合（新增分类不在折叠集合中，自动展开）
+      const nextCollapsed = new Set<string>();
+      for (const id of allCategories.map((c) => c.id)) {
+        if (!expandedSet.has(id)) nextCollapsed.add(id);
+      }
+      setCollapsedCategoryIds(nextCollapsed);
+    },
+    [allCategories],
+  );
+
+  // ====== 移动到分类下拉菜单 items（SubTask 5.3） ======
+  const moveMenuItems = useMemo(
+    () => allCategories.map((c) => ({ key: c.id, label: c.name })),
+    [allCategories],
+  );
+
   const hasCharacter = !!characterCardId;
+
+  // ====== 渲染单个特征 chip（SubTask 5.3：启用切换 / 编辑 / 删除 / 移动） ======
+  const renderTraitChip = (trait: CharacterTraitItem) => {
+    // 编辑态：渲染 Input（回车保存 / Esc 取消 / 失焦自动保存）
+    if (editingTraitId === trait.id) {
+      return (
+        <input
+          key={`edit-${trait.id}`}
+          ref={editingInputRef}
+          value={editingValue}
+          onChange={(e) => setEditingValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              handleSaveEdit(trait.id);
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              handleCancelEdit();
+            }
+          }}
+          onBlur={() => handleSaveEdit(trait.id)}
+          style={{
+            background: '#0f0f1a',
+            border: '1px solid var(--primary-color, #6366f1)',
+            borderRadius: 4,
+            color: 'var(--text-primary, #e2e8f0)',
+            padding: '2px 8px',
+            fontSize: 13,
+            width: Math.max(80, editingValue.length * 8 + 24),
+            outline: 'none',
+          }}
+        />
+      );
+    }
+    // 展示态：自定义 chip（启用圆点 + 文字 + 移动下拉 + 删除按钮）
+    return (
+      <span
+        key={`chip-${trait.id}`}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 4,
+          padding: '2px 6px 2px 8px',
+          borderRadius: 4,
+          fontSize: 13,
+          userSelect: 'none',
+          background: trait.enabled
+            ? 'rgba(99, 102, 241, 0.18)'
+            : 'rgba(30, 30, 46, 0.5)',
+          border: trait.enabled
+            ? '1px solid var(--primary-color, #6366f1)'
+            : '1px solid rgba(255, 255, 255, 0.12)',
+          color: trait.enabled
+            ? 'var(--text-primary, #e2e8f0)'
+            : 'var(--text-tertiary, #6b7280)',
+          opacity: trait.enabled ? 1 : 0.7,
+        }}
+      >
+        {/* 启用状态圆点（点击切换 enabled） */}
+        <span
+          onClick={() => handleToggleEnabled(trait.id)}
+          title={trait.enabled ? '已启用，点击禁用' : '已禁用，点击启用'}
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            background: trait.enabled ? '#52c41a' : '#6b7280',
+            cursor: 'pointer',
+            flexShrink: 0,
+            boxShadow: trait.enabled ? '0 0 4px rgba(82, 196, 26, 0.6)' : 'none',
+          }}
+        />
+        {/* 文字（点击进入编辑态） */}
+        <span
+          onClick={() => handleStartEdit(trait.id)}
+          style={{ cursor: 'text', lineHeight: '20px' }}
+        >
+          {trait.text}
+        </span>
+        {/* 移动到分类下拉 */}
+        <Dropdown
+          menu={{ items: moveMenuItems, onClick: ({ key }) => handleMoveTrait(trait.id, key) }}
+          trigger={['click']}
+        >
+          <span
+            title="移动到分类"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              cursor: 'pointer',
+              opacity: 0.6,
+              display: 'inline-flex',
+              alignItems: 'center',
+              padding: '0 2px',
+            }}
+          >
+            <SwapOutlined style={{ fontSize: 11 }} />
+          </span>
+        </Dropdown>
+        {/* 删除按钮 */}
+        <span
+          title="删除特征"
+          onClick={(e) => {
+            e.stopPropagation();
+            handleRemoveTrait(trait.id);
+          }}
+          style={{
+            cursor: 'pointer',
+            opacity: 0.6,
+            display: 'inline-flex',
+            alignItems: 'center',
+          }}
+        >
+          <CloseOutlined style={{ fontSize: 11 }} />
+        </span>
+      </span>
+    );
+  };
+
+  // ====== 渲染分类面板头（SubTask 5.2 / 5.4：分类名 + 计数 + 自定义分类操作） ======
+  const renderCategoryHeader = (category: TraitCategory) => {
+    const list = traitsByCategory[category.id] || [];
+    const enabledInCategory = list.filter((t) => t.enabled).length;
+    return (
+      <div
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', paddingRight: 4 }}
+        onClick={(e) => {
+          // 阻止按钮点击触发的折叠/展开（仅在点击操作区时阻止）
+          if (e.target instanceof HTMLElement && e.target.closest('span[data-stop-collapse]')) {
+            e.stopPropagation();
+          }
+        }}
+      >
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ color: 'var(--text-primary, #e2e8f0)', fontWeight: 500 }}>
+            {category.name}
+          </span>
+          <span style={{ color: 'var(--text-tertiary, #6b7280)', fontSize: 11 }}>
+            （{enabledInCategory}/{list.length}）
+          </span>
+        </span>
+        {/* 自定义分类支持重命名 / 删除；系统分类与未分类不可改 */}
+        {!category.isSystem && (
+          <span data-stop-collapse style={{ display: 'inline-flex', gap: 4 }} onClick={(e) => e.stopPropagation()}>
+            <Tooltip title="重命名分类">
+              <Button
+                size="small"
+                type="text"
+                icon={<EditOutlined />}
+                onClick={() => handleOpenRenameCategory(category)}
+                style={{ color: 'var(--text-secondary, #94a3b8)' }}
+              />
+            </Tooltip>
+            <Tooltip title="删除分类（特征回退未分类）">
+              <Button
+                size="small"
+                type="text"
+                icon={<DeleteOutlined />}
+                onClick={() => handleDeleteCategory(category)}
+                style={{ color: 'var(--text-secondary, #94a3b8)' }}
+              />
+            </Tooltip>
+          </span>
+        )}
+      </div>
+    );
+  };
 
   return (
     <>
-      {/* 顶部工具栏 */}
+      {/* 顶部工具栏（SubTask 5.1：AI 生成 + 保存 + 组合方案下拉 + 启用统计） */}
       <div
         style={{
           display: 'flex',
@@ -2019,14 +2835,15 @@ const CharacterTraitTabContent: React.FC<{
           padding: 12,
           background: 'var(--chat-bubble-assistant-bg, rgba(30, 30, 46, 0.5))',
           borderRadius: 8,
+          flexWrap: 'wrap',
         }}
       >
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ flex: '1 1 240px', minWidth: 0 }}>
           <div style={{ color: 'var(--text-primary, #e2e8f0)', fontSize: 13 }}>
             管理角色的视觉特征 tag，AI 生成图片时会自动携带这些特征以保持一致性。
           </div>
           <div style={{ color: 'var(--text-secondary, #94a3b8)', fontSize: 11, marginTop: 2 }}>
-            已添加 {traits.length} 个特征。修改后请点击「保存」持久化。
+            已添加 {traits.length} 个特征，已启用 {enabledCount}/{traits.length}。修改后请点击「保存」持久化。
           </div>
           {/* 【重点标记 - 多模态综合特征提取用户提示】 */}
           <div style={{ color: supportsVision ? 'var(--success-color, #52c41a)' : 'var(--text-tertiary, #6b7280)', fontSize: 11, marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -2039,6 +2856,36 @@ const CharacterTraitTabContent: React.FC<{
               '当前模型不支持图片识别，将仅根据角色描述文本提取特征。如需更精准的识别，请在设置中切换到多模态模型'
             )}
           </div>
+        </div>
+
+        {/* 组合方案下拉 + 保存/删除方案 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span style={{ color: 'var(--text-secondary, #94a3b8)', fontSize: 12 }}>组合方案</span>
+          <Select
+            size="small"
+            value={activeCombinationId ?? '__manual__'}
+            onChange={handleApplyCombination}
+            style={{ width: 160 }}
+            options={[
+              { value: '__manual__', label: '手动模式' },
+              ...combinations.map((c) => ({ value: c.id, label: c.name })),
+            ]}
+          />
+          <Tooltip title="将当前启用的特征保存为命名方案">
+            <Button size="small" icon={<SaveOutlined />} onClick={handleOpenSaveCombination}>
+              存方案
+            </Button>
+          </Tooltip>
+          <Tooltip title="删除当前方案（进入手动模式）">
+            <Button
+              size="small"
+              icon={<DeleteOutlined />}
+              disabled={!activeCombinationId}
+              onClick={handleDeleteCombination}
+            >
+              删方案
+            </Button>
+          </Tooltip>
         </div>
 
         <Button
@@ -2101,109 +2948,51 @@ const CharacterTraitTabContent: React.FC<{
             加载中...
           </span>
         </div>
-      ) : traits.length === 0 ? (
-        <Empty description="尚未添加特征">
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
-            <Button
-              type="primary"
-              icon={<ThunderboltOutlined />}
-              onClick={handleAIGenerateTraits}
-              loading={aiGenerating}
-              style={{
-                background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-                borderColor: 'transparent',
-              }}
-            >
-              AI 生成特征
-            </Button>
-          </div>
-        </Empty>
       ) : (
         <>
-          {/* 特征 Tag 列表 */}
-          <div
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: 8,
-              padding: 12,
-              background: 'var(--chat-bubble-assistant-bg, rgba(30, 30, 46, 0.5))',
-              borderRadius: 8,
-              marginBottom: 16,
-              minHeight: 60,
-            }}
-          >
-            {traits.map((trait, index) => {
-              // 编辑态：渲染 Input
-              if (editingIndex === index) {
-                return (
-                  <input
-                    key={`edit-${index}`}
-                    ref={editingInputRef}
-                    value={editingValue}
-                    onChange={(e) => setEditingValue(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleSaveEdit(index);
-                      } else if (e.key === 'Escape') {
-                        e.preventDefault();
-                        handleCancelEdit();
-                      }
-                    }}
-                    onBlur={() => handleSaveEdit(index)}
-                    style={{
-                      background: '#0f0f1a',
-                      border: '1px solid var(--primary-color, #6366f1)',
-                      borderRadius: 4,
-                      color: 'var(--text-primary, #e2e8f0)',
-                      padding: '2px 8px',
-                      fontSize: 13,
-                      width: Math.max(80, editingValue.length * 8 + 24),
-                      outline: 'none',
-                    }}
-                  />
-                );
-              }
-              // 展示态：渲染 Tag（closable + 可点击进入编辑态）
-              return (
-                <Tag
-                  key={`tag-${index}`}
-                  closable
-                  onClose={(e) => {
-                    e.preventDefault();
-                    handleRemoveTrait(index);
-                  }}
-                  onClick={() => handleStartEdit(index)}
-                  style={{
-                    cursor: 'pointer',
-                    background: 'var(--chat-bubble-assistant-bg, rgba(30, 30, 46, 0.8))',
-                    border: '1px solid var(--primary-color, #6366f1)',
-                    color: 'var(--text-primary, #e2e8f0)',
-                    padding: '2px 8px',
-                    borderRadius: 4,
-                    fontSize: 13,
-                    userSelect: 'none',
-                  }}
-                >
-                  {trait}
-                </Tag>
-              );
+          {/* 分类分组面板（SubTask 5.2：系统分类 + 自定义分类 + 未分类，按 order 升序） */}
+          <Collapse
+            activeKey={expandedCategoryKeys}
+            onChange={handleCollapseChange}
+            style={{ marginBottom: 16, background: 'var(--chat-bubble-assistant-bg, rgba(30, 30, 46, 0.3))' }}
+            items={allCategories.map((category) => {
+              const list = traitsByCategory[category.id] || [];
+              return {
+                key: category.id,
+                label: renderCategoryHeader(category),
+                children:
+                  list.length === 0 ? (
+                    <div style={{ color: 'var(--text-tertiary, #6b7280)', fontSize: 12, padding: '4px 0' }}>
+                      暂无特征，可从其他分类移动或从下方添加
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      {list.map((trait) => renderTraitChip(trait))}
+                    </div>
+                  ),
+              };
             })}
-          </div>
+          />
 
-          {/* 添加特征输入框 */}
-          <div style={{ display: 'flex', gap: 8 }}>
+          {/* 底部添加区（SubTask 5.5：输入框 + 目标分类下拉 + 添加按钮 + 新建分类入口） */}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
             <Input
               value={newTrait}
               onChange={(e) => setNewTrait(e.target.value)}
               placeholder="输入新特征 tag，如 white fur, blue eyes"
               onPressEnter={handleAddTrait}
               style={{
+                flex: '1 1 200px',
                 background: 'var(--chat-bubble-assistant-bg, rgba(30, 30, 46, 0.5))',
                 borderColor: 'rgba(255, 255, 255, 0.1)',
                 color: 'var(--text-primary, #e2e8f0)',
               }}
+            />
+            <Select
+              value={newTraitCategoryId}
+              onChange={setNewTraitCategoryId}
+              style={{ width: 140 }}
+              options={allCategories.map((c) => ({ value: c.id, label: c.name }))}
             />
             <Button
               type="primary"
@@ -2216,9 +3005,274 @@ const CharacterTraitTabContent: React.FC<{
             >
               添加
             </Button>
+            <Button
+              icon={<FolderAddOutlined />}
+              onClick={handleOpenAddCategory}
+              style={{
+                background: 'var(--chat-bubble-assistant-bg, rgba(30, 30, 46, 0.5))',
+                borderColor: 'rgba(255, 255, 255, 0.15)',
+                color: 'var(--text-primary, #e2e8f0)',
+              }}
+            >
+              新建分类
+            </Button>
           </div>
 
-          {/* 角色外观描述（AI 生成特征时自动提取，可手动编辑） */}
+          {/* ====== 动态场景指令面板（Spec: add-dynamic-scene-prompt-generation / Task 6） ====== */}
+          {/* 默认折叠，紫色边框区分于特征分类面板。包含 NL 输入 + AI 解析 + 三组可编辑 tag + 完整预览 + 方案 CRUD */}
+          <Collapse
+            defaultActiveKey={[]}
+            style={{
+              marginTop: 16,
+              marginBottom: 16,
+              background: 'var(--chat-bubble-assistant-bg, rgba(30, 30, 46, 0.3))',
+              border: '1px solid rgba(139, 92, 246, 0.35)',
+              borderRadius: 8,
+            }}
+            items={[
+              {
+                key: 'dynamic-scene',
+                label: (
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      color: '#a78bfa',
+                      fontWeight: 600,
+                    }}
+                  >
+                    <ThunderboltOutlined />
+                    动态场景指令
+                    <span
+                      style={{
+                        color: 'var(--text-tertiary, #6b7280)',
+                        fontSize: 11,
+                        fontWeight: 400,
+                      }}
+                    >
+                      （AI 解析自然语言为服装 / 动作 / 场景提示词，独立于基础特征）
+                    </span>
+                  </span>
+                ),
+                children: (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    {/* SubTask 6.2：NL 输入 + AI 解析按钮 */}
+                    <div>
+                      <div
+                        style={{
+                          color: 'var(--text-secondary, #94a3b8)',
+                          fontSize: 12,
+                          marginBottom: 6,
+                        }}
+                      >
+                        自然语言指令：
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                        <Input.TextArea
+                          value={dynamicInput}
+                          onChange={(e) => setDynamicInput(e.target.value)}
+                          placeholder="输入动态场景指令，如：让角色穿上一套哥特风的衣服，骑着摩托驰骋在高速公路上"
+                          autoSize={{ minRows: 2, maxRows: 4 }}
+                          style={{
+                            flex: 1,
+                            background: 'var(--chat-bubble-assistant-bg, rgba(30, 30, 46, 0.5))',
+                            color: 'var(--text-primary, #e2e8f0)',
+                            borderColor: 'rgba(255, 255, 255, 0.1)',
+                          }}
+                        />
+                        <Button
+                          type="primary"
+                          icon={<ThunderboltOutlined />}
+                          loading={parsing}
+                          onClick={handleParseDynamicScene}
+                          style={{
+                            background: 'linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%)',
+                            borderColor: 'transparent',
+                          }}
+                        >
+                          AI 解析
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* SubTask 6.3：解析结果预览 - 三个可编辑 TextArea（clothing=蓝 / pose=绿 / scene=橙） */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <div>
+                        <label
+                          style={{
+                            color: '#60a5fa',
+                            fontSize: 12,
+                            marginBottom: 4,
+                            display: 'block',
+                          }}
+                        >
+                          服装 (clothing)
+                        </label>
+                        <Input.TextArea
+                          value={parsedClothing}
+                          onChange={(e) => setParsedClothing(e.target.value)}
+                          autoSize={{ minRows: 1, maxRows: 3 }}
+                          placeholder="如：gothic dress, black lace, choker, dark makeup"
+                          style={{
+                            background: 'var(--chat-bubble-assistant-bg, rgba(30, 30, 46, 0.5))',
+                            color: 'var(--text-primary, #e2e8f0)',
+                            borderColor: 'rgba(96, 165, 250, 0.3)',
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <label
+                          style={{
+                            color: '#52c41a',
+                            fontSize: 12,
+                            marginBottom: 4,
+                            display: 'block',
+                          }}
+                        >
+                          动作 (pose)
+                        </label>
+                        <Input.TextArea
+                          value={parsedPose}
+                          onChange={(e) => setParsedPose(e.target.value)}
+                          autoSize={{ minRows: 1, maxRows: 3 }}
+                          placeholder="如：riding motorcycle, holding handlebars, leaning forward"
+                          style={{
+                            background: 'var(--chat-bubble-assistant-bg, rgba(30, 30, 46, 0.5))',
+                            color: 'var(--text-primary, #e2e8f0)',
+                            borderColor: 'rgba(82, 196, 26, 0.3)',
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <label
+                          style={{
+                            color: '#f59e0b',
+                            fontSize: 12,
+                            marginBottom: 4,
+                            display: 'block',
+                          }}
+                        >
+                          场景 (scene)
+                        </label>
+                        <Input.TextArea
+                          value={parsedScene}
+                          onChange={(e) => setParsedScene(e.target.value)}
+                          autoSize={{ minRows: 1, maxRows: 3 }}
+                          placeholder="如：highway, motion blur, sunset, road"
+                          style={{
+                            background: 'var(--chat-bubble-assistant-bg, rgba(30, 30, 46, 0.5))',
+                            color: 'var(--text-primary, #e2e8f0)',
+                            borderColor: 'rgba(245, 158, 11, 0.3)',
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* SubTask 6.4：完整提示词预览（基础特征 + clothing + pose + scene，只读、等宽字体、实时更新） */}
+                    <div>
+                      <div
+                        style={{
+                          color: 'var(--text-secondary, #94a3b8)',
+                          fontSize: 12,
+                          marginBottom: 4,
+                        }}
+                      >
+                        完整提示词预览（基础特征 + 动态场景）：
+                      </div>
+                      <Input.TextArea
+                        value={fullPromptPreview}
+                        readOnly
+                        autoSize={{ minRows: 2, maxRows: 4 }}
+                        placeholder="（基础特征 + 服装 + 动作 + 场景 将在此处实时拼接显示）"
+                        style={{
+                          background: 'rgba(15, 15, 26, 0.6)',
+                          color: 'var(--text-secondary, #94a3b8)',
+                          borderColor: 'rgba(255, 255, 255, 0.08)',
+                          fontFamily: 'monospace',
+                          fontSize: 12,
+                        }}
+                      />
+                    </div>
+
+                    {/* SubTask 6.5：保存 / 切换 / 删除 */}
+                    <div
+                      style={{
+                        display: 'flex',
+                        gap: 8,
+                        alignItems: 'center',
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <Input
+                        value={schemeName}
+                        onChange={(e) => setSchemeName(e.target.value)}
+                        placeholder="方案名，如：哥特公路"
+                        onPressEnter={handleSaveDynamicScene}
+                        style={{
+                          flex: '1 1 180px',
+                          background: 'var(--chat-bubble-assistant-bg, rgba(30, 30, 46, 0.5))',
+                          borderColor: 'rgba(255, 255, 255, 0.1)',
+                          color: 'var(--text-primary, #e2e8f0)',
+                        }}
+                      />
+                      <Button
+                        type="primary"
+                        icon={<SaveOutlined />}
+                        onClick={handleSaveDynamicScene}
+                        style={{
+                          background: 'linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%)',
+                          borderColor: 'transparent',
+                        }}
+                      >
+                        保存为方案
+                      </Button>
+                      <span
+                        style={{
+                          color: 'var(--text-secondary, #94a3b8)',
+                          fontSize: 12,
+                          marginLeft: 4,
+                        }}
+                      >
+                        已保存方案
+                      </span>
+                      <Select
+                        value={activeDynamicScenePromptId ?? undefined}
+                        placeholder="未激活"
+                        onChange={handleApplyDynamicScene}
+                        style={{ width: 180 }}
+                        options={dynamicScenePrompts.map((p) => ({
+                          value: p.id,
+                          label: p.name,
+                        }))}
+                      />
+                      <Tooltip title="删除当前激活动态场景方案">
+                        <Button
+                          danger
+                          icon={<DeleteOutlined />}
+                          disabled={!activeDynamicScenePromptId}
+                          onClick={handleDeleteDynamicScene}
+                        />
+                      </Tooltip>
+                    </div>
+
+                    {/* 提示文字 */}
+                    <div
+                      style={{
+                        color: 'var(--text-tertiary, #6b7280)',
+                        fontSize: 11,
+                      }}
+                    >
+                      提示：AI 解析后可手动编辑三组 tag，保存为方案后将在立绘 / 一般图像生成时自动携带。
+                      切换方案可一键加载已保存的服装 / 动作 / 场景。
+                    </div>
+                  </div>
+                ),
+              },
+            ]}
+          />
+
+          {/* 角色外观描述（SubTask 5.6：保留原 UI 行为，AI 生成特征时自动提取，可手动编辑） */}
           <div style={{ marginTop: 16 }}>
             <div style={{
               color: 'var(--text-secondary, #94a3b8)',
@@ -2302,10 +3356,38 @@ const CharacterTraitTabContent: React.FC<{
               fontSize: 11,
             }}
           >
-            提示：LoRA 配置按角色独立存储，切换角色不会互相影响。点击 X 可删除。
+            提示：点击特征左侧圆点切换启用/禁用，点击文字可编辑，圆点右侧图标可移动分类。LoRA 配置按角色独立存储。
           </div>
         </>
       )}
+
+      {/* 通用文本输入弹窗（新建分类 / 重命名分类 / 保存组合方案 复用） */}
+      <Modal
+        open={promptModal.open}
+        title={promptModal.title}
+        okText={promptModal.confirmText}
+        cancelText="取消"
+        onCancel={() => setPromptModal((s) => ({ ...s, open: false }))}
+        onOk={() => promptModal.onOk(promptModal.value)}
+      >
+        <div style={{ marginTop: 8 }}>
+          <div style={{ color: 'var(--text-secondary, #94a3b8)', fontSize: 12, marginBottom: 6 }}>
+            {promptModal.label}
+          </div>
+          <Input
+            value={promptModal.value}
+            onChange={(e) => setPromptModal((s) => ({ ...s, value: e.target.value }))}
+            placeholder={promptModal.placeholder}
+            onPressEnter={() => promptModal.onOk(promptModal.value)}
+            autoFocus
+            style={{
+              background: 'var(--chat-bubble-assistant-bg, rgba(30, 30, 46, 0.5))',
+              borderColor: 'rgba(255, 255, 255, 0.1)',
+              color: 'var(--text-primary, #e2e8f0)',
+            }}
+          />
+        </div>
+      </Modal>
 
       {/* LoRA 选择弹窗 */}
       <LoraSelectModal
@@ -2361,7 +3443,7 @@ const AssetManagerModal: React.FC<AssetManagerModalProps> = ({
   >('batch-expression');
   const [generateTargetEmotionKey, setGenerateTargetEmotionKey] = useState<string | undefined>(undefined);
   const [generateTargetEmotionLabel, setGenerateTargetEmotionLabel] = useState<string | undefined>(undefined);
-  const [generateTargetSlot, setGenerateTargetSlot] = useState<'front' | 'side' | 'back' | undefined>(undefined);
+  const [generateTargetSlot, setGenerateTargetSlot] = useState<ThreeViewSlot | undefined>(undefined);
 
   // 统一打开 AssetGenerateModal 的入口
   const openGenerateModal = useCallback(
@@ -2370,7 +3452,7 @@ const AssetManagerModal: React.FC<AssetManagerModalProps> = ({
       options?: {
         targetEmotionKey?: string;
         targetEmotionLabel?: string;
-        targetSlot?: 'front' | 'side' | 'back';
+        targetSlot?: ThreeViewSlot;
       }
     ) => {
       setGenerateMode(mode);

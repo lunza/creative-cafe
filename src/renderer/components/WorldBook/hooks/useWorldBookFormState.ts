@@ -196,6 +196,36 @@ export function useWorldBookFormState() {
   // Ref to track if AI operation should be cancelled
   const isProcessingRef = useRef<boolean>(false);
 
+  // ===== 批量重置所有 AI 操作状态（用于中断按钮和页面关闭清理） =====
+  const resetAllAIStates = useCallback(() => {
+    setTranslatingField(null);
+    setIsTranslatingAll(false);
+    setPolishingField(null);
+    setIsPolishingAll(false);
+    setIsAISorting(false);
+    setIsGeneratingKeywordsAll(false);
+    setGeneratingKeywordsUid(null);
+    setIsGeneratingEntries(false);
+    setIsAddingEntry(false);
+    setIsGeneratingFromChars(false);
+    setAuditingField(null);
+    setIsAuditingAll(false);
+    // 关闭所有 AI Modal
+    setIsPolishModalOpen(false);
+    setIsPolishAllModalOpen(false);
+    setIsAuditModalOpen(false);
+    setIsAuditAllModalOpen(false);
+    setIsAuditResultModalOpen(false);
+  }, [
+    setTranslatingField, setIsTranslatingAll,
+    setPolishingField, setIsPolishingAll,
+    setIsAISorting, setIsGeneratingKeywordsAll, setGeneratingKeywordsUid,
+    setIsGeneratingEntries, setIsAddingEntry, setIsGeneratingFromChars,
+    setAuditingField, setIsAuditingAll,
+    setIsPolishModalOpen, setIsPolishAllModalOpen,
+    setIsAuditModalOpen, setIsAuditAllModalOpen, setIsAuditResultModalOpen,
+  ]);
+
   return {
     // 查看详情
     isViewModalOpen, setIsViewModalOpen,

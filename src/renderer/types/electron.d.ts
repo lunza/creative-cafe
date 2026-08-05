@@ -34,6 +34,7 @@ import type {
 } from '../../shared/types/game.types';
 import type { AIEngineCapabilities } from './setting';
 import type { AgentModeStatus, AgentModeOverride, AgentConfig } from '../../shared/types/agent-center.types';
+import type { CharacterTraitManifestV2, CategorizedTrait, GlobalTraitCategoryDictionary, TraitCategory } from '../../shared/types/characterTrait.types';
 
 declare global {
   interface Window {
@@ -250,6 +251,8 @@ interface ElectronAPI {
       error?: string;
       details?: string
     }>;
+    /** 取消当前活跃的 AI 请求（中止后端 AbortController） */
+    cancel: () => Promise<{ success: boolean; error?: string }>;
     listModels: (params: { apiUrl?: string; apiKey?: string; apiKeyTransmission?: string }) => Promise<{ success: boolean; models: string[]; error?: string }>;
     /**
      * AI 辅助角色特征生成（Spec: add-asset-and-trait-management / Task 12）
@@ -270,7 +273,8 @@ interface ElectronAPI {
       includeImage?: boolean;
     }) => Promise<{
       success: boolean;
-      traits?: string[];
+      /** 【重点标记 - AI 自动归类增强】traits 由 string[] 升级为 CategorizedTrait[]，携带系统分类信息 */
+      traits?: CategorizedTrait[];
       appearanceDescription?: string;
       error?: string;
     }>;
@@ -288,7 +292,59 @@ interface ElectronAPI {
      * - traits 可能为空数组（模型未从图片中提取到任何视觉特征）
      */
     recognizeImageTraits: (args: { characterCardPath: string; characterName?: string }) =>
-      Promise<{ success: boolean; traits?: string[]; appearanceDescription?: string; error?: string }>;
+      Promise<{
+        success: boolean;
+        /** 【重点标记 - AI 自动归类增强】traits 由 string[] 升级为 CategorizedTrait[]，携带系统分类信息 */
+        traits?: CategorizedTrait[];
+        appearanceDescription?: string;
+        error?: string;
+      }>;
+    /**
+     * 动态场景提示词生成（Spec: add-dynamic-scene-prompt-generation / Task 3）
+     *
+     * 将自然语言指令（如「让角色穿上一套哥特风的衣服，骑着摩托驰骋在高速公路上」）
+     * 通过 LLM 解析为三组独立的英文 SD tag（服装/动作/场景），未提及的维度返回空字符串 ""。
+     * 主进程内部复用 aiConfigProvider 读取激活 AI 引擎配置，调用 DYNAMIC_SCENE_SYSTEM_PROMPT，
+     * 非流式调用 /v1/chat/completions，按 ---CLOTHING--- / ---POSE--- / ---SCENE--- 分隔符解析。
+     *
+     * 入参：
+     *   - naturalLanguageInput：用户原始自然语言指令（必填非空，空/纯空白触发兜底错误）
+     *   - baseTraits：角色基础特征拼接字符串（可选，给 LLM 提供角色上下文，
+     *     避免生成与基础特征矛盾的 tag，例如基础特征有 tail 时不生成 no tail）
+     *
+     * 返回：
+     *   - success=true：clothing / pose / scene 三组英文 SD tag 字符串
+     *     （未提及的维度为空字符串 ""，与 spec「未提及的维度返回空」一致）
+     *   - success=false：error 为友好错误信息（非堆栈）
+     *
+     * 错误场景：
+     *   - 空输入：naturalLanguageInput 为空或纯空白 → 「请输入动态场景指令」（不调用 LLM）
+     *   - AI 引擎未配置：baseUrl / apiKey / modelName / temperature / max_tokens 任一缺失
+     *   - 调用失败：网络 / 超时 / HTTP 错误
+     *   - 解析失败：LLM 返回空内容 / 无分隔符 / 无法识别三组 tag
+     *
+     * 类型声明策略（与 generateCharacterTraits / recognizeImageTraits 一致）：
+     *   - 主进程 `GenerateDynamicScenePromptsParams` / `GenerateDynamicScenePromptsResult`
+     *     定义于 src/main/services/characterTraitAIService.ts，渲染进程不直接引用主进程类型
+     *   - 此处使用内联类型签名，与现有 ai 命名空间下其他方法保持一致
+     *     （electron.d.ts 顶部注释亦说明「主进程类型不可直接被渲染进程引用」）
+     */
+    generateDynamicScenePrompts: (args: {
+      /** 用户原始自然语言指令（中文/英文均可，必填非空） */
+      naturalLanguageInput: string;
+      /** 角色基础特征拼接字符串（可选，给 LLM 提供角色上下文避免生成矛盾 tag） */
+      baseTraits?: string;
+    }) => Promise<{
+      success: boolean;
+      /** 服装相关英文 SD tag 字符串（逗号分隔，未提及时为空字符串 ""） */
+      clothing?: string;
+      /** 动作/姿势英文 SD tag 字符串（逗号分隔，未提及时为空字符串 ""） */
+      pose?: string;
+      /** 场景/环境英文 SD tag 字符串（逗号分隔，未提及时为空字符串 ""） */
+      scene?: string;
+      /** 友好错误信息（success=false 时存在，非堆栈） */
+      error?: string;
+    }>;
     /**
      * 探测 AI 模型能力（Spec: add-model-capability-detection-and-image-recognition / Task 3）
      *
@@ -565,18 +621,75 @@ interface ElectronAPI {
     getImagePath: (args: { characterCardId: string; emotionKey: string }) => Promise<{ success: boolean; imagePath: string | null; error?: string }>;
   };
 
-  // 角色特征管理 API（Spec: add-asset-and-trait-management / Task 2）
-  // 为每个角色卡持久化视觉特征 tag 数组，SD 生成素材时携带以保证角色一致性
+  // 角色特征管理 API（Spec: add-asset-and-trait-management / Task 2 + add-trait-category-grouping / Task 3）
+  // 为每个角色卡持久化视觉特征清单，SD 生成素材时携带以保证角色一致性
+  // v2 升级：结构化 CharacterTraitItem[] + 分类 + 组合方案，下游仅拼接 enabled=true 项
   // 存储路径：{userData}/data/character-traits/{sha256(characterCardId).slice(0,16)}/traits.json
   characterTrait: {
-    /** 读取角色卡视觉特征 tag 数组；文件不存在或解析失败时返回 [] */
+    /**
+     * 读取角色卡视觉特征 tag 数组（v1 string[] 兼容）；文件不存在或解析失败时返回 []
+     * @deprecated 改用 loadData 获取完整 v2 数据（含分类/组合/启用状态）
+     */
     list: (characterCardId: string) => Promise<string[]>;
-    /** 覆盖保存角色卡视觉特征 tag 数组（自动创建目录，原子写入 traits.json，可附带外观描述） */
+    /**
+     * 覆盖保存角色卡视觉特征 tag 数组（v1 string[] 兼容，自动创建目录，原子写入 traits.json）
+     * 合并去重：保留现有已分类 item，对传入 string 中新增的项追加为 uncategorized + enabled=true
+     * @deprecated 改用 saveData 保存完整 v2 数据
+     */
     save: (args: { characterCardId: string; traits: string[]; appearanceDescription?: string }) => Promise<{ success: boolean; error?: string }>;
     /** 读取角色卡外观描述（中文自然语言）；不存在时返回空串 */
     loadDescription: (characterCardId: string) => Promise<string>;
     /** 清除角色卡特征文件（删除 traits.json，文件不存在视为幂等成功） */
     clear: (characterCardId: string) => Promise<{ success: boolean; error?: string }>;
+    /**
+     * 读取角色卡完整 v2 数据（Spec: add-trait-category-grouping / Task 3）。
+     * 文件不存在返回空白 v2（traits:[], customCategories:[], combinations:[], activeCombinationId:null）；
+     * v1 数据自动迁移为 v2 后返回；字段缺失由 service 防御性兜底补全。
+     */
+    loadData: (characterCardId: string) => Promise<CharacterTraitManifestV2>;
+    /**
+     * 覆盖保存角色卡完整 v2 数据（version 强制为 2，含分类/组合/启用状态）。
+     * 自动创建目录，原子写入 traits.json；返回 { success, error? }。
+     */
+    saveData: (args: { characterCardId: string; data: CharacterTraitManifestV2 }) => Promise<{ success: boolean; error?: string }>;
+  };
+
+  // 全局特征分类字典 API（Spec: fix-asset-trait-and-scene-defects / Task 3）
+  // 跨角色卡共享的自定义分类字典，持久化到 {userData}/data/trait-categories.json
+  // 取代 CharacterTraitManifestV2.customCategories 作为分类的唯一读取源
+  // 系统分类（SYSTEM_TRAIT_CATEGORIES）仍由代码常量提供，不写入此字典
+  //
+  // 类型声明策略（与 characterTrait 一致）：
+  //   - 主进程 `CategoryDictionaryService` 定义于 src/main/services/categoryDictionaryService.ts，
+  //     渲染进程不直接引用主进程类型
+  //   - 此处使用 shared 类型（GlobalTraitCategoryDictionary / TraitCategory）+ 内联返回类型签名
+  categoryDictionary: {
+    /**
+     * 读取全局分类字典。
+     * 文件不存在或损坏时返回空白字典（version=1, categories=[], updatedAt=now）。
+     * 返回 `{ success: true, dictionary }`；失败时返回 `{ success: false, error }`。
+     */
+    load: () => Promise<{ success: boolean; dictionary?: GlobalTraitCategoryDictionary; error?: string }>;
+    /**
+     * 新增自定义分类（重名时返回既有分类，不创建副本）。
+     * 返回 `{ success: true, category }`；name 为空时返回 `{ success: false, error }`。
+     */
+    add: (args: { name: string; icon?: string }) => Promise<{ success: boolean; category?: TraitCategory; error?: string }>;
+    /**
+     * 按 id 删除自定义分类（幂等：id 不存在视为成功）。
+     * 返回 `{ success: true }` 或 `{ success: false, error }`。
+     */
+    delete: (args: { id: string }) => Promise<{ success: boolean; error?: string }>;
+    /**
+     * 按 id 重命名自定义分类。
+     * newName 为空或重名时返回 `{ success: false, error }`；id 不存在视为幂等成功。
+     */
+    rename: (args: { id: string; newName: string }) => Promise<{ success: boolean; error?: string }>;
+    /**
+     * 检查全局字典中是否已存在指定名称的分类（大小写不敏感）。
+     * 返回 `{ success: true, exists }`；name 为空时 exists=false。
+     */
+    has: (args: { name: string }) => Promise<{ success: boolean; exists?: boolean; error?: string }>;
   };
 
   // 角色卡 LoRA 管理 API（2026-07-29 bug 修复 - 按角色独立存储）
@@ -608,7 +721,7 @@ interface ElectronAPI {
       assets: Record<string, {
         id: string;
         type: 'illustration' | 'general' | 'three-view';
-        slot?: 'front' | 'side' | 'back';
+        slot?: 'front' | 'side' | 'back' | 'front-nude' | 'side-nude' | 'back-nude';
         image: string;
         createdAt: string;
       }>;

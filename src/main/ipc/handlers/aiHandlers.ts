@@ -722,6 +722,10 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
         }, effectiveTimeout);
       }
       
+      // 注册 AbortController 到 activeRequests，使 ai:cancel 能中止非流式请求
+      const senderId = event.sender.id;
+      activeRequests.set(senderId, { controller, timeoutId, connectionTimeoutId });
+
       logger.info(`[${requestId}] 正在发送请求到 ${url}...`, undefined, {
         requestId,
         timestamp: startTimeStr,
@@ -737,10 +741,10 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
           body: JSON.stringify(body),
           signal: controller.signal
         });
-        
+
         // 连接成功，清除连接超时
         clearTimeout(connectionTimeoutId);
-        
+
         if (timeoutId) {
           clearTimeout(timeoutId);
         }
@@ -819,6 +823,8 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
             response_time_ms: responseTime,
             parsedData: data
           });
+          // 清理 activeRequests 中的 AbortController
+          activeRequests.delete(senderId);
           return {
             success: true,
             data
@@ -843,6 +849,8 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
         if (timeoutId) {
           clearTimeout(timeoutId);
         }
+        // 清理 activeRequests 中的 AbortController
+        activeRequests.delete(senderId);
         throw fetchError;
       }
     }
@@ -1000,5 +1008,36 @@ ipcMain.handle('ai:probeCapabilities', async (_event, args: {
     };
   }
 });
+
+/**
+ * 中止所有活跃的 AI 请求（用于应用退出时的全局清理）。
+ *
+ * 遍历 activeRequests Map，逐个调用 controller.abort() 并清理 timeout，
+ * 返回被中止的请求数量。与 writingHandlers 的 abortAllActiveRequests（写作智能体）
+ * 是不同的清理目标，故命名为 abortAllAIRequests 以示区分。
+ */
+export function abortAllAIRequests(): number {
+  let count = 0;
+  for (const [senderId, activeRequest] of activeRequests) {
+    try {
+      activeRequest.controller.abort();
+      if (activeRequest.timeoutId) {
+        clearTimeout(activeRequest.timeoutId);
+      }
+      if (activeRequest.connectionTimeoutId) {
+        clearTimeout(activeRequest.connectionTimeoutId);
+      }
+      count++;
+    } catch (e) {
+      // 单个请求中止失败不影响其他请求的清理
+      logger.warn(`中止请求失败 (senderId=${senderId}): ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  activeRequests.clear();
+  if (count > 0) {
+    logger.info(`应用退出清理：已中止 ${count} 个活跃 AI 请求`);
+  }
+  return count;
+}
 
 export default {};
