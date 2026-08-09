@@ -34,6 +34,9 @@ import { registerTagRagHandlers } from './handlers/tagRagHandlers';
 // 缩略图管线 IPC（Spec: optimize-system-rendering-performance / Task 7）
 // 暴露 thumbnail:get / thumbnail:invalidate 通道，基于 nativeImage 生成缩略图
 import { registerThumbnailHandlers } from './handlers/thumbnailHandlers';
+// 文档读取 IPC（读取项目根目录 docs/ 下的文档文件内容）
+// 暴露 docs:read 通道，供渲染进程读取本地技术文档
+import { docsHandlers } from './handlers/docsHandlers';
 import { getStorageService } from '../services/storageService';
 import { embeddingService } from '../services/EmbeddingService';
 import { embeddingWorkerService } from '../services/EmbeddingWorkerService';
@@ -124,6 +127,9 @@ export function setupIpcHandlers() {
   //       thumbnail:invalidate（粗粒度清空全部缩略图缓存）共 2 个通道
   // 基于 Electron nativeImage（零新原生依赖），供渲染进程 LazyImage 走 IPC 取缩略图
   registerThumbnailHandlers();
+
+  // 文档读取 IPC：暴露 docs:read 通道，读取项目根目录 docs/ 下的文档文件内容
+  docsHandlers();
 
   embeddingService.initialize();
   embeddingService.registerIpcHandlers();

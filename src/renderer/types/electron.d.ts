@@ -182,6 +182,11 @@ interface ElectronAPI {
     readJson: (fileName: string) => Promise<any>;
     readAsBase64: (path: string) => Promise<{ success: boolean; data?: string; error?: string }>;
   };
+  // 文档读取 API：读取项目根目录 docs/ 下的文档文件内容
+  // 主进程 docsHandlers.ts 暴露 docs:read 通道，成功返回文件内容字符串，失败返回 { success: false, error }
+  docs: {
+    read: (fileName: string) => Promise<string | { success: false; error: string }>;
+  };
   app: {
     getVersion: () => Promise<string>;
     getPlatform: () => Promise<string>;

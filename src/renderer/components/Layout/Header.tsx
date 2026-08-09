@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Layout, Button, Space, Tooltip } from 'antd';
-import { MoonOutlined, SunOutlined, DesktopOutlined, ReloadOutlined, EditOutlined, EyeOutlined, BulbOutlined, ToolOutlined, RobotOutlined } from '@ant-design/icons';
+import { MoonOutlined, SunOutlined, DesktopOutlined, ReloadOutlined, EditOutlined, EyeOutlined, BulbOutlined, ToolOutlined, RobotOutlined, QuestionCircleOutlined } from '@ant-design/icons';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingStore } from '../../stores/settingStore';
 import { useAgentMode } from '../../hooks/useAgentMode';
+import HelpViewer from '../Help/HelpViewer';
 import './Header.css';
 
 const { Header: AntHeader } = Layout;
@@ -39,6 +40,7 @@ const Header: React.FC = () => {
   const setTheme = useUIStore(s => s.setTheme);
   const setting = useSettingStore(s => s.setting);
   const { isActive, status } = useAgentMode();
+  const [helpOpen, setHelpOpen] = useState(false);
   const activeEngine = setting?.aiEngines?.find((e) => e.id === setting?.activeEngineId);
   const capabilities = activeEngine?.capabilities;
   const supportsVision = capabilities?.supportsVision === true;
@@ -115,6 +117,13 @@ const Header: React.FC = () => {
         <Space>
           <Button
             type="text"
+            icon={<QuestionCircleOutlined />}
+            onClick={() => setHelpOpen(true)}
+          >
+            帮助
+          </Button>
+          <Button
+            type="text"
             icon={<ReloadOutlined />}
             onClick={() => window.location.reload()}
           >
@@ -129,6 +138,7 @@ const Header: React.FC = () => {
           </Button>
         </Space>
       </div>
+      <HelpViewer open={helpOpen} onClose={() => setHelpOpen(false)} />
     </AntHeader>
   );
 };

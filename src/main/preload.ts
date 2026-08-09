@@ -220,6 +220,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     readAsBase64: (path: string) => ipcRenderer.invoke('file:readAsBase64', path),
     validatePath: (path: string) => ipcRenderer.invoke('file:validatePath', path)
   },
+  // 文档读取 API：读取项目根目录 docs/ 下的文档文件内容
+  docs: {
+    read: (fileName: string) => ipcRenderer.invoke('docs:read', fileName),
+  },
   app: {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
     getPlatform: () => ipcRenderer.invoke('app:getPlatform'),
