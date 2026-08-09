@@ -4,19 +4,17 @@
  * Spec:
  *  - add-asset-and-trait-management / Task 1（v1 基线）
  *  - add-trait-category-grouping / Task 2（v2 升级 + 迁移）
- *  - add-dynamic-scene-prompt-generation / Task 4（动态场景字段持久化）
  *
  * 用途：
  *  - 为每个角色卡持久化「视觉特征清单」（如 `white fur, dog girl, black shirt`）
  *  - 在 SD 生成素材时，自动携带该角色的特征 tag，保证角色一致性（毛色/服饰/物种等关键特征不漂移）
  *  - v2 引入分类体系（系统分类 + 自定义分类 + 未分类）与组合方案，支持跨分类启用选择
- *  - 动态场景方案（dynamicScenePrompts）独立于基础特征，存储一次性服装/动作/场景提示词
  *
  * 存储路径设计：
  *  - 根目录：`{userData}/data/character-traits/`
  *  - 单卡目录：`{userData}/data/character-traits/{sanitizeCardId(characterCardId)}/`
  *  - 特征文件：`{userData}/data/character-traits/{sanitizeCardId(characterCardId)}/traits.json`
- *  - 文件结构：`{ characterCardId, version: 2, traits: CharacterTraitItem[], customCategories, combinations, activeCombinationId, dynamicScenePrompts, activeDynamicScenePromptId }`（v2）
+ *  - 文件结构：`{ characterCardId, version: 2, traits: CharacterTraitItem[], customCategories, combinations, activeCombinationId }`（v2）
  *             `{ characterCardId, version: 1, traits: string[] }`（v1，加载时自动迁移为 v2）
  *
  * 与 expressionService 的关系：
@@ -35,19 +33,12 @@
  *  - 加载 traits.json 时若 `version !== 2`，将 `string[]` 映射为 `CharacterTraitItem[]`
  *    （每项 `{ id: genTraitId(), text, categoryId: 'uncategorized', enabled: true }`）
  *  - 迁移后 `customCategories=[]`、`combinations=[]`、`activeCombinationId=null`，保留 `appearanceDescription`
- *  - 迁移后 `dynamicScenePrompts=[]`、`activeDynamicScenePromptId=null`（v1 无动态场景概念，显式补默认）
  *  - 迁移仅在内存进行，下次 `saveTraitData` 时以 `version: 2` 落盘
- *
- * 旧 v2 文件兼容（Spec: add-dynamic-scene-prompt-generation / Task 4）：
- *  - 早于本 spec 落盘的 v2 文件可能缺失 `dynamicScenePrompts` / `activeDynamicScenePromptId`
- *  - `loadTraitData()` 通过 `Array.isArray(parsed.x) ? parsed.x : []` / `typeof === 'string' ? x : null` 兜底
- *  - 类型上 v2 manifest 的这两个字段为必填（避免消费方判空），由 service 层负责兜底补全
  *
  * 旧 API 兼容（Spec: 旧 IPC 调用兼容 Scenario）：
  *  - `loadTraits(cardId): Promise<string[]>` 废弃适配层：调 `loadTraitData` 后返回 `data.traits.map(t => t.text)`
  *  - `saveTraits(cardId, traits: string[], appearanceDescription?)` 废弃适配层：
  *    合并去重策略——保留现有 item，对传入 string 中不在现有 text 集合的，新增 item 归 uncategorized+enabled
- *    动态场景方案原样透传（不被 string[] 保存破坏）
  */
 
 import fs from 'fs/promises';
@@ -58,7 +49,6 @@ import { getUserDataPath } from '../utils/appPath';
 import {
   CharacterTraitItem,
   CharacterTraitManifestV2,
-  DynamicScenePrompt,
   TraitCategory,
   TraitCombination,
   UNCATEGORIZED_CATEGORY_ID,
@@ -137,10 +127,6 @@ class CharacterTraitService {
   /**
    * 构造空白 v2 manifest（文件不存在或解析失败时返回）。
    *
-   * 【重点标记 - 新增字段兜底】Spec: add-dynamic-scene-prompt-generation / Task 4
-   * - 空白 manifest 的 `dynamicScenePrompts` 兜底为 `[]`，`activeDynamicScenePromptId` 兜底为 `null`
-   * - 与 v1→v2 迁移路径保持一致：无动态场景方案时默认空列表 + null 激活态
-   *
    * @param characterCardId 角色卡 ID
    */
   private emptyV2Manifest(characterCardId: string): CharacterTraitManifestV2 {
@@ -152,13 +138,21 @@ class CharacterTraitService {
       customCategories: [],
       combinations: [],
       activeCombinationId: null,
-      dynamicScenePrompts: [],
-      activeDynamicScenePromptId: null,
     };
   }
 
   /**
    * 防御性补全单个 CharacterTraitItem：缺失字段补默认。
+   *
+   * 【Spec: add-ai-tag-chinese-translation / Task 8.1 + 8.2】
+   * - `translation` 字段透传：AI 生成时产出，编辑/替换时清空为 undefined
+   * - 旧数据缺失 translation 时兜底 undefined（前端 Tooltip 不显示）
+   * - 非字符串/空字符串时兜底 undefined
+   *
+   * 【Spec: optimize-trait-translation-and-temp-scheme / Task 3】
+   * - `originalText` 字段透传：L3 颜色拆分时设置（记录原始复合标签），手动编辑后清空
+   * - 旧数据缺失 originalText 时兜底 undefined（前端不显示拆分图标）
+   * - 非字符串/空字符串时兜底 undefined
    *
    * @param raw 原始对象（可能字段缺失/类型不符）
    * @returns 兜底后的 CharacterTraitItem，若 text 非字符串则返回 null
@@ -177,6 +171,14 @@ class CharacterTraitService {
       categoryId:
         typeof r.categoryId === 'string' && r.categoryId ? r.categoryId : UNCATEGORIZED_CATEGORY_ID,
       enabled: typeof r.enabled === 'boolean' ? r.enabled : true,
+      translation:
+        typeof r.translation === 'string' && r.translation ? r.translation : undefined,
+      originalText:
+        typeof r.originalText === 'string' && r.originalText ? r.originalText : undefined,
+      weight:
+        typeof r.weight === 'number' && r.weight >= 0.1 && r.weight <= 10.0
+          ? Math.round(r.weight * 10) / 10
+          : undefined,
     };
   }
 
@@ -211,10 +213,6 @@ class CharacterTraitService {
       // 注意：不使用 `Partial<CharacterTraitManifestV2 & CharacterTraitManifest>`，
       // 因为 v1.version=1 与 v2.version=2 是不相交字面量类型，交集会塌缩为 never。
       // 这里采用 permissive 形状，运行时逐字段校验类型并兜底。
-      //
-      // 【重点标记 - 新增字段】Spec: add-dynamic-scene-prompt-generation / Task 4
-      // - `dynamicScenePrompts` / `activeDynamicScenePromptId` 加入 permissive 形状
-      // - 旧 v2 文件（早于本 spec 落盘的）可能缺失这两个字段，由下方 `?? []` / `?? null` 兜底
       const parsed = JSON.parse(content) as {
         version?: unknown;
         traits?: unknown;
@@ -223,8 +221,6 @@ class CharacterTraitService {
         activeCombinationId?: unknown;
         appearanceDescription?: unknown;
         characterCardId?: unknown;
-        dynamicScenePrompts?: unknown;
-        activeDynamicScenePromptId?: unknown;
       };
 
       const version =
@@ -250,9 +246,6 @@ class CharacterTraitService {
           'path=',
           traitPath
         );
-        // 【重点标记 - v1→v2 迁移】Spec: add-dynamic-scene-prompt-generation / Task 4
-        // - v1 traits.json 无动态场景字段概念，迁移时显式补 `dynamicScenePrompts: []` + `activeDynamicScenePromptId: null`
-        // - 与 emptyV2Manifest 兜底语义一致，保证迁移产物为完整 v2 manifest
         return {
           characterCardId,
           version: 2,
@@ -261,8 +254,6 @@ class CharacterTraitService {
           customCategories: [],
           combinations: [],
           activeCombinationId: null,
-          dynamicScenePrompts: [],
-          activeDynamicScenePromptId: null,
         };
       }
 
@@ -314,18 +305,6 @@ class CharacterTraitService {
           ? parsed.activeCombinationId
           : null;
 
-      // 【重点标记 - 旧 v2 文件兼容】Spec: add-dynamic-scene-prompt-generation / Task 4
-      // - 早于本 spec 落盘的 v2 文件可能缺失 dynamicScenePrompts / activeDynamicScenePromptId
-      // - `Array.isArray` / `typeof === 'string'` 兜底，保证返回值为完整 v2 manifest
-      // - 不对数组元素做 schema 校验（spec 明确：简单数组/字符串，无需校验）
-      const dynamicScenePrompts = Array.isArray(parsed.dynamicScenePrompts)
-        ? parsed.dynamicScenePrompts
-        : [];
-      const activeDynamicScenePromptId =
-        typeof parsed.activeDynamicScenePromptId === 'string'
-          ? parsed.activeDynamicScenePromptId
-          : null;
-
       return {
         characterCardId,
         version: 2,
@@ -334,8 +313,6 @@ class CharacterTraitService {
         customCategories,
         combinations,
         activeCombinationId,
-        dynamicScenePrompts,
-        activeDynamicScenePromptId,
       };
     } catch (error) {
       console.error('[CharacterTraitService] loadTraitData failed:', error);
@@ -387,18 +364,6 @@ class CharacterTraitService {
       const safeActiveCombinationId =
         typeof data?.activeCombinationId === 'string' ? data.activeCombinationId : null;
 
-      // 【重点标记 - 新增字段持久化】Spec: add-dynamic-scene-prompt-generation / Task 4
-      // - `dynamicScenePrompts` 仅做 Array.isArray 兜底，不校验元素结构（spec：简单数组无需 schema 校验）
-      // - `activeDynamicScenePromptId` 仅做 typeof === 'string' 兜底，缺失/类型不符时落盘为 null
-      // - 字段完整写入 traits.json，保证下次加载时无需再次兜底
-      const safeDynamicScenePrompts: DynamicScenePrompt[] = Array.isArray(data?.dynamicScenePrompts)
-        ? data.dynamicScenePrompts
-        : [];
-      const safeActiveDynamicScenePromptId =
-        typeof data?.activeDynamicScenePromptId === 'string'
-          ? data.activeDynamicScenePromptId
-          : null;
-
       // 外观描述规整：非字符串视为空串（保留字段，便于 UI 直接显示）
       const safeDescription =
         typeof data?.appearanceDescription === 'string' ? data.appearanceDescription : '';
@@ -411,8 +376,6 @@ class CharacterTraitService {
         customCategories: safeCustomCategories,
         combinations: safeCombinations,
         activeCombinationId: safeActiveCombinationId,
-        dynamicScenePrompts: safeDynamicScenePrompts,
-        activeDynamicScenePromptId: safeActiveDynamicScenePromptId,
       };
 
       const traitPath = this.getTraitPath(characterCardId);
@@ -434,10 +397,6 @@ class CharacterTraitService {
         safeCombinations.length,
         'activeCombinationId=',
         safeActiveCombinationId,
-        'dynamicScenePrompts=',
-        safeDynamicScenePrompts.length,
-        'activeDynamicScenePromptId=',
-        safeActiveDynamicScenePromptId,
         'hasDescription=',
         !!safeDescription
       );
@@ -559,11 +518,6 @@ class CharacterTraitService {
         customCategories: existing.customCategories,
         combinations: existing.combinations,
         activeCombinationId: existing.activeCombinationId,
-        // 【重点标记 - 旧 API 兼容层透传】Spec: add-dynamic-scene-prompt-generation / Task 4
-        // - saveTraits 是废弃适配层，仅更新 traits(string[]) 与 appearanceDescription
-        // - 动态场景方案应原样保留（existing 已由 loadTraitData 兜底补全字段），不被本次保存破坏
-        dynamicScenePrompts: existing.dynamicScenePrompts,
-        activeDynamicScenePromptId: existing.activeDynamicScenePromptId,
       };
 
       return await this.saveTraitData(characterCardId, manifest);

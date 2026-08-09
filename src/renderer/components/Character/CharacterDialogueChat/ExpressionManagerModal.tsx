@@ -64,6 +64,7 @@ const ExpressionManagerModal: React.FC<ExpressionManagerModalProps> = ({
     addCustomEmotion,
     removeCustomEmotion,
   } = useExpressionStore();
+  // TODO(perf): 整体订阅，待拆分为 selector（7 字段，>5 暂缓）
 
   // store.error 单独订阅，用于渲染 inline 错误横幅
   const storeError = useExpressionStore((s) => s.error);

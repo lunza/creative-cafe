@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Form, Button, Space, message, Divider } from 'antd';
+import { Form, Button, Space, message, Divider, Tabs } from 'antd';
 import { SaveOutlined, ReloadOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useSettingStore } from '../../stores/settingStore';
 import { useLogStore } from '../../stores/logStore';
@@ -9,18 +9,30 @@ import GeneralSettingsPanel from './GeneralSettingsPanel';
 import AIEngineSettingsPanel from './AIEngineSettingsPanel';
 import SDWebuiSettings, { SDWebuiSettingsRef } from './SDWebuiSettings';
 import WebSearchSettings, { WebSearchSettingsRef } from './WebSearchSettings';
+// Spec: implement-local-tag-autocomplete / Task 6
+import TagAutocompleteSettings, { TagAutocompleteSettingsRef } from './TagAutocompleteSettings';
+// Spec: rag-tag-library-for-ai-trait-generation / Task 10
+import TagRagSettings, { TagRagSettingsRef } from './TagRagSettings';
 import './Settings.css';
 
 const Settings: React.FC = () => {
   const [form] = Form.useForm();
-  const { setting, fetchSetting, saveSetting, restoreDefault } = useSettingStore();
-  const { addLog } = useLogStore();
+  const setting = useSettingStore(s => s.setting);
+  const fetchSetting = useSettingStore(s => s.fetchSetting);
+  const saveSetting = useSettingStore(s => s.saveSetting);
+  const restoreDefault = useSettingStore(s => s.restoreDefault);
+  const addLog = useLogStore(s => s.addLog);
 
   const [dashboardBackgroundImage, setDashboardBackgroundImage] = useState('');
   const [debugMode, setDebugMode] = useState(false);
+  const [activeTab, setActiveTab] = useState('general');
   const vectorConfigRef = React.useRef<VectorConfigPanelRef>(null);
   const sdWebuiConfigRef = React.useRef<SDWebuiSettingsRef>(null);
   const webSearchConfigRef = React.useRef<WebSearchSettingsRef>(null);
+  // Spec: implement-local-tag-autocomplete / Task 6
+  const tagAutocompleteConfigRef = React.useRef<TagAutocompleteSettingsRef>(null);
+  // Spec: rag-tag-library-for-ai-trait-generation / Task 10
+  const tagRagConfigRef = React.useRef<TagRagSettingsRef>(null);
 
   const activeEngine = useMemo<AIEngineSetting | null>(() => {
     const engines = setting?.aiEngines ?? [];
@@ -34,6 +46,7 @@ const Settings: React.FC = () => {
   useEffect(() => {
     if (setting) {
       setDashboardBackgroundImage(setting.dashboardBackgroundImage || '');
+      setDebugMode(setting.debugMode || false);
       const engines = setting.aiEngines || [];
       const engine = engines.find(e => e.id === setting.activeEngineId) || engines[0];
       form.setFieldsValue({
@@ -42,7 +55,8 @@ const Settings: React.FC = () => {
         api_url: engine?.api_url || 'http://127.0.0.1:5000',
         api_key: engine?.api_key || '',
         model_name: engine?.model_name || '',
-        api_key_transmission: engine?.api_key_transmission || 'body',
+        api_key_transmission: engine?.api_key_transmission || 'header',
+        agentModeOverride: engine?.agentModeOverride || 'auto',
         max_tokens: (typeof engine?.max_tokens === 'number' && engine.max_tokens > 0) ? engine.max_tokens : 10240,
         temperature: (typeof engine?.temperature === 'number' && engine.temperature >= 0 && engine.temperature <= 2) ? engine.temperature : 0.7,
         top_p: engine?.top_p,
@@ -85,7 +99,8 @@ const Settings: React.FC = () => {
               api_url: values.api_url || 'http://127.0.0.1:5000',
               api_key: values.api_key || '',
               model_name: values.model_name || '',
-              api_key_transmission: values.api_key_transmission || 'body',
+              api_key_transmission: values.api_key_transmission || 'header',
+              agentModeOverride: values.agentModeOverride || 'auto',
               max_tokens: Number(values.max_tokens) || 10240,
               temperature: Number(values.temperature) ?? 0.7,
               top_p: Number(values.top_p) || undefined,
@@ -105,6 +120,10 @@ const Settings: React.FC = () => {
         const vectorConfig = vectorConfigRef.current?.getFormValues() || {};
         const sdWebuiConfig = sdWebuiConfigRef.current?.getFormValues();
         const webSearchConfig = webSearchConfigRef.current?.getFormValues();
+        // Spec: implement-local-tag-autocomplete / Task 6
+        const tagAutocompleteConfig = tagAutocompleteConfigRef.current?.getFormValues();
+        // Spec: rag-tag-library-for-ai-trait-generation / Task 10
+        const tagRagConfig = tagRagConfigRef.current?.getFormValues();
 
         const updatedSetting = {
           ...setting,
@@ -115,6 +134,8 @@ const Settings: React.FC = () => {
           vector: vectorConfig,
           ...(sdWebuiConfig ? { sdWebui: sdWebuiConfig } : {}),
           ...(webSearchConfig ? { webSearch: webSearchConfig } : {}),
+          ...(tagAutocompleteConfig ? { tagAutocomplete: tagAutocompleteConfig } : {}),
+          ...(tagRagConfig ? { tagRag: tagRagConfig } : {}),
         };
 
         addLog(`更新后的设置: ${JSON.stringify(updatedSetting)}`, 'info');
@@ -187,17 +208,61 @@ const Settings: React.FC = () => {
     <div className="settings">
       <div className="settings-content">
         <h2>设置</h2>
-        <GeneralSettingsPanel
-          form={form}
-          dashboardBackgroundImage={dashboardBackgroundImage}
-          onBackgroundImageChange={setDashboardBackgroundImage}
-          debugMode={debugMode}
-          onDebugModeChange={setDebugMode}
+        <Tabs
+          activeKey={activeTab}
+          onChange={setActiveTab}
+          tabPlacement="top"
+          items={[
+            {
+              key: 'general',
+              label: '通用',
+              forceRender: true,
+              children: (
+                <GeneralSettingsPanel
+                  form={form}
+                  dashboardBackgroundImage={dashboardBackgroundImage}
+                  onBackgroundImageChange={setDashboardBackgroundImage}
+                  debugMode={debugMode}
+                  onDebugModeChange={setDebugMode}
+                />
+              ),
+            },
+            {
+              key: 'ai-engine',
+              label: 'AI 引擎',
+              forceRender: true,
+              children: <AIEngineSettingsPanel form={form} />,
+            },
+            {
+              key: 'image-gen',
+              label: '图像生成',
+              forceRender: true,
+              children: <SDWebuiSettings ref={sdWebuiConfigRef} />,
+            },
+            {
+              key: 'vector-rag',
+              label: '向量与 RAG',
+              forceRender: true,
+              children: (
+                <>
+                  <VectorConfigPanel ref={vectorConfigRef} />
+                  <TagRagSettings ref={tagRagConfigRef} />
+                </>
+              ),
+            },
+            {
+              key: 'tags-search',
+              label: '标签与搜索',
+              forceRender: true,
+              children: (
+                <>
+                  <TagAutocompleteSettings ref={tagAutocompleteConfigRef} />
+                  <WebSearchSettings ref={webSearchConfigRef} />
+                </>
+              ),
+            },
+          ]}
         />
-        <AIEngineSettingsPanel form={form} />
-        <SDWebuiSettings ref={sdWebuiConfigRef} />
-        <VectorConfigPanel ref={vectorConfigRef} />
-        <WebSearchSettings ref={webSearchConfigRef} />
         <Divider />
         <Space>
           <Button type="primary" icon={<SaveOutlined />} onClick={handleSave}>保存设置</Button>

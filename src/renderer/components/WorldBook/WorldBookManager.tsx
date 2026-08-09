@@ -64,10 +64,14 @@ interface WorldBook {
  * 任何 AI 函数或重复的 useState。
  */
 const WorldBookManager: React.FC = () => {
-  const { worldBooks, loading, fetchWorldBooks, clearCurrentWorldBook } = useWorldBookStore();
-  const { theme: appTheme } = useUIStore();
-  const { setting, fetchSetting } = useSettingStore();
-  const { addLog } = useLogStore();
+  const worldBooks = useWorldBookStore(s => s.worldBooks);
+  const loading = useWorldBookStore(s => s.loading);
+  const fetchWorldBooks = useWorldBookStore(s => s.fetchWorldBooks);
+  const clearCurrentWorldBook = useWorldBookStore(s => s.clearCurrentWorldBook);
+  const appTheme = useUIStore(s => s.theme);
+  const setting = useSettingStore(s => s.setting);
+  const fetchSetting = useSettingStore(s => s.fetchSetting);
+  const addLog = useLogStore(s => s.addLog);
 
   // ===== Hook 接入：表单状态 + AI 操作 =====
   const formState = useWorldBookFormState();

@@ -133,19 +133,29 @@ export interface SDGenerationOptions {
   modelType?: SDModelType;
 
   /**
-   * 角色视觉特征 tag 列表（Spec: add-asset-and-trait-management / Task 4）
+   * 角色视觉特征 tag 列表（Spec: add-asset-and-trait-management / Task 4；权重语法升级 Spec: add-sdxl-prompt-weight-support / Task 2）
    *
    * 【重点标记 - 特征携带机制】
    * 用于在 SD 生成任何素材时自动携带角色特征，保证角色一致性。
-   * 例如 `['white fur', 'dog girl']` 会被拼接为 `white fur, dog girl`，
-   * 替换提示词模板中的 `{traits}` 占位符。
+   * 例如 `[{text: 'white fur'}, {text: 'dog girl', weight: 1.5}]` 会被拼接为
+   * `white fur, (dog girl:1.5)`，替换提示词模板中的 `{traits}` 占位符。
+   *
+   * 【重点标记 - SDXL 权重语法（Spec: add-sdxl-prompt-weight-support / Task 2 BREAKING）】
+   * 类型已从 `string[]` 升级为 `Array<{ text: string; weight?: number }>`（旧调用方需适配）。
+   * 每个项可携带 `weight?: number` 字段（默认 1.0 / undefined，范围 0.1-10.0）。
+   * `applyTraitsAndLora` 在拼接时对 `weight !== 1.0 && weight !== undefined` 的项
+   * 格式化为 Forge Neo 兼容的 `(text:weight)` 语法（如 `(blue_eyes:1.5)`，冒号两侧无空格），
+   * 默认权重项保持 `text` 原样不加括号。权重格式化发生在注入 SD prompt 前，为防御性
+   * 去重的最后一环（参考 `modules/prompt_parser.py` 的 lark 语法 `:\s*([+-]?[.\d]+)\s*\)`）。
    *
    * 行为说明：
    * - 若为空数组或 undefined，`{traits}` 占位符替换为空字符串（并清理多余逗号与空格）
    * - 若模板不含 `{traits}` 占位符，本字段不生效（由 PromptBuilder 兜底追加，见 Task 5）
    * - ADetailer 的 `ad_prompt` 同步使用已注入特征的最终 prompt，保证面部修复也携带特征
+   * - 去重以 `text.trim().toLowerCase()` 为 key（不带权重语法），保证 `blue_eyes` 与
+   *   `(blue_eyes:1.5)` 不会被识别为不同 tag；保留首次出现项（含其权重设置）
    */
-  characterTraits?: string[];
+  characterTraits?: Array<{ text: string; weight?: number }>;
 
   /**
    * 人物数量约束 tag（Spec: fix-asset-trait-and-scene-defects / Task 2）。
@@ -160,37 +170,17 @@ export interface SDGenerationOptions {
   characterGenderTag?: string;
 
   /**
-   * 动态场景服装提示词（Spec: add-dynamic-scene-prompt-generation / Task 8）。
+   * 视角镜头提示词（2026-08-06 新增）。
    *
-   * 【重点标记 - 动态场景字段】Spec: add-dynamic-scene-prompt-generation / Task 8
-   * 由 `AssetGenerateModal.buildSdOptions` 从 store 的激活动态场景方案中读取并填充：
-   * - 英文 SD tag 字符串，逗号分隔（如 `"gothic dress, black lace, choker"`）
-   * - 无激活动态场景方案时为 `undefined`，由 `applyTraitsAndLora` 替换 `{clothing}` 为空字符串
-   * - 仅 illustration / general 模板含 `{clothing}` 占位符（three-view 模板不含）
+   * 【2026-08-06 新增 - 视角镜头下拉】
+   * 由 `AssetGenerateModal.buildSdOptions` 从视角镜头下拉选择（CameraAngleSelector）读取并填充：
+   * - 英文 SD tag 字符串（如 `"from above"` / `"wide shot"` / `"dutch angle"`）
+   * - 未选择时为 `undefined`，由 `applyTraitsAndLora` 替换 `{camera}` 为空字符串并清理多余逗号
+   * - 仅 illustration / general 模板含 `{camera}` 占位符（three-view 模板不含，固定 view 避免冲突）
+   * - 表情模板（buildExpressionGenerationPrompt）默认不含 `{camera}`，透传无副作用
+   * - 标签来源：Danbooru 训练标签（Pony / SDXL anime 系列模型语义基础）
    */
-  dynamicClothing?: string;
-  /**
-   * 动态场景动作提示词（Spec: add-dynamic-scene-prompt-generation / Task 8）。
-   *
-   * 【重点标记 - 动态场景字段】Spec: add-dynamic-scene-prompt-generation / Task 8
-   * - 英文 SD tag 字符串，逗号分隔（如 `"riding motorcycle, leaning forward"`）
-   * - 无激活动态场景方案时为 `undefined`；立绘模式由 `buildSdOptions` 兜底为 `"standing"`，
-   *   保持原模板行为（与原 `full body, standing, ...` 一致）
-   * - 由 `applyTraitsAndLora` 替换提示词模板中的 `{pose}` 占位符
-   */
-  dynamicPose?: string;
-  /**
-   * 动态场景环境提示词（Spec: add-dynamic-scene-prompt-generation / Task 8）。
-   *
-   * 【重点标记 - 动态场景字段】Spec: add-dynamic-scene-prompt-generation / Task 8
-   * - 英文 SD tag 字符串，逗号分隔（如 `"highway, motion blur, sunset"`）
-   * - 无激活动态场景方案时为 `undefined`：
-   *   - 立绘模式由 `buildSdOptions` 兜底为 `"simple background"`（保持原模板行为）
-   *   - 一般图像模式由 `buildSdOptions` 回退到用户输入的 `userScene`
-   *   - 三视图不使用此字段（模板不含 `{scene}` 占位符）
-   * - 由 `applyTraitsAndLora` 替换提示词模板中的 `{scene}` 占位符
-   */
-  dynamicScene?: string;
+  dynamicCamera?: string;
 
   /**
    * ADetailer 高级参数（Spec: add-ai-expression-generation / Task 6 扩展，2026-07-27）
@@ -207,6 +197,18 @@ export interface SDGenerationOptions {
    */
   /** ADetailer 检测模型，默认 "face_yolov8n.pt" */
   adModel?: string;
+  /**
+   * ADetailer 检测类别（2026-08-07 新增，仅 YOLO-World 模型生效）。
+   *
+   * 【重点标记 - Furry/拟人生物面部识别扩展】
+   * 源码位置：ADetailer-Neo args.py `ad_model_classes`。
+   * 仅当 adModel 为 YOLO-World 系列（文件名含 "world"）时生效，
+   * 透传给 ultralytics_predict 的 classes 参数实现零样本开放词汇检测。
+   * 空字符串=使用模型默认 COCO 80 类；填入文本提示如
+   * "furry face, anthro head, animal head, kemono face" 可检测任意类别。
+   * 非 YOLO-World 模型此字段被忽略。
+   */
+  adModelClasses?: string;
   /** 检测置信度阈值（0.0-1.0），默认 0.3 */
   adConfidence?: number;
   /** ADetailer 面部修复去噪强度（0.0-1.0），默认 0.4 */
@@ -779,41 +781,76 @@ class SDGenerationService {
 
     // ===== {traits} 占位符替换 =====
     const traitsRaw = options.characterTraits || [];
+    // ⚠️ 【重点标记 - SD 生成前去重】2026-08-07 用户反馈：
+    // 若 characterTraits 含重复 tag（如 [{text:'dog_girl'}, {text:'dog_girl'}, {text:'white_fur'}]），
+    // 未去重直接拼接会导致 SD 对该 tag 多次加权，影响生成质量。
+    // 此处对 trim 后的 text 做大小写不敏感去重（保留首次出现的项，维持原有顺序）。
+    // 前端 enabledTraitTexts 已做源头去重，此处为防御性兜底，保护所有调用方
+    // （含 expression 生成等其他路径可能传入未去重的 traits）。
+    //
+    // 「应用层去重已足够」是错误假设——prompt 构建链路最后一环（注入 SD prompt 前）必须做防御性去重。
+    //
+    // 【重点标记 - SDXL 权重格式化（Spec: add-sdxl-prompt-weight-support / Task 2）】
+    // 每个项可携带 weight 字段（默认 1.0 / undefined）。对 `weight !== 1.0 && weight !== undefined`
+    // 的项格式化为 Forge Neo 兼容的 `(text:weight)` 语法（如 `(blue_eyes:1.5)`，冒号两侧无空格），
+    // 参考 modules/prompt_parser.py 的 lark 规则 `:\s*([+-]?[.\d]+)\s*\)`。
+    // 关键：去重 key 必须使用 text.toLowerCase()（不带权重语法），否则 `blue_eyes` 与
+    // `(blue_eyes:1.5)` 不会被识别为重复。先计算 formatted text，再以 text 为 key 去重，
+    // 保留首次出现项（含其权重设置——若 weight=1.5 的项先出现，weight=0.8 的重复项会被丢弃）。
+    // 使用 Math.round(weight * 10) / 10 保留 1 位小数精度，避免浮点误差（如 1.5000000001）。
+    const seenKeys = new Set<string>();
     const traitsStr = traitsRaw
-      .map((t) => (typeof t === 'string' ? t.trim() : ''))
-      .filter((t) => t.length > 0)
+      .map((t) => {
+        const text = (t?.text ?? '').trim();
+        if (text.length === 0) return { formatted: '', key: '' };
+        // 权重格式化：仅对 weight !== undefined && weight !== 1.0 的项应用 (text:weight) 语法
+        const w = t.weight;
+        const hasNonDefaultWeight = w !== undefined && w !== 1.0;
+        const formatted = hasNonDefaultWeight
+          ? `(${text}:${Math.round(w! * 10) / 10})`
+          : text;
+        return { formatted, key: text.toLowerCase() };
+      })
+      .filter((entry) => {
+        if (entry.formatted.length === 0) return false;
+        if (seenKeys.has(entry.key)) return false;
+        seenKeys.add(entry.key);
+        return true;
+      })
+      .map((entry) => entry.formatted)
       .join(', ');
     // 【Bug 修复 - tag 数量不符】日志记录输入特征数与最终拼接字符串，
     // 便于用户对照「特征生成阶段 tag 数」与「图片生成阶段 tag 数」是否一致
     const nonEmptyTraitCount = traitsRaw.filter(
-      (t) => typeof t === 'string' && t.trim().length > 0,
+      (t) => (t?.text ?? '').trim().length > 0,
     ).length;
+    const dedupedCount = seenKeys.size;
+    // 【Spec: add-sdxl-prompt-weight-support / Task 2 - SubTask 2.4】
+    // 统计带非默认权重的 tag 数量，便于调试 prompt 权重注入是否正确
+    const weightedCount = traitsRaw.filter(
+      (t) => t.weight !== undefined && t.weight !== 1.0,
+    ).length;
+    if (dedupedCount < nonEmptyTraitCount) {
+      console.warn(
+        `[sdGenerationService] applyTraitsAndLora: 检测到 ${nonEmptyTraitCount - dedupedCount} 条重复 tag，已去重（${nonEmptyTraitCount} → ${dedupedCount}）`,
+      );
+    }
     console.log(
-      '[sdGenerationService] applyTraitsAndLora: 输入特征',
-      nonEmptyTraitCount,
-      '条，拼接为:',
+      `[sdGenerationService] applyTraitsAndLora: Applied ${dedupedCount} traits (${weightedCount} with non-default weight), 拼接为:`,
       traitsStr || '(空)',
     );
     result = result.replace(/\{traits\}/g, () => traitsStr);
 
-    // ===== {clothing} / {pose} / {scene} 占位符替换 =====
-    // 【重点标记 - 动态场景占位符】Spec: add-dynamic-scene-prompt-generation / Task 8
-    // - 读取 SDGenerationOptions.dynamicClothing / dynamicPose / dynamicScene
-    // - 任一字段为 undefined / null 时替换为空字符串（兜底由 buildSdOptions 处理，本方法保持通用）
-    // - 仅 illustration / general 模板含这些占位符（three-view 模板不含，无副作用）
-    // - 替换后由下方统一的逗号清理逻辑处理空替换产生的多余逗号（与 {traits} 共用清理路径）
-    const clothingStr = options.dynamicClothing ?? '';
-    const poseStr = options.dynamicPose ?? '';
-    const sceneStr = options.dynamicScene ?? '';
+    // ===== {camera} 占位符替换 =====
+    // 【2026-08-06 新增】{camera} 占位符：视角镜头下拉选择（dynamicCamera）
+    // - 未选择时为 undefined，替换为空字符串，由下方统一逗号清理逻辑处理多余逗号
+    // - 仅 illustration / general 模板含 {camera} 占位符（three-view 模板不含，固定 view 避免冲突）
+    const cameraStr = options.dynamicCamera ?? '';
     console.log(
-      '[sdGenerationService] applyTraitsAndLora: 动态场景字段',
-      'clothing=', clothingStr || '(空)',
-      'pose=', poseStr || '(空)',
-      'scene=', sceneStr || '(空)',
+      '[sdGenerationService] applyTraitsAndLora: camera 字段',
+      'camera=', cameraStr || '(空)',
     );
-    result = result.replace(/\{clothing\}/g, () => clothingStr);
-    result = result.replace(/\{pose\}/g, () => poseStr);
-    result = result.replace(/\{scene\}/g, () => sceneStr);
+    result = result.replace(/\{camera\}/g, () => cameraStr);
 
     // ===== 注入人物数量约束 tag（高分辨率时防止生成多角色）=====
     // 【重点标记 - 高分辨率约束】Spec: fix-asset-trait-and-scene-defects / Task 2
@@ -832,8 +869,8 @@ class SDGenerationService {
       }
     }
 
-    // 清理 {traits} / {clothing} / {pose} / {scene} 替换后可能产生的多余逗号与空格
-    // 场景：模板 `portrait, {traits}, {clothing}, looking at viewer` + 空 traits + 空 clothing
+    // 清理 {traits} / {camera} 替换后可能产生的多余逗号与空格
+    // 场景：模板 `portrait, {traits}, {camera}, looking at viewer` + 空 traits + 空 camera
     //       → `portrait, , , looking at viewer`
     let prevPrompt: string;
     do {
@@ -1218,6 +1255,19 @@ class SDGenerationService {
       // 增大倍率可增加面部修复细节丰富度，但过高可能引入噪声。默认 1.0（标准）。
       adArgs.ad_use_noise_multiplier = options.adUseNoiseMultiplier ?? true;
       adArgs.ad_noise_multiplier = options.adNoiseMultiplier ?? 1.0;
+
+      // 【重点标记 - Furry/拟人生物面部识别扩展（2026-08-07）】
+      // 仅当 adModel 为 YOLO-World 系列（文件名含 "world"）时透传 ad_model_classes，
+      // 实现「零样本开放词汇检测」：用户可填入文本提示如
+      // "furry face, anthro head, animal head, kemono face" 检测任意类别。
+      // 非 YOLO-World 模型此字段被 ADetailer-Neo 忽略，且 ultralytics_predict 仅在
+      // model 是 YOLO-World 实例时才消费 classes 参数，因此条件透传避免无效负载。
+      // 源码：ADetailer-Neo args.py `ad_model_classes` + ultralytics_predict `classes`。
+      const isYoloWorldModel = adModel.toLowerCase().includes('world');
+      const adModelClassesValue = options.adModelClasses?.trim();
+      if (isYoloWorldModel && adModelClassesValue) {
+        adArgs.ad_model_classes = adModelClassesValue;
+      }
 
       requestBody.alwayson_scripts = {
         ADetailer: {

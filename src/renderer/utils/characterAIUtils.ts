@@ -23,10 +23,7 @@ function buildAIRequestOptions(
     baseUrl: engine.api_url,
     apiKey: engine.api_key,
     messages,
-    temperature,
-    maxTokens: (typeof engine.max_tokens === 'number' && engine.max_tokens > 0)
-      ? engine.max_tokens
-      : 10240
+    temperature
   };
 }
 

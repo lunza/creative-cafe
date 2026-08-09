@@ -358,6 +358,14 @@ export function getMemoryStore(config?: MemoryStoreConfig): MemoryStore {
 }
 
 /**
+ * 检查 MemoryStore 是否已初始化。
+ * 用于在调用 getMemoryStore() 前判断是否可用，避免抛错。
+ */
+export function isMemoryStoreInitialized(): boolean {
+  return memoryStoreInstance !== null;
+}
+
+/**
  * 重置 MemoryStore 单例（仅测试用）。
  */
 export function resetMemoryStore(): void {

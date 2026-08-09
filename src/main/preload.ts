@@ -109,6 +109,67 @@ contextBridge.exposeInMainWorld('electronAPI', {
     search: (args: { query: string; maxResults?: number }) =>
       ipcRenderer.invoke('webSearch:search', args),
   },
+  // ============================================================================
+  // 标签自动推荐 API（Spec: implement-local-tag-autocomplete / Task 3）
+  // ============================================================================
+  // 4 个 IPC 通道：tag:search / tag:getLoadStatus / tag:reload / tag:setCsvPath
+  // 用于 AssetGenerateModal 临时标签输入框的实时推荐，调用 tagAutocompleteService
+  tag: {
+    // 查询标签库（子串匹配 + 排序，返回最多 50 条结果）
+    search: (args: { query: string; sortBy?: 'relevance' | 'count' | 'alphabetical'; limit?: number }) =>
+      ipcRenderer.invoke('tag:search', args),
+    // 获取加载状态（loaded / loading / totalCount / csvPath / error?）
+    getLoadStatus: () => ipcRenderer.invoke('tag:getLoadStatus'),
+    // 重新加载标签库（不传 csvPath 沿用当前路径；传入则切换路径并重新加载）
+    reload: (args?: { csvPath?: string }) => ipcRenderer.invoke('tag:reload', args),
+    // 设置新 CSV 路径并重新加载（必传 csvPath；语义等同于 tag:reload 传 csvPath）
+    setCsvPath: (args: { csvPath: string }) => ipcRenderer.invoke('tag:setCsvPath', args),
+  },
+  // ============================================================================
+  // RAG 标签库 API（Spec: rag-tag-library-for-ai-trait-generation / Task 8）
+  // ============================================================================
+  // 5 个 IPC 通道 + 1 个进度事件订阅：
+  //   tagRag:getStatus / startVectorization / cancelVectorization / search / clearIndex
+  //   tagRag:progress（主进程 → 渲染进程单向广播，向量化进度）
+  // 用于将 31.7 万标签向量化后语义检索，引导 AI 使用有效标签（防止生成标签库以外的新 tag）
+  //
+  // 多轮标签审计扩展（Spec: add-multi-round-tag-audit / Task 1.3）：
+  //   tagRag:getUserSynonymMap / addUserSynonymMapping / removeUserSynonymMapping
+  //   用于末轮人工审核入口持久化用户指定的替换映射，下次 L0 首轮命中
+  tagRag: {
+    // 获取当前状态快照（idle / vectorizing / ready / error / stale）
+    getStatus: () => ipcRenderer.invoke('tagRag:getStatus'),
+    // 启动向量化（异步长任务，返回时已完成；进度通过 onProgress 实时推送）
+    startVectorization: (args?: { force?: boolean }) =>
+      ipcRenderer.invoke('tagRag:startVectorization', args),
+    // 取消进行中的向量化（在当前批次结束后生效）
+    cancelVectorization: () => ipcRenderer.invoke('tagRag:cancelVectorization'),
+    // 语义检索相关标签（query 必填；返回 score 降序的相关标签列表）
+    search: (args: {
+      query: string;
+      topK?: number;
+      minScore?: number;
+      categoryFilter?: number[];
+    }) => ipcRenderer.invoke('tagRag:search', args),
+    // 清空索引（删除向量数据 + meta 文件；vectorizing 中需先 cancel）
+    clearIndex: () => ipcRenderer.invoke('tagRag:clearIndex'),
+    // 订阅向量化进度事件（返回取消订阅函数）
+    onProgress: (callback: (event: any) => void) => {
+      const listener = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('tagRag:progress', listener);
+      return () => {
+        ipcRenderer.removeListener('tagRag:progress', listener);
+      };
+    },
+    // 读取用户自定义同义词映射表（key 小写 → 替换词；文件不存在/损坏返回空对象）
+    getUserSynonymMap: () => ipcRenderer.invoke('tagRag:getUserSynonymMap'),
+    // 新增/更新一条用户自定义同义词映射（末轮人工审核替换时调用，持久化到 user-synonym-map.json）
+    addUserSynonymMapping: (args: { original: string; replacement: string }) =>
+      ipcRenderer.invoke('tagRag:addUserSynonymMapping', args),
+    // 删除一条用户自定义同义词映射（撤销手动替换时调用；幂等）
+    removeUserSynonymMapping: (args: { original: string }) =>
+      ipcRenderer.invoke('tagRag:removeUserSynonymMapping', args),
+  },
   character: {
     list: () => ipcRenderer.invoke('character:list'),
     read: (path: string) => ipcRenderer.invoke('character:read', path),
@@ -255,15 +316,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 返回 { success, traits?: CategorizedTrait[], appearanceDescription?: string, error?: string }，traits 可能为空数组
     recognizeImageTraits: (args: { characterCardPath: string; characterName?: string }) =>
       ipcRenderer.invoke('ai:recognizeImageTraits', args),
-    // 动态场景提示词生成（Spec: add-dynamic-scene-prompt-generation / Task 3）
-    // 将自然语言指令解析为三组英文 SD tag（服装/动作/场景），未提及的维度返回空字符串
-    // 入参：{ naturalLanguageInput: string, baseTraits?: string }
-    // 返回：{ success, clothing?, pose?, scene?, error? } —— 三个字段均为逗号分隔的英文 tag 字符串
-    // 错误场景：空输入（不调用 LLM）/ AI 引擎未配置 / 调用失败 / 解析失败
-    generateDynamicScenePrompts: (args: {
-      naturalLanguageInput: string;
+    // 提示词生成（Spec: add-prompt-generation-in-asset-modal）
+    // 入参：{ prompt: string, baseTraits?: string }
+    // 返回：{ success, traits?: CategorizedTrait[], error?, ragDebug? }
+    //   - traits 携带 categoryId / translation / originalText，可直接追加到 editedTraits
+    //   - ragDebug 为 L0-L5 审计质检报告（与 generateCharacterTraits.ragDebug 结构兼容）
+    // 错误场景：空输入（不调用 LLM）/ AI 引擎未配置 / 引擎参数缺失 / 调用失败 / 解析失败
+    generateTraitPrompts: (args: {
+      prompt: string;
       baseTraits?: string;
-    }) => ipcRenderer.invoke('ai:generateDynamicScenePrompts', args),
+    }) => ipcRenderer.invoke('ai:generateTraitPrompts', args),
     // 探测 AI 模型能力（Spec: add-model-capability-detection-and-image-recognition / Task 3）
     // 并行探测 vision / thinking / tool-calling，返回 { success, capabilities?, error? }
     probeCapabilities: (args: { apiUrl: string; apiKey: string; apiKeyTransmission: string; modelName: string }) =>
@@ -1150,5 +1212,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 加载会话消息历史（文件不存在时返回空数组）
     loadMessages: (characterCardId: string, sessionId: string) =>
       ipcRenderer.invoke('session:loadMessages', { characterCardId, sessionId }),
+  },
+
+  // ============================================================================
+  // 缩略图管线 API（Spec: optimize-system-rendering-performance / Task 7）
+  // ============================================================================
+  // 2 个 IPC 通道（主进程实现见 thumbnailHandlers.ts / thumbnailService.ts）：
+  //   - thumbnail:get          生成/读取缩略图 dataUrl（命中内存→磁盘→重新生成）
+  //   - thumbnail:invalidate    粗粒度清空全部缩略图缓存（内存 LRU + 磁盘目录）
+  // 供渲染进程 <LazyImage>（Task 6.1）+ imageCache（Task 8.1）走 IPC 取压缩缩略图，
+  // 避免渲染进程直接加载大图导致首屏/滚动掉帧。基于 Electron nativeImage（零新原生依赖）。
+  // 返回的 dataUrl 可直接用于 <img src>（CSP 兼容，无需渲染进程再读盘）。
+  thumbnail: {
+    // 生成或读取指定源图片的缩略图 dataUrl
+    // 成功返回 { dataUrl, mime, fromCache }；失败返回 { error }
+    get: (args: { sourcePath: string; size?: 256 | 384 }) =>
+      ipcRenderer.invoke('thumbnail:get', args),
+    // 粗粒度清空全部缩略图缓存（内存 LRU + 磁盘 thumbnails 目录内容）
+    invalidate: () => ipcRenderer.invoke('thumbnail:invalidate'),
   }
 });

@@ -586,18 +586,7 @@
    全局滑块暗色主题 - Global Slider Dark Theme
    ========================================================================== */
 
-.dark .ant-slider-rail {
-  background-color: var(--border-base);
-}
-
-.dark .ant-slider-track {
-  background-color: var(--color-primary);
-}
-
-.dark .ant-slider-handle {
-  background-color: var(--bg-container);
-  border-color: var(--color-primary);
-}
+/* 滑块暗色主题已迁移至 antd-v6-fixes.css */
 
 /* ==========================================================================
    全局日期选择器暗色主题 - Global DatePicker Dark Theme

@@ -181,17 +181,10 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
           content: text
         }
       ],
-      max_tokens: maxTokens,
+      
       temperature: temperature,
       top_p: topP,
-      n: 1,
-      stream: false,
-      stop: null,
-      extra_body: {
-        chat_template_kwargs: {
-          enable_thinking: false
-        }
-      }
+      stream: false
     };
 
     // 根据传输方式添加API密钥
@@ -299,10 +292,9 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
-        max_tokens: maxTokens,
+        
         temperature: temperature,
         top_p: topP,
-        n: 1,
         stream: false
       };
 
@@ -405,17 +397,10 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
           content: text
         }
       ],
-      max_tokens: maxTokens,
+      
       temperature: temperature,
       top_p: topP,
-      n: 1,
-      stream: false,
-      stop: null,
-      extra_body: {
-        chat_template_kwargs: {
-          enable_thinking: false
-        }
-      }
+      stream: false
     };
 
     // 根据传输方式添加API密钥
@@ -494,7 +479,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
   };
 
   // 辅助函数：审核单个文本
-  const auditText = async (text: string, apiUrl: string, apiKey: string, apiMode: string, modelName: string, apiKeyTransmission: string, requirements: string = '', worldBookDescription: string = '', maxTokens: number = 10240, temperature: number = 0.7, topP: number = 0.95, globalSystemPrompt: string = ''): Promise<{ passed: boolean; suggestions: string; revisedText: string }> => {
+  const auditText = async (text: string, apiUrl: string, apiKey: string, apiMode: string, modelName: string, apiKeyTransmission: string, requirements: string = '', worldBookDescription: string = '', maxTokens: number = 10240, temperature: number = 0.7, topP: number = 0.95, globalSystemPrompt: string = ''): Promise<{ passed: boolean; suggestions: string; revisedText: string; optimizationSuggestions?: string; optimizedText?: string }> => {
     if (!text || text.trim() === '') {
       return { passed: true, suggestions: '内容为空，无需审核', revisedText: text };
     }
@@ -548,17 +533,10 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
           content: text
         }
       ],
-      max_tokens: maxTokens,
+      
       temperature: temperature,
       top_p: topP,
-      n: 1,
-      stream: false,
-      stop: null,
-      extra_body: {
-        chat_template_kwargs: {
-          enable_thinking: false
-        }
-      }
+      stream: false
     };
 
     // API Key 传输
@@ -612,7 +590,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       const parsed = parseAIJsonResponse(cleanedResponse);
       if (!parsed || typeof parsed.passed !== 'boolean') {
         addLog(`[WorldBook] auditText: JSON解析失败, 原始响应: ${cleanedResponse.substring(0, 200)}`, 'warn');
-        return { passed: false, suggestions: 'AI返回格式解析失败，请重试', revisedText: text };
+        return { passed: false, suggestions: 'AI返回格式解析失败，请重试', revisedText: text, optimizationSuggestions: undefined, optimizedText: undefined };
       }
 
       const endTime = Date.now();
@@ -621,8 +599,10 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
 
       return {
         passed: parsed.passed,
-        suggestions: parsed.suggestions || '',
-        revisedText: parsed.revisedText || text
+        suggestions: parsed.suggestions || (parsed.passed ? '审核通过：内容在正确性、主题一致性、格式规范性、语言表达四个维度均符合要求。' : '未提供具体说明'),
+        revisedText: parsed.revisedText || text,
+        optimizationSuggestions: parsed.passed ? (parsed.optimizationSuggestions || '内容已较为完善，暂无进一步优化建议') : undefined,
+        optimizedText: parsed.passed ? (parsed.optimizedText || text) : undefined,
       };
     } catch (error) {
       addLog(`[WorldBook] 审核失败: ${error instanceof Error ? error.message : '未知错误'}`, 'error');
@@ -697,15 +677,10 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ],
-      max_tokens: maxTokensVal,
+      
       temperature: tempVal,
       top_p: topPVal,
-      n: 1,
-      stream: false,
-      stop: null,
-      chat_template_kwargs: {
-        enable_thinking: false
-      }
+      stream: false
     };
 
     // 添加 API 密钥
@@ -952,7 +927,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       const apiKey = activeEngine.api_key;
       const apiMode = activeEngine.api_mode;
       const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
-      const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
+      const apiKeyTransmission = activeEngine.api_key_transmission || 'header';
       const maxTokens = (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240;
       const temperature = (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : 0.7;
       const topP = (typeof activeEngine.top_p === 'number' && activeEngine.top_p >= 0 && activeEngine.top_p <= 1) ? activeEngine.top_p : 0.95;
@@ -1051,7 +1026,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       const apiKey = activeEngine.api_key;
       const apiMode = activeEngine.api_mode;
       const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
-      const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
+      const apiKeyTransmission = activeEngine.api_key_transmission || 'header';
       const maxTokens = (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240;
       const temperature = (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : 0.7;
       const topP = (typeof activeEngine.top_p === 'number' && activeEngine.top_p >= 0 && activeEngine.top_p <= 1) ? activeEngine.top_p : 0.95;
@@ -1270,7 +1245,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       const apiKey = activeEngine.api_key;
       const apiMode = activeEngine.api_mode;
       const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
-      const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
+      const apiKeyTransmission = activeEngine.api_key_transmission || 'header';
       const maxTokens = (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240;
       const temperature = (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : 0.7;
       const topP = (typeof activeEngine.top_p === 'number' && activeEngine.top_p >= 0 && activeEngine.top_p <= 1) ? activeEngine.top_p : 0.95;
@@ -1411,7 +1386,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       const apiKey = activeEngine.api_key;
       const apiMode = activeEngine.api_mode;
       const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
-      const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
+      const apiKeyTransmission = activeEngine.api_key_transmission || 'header';
       const maxTokens = (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240;
       const temperature = (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : 0.7;
       const topP = (typeof activeEngine.top_p === 'number' && activeEngine.top_p >= 0 && activeEngine.top_p <= 1) ? activeEngine.top_p : 0.95;
@@ -1583,7 +1558,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       const apiKey = activeEngine.api_key;
       const apiMode = activeEngine.api_mode;
       const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
-      const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
+      const apiKeyTransmission = activeEngine.api_key_transmission || 'header';
       const maxTokens = (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240;
       const temperature = (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : 0.7;
       const topP = (typeof activeEngine.top_p === 'number' && activeEngine.top_p >= 0 && activeEngine.top_p <= 1) ? activeEngine.top_p : 0.95;
@@ -1623,19 +1598,22 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       return;
     }
 
-    // 单字段模式：更新 formValues
-    setFormValues(prev => ({ ...prev, [currentAuditField]: auditResult.revisedText }));
+    // 单字段模式：通过时采用优化文本，不通过时采用修改后文本
+    const textToApply = auditResult.passed ? (auditResult.optimizedText || auditResult.revisedText) : auditResult.revisedText;
+    setFormValues(prev => ({ ...prev, [currentAuditField]: textToApply }));
     message.success('已采用审核文本');
     setIsAuditResultModalOpen(false);
     setAuditResult(null);
-    addLog(`[WorldBook] 用户采用审核文本, 字段=${currentAuditField}`);
+    addLog(`[WorldBook] 用户采用审核文本, 字段=${currentAuditField}, passed=${auditResult.passed}`);
   };
 
   const applyAuditResultForBatch = () => {
     if (!auditResult) {
       return;
     }
-    batchAppliedTextRef.current = auditResult.revisedText;
+    // 批量模式：通过时采用优化文本，不通过时采用修改后文本
+    const textToApply = auditResult.passed ? (auditResult.optimizedText || auditResult.revisedText) : auditResult.revisedText;
+    batchAppliedTextRef.current = textToApply;
     isAuditResultModalOpenRef.current = false;
     setIsAuditResultModalOpen(false);
     setAuditResult(null);
@@ -1682,7 +1660,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       const apiKey = activeEngine.api_key;
       const apiMode = activeEngine.api_mode;
       const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
-      const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
+      const apiKeyTransmission = activeEngine.api_key_transmission || 'header';
       const maxTokens = (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240;
       const temperature = (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : 0.7;
       const topP = (typeof activeEngine.top_p === 'number' && activeEngine.top_p >= 0 && activeEngine.top_p <= 1) ? activeEngine.top_p : 0.95;
@@ -1771,7 +1749,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       const apiKey = activeEngine.api_key;
       const apiMode = activeEngine.api_mode;
       const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
-      const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
+      const apiKeyTransmission = activeEngine.api_key_transmission || 'header';
       const maxTokens = (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240;
       const temperature = (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : 0.7;
       const topP = (typeof activeEngine.top_p === 'number' && activeEngine.top_p >= 0 && activeEngine.top_p <= 1) ? activeEngine.top_p : 0.95;
@@ -1838,17 +1816,10 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
-        max_tokens: maxTokens,
+        
         temperature: temperature,
         top_p: topP,
-        n: 1,
-        stream: false,
-        stop: null,
-        extra_body: {
-          chat_template_kwargs: {
-            enable_thinking: false
-          }
-        }
+        stream: false
       };
 
       // 根据传输方式添加API密钥
@@ -2022,7 +1993,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       const apiKey = activeEngine.api_key;
       const apiMode = activeEngine.api_mode;
       const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
-      const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
+      const apiKeyTransmission = activeEngine.api_key_transmission || 'header';
       const maxTokens = (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240;
       const temperature = (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : 0.7;
       const topP = (typeof activeEngine.top_p === 'number' && activeEngine.top_p >= 0 && activeEngine.top_p <= 1) ? activeEngine.top_p : 0.95;
@@ -2086,16 +2057,10 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
-        max_tokens: maxTokens,
+        
         temperature: temperature,
         top_p: topP,
-        n: 1,
-        stream: false,
-        extra_body: {
-          chat_template_kwargs: {
-            enable_thinking: false
-          }
-        }
+        stream: false
       };
 
       // 根据传输方式添加API密钥
@@ -2132,11 +2097,11 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       const data = result.data;
       let aiResponse = data.choices?.[0]?.message?.content || '';
 
-      // 检测是否因 max_tokens 不足导致生成被截断
+      // 检测是否因输出长度限制导致生成被截断
       const finishReason = data.choices?.[0]?.finish_reason;
       if (finishReason === 'length') {
-        addLog(`[WorldBook] AI 生成可能因 max_tokens(${maxTokens})不足被截断 (finish_reason=length)`, 'warn');
-        message.warning('AI 生成内容可能因 max_tokens 不足被截断，建议调大 max_tokens 或减少生成条目数');
+        addLog(`[WorldBook] AI 生成可能被截断 (finish_reason=length)`, 'warn');
+        message.warning('AI 生成内容可能被截断，建议减少生成条目数或缩短提示词');
       }
 
       // 清理响应，提取JSON
@@ -2242,10 +2207,10 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       const apiUrl = activeEngine.api_url;
       const apiKey = activeEngine.api_key;
       const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
-      const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
+      const apiKeyTransmission = activeEngine.api_key_transmission || 'header';
       const maxTokens = (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240;
       const temperature = (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : 0.7;
-      const topP = Number(activeEngine.top_p) ?? (() => { throw new Error('未配置 top_p 参数') })();
+      const topP = (typeof activeEngine.top_p === 'number' && activeEngine.top_p >= 0 && activeEngine.top_p <= 1) ? activeEngine.top_p : 0.95;
 
       if (!apiUrl) {
         message.error('API地址不能为空');
@@ -2280,10 +2245,9 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
           { role: 'system', content: finalSystemPrompt },
           { role: 'user', content: userPrompt }
         ],
-        max_tokens: maxTokens,
+        
         temperature: temperature,
         top_p: topP,
-        n: 1,
         stream: false
       };
 
@@ -2374,10 +2338,10 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       const apiKey = activeEngine.api_key;
       const apiMode = activeEngine.api_mode;
       const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
-      const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
+      const apiKeyTransmission = activeEngine.api_key_transmission || 'header';
       const maxTokens = (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240;
       const temperature = (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : 0.7;
-      const topP = Number(activeEngine.top_p) ?? (() => { throw new Error('未配置 top_p 参数') })();
+      const topP = (typeof activeEngine.top_p === 'number' && activeEngine.top_p >= 0 && activeEngine.top_p <= 1) ? activeEngine.top_p : 0.95;
 
       addLog(`[WorldBook] 关键词扩写API配置: URL=${apiUrl}, Mode=${apiMode}, Model=${modelName}, Transmission=${apiKeyTransmission}, MaxTokens=${maxTokens}, Temperature=${temperature}, TopP=${topP}`);
 
@@ -2422,16 +2386,10 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
           { role: 'system', content: finalSystemPrompt },
           { role: 'user', content: keywords }
         ],
-        max_tokens: maxTokens,
+        
         temperature: temperature,
         top_p: topP,
-        n: 1,
-        stream: false,
-        extra_body: {
-          chat_template_kwargs: {
-            enable_thinking: false
-          }
-        }
+        stream: false
       };
 
       // 根据传输方式添加API密钥
@@ -2501,10 +2459,10 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       const apiKey = activeEngine.api_key;
       const apiMode = activeEngine.api_mode;
       const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
-      const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
+      const apiKeyTransmission = activeEngine.api_key_transmission || 'header';
       const maxTokens = (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240;
       const temperature = (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : 0.7;
-      const topP = Number(activeEngine.top_p) ?? (() => { throw new Error('未配置 top_p 参数') })();
+      const topP = (typeof activeEngine.top_p === 'number' && activeEngine.top_p >= 0 && activeEngine.top_p <= 1) ? activeEngine.top_p : 0.95;
 
       addLog(`[WorldBook] 生成描述API配置: URL=${apiUrl}, Mode=${apiMode}, Model=${modelName}, Transmission=${apiKeyTransmission}, MaxTokens=${maxTokens}, Temperature=${temperature}, TopP=${topP}`);
 
@@ -2551,16 +2509,10 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
           { role: 'system', content: finalSystemPrompt },
           { role: 'user', content: userPrompt }
         ],
-        max_tokens: maxTokens,
+        
         temperature: temperature,
         top_p: topP,
-        n: 1,
-        stream: false,
-        extra_body: {
-          chat_template_kwargs: {
-            enable_thinking: false
-          }
-        }
+        stream: false
       };
 
       // 根据传输方式添加API密钥
@@ -2626,10 +2578,10 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       const apiUrl = activeEngine.api_url;
       const apiKey = activeEngine.api_key;
       const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
-      const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
+      const apiKeyTransmission = activeEngine.api_key_transmission || 'header';
       const maxTokens = (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240;
       const temperature = (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : 0.7;
-      const topP = Number(activeEngine.top_p) ?? (() => { throw new Error('未配置 top_p 参数') })();
+      const topP = (typeof activeEngine.top_p === 'number' && activeEngine.top_p >= 0 && activeEngine.top_p <= 1) ? activeEngine.top_p : 0.95;
 
       if (!apiUrl) {
         message.error('API地址不能为空');
@@ -2687,12 +2639,10 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
           { role: 'system', content: finalSystemPrompt },
           { role: 'user', content: userPrompt }
         ],
-        max_tokens: maxTokens,
+        
         temperature,
         top_p: topP,
-        n: 1,
-        stream: false,
-        extra_body: { chat_template_kwargs: { enable_thinking: false } }
+        stream: false
       };
 
       if (apiKey) {
@@ -2751,10 +2701,10 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       const apiKey = activeEngine.api_key;
       const apiMode = activeEngine.api_mode;
       const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
-      const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
+      const apiKeyTransmission = activeEngine.api_key_transmission || 'header';
       const maxTokens = (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240;
       const temperature = (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : 0.7;
-      const topP = Number(activeEngine.top_p) ?? (() => { throw new Error('未配置 top_p 参数') })();
+      const topP = (typeof activeEngine.top_p === 'number' && activeEngine.top_p >= 0 && activeEngine.top_p <= 1) ? activeEngine.top_p : 0.95;
 
       const worldBookDescription = worldBookContent?.description || '';
 
@@ -2892,10 +2842,10 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       const apiUrl = activeEngine.api_url;
       const apiKey = activeEngine.api_key;
       const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
-      const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
+      const apiKeyTransmission = activeEngine.api_key_transmission || 'header';
       const maxTokens = (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240;
       const temperature = (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : 0.7;
-      const topP = Number(activeEngine.top_p) ?? (() => { throw new Error('未配置 top_p 参数') })();
+      const topP = (typeof activeEngine.top_p === 'number' && activeEngine.top_p >= 0 && activeEngine.top_p <= 1) ? activeEngine.top_p : 0.95;
 
       // 构建请求 URL 和请求体
       let requestUrl;
@@ -2915,16 +2865,10 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
-        max_tokens: maxTokens,
+        
         temperature: temperature,
         top_p: topP,
-        n: 1,
-        stream: false,
-        extra_body: {
-          chat_template_kwargs: {
-            enable_thinking: false
-          }
-        }
+        stream: false
       };
 
       // 根据传输方式添加API密钥
@@ -3055,10 +2999,10 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       const apiKey = activeEngine.api_key;
       const apiMode = activeEngine.api_mode;
       const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
-      const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
+      const apiKeyTransmission = activeEngine.api_key_transmission || 'header';
       const maxTokens = (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240;
       const temperature = (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : 0.7;
-      const topP = Number(activeEngine.top_p) ?? (() => { throw new Error('未配置 top_p 参数') })();
+      const topP = (typeof activeEngine.top_p === 'number' && activeEngine.top_p >= 0 && activeEngine.top_p <= 1) ? activeEngine.top_p : 0.95;
       const topK = Number(activeEngine.top_k) || undefined;
       const minP = Number(activeEngine.min_p) || undefined;
       const frequencyPenalty = Number(activeEngine.frequency_penalty) || undefined;
@@ -3134,16 +3078,10 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
           { role: 'system', content: finalSystemPrompt },
           { role: 'user', content: userPrompt }
         ],
-        max_tokens: maxTokens,
+        
         temperature: temperature,
         top_p: topP,
-        n: n,
-        stream: false,
-        extra_body: {
-          chat_template_kwargs: {
-            enable_thinking: false
-          }
-        }
+        stream: false
       };
 
       // 根据传输方式添加API密钥

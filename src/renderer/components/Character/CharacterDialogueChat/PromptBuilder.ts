@@ -385,6 +385,15 @@ export function parseExpressionFromContent(content: string): { emotion: string |
     { regex: /<<<EXPRESSION>>>\s*([a-z_][a-z0-9_]*)\s*<<<END_EXPRESSION>>>/i, name: 'text-marker' },
     // 容错：仅有开始标记 <<<EXPRESSION>>>key 到文本末尾
     { regex: /<<<EXPRESSION>>>\s*([a-z_][a-z0-9_]*)\s*$/i, name: 'text-marker-unclosed' },
+    // ⚠️ 容错：AI 输出残缺标记（如 <<>>key<<<_EXPRESSION>>>）
+    // 策略：忽略尖括号数量，匹配 EXPRESSION 字样前后的有效情绪键名
+    { regex: /[<>_]+EXPRESSION[<>_]+\s*([a-z_][a-z0-9_]*)\s*[<>_]+(?:END[_]*EXPRESSION|EXPRESSION)[<>_]+/i, name: 'text-marker-malformed' },
+    // ⚠️ 容错：残缺开始标记 + key 到末尾（无结束标记）
+    { regex: /[<>_]+EXPRESSION[<>_]+\s*([a-z_][a-z0-9_]*)\s*$/i, name: 'text-marker-malformed-unclosed' },
+    // ⚠️ 终极兜底：文本末尾任意位置出现 EXPRESSION 字样，取其附近的情绪键名
+    // 匹配 key 在 EXPRESSION 之前或之后的情况（key 必须是有效情绪词格式）
+    { regex: /\b([a-z_][a-z0-9_]*)\s*[<>_]+(?:END[_]*EXPRESSION|EXPRESSION)[<>_]+\s*$/i, name: 'text-marker-fallback-before' },
+    { regex: /EXPRESSION[<>_]+\s*([a-z_][a-z0-9_]*)\s*[<>_]*\s*$/i, name: 'text-marker-fallback-after' },
     // 兼容变体：纯标签 <expression>key</expression>
     { regex: /<expression>\s*([a-z_][a-z0-9_]*)\s*<\/expression>/i, name: 'plain-tag' },
     // 兼容变体：仅有 <expression>key 到末尾
@@ -396,7 +405,9 @@ export function parseExpressionFromContent(content: string): { emotion: string |
     const m = content.match(pattern.regex);
     if (m) {
       const emotion = m[1].toLowerCase();
-      const cleanedContent = content.replace(m[0], '').trim();
+      let cleanedContent = content.replace(m[0], '').trim();
+      // ⚠️ 清理残留的孤立尖括号/下划线标记（如 <<>> 等残缺开始标记碎片）
+      cleanedContent = cleanedContent.replace(/[<>_]{2,}\s*$/, '').trim();
       return { emotion, cleanedContent };
     }
   }
@@ -878,6 +889,40 @@ export function buildPromptCore(
   return { characterContext, personaSection, charName };
 }
 
+/**
+ * ⚠️【重点标记】对话格式指令注入器
+ *
+ * 修复 Bug：系统提示词模板可能来自数据库旧版（mergeNewDefaultTemplates 不更新已有模板），
+ * 旧模板写着"不要添加任何额外的标记或说明"，导致 AI 不使用 *动作* 格式，
+ * 动作描写渲染样式（message-renderer-action）永远不触发。
+ *
+ * 此函数在提示词返回前做后处理：
+ * 1. 移除"不要添加任何额外的标记或说明"语句
+ * 2. 追加格式要求指令（对话用双引号，动作用星号）
+ */
+function injectDialogueFormatInstructions(systemPrompt: string): string {
+  let result = systemPrompt;
+
+  // 移除旧版禁止标记语句（覆盖多种变体写法）
+  result = result.replace(
+    /不要添加任何额外的标记或说明[。\n]?/g,
+    ''
+  );
+
+  // 追加格式指令（若已包含则不重复注入）
+  const formatInstruction = `\n【输出格式要求】
+- 角色直接说出的对话内容必须用标准英文双引号（" "）完整包裹
+- 角色的动作、神态、心理活动等非对话描写必须用星号包裹（如 *微微一笑* 或 *她低下头，脸微微泛红*）
+- 对话与动作描写可自然交替，像真实的人在说话一样
+- 星号 *动作描写* 是格式标记，不属于"额外标记或说明"`;
+
+  if (!result.includes('角色的动作、神态、心理活动等非对话描写必须用星号包裹')) {
+    result = result.trimEnd() + '\n' + formatInstruction;
+  }
+
+  return result;
+}
+
 // ==================== 第四步：构建基础任务提示词 ====================
 // 数据来源：第三步（核心上下文）+ 任务类型（对话/续写）+ 约束规则
 
@@ -906,7 +951,7 @@ export async function buildDialoguePrompt(
       persona_section: personaSection
     });
     if (promptResult.success && promptResult.data) {
-      return promptResult.data.systemPrompt;
+      return injectDialogueFormatInstructions(promptResult.data.systemPrompt);
     }
   } catch (e) {
     console.error('[PromptBuilder] 获取对话模式模板失败，使用硬编码回退:', e);
@@ -927,6 +972,7 @@ export async function buildDialoguePrompt(
 5. 使用符合角色身份的语言风格
 6. 在回复中使用 ${charName} 代替 {{char}}，使用 ${userName} 代替 {{user}}
 7. 【强制要求】角色直接说出的对话内容必须用标准英文双引号（" "）完整包裹，确保引号准确包裹对话文本的起始与结束位置
+8. 【格式要求】角色的动作、神态、心理活动等非对话描写必须用星号包裹（如 *微微一笑* 或 *她低下头，脸微微泛红*），对话与动作可自然交替
 
 【严格禁止】
 - 禁止输出任何元信息、系统说明或格式说明
@@ -942,9 +988,10 @@ export async function buildDialoguePrompt(
 - HTML 注释标签 <!-- ... --> 是系统通信格式，用于传递控制指令
 - <tableEdit> 标签及其内部命令（insertRow/updateRow/deleteRow）是系统记忆表格功能的必需格式
 - 当你在提示词末尾看到"记忆表格异步整理指令"时，【必须】在回复最后生成 <!--  <tableEdit> ... </tableEdit> --> 标签
+- 星号 *动作描写* 是格式标记，不属于"额外标记或说明"
 
 【输出格式】
-直接输出角色的对话和行动描写，像真实的人在说话一样。不要添加任何额外的标记或说明。
+直接输出角色的对话和行动描写。对话内容用英文双引号（" "）包裹，动作和神态描写用星号（* *）包裹。像真实的人在说话一样自然交替。
 
 【角色信息】
 ${characterContext}
@@ -1078,13 +1125,7 @@ export async function buildFinalSystemPrompt(
    * 注入位置：在"区域 1：相关背景知识"之后，"区域 3：记忆表格数据"之前
    * 注：区域编号变更：原"区域 2 记忆表格"→"区域 3"，原"区域 3 异步整理指令"→"区域 4"
    */
-  chatHistoryItems?: Array<{ content: string; score: number; timestamp: number }>,
-  /**
-   * 可用技能 prompt 片段（Spec: optimize-agent-interaction-from-openclaw / Task 12）
-   * 来源：SkillRegistry.buildSnapshot() → 格式化后的 <available_skills> XML 块
-   * 注入位置：在"区域 4：记忆表格异步整理指令"之后（区域 5）
-   */
-  skillPromptSnippet?: string
+  chatHistoryItems?: Array<{ content: string; score: number; timestamp: number }>
 ): Promise<string> {
   console.log('[PromptBuilder] buildFinalSystemPrompt 开始:');
   console.log('  - systemPrompt 长度:', systemPrompt.length);
@@ -1162,18 +1203,6 @@ export async function buildFinalSystemPrompt(
     result += `\n【区域 4 结束 - 以上为系统指令】`;
     result += `\n═══════════════════════════════════════════════════════`;
     console.log('  - 异步整理指令已追加到 system prompt, 最终长度:', result.length);
-  }
-
-  // 追加可用技能 prompt（区域 5）
-  if (skillPromptSnippet && skillPromptSnippet.trim()) {
-    result += `\n\n═══════════════════════════════════════════════════════`;
-    result += `\n【区域 5：可用技能】（以下为当前可用的技能列表，模型可根据任务描述选择使用）`;
-    result += `\n═══════════════════════════════════════════════════════\n\n`;
-    result += skillPromptSnippet;
-    result += `\n\n═══════════════════════════════════════════════════════`;
-    result += `\n【区域 5 结束 - 以上为可用技能列表】`;
-    result += `\n═══════════════════════════════════════════════════════`;
-    console.log('  - 可用技能 prompt 已追加, 最终长度:', result.length);
   }
 
   return result;
@@ -1447,12 +1476,7 @@ export async function buildSystemPrompt(
    * 由 hooks.ts::requestAIResponse 步骤 A2 调用 chatHistory.retrieve 获取，
    * 仅在对话历史 > 20 轮时传入（短对话跳过 RAG 检索）。
    */
-  chatHistoryItems?: Array<{ content: string; score: number; timestamp: number }>,
-  /**
-   * 可用技能 prompt 片段（Spec: optimize-agent-interaction-from-openclaw / Task 12）
-   * 来源：usePromptBuilder 通过 IPC skill:getPromptSnippet 获取。
-   */
-  skillPromptSnippet?: string
+  chatHistoryItems?: Array<{ content: string; score: number; timestamp: number }>
 ): Promise<string> {
   // 第四步：根据任务类型构建基础提示词
   const systemPrompt = promptType === 'continuation'
@@ -1460,7 +1484,7 @@ export async function buildSystemPrompt(
     : await buildDialoguePrompt(characterInfo, selectedPersona, organizeMode);
 
   // 第六步：将向量上下文和记忆表格数据追加到提示词末尾
-  return await buildFinalSystemPrompt(systemPrompt, vectorContextItems, memoryTableData, organizeMode, tableStructure, chatHistoryItems, skillPromptSnippet);
+  return await buildFinalSystemPrompt(systemPrompt, vectorContextItems, memoryTableData, organizeMode, tableStructure, chatHistoryItems);
 }
 
 // ==================== AI 表情生成：情绪 → SD 提示词映射 ====================
@@ -1476,39 +1500,46 @@ export async function buildSystemPrompt(
  *
  * 键名严格对齐 `EMOTION_PRESETS` 的 31 个 key（default / admiration / ... / cheerfulness / in_heat），
  * 自定义情绪（不在预置清单内）由 `buildExpressionGenerationPrompt` 通过 customLabel 兜底处理。
+ *
+ * 【Spec: optimize-expression-preset-prompts】
+ * 由 scripts/optimize-expression-prompts.ts 生成，最后更新日期 2026-08-07，请勿手动修改。
+ * 4 维度结构：面部表情（FACE）/ 人物动作（ACTION）/ 符号元素（SYMBOL）/ 简单背景（BACKGROUND）。
+ * 所有 tag 已通过 L1-L3b 审计链验证（Danbooru/e621 标签库，317600 tags / 81700 aliases）。
+ * 重新生成：`npx tsx scripts/optimize-expression-prompts.ts`（需配置 AI 引擎）。
+ * 审计详情见 scripts/expression-prompt-optimization-report.json。
  */
 export const EMOTION_PROMPT_MAP: Record<string, { positive: string; negative?: string }> = {
-  default: { positive: 'neutral expression, calm face, gentle look, serene' },
-  admiration: { positive: 'admiring expression, awestruck, starry eyes, flushed cheeks, longing gaze, aroused' },
-  amusement: { positive: 'amused, playful sultry smile, twinkling eyes, teasing look, biting lip, sensual' },
-  anger: { positive: 'angry expression, furrowed brows, intense lustful glare, clenched teeth, frustrated arousal, heavy breathing' },
-  annoyance: { positive: 'annoyed expression, slight frown, blushing, irritated but aroused, tsundere look' },
-  approval: { positive: 'approving nod, satisfied sultry smile, warm longing expression, bedroom eyes' },
-  caring: { positive: 'caring expression, tender lustful look, soft smile, flushed face, possessive gaze' },
-  confusion: { positive: 'confused expression, tilted head, blushing, puzzled by arousal, parted lips' },
-  curiosity: { positive: 'curious expression, wide eyes, eager longing look, leaning forward, inquisitive and aroused' },
-  desire: { positive: 'intense desiring expression, hungry gaze, dilated pupils, yearning, heavy panting, saliva' },
-  disappointment: { positive: 'disappointed expression, downcast eyes, sad but aroused smile, longing for touch' },
-  disapproval: { positive: 'disapproving look, frown, stern expression, blushing, conflicting desires' },
-  disgust: { positive: 'disgusted expression, wrinkled nose, grimace, aroused despite repulsion, flushed skin' },
-  embarrassment: { positive: 'embarrassed expression, deep blushing, averted gaze, flustered, shy arousal, biting lip' },
-  excitement: { positive: 'excited expression, wide grin, sparkling eyes, hyper-aroused, panting, sweat' },
-  fear: { positive: 'fearful expression, wide eyes, trembling with pleasure, pale face, submissive arousal' },
-  gratitude: { positive: 'grateful expression, warm sultry smile, thankful eyes, flushed face, affectionate' },
-  grief: { positive: 'grief expression, teary eyes, sorrowful face, mixing sadness with lust, longing' },
-  joy: { positive: 'joyful expression, bright radiant smile, happy tears, elated and aroused, flushed' },
-  love: { positive: 'loving expression, tender passionate gaze, warm smile, affectionate, heart eyes, deep lust' },
-  nervousness: { positive: 'nervous expression, biting lip, anxious aroused eyes, fidgeting, trembling' },
-  neutral: { positive: 'neutral expression, calm face, hidden desire, half-closed eyes, suppressed arousal' },
-  optimism: { positive: 'optimistic expression, hopeful sultry smile, bright outlook, eager for intimacy' },
-  pride: { positive: 'proud expression, confident sultry smile, chin up, dominant look, smug arousal' },
-  realization: { positive: 'realization expression, widened eyes, open mouth, sudden arousal, blushing' },
-  relief: { positive: 'relieved expression, sigh, relaxed shoulders, gentle sultry smile, satisfied arousal' },
-  remorse: { positive: 'remorseful expression, guilty look, downcast, apologetic but aroused, flushed' },
-  sadness: { positive: 'sad expression, teary eyes, downturned mouth, melancholic longing, sensual sadness' },
-  surprise: { positive: 'surprised expression, wide eyes, open mouth, shocked by pleasure, heavy breathing, blushing' },
-  cheerfulness: { positive: 'cheerful expression, bright smile, sunny disposition, joyful laugh, aroused and beaming' },
-  in_heat: { positive: 'smile, open mouth, saliva, drooling, tongue, tongue out, blush, looking at viewer, sweat, half-closed eyes, in heat, heavy breathing, heart, extreme arousal' },
+  default: { positive: 'neutral_expression, closed_mouth, light_smile, looking_at_viewer, standing, arms_at_sides, sparkle, simple_background, white_background, depth_of_field' },
+  admiration: { positive: 'sparkling_eyes, wide-eyed, smile, blush, open_mouth, dilated_pupils, happy, looking_up, looking_at_viewer, leaning_forward, hands_together, clenched_hands, head_tilt, sparkle, star, heart, exclamation_point, simple_background, white_background, gradient_background, light_rays, ambient_lighting' },
+  amusement: { positive: 'smile, grin, laughing, closed_eyes, happy, open_mouth, sparkling_eyes, playful_expression, looking_at_viewer, hand_on_mouth, head_tilt, leaning_back, wink, sparkle, musical_note, heart, simple_background, white_background, gradient_background, soft_lighting' },
+  anger: { positive: 'angry, scowl, open_mouth, shouting, clenched_teeth, glaring, flushed_face, looking_at_viewer, clenched_hand, pointing, crossed_arms, leaning_forward, shaking, anger_vein, exclamation_point, fire, lightning, symbol, simple_background, red_background, speed_lines, motion_blur, ambient_lighting' },
+  annoyance: { positive: 'scowl, frown, narrowed_eyes, pouting, annoyed, crossed_arms, looking_away, rolling_eyes, sighing, hand_on_hip, head_tilt, anger_vein, sweatdrop, exclamation_point, simple_background, white_background, gradient_background' },
+  approval: { positive: 'smile, closed_eyes, pleased, closed_mouth, blush, happy, nodding, looking_at_viewer, thumbs_up, head_tilt, hands_on_hips, sparkle, heart, star, simple_background, white_background, gradient_background' },
+  caring: { positive: 'blush, looking_at_viewer, reaching_out, hand_on_cheek, head_tilt, leaning_forward, hand_to_face, sparkle, heart, floating_heart, simple_background, white_background, blurred_background, soft_lighting, ambient_lighting' },
+  confusion: { positive: 'open_mouth, squinting, blank_stare, head_tilt, scratching_head, hand_on_chin, hand_on_cheek, looking_away, looking_at_viewer, question_mark, sweatdrop, ellipsis, simple_background, white_background, gradient_background' },
+  curiosity: { positive: 'wide-eyed, raised_eyebrows, parted_lips, slight_smile, open_mouth, looking_sideways, head_tilt, leaning_forward, hand_on_chin, looking_at_viewer, hand_on_cheek, finger_to_own_chin, question_mark, sparkle, thought_bubble, exclamation_point, emoji, simple_background, white_background, depth_of_field, ambient_lighting, gradient_background' },
+  desire: { positive: 'blush, dilated_pupils, parted_lips, flushed_face, sweatdrop, panting, looking_at_viewer, leaning_forward, biting_lip, hand_on_cheek, hand_on_own_breast, head_tilt, reaching_out, heart, sparkle, simple_background, gradient_background, ambient_lighting, depth_of_field' },
+  disappointment: { positive: 'sad, disappointed, frown, pout, downcast_eyes, unhappy, looking_away, looking_down, sigh, head_down, hand_on_face, sweatdrop, tears, blue_lines, simple_background, white_background, grey_background, dim_lighting' },
+  disapproval: { positive: 'narrowed_eyes, scowl, frown, side_eye, displeased, closed_mouth, pout, crossed_arms, looking_away, hand_on_hip, head_tilt, looking_at_viewer, sighing, anger_vein, sweatdrop, exclamation_point, question_mark, simple_background, white_background, gradient_background' },
+  disgust: { positive: 'disgust, scowl, sneer, frown, looking_down, looking_away, covering_mouth, crossed_arms, shrugging, sweatdrop, vein, exclamation_point, simple_background, white_background, depth_of_field' },
+  embarrassment: { positive: 'blush, awkward_smile, open_mouth, flushed_face, looking_away, covering_mouth, scratching_head, fidgeting, shrugging, hand_on_cheek, sweatdrop, question_mark, exclamation_point, speech_bubble, simple_background, white_background, gradient_background, depth_of_field' },
+  excitement: { positive: 'wide_eyed, open_mouth, blush, smile, grin, sparkling_eyes, dilated_pupils, flushed_face, looking_at_viewer, leaning_forward, arms_up, clenched_hands, jumping, hand_on_cheek, sparkle, exclamation_point, heart, musical_note, star, simple_background, white_background, gradient_background, depth_of_field' },
+  fear: { positive: 'wide_eyed, dilated_pupils, open_mouth, trembling, pale_skin, teary_eyes, sweatdrop, shaking, cowering, covering_mouth, self_hug, looking_away, hand_on_face, exclamation_point, shadow, dark_aura, simple_background, dark_background, vignette, depth_of_field' },
+  gratitude: { positive: 'smile, closed_eyes, blush, happy, sparkling_eyes, clasped_hands, bowing, looking_at_viewer, hand_on_chest, head_tilt, sparkle, heart, floating_heart, simple_background, white_background, soft_lighting, bokeh, ambient_lighting' },
+  grief: { positive: 'crying, tears, streaming_tears, sad, sorrow, closed_eyes, open_mouth, trembling, covering_face, hand_on_face, looking_down, shaking, clutching_chest, kneeling, sobbing, rain, broken_heart, dark_aura, gloom_(expression), simple_background, dark_background, depth_of_field' },
+  joy: { positive: 'smile, laughing, open_mouth, blush, closed_eyes, sparkling_eyes, wide_smile, looking_at_viewer, arms_up, jumping, head_tilt, clenched_hands, heart, sparkle, musical_note, flower, confetti, star, simple_background, white_background, gradient_background, colorful_background' },
+  love: { positive: 'blush, closed_eyes, sparkling_eyes, happy, joyful, open_mouth, looking_at_viewer, leaning_forward, hand_on_cheek, head_tilt, self_hug, heart, heart_bubbles, sparkle, musical_note, flower, simple_background, white_background, pink_background, gradient_background, pastel_background' },
+  nervousness: { positive: 'blush, sweatdrop, nervous_smile, wide-eyed, worried, looking_away, interlocked_fingers, hand_to_mouth, hand_to_face, exclamation_point, question_mark, swirl, speech_bubble, simple_background, white_background, gradient_background, depth_of_field' },
+  neutral: { positive: 'neutral_expression, expressionless, closed_mouth, blank_stare, looking_at_viewer, standing, arms_at_sides, staring, sparkle, simple_background, white_background, grey_background, flat_color, ambient_lighting' },
+  optimism: { positive: 'smile, happy, sparkling_eyes, open_mouth, wide_eyed, cheerful, looking_at_viewer, waving, head_tilt, arms_up, jumping, v_sign, sparkle, star, musical_note, sun, heart, simple_background, white_background, sunny, blue_sky' },
+  pride: { positive: 'smug, raised_eyebrow, grin, looking_down, smirk, crossed_arms, hand_on_hip, chin_up, leaning_back, looking_at_viewer, sparkle, star, light_rays, shining, simple_background, white_background, spotlight, gradient_background' },
+  realization: { positive: 'wide-eyed, open_mouth, raised_eyebrows, dilated_pupils, surprised, staring, looking_up, raised_finger, hand_on_forehead, gasp, head_tilt, looking_at_viewer, exclamation_point, sparkle, sweatdrop, light_bulb, simple_background, white_background, speed_lines, gradient_background' },
+  relief: { positive: 'closed_eyes, light_smile, relaxed_expression, serene, slight_blush, sighing, hand_on_chest, leaning_back, looking_up, hand_on_forehead, closing_eyes, sweatdrop, sparkle, light_particles, musical_note, simple_background, white_background, gradient_background, soft_lighting' },
+  remorse: { positive: 'sad, frown, downcast_eyes, tears, pained_expression, crying, looking_down, hand_on_face, covering_face, head_down, kneeling, curled_up, clenched_hands, teardrop, dark_aura, rain, shadow, broken_heart, simple_background, grey_background, dim_lighting, dark_background' },
+  sadness: { positive: 'tears, crying, sad, frown, downcast_eyes, watery_eyes, sobbing, pout, looking_down, covering_face, self_hug, wiping_tears, curled_up, slouching, looking_away, teardrop, broken_heart, rain, gloom_(expression), simple_background, grey_background, dark_background, depth_of_field, ambient_lighting' },
+  surprise: { positive: 'surprised, wide_eyed, open_mouth, raised_eyebrows, shocked, blush, dilated_pupils, looking_at_viewer, covering_mouth, hands_up, leaning_back, startled, head_tilt, exclamation_point, sweatdrop, sparkle, simple_background, white_background, gradient_background, depth_of_field' },
+  cheerfulness: { positive: 'smile, open_mouth, happy, blush, closed_eyes, sparkling_eyes, wide_eyed, looking_at_viewer, laughing, v, waving, jumping, head_tilt, arms_up, sparkle, heart, musical_note, star, petals, confetti, simple_background, white_background, sunlight, colorful_background, gradient_background' },
+  in_heat: { positive: 'blush, saliva, tongue_out, parted_lips, flushed_face, sweatdrop, dilated_pupils, panting, looking_at_viewer, biting_lip, hand_on_breast, hand_on_thigh, leaning_forward, arched_back, heart, sparkle, steam, simple_background, white_background, gradient_background, depth_of_field' },
 };
 
 /**
@@ -1521,7 +1552,7 @@ export const EMOTION_PROMPT_MAP: Record<string, { positive: string; negative?: s
  * 用户可在设置页或生成弹窗中自定义角色外观 tag（如 "1girl, silver hair, blue eyes"）。
  *
  * 【重点标记 - 特征携带机制（Spec: add-asset-and-trait-management / Task 5）】
- * 函数签名新增 `characterTraits?: string[]` 参数，用于将角色视觉特征 tag
+ * 函数签名新增 `characterTraits?: Array<{ text: string; weight?: number }>` 参数，用于将角色视觉特征 tag
  * （如 `['white fur', 'dog girl']`）注入到正面提示词模板的 `{traits}` 占位符中。
  *
  * 提示词组合规则：
@@ -1541,7 +1572,9 @@ export const EMOTION_PROMPT_MAP: Record<string, { positive: string; negative?: s
  *
  * @param emotionKey - 情绪键名（EMOTION_PRESETS 的 key 或用户自定义 key）
  * @param options - 可选配置
- *   - positivePromptTemplate: 正面提示词模板（含 {emotion} / {traits} 占位符），默认使用内置模板
+ *   - positivePromptTemplate: 正面提示词模板（含 {emotion} / {traits} / {camera} 占位符），默认使用内置模板
+ *     【2026-08-06 重构】默认模板移除写死的 portrait + looking at viewer，改为 {camera} 占位符（由视角镜头下拉默认值注入）；
+ *     {camera} 由下游 sdGenerationService.applyTraitsAndLora 替换（本函数仅替换 {traits} / {emotion}）
  *   - customNegativePrompt: 用户自定义负面提示词，为空时使用默认负面
  *   - customLabel: 自定义情绪的中文标签
  *   - characterTraits: 角色视觉特征 tag 数组（Spec: add-asset-and-trait-management / Task 5），用于替换 {traits} 占位符
@@ -1553,7 +1586,7 @@ export function buildExpressionGenerationPrompt(
     positivePromptTemplate?: string;
     customNegativePrompt?: string;
     customLabel?: string;
-    characterTraits?: string[];
+    characterTraits?: Array<{ text: string; weight?: number }>;
   },
 ): { prompt: string; negativePrompt: string } {
   const {
@@ -1578,15 +1611,25 @@ export function buildExpressionGenerationPrompt(
 
   // 【重点标记 - 特征携带机制】拼接角色特征 tag 字符串
   // 过滤空字符串与纯空白串，trim 后以逗号 + 空格连接（SD tag 标准格式）
+  // 【Spec: add-sdxl-prompt-weight-support / Task 3】characterTraits 升级为
+  // Array<{ text: string; weight?: number }>，此处仅取 .text 拼接（权重由
+  // sdGenerationService.applyTraitsAndLora 在下游格式化为 (text:weight) 语法）。
   const traitsStr = (characterTraits || [])
-    .map((t) => (typeof t === 'string' ? t.trim() : ''))
+    .map((t) => t.text.trim())
     .filter((t) => t.length > 0)
     .join(', ');
 
   // 正面提示词：使用模板，将 {traits} 与 {emotion} 占位符依次替换
-  // 默认模板同时含 {traits} 与 {emotion} 两个占位符
-  // {traits} 放在 portrait 之后，确保角色特征优先；{emotion} 位置保留
-  const defaultTemplate = 'portrait, {traits}, looking at viewer, simple background, {emotion}, high quality, best quality, masterpiece, detailed face';
+  // 默认模板同时含 {camera} / {traits} / {emotion} 三个占位符
+  // 【2026-08-06 重构】移除写死的 `portrait` + `looking at viewer`（改为由 {camera} 下拉默认值注入），
+  //   避免与用户选的 full body / close-up 等同类 tag 冲突；
+  //   弹窗打开时表情模式默认初始化 selectedCameraAngle='portrait, looking at viewer'
+  //   （由 AssetGenerateModal getCameraDefaultForMode 提供），用户可改选/加选 from above 等
+  //   {camera} 由下游 sdGenerationService.applyTraitsAndLora 替换（本函数仅替换 {traits} / {emotion}，
+  //   {camera} 保持字面量传给下游，applyTraitsAndLora 会替换并清理逗号）
+  // 【2026-08-06 标签库审计】simple background → simple_background（Danbooru 标准下划线格式）
+  // high quality / best quality / masterpiece / detailed face 虽不在标签库，但 NoobAI 训练时注入，模型理解
+  const defaultTemplate = '{camera}, {traits}, simple_background, {emotion}, high quality, best quality, masterpiece, detailed face';
   const template = (positivePromptTemplate && positivePromptTemplate.trim()) || defaultTemplate;
 
   // 【重点标记 - 特征携带机制 - 占位符注入逻辑】
@@ -1611,8 +1654,9 @@ export function buildExpressionGenerationPrompt(
     : `${prompt}, ${emotionPositive}`;
 
   // 【重点标记 - 特征携带机制 - 清理多余逗号与空格】
-  // 场景：模板 `portrait, {traits}, looking at viewer` + 空 traits → `portrait, , looking at viewer`
+  // 场景：模板 `{camera}, {traits}, simple background` + 空 traits → `{camera}, , simple background`
   // 循环处理连续逗号（如 `a, , , b` 需多次匹配才能完全收敛）
+  // 注：{camera} 占位符是字面字符串（含花括号），不参与逗号清理，保持原样传给下游
   // 与 sdGenerationService.generateExpression 的清理逻辑保持一致（下游会再清理一次，幂等安全）
   let prevPrompt: string;
   do {
@@ -1623,7 +1667,9 @@ export function buildExpressionGenerationPrompt(
   prompt = prompt.replace(/\s*,\s*$/, ''); // 清理结尾逗号
 
   // 负面提示词：用户自定义优先；否则使用默认 + 情绪特有负面
-  const baseNegative = 'deformed, ugly, bad anatomy, multiple faces, text, watermark, low quality, blurry, mutated hands, extra digits, missing fingers, bad proportions';
+  // 【2026-08-06 标签库审计】多词 tag 改为下划线版本（bad_anatomy / multiple_faces / extra_digits / bad_proportions）
+  // ugly / low quality / mutated_hands / missing_fingers 虽不在 Danbooru 标签库，但 SD 社区通用负面，模型理解
+  const baseNegative = 'deformed, ugly, bad_anatomy, multiple_faces, text, watermark, low quality, blurry, mutated_hands, extra_digits, missing_fingers, bad_proportions';
   const userNegative = (customNegativePrompt && customNegativePrompt.trim()) || '';
   const negativePrompt = userNegative
     ? (emotionNegative ? `${userNegative}, ${emotionNegative}` : userNegative)
@@ -1690,7 +1736,7 @@ export interface NLExpressionPromptOptions {
   nlPromptTemplate?: string;
   customNegativePrompt?: string;
   customLabel?: string;
-  characterTraits?: string[];
+  characterTraits?: Array<{ text: string; weight?: number }>;
   modelType?: 'sdxl' | 'qwen-image' | 'qwen-image-edit' | 'flux2';
 }
 
@@ -1724,8 +1770,10 @@ export function buildNLExpressionPrompt(
   const emotionNl = EMOTION_NL_PROMPT_MAP[emotionKey]
     || (options?.customLabel ? `${options.customLabel.toLowerCase()} expression` : 'a neutral expression');
 
+  // 【Spec: add-sdxl-prompt-weight-support / Task 3】characterTraits 升级为
+  // Array<{ text: string; weight?: number }>，此处仅取 .text 拼接（NL 模型不适用权重语法）。
   const traitsStr = (options?.characterTraits || [])
-    .map(t => t.trim())
+    .map(t => t.text.trim())
     .filter(Boolean)
     .join(', ');
   const traitsDescription = traitsStr ? `with ${traitsStr}` : '';
@@ -1762,7 +1810,6 @@ export function buildNLExpressionPrompt(
 
 // ==================== 素材生成提示词模板（illustration / general / three-view）====================
 // Spec: add-asset-and-trait-management / Task 10（原始实现，原位于 AssetGenerateModal.tsx）
-// Spec: add-dynamic-scene-prompt-generation / Task 7（迁移至本文件 + 扩展 {clothing} / {pose} / {scene} 占位符）
 
 /**
  * 裸体版三视图固定 tag 列表（Spec: fix-asset-trait-and-scene-defects / Task 1）。
@@ -1777,91 +1824,89 @@ export function buildNLExpressionPrompt(
  * 的 three-view 分支通过 `NUDE_FIXED_TAGS.join(', ')` 拼接，禁止在其它位置重复硬编码。
  */
 export const NUDE_FIXED_TAGS: readonly string[] = [
+  // 【2026-08-06 标签库审计精简】原含 naked/completely naked/no clothes，但 Danbooru/e621 标签库
+  // 验证确认这三个均为 nude 的别名（alias），重复注入无增益。精简为：
+  // - nude（核心 tag，count≈2.1M）
+  // - bare_skin（下划线版本，count=76，低频但有独特语义）
+  // - nsfw（虽不在 Danbooru 标签库，但 NoobAI 训练时注入，模型理解）
   'nude',
-  'naked',
-  'bare skin',
-  'completely naked',
-  'no clothes',
+  'bare_skin',
   'nsfw',
 ];
 
 /**
  * 根据 mode 与目标构建素材生成的正面提示词模板（不含表情）。
  *
- * 【重点标记 - 函数迁移说明（Spec: add-dynamic-scene-prompt-generation / Task 7）】
- * 原实现位于 `AssetGenerateModal.tsx` 内部（非导出函数），Task 7 将其迁移至 `PromptBuilder.ts`
+ * 【重点标记 - 函数迁移说明】
+ * 原实现位于 `AssetGenerateModal.tsx` 内部（非导出函数），后迁移至 `PromptBuilder.ts`
  * 并改为导出函数，与其它 build* 工具函数集中管理。`AssetGenerateModal.tsx` 改为从本文件导入。
  *
- * 【重点标记 - 提示词模板 - 动态场景占位符（Spec: add-dynamic-scene-prompt-generation / Task 7）】
- * - 立绘（illustration）：`full body, {pose}, {traits}, {clothing}, {scene}, high quality, best quality, masterpiece`
- *   （原模板 `full body, standing, {traits}, simple background, ...` 中的 `standing` 与 `simple background`
- *   改为 `{pose}` / `{scene}` 占位符，由动态场景方案填充；无激活方案时由 Task 8 兜底为 `standing` / `simple background`）
- * - 一般图像（general）：`{traits}, {clothing}, {pose}, {scene}, high quality, best quality`
- *   （原模板 `${scene}` JS 模板字符串插值改为 `{scene}` 字面占位符，由 sdGenerationService.applyTraitsAndLora 替换）
- * - 三视图（three-view）：根据 targetSlot 选择 front / side / back view 模板（不改）
- *   （已有穿衣/裸体分组逻辑，不使用动态场景占位符——Spec: add-dynamic-scene-prompt-generation / Scenario: 三视图不携带动态场景）
+ * 模板规则：
+ * - 立绘（illustration）：`{camera}, {traits}, high quality, best quality, masterpiece`
+ *   【2026-08-06 初版】追加 `{camera}` 占位符，由 AssetGenerateModal 视角镜头下拉选择填充
+ *   【2026-08-06 重构】移除写死的 `full body`（改为 {camera} 下拉默认值注入），避免与用户选的 close-up 等同类 tag 冲突；
+ *   弹窗打开时默认初始化 selectedCameraAngle='full body'（AssetGenerateModal getCameraDefaultForMode），用户可改选 upper body 等
+ * - 一般图像（general）：`{traits}, {camera}, high quality, best quality`
+ *   【2026-08-06 新增】追加 `{camera}` 占位符，由 AssetGenerateModal 的视角镜头下拉选择填充
+ * - 三视图（three-view）：根据 targetSlot 选择 front / side / back view 模板
+ *   （已有穿衣/裸体分组逻辑）
+ *   【2026-08-06 重点标记 - 三视图多角色 bug 修复】移除 `character sheet`（Danbooru 训练数据中天然指多视角合集图，
+ *   导致一张三视图出现多个角色/多视角 collage），改为 `solo`（强化单角色）；保留 `white background` 干净参考风格。
+ *   配合 AssetGenerateModal 负面提示词追加多角色/多视角约束。详见 docs/FIX_RECORDS.md §5.10
  *
  * 【重点标记 - 固定包含（Spec: fix-asset-trait-and-scene-defects / Task 1）】
  * 三视图的 `*-nude` 槽位（front-nude / side-nude / back-nude）会强制拼接 `NUDE_FIXED_TAGS`
- * 常量数组中的全部 tag（`nude, naked, bare skin, completely naked, no clothes, nsfw`），
+ * 常量数组中的全部 tag（`nude, bare_skin, nsfw`），
  * **固定包含，不可被用户配置覆盖**，确保生成结果始终包含裸体特征。
  * `NUDE_FIXED_TAGS` 是 nude tag 的唯一数据源（single source of truth），禁止在其它位置重复硬编码。
  *
  * 【占位符替换链路】
- * `{traits}` / `{clothing}` / `{pose}` / `{scene}` 占位符均由 `sdGenerationService.applyTraitsAndLora`
- * （Spec: add-dynamic-scene-prompt-generation / Task 8）在 SD 调用前统一替换：
+ * `{traits}` / `{camera}` 占位符均由 `sdGenerationService.applyTraitsAndLora`
+ * 在 SD 调用前统一替换：
  *   - `{traits}`：options.characterTraits 拼接字符串（已有逻辑，Spec: add-asset-and-trait-management / Task 5）
- *   - `{clothing}`：options.dynamicClothing（来自 store 激活动态场景方案；空则替换为空串并清理多余逗号）
- *   - `{pose}`：options.dynamicPose（同上；立绘模式空时由 Task 8 兜底为 `standing`，保持原行为）
- *   - `{scene}`：options.dynamicScene（同上；一般图像模式空时由 Task 8 buildSdOptions 透传 undefined → 空字符串）
- *     【重点标记】Spec: fix-asset-trait-and-scene-defects / Task 7.3 已移除 userScene 回退：无激活方案时 {scene} 替换为空字符串
- *
- * 【userScene 参数保留说明】
- * `userScene` 参数在 Task 7 后不再用于本函数内部模板插值（原 `${scene}` 已改为 `{scene}` 字面占位符），
- * 但保留在函数签名中以避免破坏调用方（AssetGenerateModal.tsx 的两处调用点按位置传参）。
- *
- * 【重点标记 - userScene 参数废弃】Spec: fix-asset-trait-and-scene-defects / Task 7
- * 原 Task 8 的 `AssetGenerateModal.buildSdOptions` 会从 React state 读取 `userScene` 作为
- * `{scene}` 占位符的 fallback 值（无激活动态场景方案时使用）。Task 7.3 已移除该回退逻辑：
- * userScene 文本输入框已由动态场景下拉选择替代，无激活方案时 `{scene}` 占位符替换为空字符串
- * （由 applyTraitsAndLora 的字面替换 + 逗号清理处理）。`userScene` 参数标记为 `@deprecated`，
- * 保留签名以避免破坏调用方，但不再作为 {scene} 的来源。
- *
- * 参数名加下划线前缀（`_userScene`）以符合 TypeScript `noUnusedParameters` 规约，标识为有意保留未使用。
+ *   - `{camera}`：options.dynamicCamera（来自 AssetGenerateModal 视角镜头下拉选择；空则替换为空串并清理多余逗号）
+ *     【2026-08-06 初版】illustration / general 模板含此占位符；three-view 模板不含（固定 view 不冲突）
+ *     【2026-08-06 重构】表情模板（buildExpressionGenerationPrompt 默认模板）也含此占位符；
+ *     各模式默认值：立绘='full body'，表情='portrait, looking at viewer'，一般图像=无默认（由 getCameraDefaultForMode 提供）
+ *     移除立绘写死的 full body 与表情写死的 portrait/looking at viewer，改为 {camera} 默认值注入，避免同类 tag 冲突
  *
  * @param mode 生成模式（illustration / general / three-view）
  * @param targetSlot 三视图模式下的目标槽位（front / side / back / front-nude / side-nude / back-nude）
- * @param _userScene @deprecated Spec: fix-asset-trait-and-scene-defects / Task 7
- *   由动态场景下拉选择替代，不再由用户输入。保留参数签名避免破坏调用方。
- *   （原保留供 Task 8 buildSdOptions 读取作为 {scene} fallback；Task 7.3 已移除该回退，
- *    无激活方案时 {scene} 替换为空字符串。本函数内部不再使用此参数。）
- * @returns 提示词模板字符串（含 {traits} / {clothing} / {pose} / {scene} 占位符）
+ * @returns 提示词模板字符串（含 {traits} / {camera} 占位符）
  */
 export function buildAssetPromptTemplate(
   mode: 'illustration' | 'general' | 'three-view',
   targetSlot?: 'front' | 'side' | 'back' | 'front-nude' | 'side-nude' | 'back-nude',
-  _userScene?: string,
 ): string {
   switch (mode) {
     case 'illustration':
-      // 立绘模板：full body + {pose}（动态姿势，无激活方案时由 Task 8 兜底为 "standing"）+ 特征 + {clothing} + {scene}（无激活方案时兜底为 "simple background"）+ 高质量
-      // 原 `standing` / `simple background` 字面量改为占位符，由 sdGenerationService.applyTraitsAndLora 替换
-      return 'full body, {pose}, {traits}, {clothing}, {scene}, high quality, best quality, masterpiece';
+      // 立绘模板：{camera}（视角镜头，默认含 full body）+ 特征 + 高质量
+      // 【2026-08-06 初版】追加 {camera} 占位符
+      // 【2026-08-06 重构】移除写死的 `full body`（改为由 {camera} 下拉默认值注入），避免 full body 与用户选的 close-up 等同类 tag 冲突
+      //   立绘模式弹窗打开时 selectedCameraAngle 默认初始化为 'full body'（由 AssetGenerateModal getCameraDefaultForMode 提供）
+      //   用户可改选 upper body（半身立绘）等，无冲突（覆盖而非叠加）
+      return '{camera}, {traits}, high quality, best quality, masterpiece';
     case 'general': {
-      // 一般图像模板：特征 + {clothing} + {pose} + {scene}（无激活方案时由 Task 8 兜底到 userScene）+ 高质量
-      // 注：原 `${scene}` JS 模板字符串插值已改为 `{scene}` 字面占位符，由 sdGenerationService.applyTraitsAndLora 替换
-      // _userScene 参数保留供 Task 8 buildSdOptions 读取作为 {scene} fallback，本函数内部不使用
-      return '{traits}, {clothing}, {pose}, {scene}, high quality, best quality';
+      // 一般图像模板：特征 + {camera}（视角镜头，2026-08-06 新增）+ 高质量
+      // 【2026-08-06 新增】{camera} 占位符由 AssetGenerateModal 视角镜头下拉填充
+      return '{traits}, {camera}, high quality, best quality';
     }
     case 'three-view': {
       // 三视图模板：根据 targetSlot 选择 front / side / back（不改，已有穿衣/裸体分组逻辑）
       // 裸体变体（*-nude）剥离后缀取 viewName，并拼接 NUDE_FIXED_TAGS 常量数组（Spec: fix-asset-trait-and-scene-defects / Task 1）
-      // 注：三视图不使用动态场景占位符（Spec: add-dynamic-scene-prompt-generation / Scenario: 三视图不携带动态场景）
       // 注：NUDE_FIXED_TAGS 为 nude tag 的唯一数据源，固定包含不可被用户配置覆盖
+      //
+      // 【2026-08-06 重点标记 - 三视图多角色 bug 修复】
+      // 原模板含 `character sheet` tag，但该 tag 在 Danbooru 训练数据中天然指"角色设定合集图"——
+      // 典型样式是一张图上展示多视角/多表情/多服装（如主视图+上半身+特写，或穿衣/不穿衣左右布局）。
+      // SDXL/Pony 模型会优先生成 collage，导致一张三视图出现多个角色/多视角。
+      // 修复：移除 `character sheet`，改为 `solo`（强化单角色），保留 `white background`（干净参考风格）。
+      // 同时在 AssetGenerateModal 负面提示词追加多角色/多视角约束（见 buildSdOptions 上方负面初始化）。
       const isNude = !!targetSlot?.endsWith('-nude');
       const viewName = (isNude ? targetSlot!.replace('-nude', '') : targetSlot) || 'front';
       const nudeTags = isNude ? `, ${NUDE_FIXED_TAGS.join(', ')}` : '';
-      return `${viewName} view, full body, {traits}${nudeTags}, character sheet, white background, high quality`;
+      // 【2026-08-06 标签库审计】full body → full_body, white background → white_background, viewName view → viewName_view
+      return `${viewName}_view, full_body, solo, {traits}${nudeTags}, white_background, high quality`;
     }
     default:
       return '{traits}, high quality, best quality';

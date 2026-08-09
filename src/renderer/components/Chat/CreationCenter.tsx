@@ -81,6 +81,57 @@ interface FavoriteCharacterData {
   avatarUrl?: string;
 }
 
+// [perf] 收藏列表数据量典型 < 50 项（用户手工标记的角色卡子集），未启用虚拟滚动
+//        （阈值 50）；已应用 React.memo + useCallback。若数据量增长可改用 useVirtualizer。
+
+interface FavoriteItemProps {
+  character: FavoriteCharacterData;
+  onClick: (character: FavoriteCharacterData) => void;
+  onRemove: (path: string) => void;
+}
+
+/**
+ * 单个收藏角色卡片（React.memo）。
+ *
+ * 拆分目的：父级 CreationCenter 因 activePanel / showChatDialog / ripples 等
+ * 与收藏列表无关的状态变化时避免整列重渲染。仅在 character / onClick / onRemove
+ * 引用变化时重渲染。
+ */
+const FavoriteItem = React.memo<FavoriteItemProps>(({ character, onClick, onRemove }) => {
+  const displayName = character.characterName || character.name;
+  const firstChar = displayName.charAt(0).toUpperCase();
+  return (
+    <Tooltip title={displayName} placement="top">
+      <div
+        className="chat-panel-favorite-item"
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick(character);
+        }}
+      >
+        <div className="chat-panel-favorite-avatar">
+          {character.avatarUrl ? (
+            <img src={character.avatarUrl} alt={displayName} />
+          ) : (
+            <span className="chat-panel-favorite-fallback">{firstChar}</span>
+          )}
+          <div
+            className="chat-panel-favorite-remove"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemove(character.path);
+            }}
+            title="取消喜爱"
+          >
+            <HeartFilled />
+          </div>
+        </div>
+        <div className="chat-panel-favorite-name">{displayName}</div>
+      </div>
+    </Tooltip>
+  );
+});
+
 export const CreationCenter: React.FC = () => {
   const [activePanel, setActivePanel] = useState<ChatPanelType>('chat');
   const [showChatDialog, setShowChatDialog] = useState(false);
@@ -94,8 +145,11 @@ export const CreationCenter: React.FC = () => {
     game: [],
   });
   const rippleCounter = useRef(0);
-  const { characters, fetchCharacters, loading: charactersLoading } = useDataStore();
-  const { getFavoritePaths, toggleFavorite } = useFavoritesStore();
+  const characters = useDataStore(s => s.characters);
+  const fetchCharacters = useDataStore(s => s.fetchCharacters);
+  const charactersLoading = useDataStore(s => s.loading);
+  const getFavoritePaths = useFavoritesStore(s => s.getFavoritePaths);
+  const toggleFavorite = useFavoritesStore(s => s.toggleFavorite);
   const [favoriteData, setFavoriteData] = useState<FavoriteCharacterData[]>([]);
   const hasFetchedRef = useRef(false);
 
@@ -336,40 +390,14 @@ export const CreationCenter: React.FC = () => {
                       <span className="favorites-divider-text">喜爱 ({favoriteData.length})</span>
                     </div>
                     <div className="chat-panel-favorites-grid">
-                      {favoriteData.map((character) => {
-                        const displayName = character.characterName || character.name;
-                        const firstChar = displayName.charAt(0).toUpperCase();
-                        return (
-                          <Tooltip key={character.path} title={displayName} placement="top">
-                            <div
-                              className="chat-panel-favorite-item"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleCharacterClick(character);
-                              }}
-                            >
-                              <div className="chat-panel-favorite-avatar">
-                                {character.avatarUrl ? (
-                                  <img src={character.avatarUrl} alt={displayName} />
-                                ) : (
-                                  <span className="chat-panel-favorite-fallback">{firstChar}</span>
-                                )}
-                                <div
-                                  className="chat-panel-favorite-remove"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    toggleFavorite(character.path);
-                                  }}
-                                  title="取消喜爱"
-                                >
-                                  <HeartFilled />
-                                </div>
-                              </div>
-                              <div className="chat-panel-favorite-name">{displayName}</div>
-                            </div>
-                          </Tooltip>
-                        );
-                      })}
+                      {favoriteData.map((character) => (
+                        <FavoriteItem
+                          key={character.path}
+                          character={character}
+                          onClick={handleCharacterClick}
+                          onRemove={toggleFavorite}
+                        />
+                      ))}
                     </div>
                   </div>
                 )}

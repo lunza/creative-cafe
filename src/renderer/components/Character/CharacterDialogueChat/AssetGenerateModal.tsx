@@ -14,6 +14,10 @@ import {
   Collapse,
   Select,
   message,
+  // 【Spec: add-sdxl-prompt-weight-support / Task 7】Popover / InputNumber / Slider 用于权重编辑器
+  Popover,
+  InputNumber,
+  Slider,
 } from 'antd';
 import {
   ThunderboltOutlined,
@@ -22,7 +26,6 @@ import {
   CloseCircleOutlined,
   LoadingOutlined,
   SettingOutlined,
-  EyeOutlined,
   EditOutlined,
   CheckOutlined,
   CloseOutlined,
@@ -30,6 +33,11 @@ import {
   PlusOutlined,
   LeftOutlined,
   RightOutlined,
+  // 【Spec: optimize-trait-translation-and-temp-scheme / Task 4+5+6】
+  // SplitCellsOutlined：拆分标签 UI 标识；SaveOutlined/DeleteOutlined：组合方案保存/删除按钮
+  SplitCellsOutlined,
+  SaveOutlined,
+  DeleteOutlined,
 } from '@ant-design/icons';
 import {
   EMOTION_PRESETS,
@@ -51,6 +59,13 @@ import type { CategorizedTrait, CharacterTraitItem, TraitCategory } from '@share
 import type { SDWebuiConfig } from '../../../types/setting';
 import LoraSelectModal from './LoraSelectModal';
 import SizeSelector from './SizeSelector';
+import CameraAngleSelector from './CameraAngleSelector';
+// Spec: implement-local-tag-autocomplete / Task 7 — 替换「输入临时标签」位置的 Input，
+// 提供基于本地标签库的实时推荐。降级开关由组件内部读取 settingStore.tagAutocomplete.enabled 处理。
+import { TagAutocomplete } from '../../Common';
+// Spec: add-prompt-generation-in-asset-modal — 提示词生成结果审计质检报告
+// 与 AssetManagerModal 一致，复用 RagQualityReport 组件以只读模式展示 L0-L5 审计结果
+import RagQualityReport from './RagQualityReport';
 
 /**
  * AI 素材生成弹窗（Spec: add-asset-and-trait-management / Task 10）
@@ -60,7 +75,7 @@ import SizeSelector from './SizeSelector';
  *   - batch-expression：批量生成 31 个预置情绪表情（沿用原 ExpressionGenerateModal 逻辑）
  *   - single-expression：生成单个情绪表情（沿用原逻辑）
  *   - illustration：生成角色立绘（full body, standing）
- *   - general：生成一般场景图像（场景由动态场景方案下拉选择，Spec: fix-asset-trait-and-scene-defects / Task 6+7）
+ *   - general：生成一般场景图像（Spec: fix-asset-trait-and-scene-defects / Task 6+7）
  *   - three-view：生成三视图（front / side / back，由 targetSlot 指定）
  * - 所有生成都自动携带角色特征（characterTraits），通过 `window.electronAPI.characterTrait.list`
  *   读取后透传到 options.characterTraits（generateExpression 与 generateTxt2Img 均读取）
@@ -176,7 +191,7 @@ const DEFAULT_SD_CONFIG: SDWebuiConfig = {
   clipSkip: 2,
   adetailerEnabled: true,
   positivePromptTemplate:
-    'portrait, {traits}, looking at viewer, simple background, {emotion}, high quality, best quality, masterpiece, detailed face',
+    'portrait, {traits}, looking_at_viewer, simple_background, {emotion}, high quality, best quality, masterpiece, detailed face',
   customNegativePrompt: '',
   // ADetailer 高级参数默认值
   // 【重点标记 - ADetailer 参数优化（2026-07-29）】表情图模糊修复：
@@ -202,6 +217,9 @@ const DEFAULT_SD_CONFIG: SDWebuiConfig = {
   adNegativePrompt: '',
   adUseNoiseMultiplier: true,
   adNoiseMultiplier: 1.0,
+  // 【重点标记 - Furry/拟人生物面部识别扩展（2026-08-07）】
+  // 仅 YOLO-World 系列模型生效，空字符串=使用模型默认 COCO 80 类。
+  adModelClasses: '',
   // NL 模型相关
   modelType: 'sdxl',
   nlPromptTemplate:
@@ -230,8 +248,8 @@ const DEFAULT_SD_CONFIG: SDWebuiConfig = {
 /** data URI 前缀（用于在浏览器中展示 base64 图片） */
 const PNG_DATA_URI_PREFIX = 'data:image/png;base64,';
 
-// 注：`buildAssetPromptTemplate` 已迁移至 `./PromptBuilder`（Spec: add-dynamic-scene-prompt-generation / Task 7）
-// 该函数扩展了 {clothing} / {pose} / {scene} 占位符，由 sdGenerationService.applyTraitsAndLora 替换（Task 8）
+// 注：`buildAssetPromptTemplate` 已迁移至 `./PromptBuilder`
+// 模板仅含 {camera} / {traits} 占位符，由 sdGenerationService.applyTraitsAndLora 替换
 
 /**
  * 三视图槽位的中英文标签映射。
@@ -293,6 +311,93 @@ function detectGenderTag(traits: CharacterTraitItem[]): '1girl' | '1boy' | null 
   return null;
 }
 
+// ==================== 子组件：WeightEditorContent（权重编辑器 Popover 内容） ====================
+
+/**
+ * 权重编辑器 Popover 内容（Spec: add-sdxl-prompt-weight-support / Task 7.2）。
+ *
+ * 受控组件：接收当前 weight + onChange/onReset 回调，内部维护 InputNumber/Slider 同步状态。
+ * - InputNumber 与 Slider 双向同步（改变一个更新另一个，范围 0.1-10.0，步长 0.1）
+ * - 「重置为 1.0」按钮调用 onReset（清空 weight 字段，等价于 1.0）
+ * - 快捷预设按钮（0.5 / 0.8 / 1.0 / 1.3 / 1.5）快速选择
+ *
+ * 与 AssetManagerModal 中的权重编辑器结构一致（Task 8 复用模式，复制实现避免跨文件重构）。
+ *
+ * 【关键差异】AssetGenerateModal 的工作副本模式：onChange/onReset 由外层传入
+ * handleUpdateTraitWeight，后者更新 editedTraits 本地 state（不直接调 store action），
+ * 编辑在用户点击「应用/生成」前不会落盘。
+ *
+ * UI 风格：暗色主题 + inline styles（与外层 Modal 一致）。
+ * Popover 内容由 antd 注入 document.body，背景使用 antd 默认浮层（已适配暗色主题）。
+ */
+const WeightEditorContent: React.FC<{
+  weight: number | undefined;
+  onChange: (weight: number) => void;
+  onReset: () => void;
+}> = ({ weight, onChange, onReset }) => {
+  // 初始值：weight 为 undefined 时回退到 1.0（UI 显示用，不写回 editedTraits）
+  const initialValue = weight ?? 1.0;
+  const [localValue, setLocalValue] = useState<number>(initialValue);
+
+  // 同步外部 weight 变化（如用户重置后 editedTraits 更新触发 props 变化）
+  useEffect(() => {
+    setLocalValue(weight ?? 1.0);
+  }, [weight]);
+
+  // InputNumber / Slider / 预设按钮共用：更新本地 + 通知外层 handleUpdateTraitWeight
+  const handleChange = useCallback(
+    (val: number | null) => {
+      if (val === null || Number.isNaN(val)) return;
+      setLocalValue(val);
+      onChange(val);
+    },
+    [onChange],
+  );
+
+  return (
+    <div style={{ width: 220, padding: 4 }}>
+      {/* InputNumber + Slider 同一行 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <InputNumber
+          size="small"
+          min={0.1}
+          max={10}
+          step={0.1}
+          precision={1}
+          value={localValue}
+          onChange={handleChange}
+          style={{ width: 80 }}
+        />
+        <Slider
+          min={0.1}
+          max={10}
+          step={0.1}
+          value={localValue}
+          onChange={handleChange}
+          style={{ flex: 1, margin: 0 }}
+        />
+      </div>
+      {/* 快捷预设按钮 */}
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
+        {[0.5, 0.8, 1.0, 1.3, 1.5].map((preset) => (
+          <Button
+            key={preset}
+            size="small"
+            onClick={() => handleChange(preset)}
+            style={{ fontSize: 11, padding: '0 6px' }}
+          >
+            ×{preset.toFixed(1)}
+          </Button>
+        ))}
+      </div>
+      {/* 重置按钮：清空 weight 字段（等价于 1.0） */}
+      <Button size="small" block onClick={onReset} style={{ fontSize: 11 }}>
+        重置为 1.0
+      </Button>
+    </div>
+  );
+};
+
 // ==================== 组件实现 ====================
 
 const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
@@ -308,12 +413,13 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
   onGenerated,
 }) => {
   // ====== Store 订阅 ======
-  const { saveExpression, loadExpressions } = useExpressionStore();
-  const { saveAsset } = useAssetStore();
+  const saveExpression = useExpressionStore(s => s.saveExpression);
+  const loadExpressions = useExpressionStore(s => s.loadExpressions);
+  const saveAsset = useAssetStore(s => s.saveAsset);
   // 【Spec: add-model-capability-detection-and-image-recognition / Task 7】
   // 从 settingStore 读取当前激活引擎的 capabilities.supportsVision，
   // 仅当为 true 时展示「AI 图片识别」按钮
-  const { setting } = useSettingStore();
+  const setting = useSettingStore(s => s.setting);
   const activeEngine = setting?.aiEngines?.find(
     (e) => e.id === setting?.activeEngineId,
   );
@@ -322,11 +428,9 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
   // 【重点标记 - 按角色独立存储 LoRA（2026-07-29 bug 修复）】
   // LoRA 配置不再从全局 setting.sdWebui.selectedLoras 读取，而是按角色卡独立存储，
   // 避免 A 角色选择的 LoRA 污染 B 角色的生成。
-  const {
-    loras: characterLoras,
-    loadLoras: loadCharacterLoras,
-    saveLoras: saveCharacterLoras,
-  } = useCharacterLoraStore();
+  const characterLoras = useCharacterLoraStore(s => s.loras);
+  const loadCharacterLoras = useCharacterLoraStore(s => s.loadLoras);
+  const saveCharacterLoras = useCharacterLoraStore(s => s.saveLoras);
 
   // 【重点标记 - 角色特征缓存 Bug 修复（2026-07-29）】
   // 原实现通过 window.electronAPI.characterTrait.list() 直接 IPC 读取（从磁盘），
@@ -335,13 +439,6 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
   // 与 AssetManagerModal 特征 Tab 共享同一 store state，实时同步未保存的修改。
   // init useEffect 中仅当 store 的 currentCharacterCardId 与当前角色不一致时才 loadTraits，
   // 避免覆盖 AssetManagerModal 中已加载（可能含未保存修改）的 traits。
-  //
-  // 【重点标记 - 动态场景字段订阅】Spec: add-dynamic-scene-prompt-generation / Task 8
-  // 额外订阅 dynamicScenePrompts / activeDynamicScenePromptId，供 buildSdOptions 查找
-  // 当前激活动态场景方案并填充 dynamicClothing / dynamicPose / dynamicScene 选项。
-  // 【重点标记 - 动态场景下拉 UI】Spec: fix-asset-trait-and-scene-defects / Task 6
-  // 额外订阅 applyDynamicScenePrompt action，供生成弹窗内的 <Select> 下拉切换激活方案，
-  // 用户无需返回 AssetManagerModal 即可在生成时选择已保存的动态场景方案。
   const {
     traits: characterTraits,
     // 【Bug 修复 - Spec: fix-asset-trait-and-scene-defects §5.7】原订阅 customCategories（旧字段，
@@ -349,12 +446,21 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
     // 修复：改订阅 globalCategories（Task 4 引入的全局分类字典 state）。
     globalCategories: traitGlobalCategories,
     currentCharacterCardId: traitStoreCardId,
-    dynamicScenePrompts,
-    activeDynamicScenePromptId,
-    applyDynamicScenePrompt,
+    // 【Spec: optimize-trait-translation-and-temp-scheme / Task 5+6】组合方案 CRUD 订阅：
+    // - combinations / activeCombinationId：驱动「组合方案」下拉显示与当前激活态
+    // - saveCombination：handleSaveTempScheme 调用，传入 editedTraits 快照
+    // - overwriteCombination：重名时覆盖已有方案
+    // - applyCombination / deleteCombination：下拉切换与「删方案」按钮调用
+    combinations,
+    activeCombinationId,
+    saveCombination,
+    overwriteCombination,
+    applyCombination,
+    deleteCombination,
     loadTraits: loadStoreTraits,
     setTraits: setStoreTraits,
   } = useCharacterTraitStore();
+  // TODO(perf): 整体订阅，待拆分为 selector（10 字段，>5 暂缓）
 
   // ====== 临时编辑态（不持久化）======
   // editedTraits 是 store characterTraits 的「工作副本」：
@@ -373,6 +479,47 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
   // 新增临时标签：Input 暂存的文本（Enter 提交 / Esc 取消）
   const [addingText, setAddingText] = useState<string>('');
 
+  // ====== 提示词生成面板状态（Spec: add-prompt-generation-in-asset-modal） ======
+  // 用户在「携带角色特征」区域正上方输入提示词 → 调用 AI 生成分类 tag → 应用追加到 editedTraits
+  // 视觉风格：紫色边框 + ThunderboltOutlined 图标
+  // 审计流程复用 generateTraitPrompts（主进程内部走 L0-L5 完整审计链 + RAG 标签库参考注入）
+  /** 用户输入的提示词文本（如 "red hair, blue dress, forest background"） */
+  const [promptGenInput, setPromptGenInput] = useState<string>('');
+  /** AI 生成的分类特征（CategorizedTrait[]，应用前暂存，不直接写入 editedTraits） */
+  const [promptGenResult, setPromptGenResult] = useState<CategorizedTrait[] | null>(null);
+  /** AI 调用 loading（控制生成按钮 disabled + loading 图标） */
+  const [promptGenLoading, setPromptGenLoading] = useState<boolean>(false);
+  /** RAG 质检报告 */
+  const [promptGenRagDebug, setPromptGenRagDebug] = useState<{
+    enabled: boolean;
+    status: string;
+    retrievedTags: Array<{ name: string; category: number; count: number; score: number }>;
+    tagValidation: Array<{
+      tag: string;
+      isValid: boolean;
+      canonicalName?: string;
+      category?: number;
+      count?: number;
+      skipReason?: 'rating' | 'no_suggestion';
+      suggestions: Array<{ name: string; category: number; count: number; score: number }>;
+      replacedBy?: string;
+      splitTags?: { colorPartTag: string; featureTag: string };
+      source?: 'user-map' | 'name' | 'alias' | 'color-split' | 'negation-strip' | 'knn' | 'ai-fallback';
+      manuallyReplaced?: boolean;
+      manualReplacement?: string;
+      aiFallbackAttempted?: boolean;
+      aiFallbackCandidates?: string[];
+    }>;
+  } | null>(null);
+  /** RAG 质检面板可见性（用户可折叠/展开，默认展开） */
+  const [promptGenRagVisible, setPromptGenRagVisible] = useState<boolean>(true);
+  /**
+   * 已应用的提示词生成特征 ID 集合（用于视觉标识新追加的 tag）。
+   * 应用后这些 id 进入 editedTraits，但在 UI 渲染时若 id 在集合内则显示「✨ 新增」徽标。
+   * 关闭弹窗 / 重置特征时清空。
+   */
+  const [appliedPromptTraitIds, setAppliedPromptTraitIds] = useState<Set<string>>(new Set());
+
   // effectiveTraits：实际用于 SD 生成与 UI 展示的特征列表
   //  - editedTraits 非空时使用工作副本（含用户临时编辑）
   //  - 否则回退到 store characterTraits（与原行为一致）
@@ -385,12 +532,39 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
   // 【裸体三视图支持】当 targetSlot 为 *-nude 时，自动过滤 categoryId='clothing' 的特征，
   //   确保裸体版不携带衣物 tag（species / body / head 等基础特征保留）。
   const isNudeSlot = mode === 'three-view' && !!targetSlot?.endsWith('-nude');
-  const enabledTraitTexts = useMemo(
+  // 【Spec: optimize-expression-preset-prompts / Task 7】
+  // 表情模式（single-expression / batch-expression）下过滤 expression 分类特征，
+  // 避免与 {emotion} 占位符注入的 EMOTION_PROMPT_MAP 表情 tag 重复/冲突。
+  // illustration / general / three-view 模式不受影响，expression 分类特征正常携带。
+  // 注：enabledTraitTexts 为 buildSdOptions / buildEmotionPrompt / single-expression
+  // 提示词构建器共用派生值，在此处统一过滤可确保所有下游消费者一致地不携带 expression 分类 tag。
+  const isExpressionMode = mode === 'single-expression' || mode === 'batch-expression';
+  // 【Spec: add-sdxl-prompt-weight-support / Task 3.1】enabledTraitTexts 升级为
+  // Array<{ text: string; weight?: number }>，透传 weight 到下游 SD 生成管线
+  // （sdGenerationService.applyTraitsAndLora 会按 weight 格式化为 (text:weight) 语法）。
+  const enabledTraitTexts: Array<{ text: string; weight?: number }> = useMemo(
     () =>
       effectiveTraits
-        .filter((t) => t.enabled && (!isNudeSlot || t.categoryId !== 'clothing'))
-        .map((t) => t.text),
-    [effectiveTraits, isNudeSlot],
+        .filter(
+          (t) =>
+            t.enabled &&
+            (!isNudeSlot || t.categoryId !== 'clothing') &&
+            !(isExpressionMode && t.categoryId === 'expression'),
+        )
+        .map((t) => ({ text: t.text, weight: t.weight }))
+        // ⚠️ 【重点标记 - SD 生成前去重】2026-08-07 用户反馈：
+        // 若特征列表存在重复 tag（如两个 dog_girl），未去重直接拼接会导致 SD 对该 tag
+        // 多次加权，影响生成质量。此处对 text 做大小写不敏感去重（保留首次出现的项，
+        // 维持原有顺序），与 handleApplyGeneratedTraits 的去重 key 策略一致。
+        // 同时让 baseTraits（传给 generateTraitPrompts 的 LLM 上下文）也去重，
+        // 避免 LLM 因看到重复上下文而生成重复 tag。
+        // 【Spec: add-sdxl-prompt-weight-support / Task 3.1】去重 key 仍为 text
+        // （不带权重语法），权重不影响去重；保留首次出现项的 weight。
+        .filter((item, _index, arr) => {
+          const key = item.text.trim().toLowerCase();
+          return arr.findIndex((t) => t.text.trim().toLowerCase() === key) === _index;
+        }),
+    [effectiveTraits, isNudeSlot, isExpressionMode],
   );
 
   // ====== 基础状态 ======
@@ -450,15 +624,6 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
   const [positivePrompt, setPositivePrompt] = useState<string>('');
   /** 可编辑的负面提示词（用户可修改后再生） */
   const [negativePrompt, setNegativePrompt] = useState<string>('');
-  /**
-   * general 模式下用户输入的场景描述。
-   *
-   * @deprecated Spec: fix-asset-trait-and-scene-defects / Task 7
-   *   由动态场景下拉选择替代，不再由用户输入。保留 state 声明（默认空字符串）仅作为
-   *   `buildAssetPromptTemplate` 的兼容参数传递，避免破坏调用方签名。state 不再由
-   *   用户输入更新（userScene 文本输入框已移除，由动态场景 <Select> 下拉替代）。
-   */
-  const [userScene, setUserScene] = useState<string>('');
   /** LoRA 选择弹窗开关（Spec: add-lora-model-selection / Task 5） */
   const [loraModalOpen, setLoraModalOpen] = useState(false);
 
@@ -473,6 +638,62 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
     width: 1024,
     height: 1024,
   });
+
+  /**
+   * 视角镜头选择（2026-08-06 新增，2026-08-06 重构为按模式默认值）
+   *
+   * 用户通过 CameraAngleSelector 下拉选择 SDXL/Pony 视角镜头标签（如 from above / wide shot /
+   * dutch angle），选中后通过 {camera} 占位符注入到正面提示词模板（由 applyTraitsAndLora 替换）。
+   *
+   * 【2026-08-06 重构 - 模式默认值注入】
+   * 立绘 / 表情模板已移除写死的视角 tag（full body / portrait / looking at viewer），
+   * 改为弹窗打开时按模式初始化默认值（getCameraDefaultForMode），用户可改选/加选/清空。
+   * 这样避免「写死 tag + 用户选同类 tag」的冲突（如 full body + close-up 自相矛盾）。
+   *
+   * - 空字符串表示未选择，{camera} 占位符替换为空串并清理多余逗号
+   * - 立绘 / 表情（SDXL）/ 一般图像模板含 {camera} 占位符；三视图不含（视角程序化，不渲染下拉）
+   * - NL 表情模板（buildNLExpressionPrompt）不含 {camera}，选择后为 no-op
+   * - 每次生成独立应用，不写入全局设置；弹窗关闭时重置为空字符串；模式切换时重置为新模式默认值
+   */
+  const [selectedCameraAngle, setSelectedCameraAngle] = useState<string>('');
+
+  /**
+   * 按生成模式返回视角镜头默认值（2026-08-06 重构新增）。
+   *
+   * 立绘 / 表情模板已移除写死的视角 tag，改为由此函数提供模式默认值，
+   * 弹窗打开 / 模式切换时初始化 selectedCameraAngle。
+   *
+   * - illustration（立绘）：'full body'（立绘语义核心，用户可改 upper body 等）
+   * - single-expression / batch-expression（表情）：'portrait, looking at viewer'
+   *   （表情默认面部特写 + 看镜头，用户可加选 from above 等）
+   * - general（一般图像）：'' 无默认（用户自由选）
+   * - three-view（三视图）：'' 无默认（视角程序化，下拉不渲染）
+   *
+   * 注意：NL 表情模型（buildNLExpressionPrompt）模板不含 {camera}，默认值透传后为 no-op。
+   */
+  const getCameraDefaultForMode = (m: typeof mode): string => {
+    switch (m) {
+      case 'illustration':
+        return 'full_body';
+      case 'single-expression':
+      case 'batch-expression':
+        return 'portrait, looking_at_viewer';
+      case 'general':
+      case 'three-view':
+      default:
+        return '';
+    }
+  };
+
+  // ====== 视角镜头默认值初始化（弹窗打开 + 模式切换时重置为模式默认值） ======
+  // 【2026-08-06 重构】立绘/表情模板移除写死视角 tag 后，需在弹窗打开/模式切换时
+  // 自动初始化 selectedCameraAngle 为模式默认值，确保不调整时行为等价于原写死 tag。
+  // 用户可手动改选/加选/清空；模式切换时重置（各模式视角语义不同，不跨模式保留）。
+  useEffect(() => {
+    if (!open) return;
+    setSelectedCameraAngle(getCameraDefaultForMode(mode));
+    // 仅依赖 open / mode：弹窗打开或模式切换时触发，用户手动调整不触发
+  }, [open, mode]);
 
   // ====== 初始化加载（open 时拉取 SD 配置 / 读取特征 / 检测 SD 状态） ======
   useEffect(() => {
@@ -609,17 +830,27 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
     }
 
     // illustration / general / three-view 模式：构建素材提示词模板
-    const template = buildAssetPromptTemplate(
-      mode,
-      targetSlot,
-      userScene,
-    );
+    const template = buildAssetPromptTemplate(mode, targetSlot);
     // 负面提示词：用户自定义优先；否则使用默认
+    // 【2026-08-06 标签库审计】多词 tag 改为下划线版本（与 PromptBuilder.baseNegative 同步）
     const baseNegative =
-      'deformed, ugly, bad anatomy, multiple faces, text, watermark, low quality, blurry, mutated hands, extra digits, missing fingers, bad proportions';
+      'deformed, ugly, bad_anatomy, multiple_faces, text, watermark, low quality, blurry, mutated_hands, extra_digits, missing_fingers, bad_proportions';
     const userNegative = (sdConfig.customNegativePrompt && sdConfig.customNegativePrompt.trim()) || '';
+    // 【2026-08-06 三视图多角色 bug 修复】三视图专属负面约束
+    // 原正面模板含 `character sheet` 导致模型生成多视角/多服装 collage（主视图+上半身+特写，或穿衣/不穿衣左右布局）。
+    // 已从正面模板移除 character sheet 并加 solo，此处再追加负面约束强化单角色单视角：
+    // multiple views / multiple characters / split screen / collage / character sheet / 2girls / 3girls
+    // 无论用户是否自定义负面，三视图模式都追加此约束（bug 修复优先于用户配置的完全自由）。
+    // 【2026-08-06 标签库审计】多词 tag 改下划线 + character sheet → model_sheet（Danbooru 标准名）
+    // 删除 multiple characters（不在标签库，已有 multiple_girls/boys 替代）
+    const threeViewExtraNegative =
+      'multiple_views, multiple_girls, multiple_boys, split_screen, collage, model_sheet, 2girls, 3girls';
+    let finalNegative = userNegative || baseNegative;
+    if (mode === 'three-view') {
+      finalNegative = `${finalNegative}, ${threeViewExtraNegative}`;
+    }
     setPositivePrompt(template);
-    setNegativePrompt(userNegative || baseNegative);
+    setNegativePrompt(finalNegative);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     open,
@@ -633,15 +864,6 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
     sdConfig.nlPromptTemplate,
     enabledTraitTexts,
   ]);
-
-  // ====== general 模式：userScene 变化时重新构建提示词 ======
-  useEffect(() => {
-    if (!open || mode !== 'general') return;
-    // 仅在 idle 阶段跟随 userScene 变化更新提示词（生成中/成功后不覆盖用户编辑）
-    if (singleStage !== 'idle') return;
-    const template = buildAssetPromptTemplate('general', undefined, userScene);
-    setPositivePrompt(template);
-  }, [userScene, open, mode, singleStage]);
 
   // ====== 重置状态（关闭时） ======
   useEffect(() => {
@@ -657,7 +879,6 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
       setSingleError(null);
       setPositivePrompt('');
       setNegativePrompt('');
-      setUserScene('');
       // 【角色特征缓存 Bug 修复】不再 reset characterTraits — 改为订阅 characterTraitStore，
       // store state 由 AssetManagerModal 管理，此处不应清空（避免影响其他订阅者）
       setTraitsError(null);
@@ -665,12 +886,22 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
       setImageRecognizing(false);
       // 重置自定义尺寸为默认值（2026-07-29 新增）
       setSelectedSize({ width: 1024, height: 1024 });
+      // 重置视角镜头选择为空（2026-08-06 新增）
+      setSelectedCameraAngle('');
       // 【临时编辑态】关闭弹窗时丢弃工作副本与编辑态，下次打开重新从 store 同步
       setEditedTraits(null);
       setEditingTraitId(null);
       setEditingText('');
       setAddingCategoryId(null);
       setAddingText('');
+      // 【Spec: add-prompt-generation-in-asset-modal】关闭弹窗时清理提示词生成面板状态
+      // 避免下次打开时残留上次的生成结果 / 输入文本 / RAG 报告 / 新增徽标
+      setPromptGenInput('');
+      setPromptGenResult(null);
+      setPromptGenLoading(false);
+      setPromptGenRagDebug(null);
+      setPromptGenRagVisible(true);
+      setAppliedPromptTraitIds(new Set());
     }
   }, [open]);
 
@@ -731,39 +962,12 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
   // 由 sdGenerationService.generateExpression 内部替换 {traits} 占位符
   // 【Spec: add-trait-category-grouping / Task 6】characterTraits 改为传 enabled=true 项的 text 扁平化 string[]
   //
-  // 【重点标记 - 动态场景字段透传】Spec: add-dynamic-scene-prompt-generation / Task 8
-  // - 从 store 的 dynamicScenePrompts / activeDynamicScenePromptId 查找激活动态场景方案
-  // - illustration 模式无激活方案时兜底：dynamicPose='standing' / dynamicScene='simple background'
-  //   （保持与原模板 `full body, standing, ..., simple background` 一致的行为）
-  // - general 模式无激活方案时：dynamicScene 保持 undefined（{scene} 替换为空字符串）
-  //   【重点标记 - 移除 userScene 回退】Spec: fix-asset-trait-and-scene-defects / Task 7
-  //   原 Task 8 引入的 `dynamicScene = userScene.trim()` 回退已移除：userScene 文本输入框
-  //   已由动态场景下拉选择替代，无激活方案时 {scene} 占位符替换为空字符串（由
-  //   applyTraitsAndLora 的字面替换 + 逗号清理处理），不再回退到用户输入的 userScene。
-  // - three-view 模式：模板不含 {clothing} / {pose} / {scene} 占位符，三个字段透传 undefined 无副作用
-  // - applyTraitsAndLora 仅做字面替换（undefined → 空字符串 + 逗号清理），兜底逻辑集中在此处
+
+
+
+
+
   const buildSdOptions = useCallback(() => {
-    // 查找当前激活动态场景方案
-    const activeDynamicScheme = activeDynamicScenePromptId
-      ? dynamicScenePrompts.find((p) => p.id === activeDynamicScenePromptId)
-      : undefined;
-
-    // 从激活动态方案读取 clothing / pose / scene（无激活方案时为 undefined）
-    let dynamicClothing = activeDynamicScheme?.clothing || undefined;
-    let dynamicPose = activeDynamicScheme?.pose || undefined;
-    let dynamicScene = activeDynamicScheme?.scene || undefined;
-
-    // 模式特定的兜底逻辑（仅对含 {clothing} / {pose} / {scene} 占位符的模板生效）
-    if (mode === 'illustration' && !activeDynamicScheme) {
-      // 立绘模式无激活方案：兜底为 standing / simple background（保持原模板行为）
-      // Spec MODIFIED Requirements: 「{pose} 兜底为 standing, {scene} 兜底为 simple background」
-      if (!dynamicPose) dynamicPose = 'standing';
-      if (!dynamicScene) dynamicScene = 'simple background';
-    }
-    // 【重点标记 - 移除 userScene 回退】Spec: fix-asset-trait-and-scene-defects / Task 7
-    // 原 `else if (mode === 'general' && !dynamicScene && userScene.trim())` 分支已移除：
-    // general 模式无激活方案时 dynamicScene 保持 undefined，{scene} 替换为空字符串。
-
     // ===== 高分辨率人物数量约束检测 =====
     // 【重点标记 - 高分辨率约束】Spec: fix-asset-trait-and-scene-defects / Task 2
     // 当分辨率 ≥ 1024×1024 时，SD 模型倾向生成多个角色，需从基础特征推断性别
@@ -806,12 +1010,11 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
       // 当分辨率 ≥ 1024×1024 时由上方 detectGenderTag 推断填充，
       // 由 sdGenerationService.applyTraitsAndLora 注入到 prompt 开头（避免重复）。
       characterGenderTag,
-      // 【重点标记 - 动态场景字段透传】Spec: add-dynamic-scene-prompt-generation / Task 8
-      // - undefined 时由 applyTraitsAndLora 替换为空字符串并清理多余逗号
-      // - 已在上方根据 mode 与 activeDynamicScheme 完成兜底填充
-      dynamicClothing,
-      dynamicPose,
-      dynamicScene,
+      // 【2026-08-06 新增 - 视角镜头字段透传】
+      // - selectedCameraAngle 为空字符串时透传 undefined（applyTraitsAndLora 替换为空串并清理逗号）
+      // - 由 applyTraitsAndLora 替换 {camera} 占位符；空则替换为空串并清理逗号
+      // - 仅 illustration / general 模板含 {camera}；其它模式无副作用
+      dynamicCamera: selectedCameraAngle.trim() || undefined,
       // ADetailer 高级参数（仅当 adetailerEnabled=true 时由 sdGenerationService 读取）
       adModel: sdConfig.adModel,
       adConfidence: sdConfig.adConfidence,
@@ -833,6 +1036,9 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
       adNegativePrompt: sdConfig.adNegativePrompt,
       adUseNoiseMultiplier: sdConfig.adUseNoiseMultiplier,
       adNoiseMultiplier: sdConfig.adNoiseMultiplier,
+      // 【重点标记 - Furry/拟人生物面部识别扩展（2026-08-07）】
+      // 仅 YOLO-World 系列模型生效，透传到 sdGenerationService 条件写入 ad_model_classes
+      adModelClasses: sdConfig.adModelClasses,
       // NL 模型相关（Spec: integrate-nl-driven-sd-models）
       modelType: sdConfig.modelType,
       // 【2026-07-29 新增 - 用户自定义尺寸】使用弹窗内 SizeSelector 选择的尺寸，
@@ -863,13 +1069,9 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
       // 【img2img 高清模式】透传模式选择（direct / two-step）
       img2imgHiresMode: sdConfig.img2imgHiresMode,
     };
-    // 【重点标记 - 动态场景依赖】Spec: add-dynamic-scene-prompt-generation / Task 8
-    // 新增 dynamicScenePrompts / activeDynamicScenePromptId / mode 依赖：
-    // - 用户在 AssetManagerModal 或本弹窗下拉切换激活动态场景方案 → 此处感知 → buildSdOptions 重算
-    // - mode 决定兜底策略（illustration: standing/simple background; general: 无兜底）
-    // 【重点标记 - 移除 userScene 依赖】Spec: fix-asset-trait-and-scene-defects / Task 7
-    // userScene 不再作为 {scene} fallback 来源，从依赖数组中移除。
-  }, [sdConfig, enabledTraitTexts, effectiveTraits, characterLoras, selectedSize, mode, dynamicScenePrompts, activeDynamicScenePromptId]);
+
+
+  }, [sdConfig, enabledTraitTexts, effectiveTraits, characterLoras, selectedSize, selectedCameraAngle, mode]);
 
   // ====== 保存生成的素材（非表情模式） ======
   // 【重点标记 - assetId 生成规则】
@@ -1061,16 +1263,6 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
       return;
     }
 
-    // general 模式无激活动态场景方案时仅警告，不阻断生成（{scene} 占位符替换为空字符串）
-    // 【重点标记 - 移除 userScene 检查】Spec: fix-asset-trait-and-scene-defects / Task 7
-    // 原 userScene.trim() 检查已移除（userScene 已废弃，始终为空字符串），
-    // 改为检查 activeDynamicScenePromptId：无激活方案时 {scene} 替换为空字符串。
-    if (mode === 'general' && !activeDynamicScenePromptId) {
-      console.warn(
-        '[AssetGenerateModal] general 模式未激活动态场景方案，{scene} 占位符将替换为空字符串',
-      );
-    }
-
     if (sdStatus !== 'available') {
       message.error('SD WebUI 不可用，无法生成');
       return;
@@ -1151,7 +1343,6 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
     targetEmotionKey,
     targetEmotionLabel,
     targetSlot,
-    activeDynamicScenePromptId,
     sdStatus,
     sdConfig.endpoint,
     positivePrompt,
@@ -1161,6 +1352,10 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
   ]);
 
   // ====== 单次生成：保存 ======
+  // ⚠️ 2026-08-07 行为变更：保存成功后不再调用 onClose() 关闭弹窗，
+  // 让用户可连续生成多张图像（立绘/一般图像场景常见需求）。
+  // 用户可点击「重新生成」追加新图，或点击「关闭」主动退出。
+  // 表情/三视图模式保存为覆盖语义（同 key/slot 幂等），重复保存无副作用。
   const handleSingleSave = useCallback(async () => {
     if (!characterCardId || !generatedImage) {
       message.warning('无生成结果可保存');
@@ -1197,7 +1392,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
             );
           });
           onGenerated?.();
-          onClose();
+          // ⚠️ 2026-08-07：不再 onClose()，允许用户继续生成/保存（详见 handleSingleSave 顶部注释）
         } else {
           message.error(result.error || '保存表情失败');
         }
@@ -1210,7 +1405,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
         if (result.success) {
           message.success('立绘已保存');
           onGenerated?.();
-          onClose();
+          // ⚠️ 2026-08-07：不再 onClose()，允许用户继续生成/保存（详见 handleSingleSave 顶部注释）
         } else {
           message.error(result.error || '保存立绘失败');
         }
@@ -1223,7 +1418,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
         if (result.success) {
           message.success('一般图像已保存');
           onGenerated?.();
-          onClose();
+          // ⚠️ 2026-08-07：不再 onClose()，允许用户继续生成/保存（详见 handleSingleSave 顶部注释）
         } else {
           message.error(result.error || '保存一般图像失败');
         }
@@ -1243,7 +1438,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
             `${THREE_VIEW_SLOT_LABELS[targetSlot]}已保存`,
           );
           onGenerated?.();
-          onClose();
+          // ⚠️ 2026-08-07：不再 onClose()，允许用户继续生成/保存（详见 handleSingleSave 顶部注释）
         } else {
           message.error(result.error || '保存三视图失败');
         }
@@ -1265,7 +1460,6 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
     loadExpressions,
     handleAssetSave,
     onGenerated,
-    onClose,
   ]);
 
   // ====== 单次生成：重新生成 ======
@@ -1354,7 +1548,163 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
     setEditingText('');
     setAddingCategoryId(null);
     setAddingText('');
+    // 【Spec: add-prompt-generation-in-asset-modal】重置时同步清除「新增」徽标
+    // （提示词生成结果本身保留，用户仍可重新应用；仅清除已应用标记）
+    setAppliedPromptTraitIds(new Set());
   }, [characterTraits]);
+
+  // ====== 提示词生成 handlers（Spec: add-prompt-generation-in-asset-modal） ======
+  // 流程：用户输入提示词 → 调用 ai:generateTraitPrompts IPC → 主进程 L0-L5 审计 →
+  //       返回 CategorizedTrait[] + ragDebug → 用户确认「应用」追加到 editedTraits
+  // 视觉风格：紫色边框 + ThunderboltOutlined
+
+  /**
+   * 触发 AI 提示词生成。
+   *
+   * 入参：promptGenInput（用户输入的提示词文本）
+   * 上下文：enabledTraitTexts（当前已启用的特征文本，逗号拼接为 baseTraits 避免重复生成）
+   *
+   * 错误兜底：
+   *  - 空输入：message.warning 提示，不调用 IPC
+   *  - IPC 失败：message.error 展示后端返回的 error 字段
+   *  - 网络异常：try/catch 兜底，message.error 展示异常 message
+   *
+   * 成功后：暂存 promptGenResult（CategorizedTrait[]，应用前不写入 editedTraits）+
+   *        ragDebug（用于展示 L0-L5 审计质检报告）
+   */
+  const handleGenerateTraitPrompts = useCallback(async () => {
+    const trimmed = promptGenInput.trim();
+    if (!trimmed) {
+      message.warning('请输入提示词');
+      return;
+    }
+    setPromptGenLoading(true);
+    setPromptGenRagDebug(null);
+    try {
+      // baseTraits = 当前已启用的特征文本（避免 LLM 重复生成已有 tag）
+      // 【Spec: add-sdxl-prompt-weight-support / Task 3.3】仅取 .text 拼接，不带权重语法，
+      // 避免 LLM 看到 (blue_eyes:1.5) 等权重语法产生混淆。
+      const baseTraits = enabledTraitTexts.map((t) => t.text).join(', ');
+      const result = await window.electronAPI.ai.generateTraitPrompts({
+        prompt: trimmed,
+        baseTraits: baseTraits || undefined,
+      });
+      if (result?.success) {
+        const traits = result.traits || [];
+        if (traits.length === 0) {
+          message.info('AI 未从提示词中提取到任何特征，请尝试更具体的描述');
+        } else {
+          message.success(`AI 生成 ${traits.length} 条特征，请确认后应用`);
+        }
+        setPromptGenResult(traits);
+        if (result.ragDebug) {
+          setPromptGenRagDebug(result.ragDebug);
+          setPromptGenRagVisible(true);
+        }
+      } else {
+        message.error(result?.error || 'AI 提示词生成失败');
+        setPromptGenResult(null);
+      }
+    } catch (error) {
+      console.error('[AssetGenerateModal] AI 提示词生成失败:', error);
+      message.error(error instanceof Error ? error.message : 'AI 提示词生成失败');
+      setPromptGenResult(null);
+    } finally {
+      setPromptGenLoading(false);
+    }
+  }, [promptGenInput, enabledTraitTexts]);
+
+  /**
+   * 应用生成的特征到 editedTraits（按分类追加到末尾，保留原有顺序与结构）。
+   *
+   * 策略：
+   *  - 为每个 CategorizedTrait 生成新 id（genTraitId）+ enabled=true
+   *  - 透传 translation / originalText（AI 审计后保留的有效翻译 + 拆分溯源）
+   *  - 追加到 editedTraits 末尾（按生成顺序，不重新排序）
+   *  - 记录新 id 到 appliedPromptTraitIds（UI 渲染时显示「✨ 新增」徽标）
+   *  - 清空 promptGenResult（应用后不允许重复应用，避免重复追加）
+   *
+   * ⚠️ 去重处理（2026-08-07 修复，详见 docs/FIX_RECORDS.md §7.23）：
+   *  - 与已有特征去重：text（忽略大小写 + trim）已存在于 editedTraits 时跳过
+   *  - 生成结果内部去重：AI 可能生成多条相同 tag（如两个 dog_girl），仅保留首条
+   *  - 去重 key 为「text 小写 + trim」，与项目 SD 标签去重语义一致
+   *    （text-only key，非 category+text 组合，详见 project_memory 教训记录）
+   *  - 跳过条数通过 message 告知用户，避免静默丢弃
+   *
+   * 边界情况：
+   *  - editedTraits === null（特征未加载）：兜底为 [...]，但因 traitStoreCardId 校验
+   *    通常已加载，此处仅做防御性处理
+   *  - 生成结果为空数组：直接清空 promptGenResult，无操作
+   *  - 全部重复（skipCount === promptGenResult.length）：提示用户无新增，保留生成结果供参考
+   */
+  const handleApplyGeneratedTraits = useCallback(() => {
+    if (!promptGenResult || promptGenResult.length === 0) {
+      return;
+    }
+    // 构建已有特征的 text 集合（小写 + trim），用于与生成结果去重
+    // 使用 effectiveTraits（editedTraits ?? characterTraits）获取当前工作副本
+    const existingTextKeys = new Set(
+      effectiveTraits.map((t) => t.text.trim().toLowerCase())
+    );
+    // 生成结果内部也需要去重（AI 可能返回多条相同 tag）
+    const seenInBatch = new Set<string>();
+    const newItems: CharacterTraitItem[] = [];
+    let skipCount = 0;
+    for (const trait of promptGenResult) {
+      const key = trait.text.trim().toLowerCase();
+      if (existingTextKeys.has(key) || seenInBatch.has(key)) {
+        skipCount++;
+        continue;
+      }
+      seenInBatch.add(key);
+      newItems.push({
+        id: genTraitId(),
+        text: trait.text,
+        categoryId: trait.categoryId,
+        enabled: true,
+        translation: trait.translation,
+        originalText: trait.originalText,
+        // 【Spec: add-sdxl-prompt-weight-support / Task 9.2】透传 CategorizedTrait.weight，
+        // AI 生成的权重应用到 editedTraits 后由 renderTraitsPanel 显示可编辑徽标。
+        weight: trait.weight,
+      });
+    }
+    // 全部重复：提示用户无新增，保留生成结果供用户参考（不清空 promptGenResult）
+    if (newItems.length === 0) {
+      message.info(`生成的 ${promptGenResult.length} 条特征均已存在于当前列表，未追加重复项`);
+      return;
+    }
+    setEditedTraits((prev) => {
+      const base = prev ?? [];
+      return [...base, ...newItems];
+    });
+    // 记录新 id 用于 UI 视觉标识「✨ 新增」徽标
+    setAppliedPromptTraitIds((prev) => {
+      const next = new Set(prev);
+      for (const item of newItems) {
+        next.add(item.id);
+      }
+      return next;
+    });
+    // 应用后清空生成结果（避免重复应用导致重复追加）
+    setPromptGenResult(null);
+    setPromptGenRagDebug(null);
+    setPromptGenInput('');
+    // 有跳过时告知用户跳过条数，避免静默丢弃
+    if (skipCount > 0) {
+      message.success(`已追加 ${newItems.length} 条特征，跳过 ${skipCount} 条重复项`);
+    } else {
+      message.success(`已追加 ${newItems.length} 条 AI 生成特征到下方列表`);
+    }
+  }, [promptGenResult, effectiveTraits]);
+
+  /**
+   * 放弃生成的特征（清空生成结果与 RAG 报告，保留输入文本以便用户修改后重试）。
+   */
+  const handleDiscardGeneratedTraits = useCallback(() => {
+    setPromptGenResult(null);
+    setPromptGenRagDebug(null);
+  }, []);
 
   /**
    * 进入行内编辑模式：记录目标 trait id，用其当前 text 初始化 Input 暂存值。
@@ -1367,6 +1717,13 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
   /**
    * 确认编辑：将 Input 暂存值写入 editedTraits 对应 trait 的 text 字段。
    * trim 后非空才写入；空串保留原值（避免空 tag 进入 SD 提示词）。
+   *
+   * 【Spec: add-ai-tag-chinese-translation / Task 4】保存新 text 时同步清空 translation，
+   * 避免旧翻译与新 tag 不符（手动编辑后的 tag 视为用户自定义，不再携带 AI 翻译）。
+   *
+   * 【Spec: optimize-trait-translation-and-temp-scheme / Task 4】同步清空 originalText，
+   * 编辑后的标签不再是「L3 颜色拆分生成」，与 translation 清空语义一致（避免前端继续显示
+   * SplitCellsOutlined 拆分图标 + 拆分溯源 Tooltip，但 text 已与 originalText 不对应）。
    */
   const handleConfirmEditTrait = useCallback(() => {
     if (!editingTraitId) return;
@@ -1380,7 +1737,9 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
     setEditedTraits((prev) =>
       prev
         ? prev.map((t) =>
-            t.id === editingTraitId ? { ...t, text: trimmed } : t,
+            t.id === editingTraitId
+              ? { ...t, text: trimmed, translation: undefined, originalText: undefined }
+              : t,
           )
         : prev,
     );
@@ -1421,6 +1780,38 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
   }, []);
 
   /**
+   * 【Spec: add-sdxl-prompt-weight-support / Task 7.3】临时更新特征权重。
+   *
+   * 与 handleToggleTraitEnabledLocal / handleDeleteTrait 同模式：仅修改 editedTraits 本地副本，
+   * 不调用 useCharacterTraitStore.updateTraitWeight（与 AssetManagerModal 的关键差异）。
+   * 编辑在用户关闭弹窗 / 重置前保留在工作副本，应用生成时由 effectiveTraits 派生消费。
+   *
+   * 使用 setEditedTraits(prev => ...) 函数式更新，避免 stale closure（项目内存规则）。
+   * weight 为 undefined 时清空字段（等价于默认 1.0，不进入 SDXL 加权语法）。
+   * 不显示成功 message：权重变化通过徽标视觉反馈，与其他行内编辑 handler 一致。
+   */
+  const handleUpdateTraitWeight = useCallback(
+    (traitId: string, weight: number | undefined) => {
+      setEditedTraits((prev) =>
+        prev
+          ? prev.map((t) =>
+              t.id === traitId
+                ? {
+                    ...t,
+                    weight:
+                      typeof weight === 'number' && !isNaN(weight)
+                        ? weight
+                        : undefined,
+                  }
+                : t,
+            )
+          : prev,
+      );
+    },
+    [],
+  );
+
+  /**
    * 进入新增临时标签模式：记录目标分类 id，清空 Input 暂存值。
    */
   const handleStartAddTrait = useCallback((categoryId: string) => {
@@ -1459,6 +1850,145 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
     setAddingCategoryId(null);
     setAddingText('');
   }, []);
+
+  // ====== 组合方案 handlers（Spec: optimize-trait-translation-and-temp-scheme / Task 5+6） ======
+  //
+  // 三个 handler 共同支撑「组合方案」下拉 UI（renderTraitsPanel 头部）：
+  // - handleSaveTempScheme：将当前 editedTraits 工作副本（含临时新增/编辑/启用状态/translation/
+  //   originalText）作为 traitSnapshot 保存为命名方案，跨会话保留。原「AI 图片识别」按钮位置由
+  //   下拉 + 「存方案」按钮替代（不再单独放「临时方案保存」按钮，避免重复入口）。
+  // - handleApplyCombination：下拉切换方案时调用。traitSnapshot 方案用快照完整替换 editedTraits
+  //   （解决「保存方案后编辑特征 → 应用方案时特征丢失」问题）；traitIds 方案（旧）仅切换 enabled。
+  //   两者均同步 store.activeCombinationId（applyCombination），让下拉显示当前激活方案。
+  // - handleDeleteCombination：删除当前激活方案，二确后调 deleteCombination。
+
+  /**
+   * 保存临时方案：弹出 Modal.confirm 输入方案名，校验非空后调 saveCombination。
+   *
+   * - traitSnapshot 入参为 editedTraits 深拷贝（saveCombination 内部还会再深拷贝一次，双重保险
+   *   避免后续 editedTraits 编辑污染快照）
+   * - saveCombination 内部已 fire-and-forget 调 saveTraits 持久化，调用方无需 await
+   * - 重名时弹出二次确认框，用户可选择「覆盖」或「取消」；覆盖走 overwriteCombination
+   */
+  const handleSaveTempScheme = useCallback(() => {
+    if (!editedTraits) return;
+    // 弹出输入框获取方案名
+    let schemeName = '';
+    const doSave = (trimmed: string) => {
+      // 保存方案（传入 editedTraits 快照，含临时新增/编辑/启用状态/translation/originalText）
+      const result = saveCombination(trimmed, editedTraits.map((t) => ({ ...t })));
+      if (result.success) {
+        message.success(`方案「${trimmed}」已保存`);
+      } else {
+        message.error(result.error || '保存方案失败');
+      }
+    };
+    const doOverwrite = (trimmed: string) => {
+      const result = overwriteCombination(trimmed, editedTraits.map((t) => ({ ...t })));
+      if (result.success) {
+        message.success(`方案「${trimmed}」已覆盖`);
+      } else {
+        message.error(result.error || '覆盖方案失败');
+      }
+    };
+    Modal.confirm({
+      title: '保存临时方案',
+      content: (
+        <Input
+          placeholder="请输入方案名称"
+          onChange={(e) => { schemeName = e.target.value; }}
+          autoFocus
+        />
+      ),
+      onOk: () => {
+        const trimmed = schemeName.trim();
+        if (!trimmed) {
+          message.error('方案名称不能为空');
+          return Promise.reject();
+        }
+        // 检查重名：重名时弹二次确认框让用户选择覆盖或取消
+        const existing = combinations.some((c) => c.name === trimmed);
+        if (existing) {
+          Modal.confirm({
+            title: '覆盖已有方案',
+            content: `已存在同名方案「${trimmed}」，是否覆盖其内容？`,
+            okText: '覆盖',
+            okButtonProps: { danger: true },
+            cancelText: '取消',
+            onOk: () => doOverwrite(trimmed),
+          });
+          return; // 不 reject，让外层 confirm 关闭，由内层 confirm 接管
+        }
+        doSave(trimmed);
+      },
+    });
+  }, [editedTraits, combinations, saveCombination, overwriteCombination]);
+
+  /**
+   * 应用组合方案到 editedTraits（下拉 onChange）。
+   *
+   * - combinationId === '__manual__'：取消激活（applyCombination(null)），editedTraits 保持不变
+   *   （用户手动编辑的状态不被覆盖，仅 store.activeCombinationId 重置为 null）
+   * - traitSnapshot 方案：用快照完整替换 editedTraits（深拷贝，保留 text/categoryId/enabled/id/
+   *   translation/originalText 全部字段），解决「保存方案后编辑特征 → 应用方案时特征丢失」问题
+   * - traitIds 方案（旧）：仅切换 editedTraits 的 enabled 状态，trait 本身不变（向后兼容）
+   *
+   * 两者均调 applyCombination(combinationId) 同步 store.activeCombinationId，让下拉显示当前激活方案。
+   * applyCombination 内部不持久化（仅切换 state），与 store.saveCombination/deleteCombination 的
+   * 即时持久化策略不同。
+   */
+  const handleApplyCombination = useCallback((combinationId: string) => {
+    if (combinationId === '__manual__') {
+      applyCombination(null);
+      // applyCombination(null) 已同步从 preCombinationTraits 备份恢复 store.traits，
+      // 此处需同步 editedTraits 到恢复后的 traits，否则本地 editedTraits 仍停留在上一个方案的快照
+      const restoredTraits = useCharacterTraitStore.getState().traits;
+      setEditedTraits(restoredTraits.map((t) => ({ ...t })));
+      return;
+    }
+    const combination = combinations.find((c) => c.id === combinationId);
+    if (!combination) return;
+
+    if (combination.traitSnapshot && combination.traitSnapshot.length > 0) {
+      // traitSnapshot 方案：用快照替换 editedTraits（深拷贝，避免后续编辑污染快照）
+      setEditedTraits(combination.traitSnapshot.map((t) => ({ ...t })));
+      applyCombination(combinationId);  // 同步 store 状态（store 内部会备份 traits）
+    } else {
+      // traitIds 方案（旧）：切换 editedTraits 的 enabled 状态
+      const traitIds = new Set(combination.traitIds);
+      setEditedTraits((prev) =>
+        prev ? prev.map((t) => ({ ...t, enabled: traitIds.has(t.id) })) : prev,
+      );
+      applyCombination(combinationId);  // 同步 store 状态
+    }
+  }, [combinations, applyCombination]);
+
+  /**
+   * 删除当前激活方案（二确后调 deleteCombination）。
+   *
+   * - 无 activeCombinationId 时 no-op（按钮已 disabled，此处二次防御）
+   * - deleteCombination 内部会 fire-and-forget 调 saveTraits 持久化
+   * - 删除激活方案时 store 会重置 activeCombinationId = null（进入手动模式），下拉自动回到「手动模式」
+   */
+  const handleDeleteCombination = useCallback(() => {
+    if (!activeCombinationId) return;
+    Modal.confirm({
+      title: '删除方案',
+      content: '确定删除当前方案？此操作不可撤销。',
+      onOk: () => {
+        const result = deleteCombination(activeCombinationId);
+        if (result.success) {
+          message.success('方案已删除');
+          // 删除激活的 traitSnapshot 方案时，store 已从备份恢复 traits，
+          // 此处同步 editedTraits 到恢复后的 traits
+          const restoredTraits = useCharacterTraitStore.getState().traits;
+          setEditedTraits(restoredTraits.map((t) => ({ ...t })));
+        } else {
+          message.error(result.error || '删除方案失败');
+        }
+      },
+    });
+  }, [activeCombinationId, deleteCombination]);
 
   // ====== 渲染辅助 ======
 
@@ -1563,10 +2093,10 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
                 (sdConfig.positivePromptTemplate.length > 60 ? '...' : '')
               : '（使用默认提示词模板）'
             : mode === 'illustration'
-            ? '立绘模板: full body, {pose}, {traits}, {clothing}, {scene}, ...'
+            ? '立绘模板: {camera}, {traits}, ... （{camera} 默认 full body）'
             : mode === 'general'
-            ? '一般图像模板: {traits}, {clothing}, {pose}, {scene}, ...'
-            : `三视图模板: ${targetSlot || 'front'} view, full body, {traits}, character sheet`}
+            ? '一般图像模板: {traits}, {camera}, ...'
+            : `三视图模板: ${targetSlot || 'front'} view, full body, solo, {traits}, white background`}
         </div>
       </div>
 
@@ -1584,6 +2114,293 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
     </div>
   );
 
+  /**
+   * 提示词生成面板（Spec: add-prompt-generation-in-asset-modal）。
+   *
+   * 位置：「携带角色特征」区域正上方（renderTraitsPanel 之前）。
+   * 视觉风格：紫色渐变边框 + ThunderboltOutlined 图标 + Input.TextArea + 主按钮。
+   *
+   * 交互流程：
+   *  1. 用户在 TextArea 输入提示词（如 "red hair, blue dress, forest background"）
+   *  2. 点击「生成提示词」按钮 → handleGenerateTraitPrompts 调用 ai:generateTraitPrompts IPC
+   *  3. 主进程内部走 L0-L5 完整审计链 + RAG 标签库参考注入，返回 CategorizedTrait[] + ragDebug
+   *  4. 结果按分类分组展示（Tag + 翻译 Tooltip），下方显示「应用」/「放弃」按钮
+   *  5. 用户点击「应用」→ handleApplyGeneratedTraits 追加到 editedTraits 末尾，
+   *     新增项在下方 renderTraitsPanel 中显示「✨ 新增」徽标
+   *  6. RAG 质检报告（RagQualityReport 组件，只读模式）展示 L0-L5 审计命中情况
+   *
+   * 错误处理：
+   *  - 空输入：按钮禁用（disabled），点击触发 message.warning
+   *  - IPC 失败 / 网络异常：message.error 展示错误信息，结果区不显示
+   *  - AI 返回空特征：message.info 提示，结果区显示「未提取到特征」
+   */
+  const renderPromptGenPanel = () => {
+    // 构建分类列表（系统分类 + 自定义分类 + 未分类），用于结果分组展示
+    const allCategories: TraitCategory[] = [
+      ...SYSTEM_TRAIT_CATEGORIES,
+      ...traitGlobalCategories,
+      UNCATEGORIZED_CATEGORY,
+    ].sort((a, b) => a.order - b.order);
+
+    // 按分类分组生成结果（仅展示有特征的分类）
+    const traitsByCategory = new Map<string, CategorizedTrait[]>();
+    if (promptGenResult) {
+      for (const trait of promptGenResult) {
+        const list = traitsByCategory.get(trait.categoryId);
+        if (list) {
+          list.push(trait);
+        } else {
+          traitsByCategory.set(trait.categoryId, [trait]);
+        }
+      }
+    }
+    const groupedCategories = allCategories.filter((c) => traitsByCategory.has(c.id));
+
+    return (
+      <div
+        style={{
+          marginBottom: 12,
+          padding: 10,
+          background: 'rgba(139, 92, 246, 0.05)',
+          borderRadius: 8,
+          border: '1px solid rgba(139, 92, 246, 0.2)',
+          fontSize: 12,
+        }}
+      >
+        {/* 标题行 */}
+        <div
+          style={{
+            color: 'var(--text-primary, #e2e8f0)',
+            marginBottom: 8,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            flexWrap: 'wrap',
+            fontWeight: 600,
+          }}
+        >
+          <ThunderboltOutlined style={{ color: '#a78bfa' }} />
+          <span>提示词生成</span>
+          <span
+            style={{
+              color: 'var(--text-tertiary, #6b7280)',
+              fontSize: 11,
+              fontWeight: 400,
+            }}
+          >
+            （AI 解析自然语言为分类特征 tag，应用后追加到下方「携带角色特征」列表）
+          </span>
+        </div>
+
+        {/* 输入区：TextArea + 生成按钮 */}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+          <Input.TextArea
+            value={promptGenInput}
+            onChange={(e) => setPromptGenInput(e.target.value)}
+            placeholder="输入提示词，如：red hair, blue dress, forest background；或自然语言：穿着哥特风服装站在森林里"
+            autoSize={{ minRows: 2, maxRows: 4 }}
+            disabled={promptGenLoading}
+            style={{
+              flex: 1,
+              background: 'var(--chat-bubble-assistant-bg, rgba(30, 30, 46, 0.5))',
+              color: 'var(--text-primary, #e2e8f0)',
+              borderColor: 'rgba(139, 92, 246, 0.2)',
+            }}
+          />
+          <Button
+            type="primary"
+            icon={<ThunderboltOutlined />}
+            loading={promptGenLoading}
+            onClick={handleGenerateTraitPrompts}
+            disabled={promptGenLoading || !promptGenInput.trim()}
+            style={{
+              background: 'linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%)',
+              borderColor: 'transparent',
+            }}
+          >
+            生成提示词
+          </Button>
+        </div>
+
+        {/* 结果展示区：仅当 promptGenResult 非空时渲染 */}
+        {promptGenResult && (
+          <div style={{ marginTop: 10 }}>
+            {promptGenResult.length === 0 ? (
+              <div
+                style={{
+                  color: 'var(--text-tertiary, #6b7280)',
+                  fontSize: 12,
+                  padding: '8px 0',
+                }}
+              >
+                AI 未从提示词中提取到任何特征，请尝试更具体的描述
+              </div>
+            ) : (
+              <>
+                <div
+                  style={{
+                    color: 'var(--text-secondary, #94a3b8)',
+                    fontSize: 12,
+                    marginBottom: 6,
+                  }}
+                >
+                  AI 生成结果（共 {promptGenResult.length} 条，按分类展示，确认后点击「应用」追加到下方特征列表）：
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {groupedCategories.map((category) => {
+                    const catTraits = traitsByCategory.get(category.id) || [];
+                    return (
+                      <div key={`prompt-gen-cat-${category.id}`}>
+                        <div
+                          style={{
+                            color: 'var(--text-secondary, #94a3b8)',
+                            fontSize: 11,
+                            marginBottom: 4,
+                          }}
+                        >
+                          {category.name}（{catTraits.length}）
+                        </div>
+                        <div
+                          style={{
+                            display: 'flex',
+                            flexWrap: 'wrap',
+                            gap: 4,
+                            alignItems: 'center',
+                            minHeight: 28,
+                            padding: '4px 8px',
+                            background: 'var(--chat-bubble-assistant-bg, rgba(30, 30, 46, 0.5))',
+                            border: '1px solid rgba(139, 92, 246, 0.15)',
+                            borderRadius: 4,
+                          }}
+                        >
+                          {catTraits.map((trait, index) => {
+                            // 【Spec: add-sdxl-prompt-weight-support / Task 9.1】AI 生成结果
+                            // 仅显示只读权重徽标（无 Popover 编辑器，应用后可在 renderTraitsPanel 编辑）。
+                            // 显示条件：weight 非 undefined 且非 1.0（与 renderTraitsPanel 的 hasWeight 一致）。
+                            const hasWeight =
+                              trait.weight !== undefined && trait.weight !== 1.0;
+                            return (
+                            <Tooltip
+                              key={`prompt-gen-tag-${category.id}-${index}`}
+                              title={
+                                trait.translation
+                                  ? `翻译：${trait.translation}${trait.originalText ? `（来源：${trait.originalText}）` : ''}${hasWeight ? `（权重 ×${trait.weight!.toFixed(1)}）` : ''}`
+                                  : trait.originalText
+                                    ? `来源：${trait.originalText}${hasWeight ? `（权重 ×${trait.weight!.toFixed(1)}）` : ''}`
+                                    : hasWeight
+                                      ? `权重 ×${trait.weight!.toFixed(1)}`
+                                      : ''
+                              }
+                            >
+                              <Tag
+                                color="purple"
+                                style={{
+                                  margin: 0,
+                                  fontSize: 11,
+                                  cursor: 'help',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                }}
+                              >
+                                {trait.text}
+                                {/* 【Spec: add-sdxl-prompt-weight-support / Task 9.1】只读权重徽标：
+                                    >1.0 暖橙（强化）/ <1.0 冷蓝（弱化），与 renderTraitsPanel 配色一致。
+                                    cursor: default（非 pointer）— 此处为 AI 生成结果展示，不可点击编辑；
+                                    应用后可在 renderTraitsPanel 通过 Popover 编辑。 */}
+                                {hasWeight && (
+                                  <span
+                                    style={{
+                                      fontSize: 10,
+                                      padding: '0 4px',
+                                      borderRadius: 4,
+                                      marginLeft: 4,
+                                      cursor: 'default',
+                                      lineHeight: '16px',
+                                      color: trait.weight! > 1.0 ? '#fa8c16' : '#1677ff',
+                                      background:
+                                        trait.weight! > 1.0
+                                          ? 'rgba(250, 140, 22, 0.15)'
+                                          : 'rgba(22, 119, 255, 0.15)',
+                                      border: `1px solid ${
+                                        trait.weight! > 1.0
+                                          ? 'rgba(250, 140, 22, 0.4)'
+                                          : 'rgba(22, 119, 255, 0.4)'
+                                      }`,
+                                      flexShrink: 0,
+                                      userSelect: 'none',
+                                    }}
+                                  >
+                                    ×{trait.weight!.toFixed(1)}
+                                  </span>
+                                )}
+                              </Tag>
+                            </Tooltip>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* 应用 / 放弃按钮 */}
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: 8,
+                    alignItems: 'center',
+                    marginTop: 8,
+                  }}
+                >
+                  <Button
+                    size="small"
+                    type="primary"
+                    icon={<CheckOutlined />}
+                    onClick={handleApplyGeneratedTraits}
+                    style={{
+                      background: 'linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%)',
+                      borderColor: 'transparent',
+                      fontSize: 11,
+                    }}
+                  >
+                    应用到特征列表
+                  </Button>
+                  <Button
+                    size="small"
+                    icon={<CloseOutlined />}
+                    onClick={handleDiscardGeneratedTraits}
+                    style={{ fontSize: 11 }}
+                  >
+                    放弃
+                  </Button>
+                  <span
+                    style={{
+                      color: 'var(--text-tertiary, #6b7280)',
+                      fontSize: 11,
+                    }}
+                  >
+                    应用后将追加到下方「携带角色特征」列表末尾，并标记为「✨ 新增」
+                  </span>
+                </div>
+
+                {/* RAG 质检报告（只读模式，不传 onRevert/onManualReplace 回调） */}
+                {promptGenRagDebug && (
+                  <div style={{ marginTop: 10 }}>
+                    <RagQualityReport
+                      ragDebug={promptGenRagDebug}
+                      visible={promptGenRagVisible}
+                      onToggle={() => setPromptGenRagVisible(!promptGenRagVisible)}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   /** 角色特征展示区（让用户知道携带了哪些特征） */
   // 【Spec: add-trait-category-grouping / Task 6】characterTraits 现已是 CharacterTraitItem[]，
   // 展示时区分 enabled / disabled（disabled 项灰显），并显示启用统计「启用 X/Y」。
@@ -1594,7 +2411,13 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
   // 也可临时删除任意标签（store 特征重置后恢复，临时特征永久移除）。
   const renderTraitsPanel = () => {
     const traits = effectiveTraits;
-    const enabledCount = traits.filter((t) => t.enabled).length;
+    // 【Spec: optimize-expression-preset-prompts】表情模式下 expression 分类特征自动过滤，
+    // UI 层也需反映：enabledCount 与 enabledInCat 均排除 expression 分类（表情模式下）
+    const isTraitAutoFiltered = (t: CharacterTraitItem) =>
+      isExpressionMode && t.categoryId === 'expression';
+    const enabledCount = traits.filter(
+      (t) => t.enabled && !isTraitAutoFiltered(t),
+    ).length;
     // store 原始数据索引：用于检测临时修改 / 临时新增 / 临时删除
     const storeTextById = new Map(characterTraits.map((t) => [t.id, t.text]));
     const storeIds = new Set(characterTraits.map((t) => t.id));
@@ -1654,6 +2477,13 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
           <span>
             携带角色特征（启用 {enabledCount}/{traits.length}）：
           </span>
+          {isExpressionMode && (
+            <Tooltip title="表情模式下，「人物表情」分类特征已自动清空（由情绪预设 EMOTION_PROMPT_MAP 提供表情 tag），避免与预置提示词冲突。其他模式不受影响。">
+              <Tag color="orange" style={{ margin: 0, fontSize: 11, cursor: 'help' }}>
+                表情特征已自动清空
+              </Tag>
+            </Tooltip>
+          )}
           <Tooltip title="点击特征可临时启用/禁用；点击编辑图标可临时修改文本（如 sitting → standing）；点击 × 可临时删除；分类下方可新增临时标签。所有修改仅影响本次生成，不保存到角色卡。">
             <Tag color="blue" style={{ margin: 0, fontSize: 11, cursor: 'help' }}>
               可临时编辑
@@ -1683,31 +2513,54 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
           >
             重置
           </Button>
-          {/* 【Spec: add-model-capability-detection-and-image-recognition / Task 7】
-              仅当当前 AI 引擎 supportsVision=true 时显示「AI 图片识别」按钮；
-              不支持时显示提示文案引导用户切换模型 */}
-          {supportsVision ? (
+          {/* 【Spec: optimize-trait-translation-and-temp-scheme / Task 5】
+              原「AI 图片识别」按钮（supportsVision ? Button : Tooltip「图片识别不可用」）已移除，
+              替换为下方的「组合方案」下拉 + 存方案/删方案按钮组合。
+              - handleImageRecognize 函数定义保留（不删除），仅移除按钮渲染入口
+              - supportsVision / imageRecognizing 状态变量保留（不删除），避免破坏其他潜在引用
+              - 「存方案」按钮整合到下方下拉行（Task 6），不再单独放「临时方案保存」按钮（避免重复入口） */}
+        </div>
+        {/* 【Spec: optimize-trait-translation-and-temp-scheme / Task 5+6】组合方案下拉 + 存方案/删方案按钮
+            * 替代原「AI 图片识别」按钮位置（已移除）。用户可在生成弹窗内直接：
+            * - 切换已保存的组合方案（applyCombination）：traitSnapshot 方案用快照完整替换 editedTraits，
+            *   traitIds 方案仅切换 enabled
+            * - 将当前 editedTraits 工作副本（含临时新增/编辑/启用状态/translation/originalText）保存为
+            *   命名方案（saveCombination + traitSnapshot），跨会话保留
+            * - 删除当前激活方案（deleteCombination）
+            * - 「手动模式」选项（value='__manual__'）：applyCombination(null)，editedTraits 保持不变
+            * - 方案名后 📋 emoji 标识 traitSnapshot 方案（与 traitIds 方案区分，让用户知道该方案会完整替换特征）
+            */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+          <span style={{ color: 'var(--text-secondary, #94a3b8)', fontSize: 11 }}>组合方案</span>
+          <Select
+            size="small"
+            value={activeCombinationId ?? '__manual__'}
+            onChange={handleApplyCombination}
+            style={{ width: 140, fontSize: 11 }}
+            options={[
+              { value: '__manual__', label: '手动模式' },
+              ...combinations.map((c) => ({
+                value: c.id,
+                label: c.traitSnapshot ? `${c.name} 📋` : c.name,
+              })),
+            ]}
+          />
+          <Tooltip title="将当前编辑的特征保存为方案">
+            <Button size="small" icon={<SaveOutlined />} onClick={handleSaveTempScheme} style={{ fontSize: 11 }}>
+              存方案
+            </Button>
+          </Tooltip>
+          <Tooltip title="删除当前方案">
             <Button
               size="small"
-              icon={<EyeOutlined />}
-              loading={imageRecognizing}
-              onClick={handleImageRecognize}
-              style={{
-                marginLeft: 'auto',
-                fontSize: 11,
-                borderColor: 'rgba(99, 102, 241, 0.4)',
-                color: '#a5b4fc',
-              }}
+              icon={<DeleteOutlined />}
+              disabled={!activeCombinationId}
+              onClick={handleDeleteCombination}
+              style={{ fontSize: 11 }}
             >
-              AI 图片识别
+              删方案
             </Button>
-          ) : (
-            <Tooltip title="当前 AI 模型不支持图片识别，请在设置中切换到多模态模型">
-              <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-tertiary, #6b7280)' }}>
-                图片识别不可用
-              </span>
-            </Tooltip>
-          )}
+          </Tooltip>
         </div>
         {editedTraits === null ? (
           <span style={{ color: 'var(--text-secondary, #94a3b8)', fontSize: 11 }}>
@@ -1721,14 +2574,27 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
           >
             {allCategories.map((category) => {
               const catTraits = traitsByCategory.get(category.id) || [];
-              const enabledInCat = catTraits.filter((t) => t.enabled).length;
+              const enabledInCat = catTraits.filter(
+                (t) => t.enabled && !isTraitAutoFiltered(t),
+              ).length;
               const isAdding = addingCategoryId === category.id;
+              // 【Spec: optimize-expression-preset-prompts】表情模式下 expression 分类自动过滤
+              const isCatAutoFiltered =
+                isExpressionMode && category.id === 'expression';
               return (
                 <Collapse.Panel
                   key={category.id}
                   header={
                     <span style={{ fontSize: 12 }}>
                       {category.name}
+                      {isCatAutoFiltered && (
+                        <Tag
+                          color="orange"
+                          style={{ marginLeft: 6, marginInlineEnd: 0, fontSize: 10, lineHeight: '16px' }}
+                        >
+                          已自动清空
+                        </Tag>
+                      )}
                       <span
                         style={{
                           marginLeft: 6,
@@ -1748,19 +2614,40 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
                         isStoreTrait &&
                         storeTextById.get(trait.id) !== trait.text;
                       const isEditing = editingTraitId === trait.id;
+                      // 【Spec: add-prompt-generation-in-asset-modal】标识通过「提示词生成」面板
+                      // 应用追加的 trait（在 appliedPromptTraitIds 集合中），UI 显示 ✨ 前缀徽标
+                      // 让用户直观区分「AI 生成追加」与「手动临时新增」（两者都是 cyan，但前者多一个 ✨）
+                      const isPromptGenerated = appliedPromptTraitIds.has(trait.id);
+                      // 【Spec: optimize-expression-preset-prompts】表情模式下 expression 分类自动过滤
+                      // UI 层将该分类下的所有特征显示为「已清空」灰态（置灰 + 删除线 + 不可点击），
+                      // 与 enabledTraitTexts 的过滤行为保持一致，让用户直观看到特征已被清空。
+                      const isAutoFiltered = isTraitAutoFiltered(trait);
+                      // 【Spec: add-sdxl-prompt-weight-support / Task 7】权重徽标显示逻辑：
+                      // 始终显示权重徽标（包括默认 1.0），让用户能直观看到并点击修改每个 tag 的权重。
+                      // - weightValue：用于展示的权重值（undefined 兜底为 1.0）
+                      // - isDefaultWeight：是否为默认权重（1.0 或 undefined），决定徽标视觉弱化
+                      // - hasWeight：是否为非默认权重，决定是否使用彩色高亮（仅用于颜色逻辑）
+                      // - isAutoFiltered 时权重无意义（特征已被表情模式清空），不显示徽标。
+                      const weightValue = trait.weight ?? 1.0;
+                      const isDefaultWeight =
+                        trait.weight === undefined || trait.weight === 1.0;
+                      const hasWeight = !isAutoFiltered && !isDefaultWeight;
                       // 颜色策略：
+                      //  - 自动过滤（表情模式下 expression 分类）→ default（灰显 + 删除线）
                       //  - 临时新增（非 store）+ enabled → cyan（青色，区分 store 特征）
                       //  - 临时新增 + disabled → default（灰显）
                       //  - store 特征 + enabled + 已修改 → orange
                       //  - store 特征 + enabled + 原始 → purple
                       //  - store 特征 + disabled → default（灰显）
-                      const tagColor = !trait.enabled
+                      const tagColor = isAutoFiltered
                         ? 'default'
-                        : !isStoreTrait
-                          ? 'cyan'
-                          : isEdited
-                            ? 'orange'
-                            : 'purple';
+                        : !trait.enabled
+                          ? 'default'
+                          : !isStoreTrait
+                            ? 'cyan'
+                            : isEdited
+                              ? 'orange'
+                              : 'purple';
 
                       if (isEditing) {
                         // 行内编辑模式：Input + 确认/取消按钮
@@ -1809,45 +2696,173 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
                       }
 
                       return (
-                        <Tag
-                          key={trait.id}
-                          color={tagColor}
-                          closable
-                          onClose={(e) => {
-                            e.preventDefault();
-                            handleDeleteTrait(trait.id);
-                          }}
-                          style={{
-                            margin: 0,
-                            opacity: trait.enabled ? 1 : 0.45,
-                            cursor: 'pointer',
-                            userSelect: 'none',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 2,
-                          }}
-                          // 点击 Tag 切换启用状态（临时）
-                          onClick={() =>
-                            handleToggleTraitEnabledLocal(trait.id)
+                        // 【Spec: add-ai-tag-chinese-translation / Task 6】用 Tooltip 包裹 Tag，
+                        // translation 存在时 hover 显示中文翻译；空字符串 title 不弹出（不影响点击切换启用）。
+                        // 【Spec: optimize-expression-preset-prompts】自动过滤的特征 Tooltip 改为
+                        // 提示「表情模式下已自动清空」，覆盖 translation 显示。
+                        // 【Spec: optimize-trait-translation-and-temp-scheme / Task 4】当 trait.originalText
+                        // 存在（L3 颜色拆分生成）且非 isAutoFiltered 时，Tooltip 改为多行展示
+                        // 「原标签 / 拆分为 / 翻译」，让用户直观看到拆分溯源信息。
+                        // 【Spec: add-sdxl-prompt-weight-support / Task 7.1 + 7.4】外层改为 <span> 包裹
+                        // Tooltip + 权重徽标 Popover（徽标为 Tooltip 的兄弟节点，与 AssetManagerModal 一致）。
+                        // key 从 Tooltip 移到外层 span（React 列表 key 必须在最外层元素）。
+                        <span
+                          key={`tip-${trait.id}`}
+                          style={{ display: 'inline-flex', alignItems: 'center' }}
+                        >
+                        <Tooltip
+                          title={
+                            isAutoFiltered
+                              ? '表情模式下已自动清空（由情绪预设提供表情 tag），其他模式恢复正常'
+                              : trait.originalText || trait.translation || hasWeight
+                                ? (
+                                  <div style={{ lineHeight: 1.6 }}>
+                                    {trait.originalText && <div>原标签：{trait.originalText}</div>}
+                                    {trait.originalText && <div>拆分为：{trait.text}</div>}
+                                    {trait.translation && <div>翻译：{trait.translation}</div>}
+                                    {/* 【Spec: add-sdxl-prompt-weight-support / Task 7.4】权重行始终展示：
+                                        - 非默认权重：>1.0 暖橙（强化）/ <1.0 冷蓝（弱化），与徽标配色一致
+                                        - 默认权重 1.0：使用次级文本色（弱化），让用户在 Tooltip 中也能看到当前权重值 */}
+                                    <div
+                                      style={{
+                                        color: isDefaultWeight
+                                          ? 'var(--text-secondary, #94a3b8)'
+                                          : weightValue > 1.0
+                                            ? '#fa8c16'
+                                            : '#1677ff',
+                                      }}
+                                    >
+                                      权重：{weightValue.toFixed(1)}
+                                    </div>
+                                  </div>
+                                )
+                                : trait.translation || ''
                           }
                         >
-                          {trait.text}
-                          {/* 编辑图标：点击进入行内编辑（stopPropagation 避免触发 toggle） */}
-                          <EditOutlined
+                          <Tag
+                            key={trait.id}
+                            color={tagColor}
+                            closable={!isAutoFiltered}
+                            onClose={(e) => {
+                              e.preventDefault();
+                              handleDeleteTrait(trait.id);
+                            }}
                             style={{
-                              fontSize: 10,
-                              marginLeft: 2,
-                              opacity: 0.7,
+                              margin: 0,
+                              opacity: isAutoFiltered ? 0.35 : trait.enabled ? 1 : 0.45,
+                              cursor: isAutoFiltered ? 'not-allowed' : 'pointer',
+                              userSelect: 'none',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 2,
+                              textDecoration: isAutoFiltered ? 'line-through' : 'none',
                             }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleStartEditTrait(trait.id, trait.text);
+                            // 点击 Tag 切换启用状态（临时）；自动过滤的特征不响应点击
+                            onClick={() => {
+                              if (isAutoFiltered) return;
+                              handleToggleTraitEnabledLocal(trait.id);
                             }}
-                          />
-                        </Tag>
+                          >
+                            {/* 【Spec: optimize-trait-translation-and-temp-scheme / Task 4】
+                                拆分标签视觉标识：trait.originalText 存在（L3 颜色拆分生成）且
+                                非 isAutoFiltered 时在文字前显示 SplitCellsOutlined 图标，让用户
+                                一眼看出该 tag 是从复合标签拆分而来。 */}
+                            {trait.originalText && !isAutoFiltered && (
+                              <SplitCellsOutlined style={{ fontSize: 10, marginRight: 2, opacity: 0.7 }} />
+                            )}
+                            {/* 【Spec: add-prompt-generation-in-asset-modal】AI 生成追加标识：
+                                isPromptGenerated=true 时在文字前显示 ✨ 徽标，让用户直观区分
+                                「AI 提示词生成应用」与「手动临时新增」（两者 Tag 颜色均为 cyan） */}
+                            {isPromptGenerated && (
+                              <span style={{ fontSize: 10, marginRight: 2 }} title="AI 提示词生成追加">
+                                ✨
+                              </span>
+                            )}
+                            {trait.text}
+                            {/* 编辑图标：点击进入行内编辑（stopPropagation 避免触发 toggle） */}
+                            <EditOutlined
+                              style={{
+                                fontSize: 10,
+                                marginLeft: 2,
+                                opacity: 0.7,
+                                display: isAutoFiltered ? 'none' : undefined,
+                              }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleStartEditTrait(trait.id, trait.text);
+                              }}
+                            />
+                          </Tag>
+                        </Tooltip>
+                        {/* 权重徽标 + 编辑器 Popover（Spec: add-sdxl-prompt-weight-support / Task 7.1 + 7.2）
+                            - 始终渲染（包括默认权重 1.0），让用户能随时点击修改任意 tag 的权重
+                            - 默认权重（1.0/undefined）：灰色弱化 + 虚线边框，提示「可点击调整」
+                            - 非默认权重：>1.0 暖橙色（#fa8c16 强化）/ <1.0 冷蓝色（#1677ff 弱化），半透明背景
+                            - 点击徽标弹出 Popover 编辑器（InputNumber + Slider + 预设 + 重置）
+                            - stopPropagation 避免冒泡触发 Tag 的 onClick（切换启用状态）
+                            - isAutoFiltered 时不渲染（表情模式下 expression 分类已清空，权重无意义）
+                            - 与 AssetManagerModal 视觉设计完全一致（Task 8 复用模式） */}
+                        {!isAutoFiltered && (
+                          <Popover
+                            trigger="click"
+                            placement="top"
+                            title={`权重编辑（${trait.text}）`}
+                            content={
+                              <WeightEditorContent
+                                weight={trait.weight}
+                                onChange={(val) => handleUpdateTraitWeight(trait.id, val)}
+                                onReset={() => handleUpdateTraitWeight(trait.id, undefined)}
+                              />
+                            }
+                          >
+                            <span
+                              title={`权重 ×${weightValue.toFixed(1)}，点击修改`}
+                              onClick={(e) => e.stopPropagation()}
+                              style={{
+                                fontSize: 10,
+                                padding: '0 4px',
+                                borderRadius: 4,
+                                marginLeft: 4,
+                                cursor: 'pointer',
+                                lineHeight: '16px',
+                                // 默认权重：灰色弱化 + 虚线边框（提示可点击调整）
+                                // 非默认权重：橙色（>1.0 强化）/ 蓝色（<1.0 弱化）+ 半透明背景
+                                color: isDefaultWeight
+                                  ? 'var(--text-tertiary, #8c8c8c)'
+                                  : weightValue > 1.0
+                                    ? '#fa8c16'
+                                    : '#1677ff',
+                                background: isDefaultWeight
+                                  ? 'transparent'
+                                  : weightValue > 1.0
+                                    ? 'rgba(250, 140, 22, 0.15)'
+                                    : 'rgba(22, 119, 255, 0.15)',
+                                border: isDefaultWeight
+                                  ? '1px dashed rgba(255, 255, 255, 0.2)'
+                                  : `1px solid ${
+                                      weightValue > 1.0
+                                        ? 'rgba(250, 140, 22, 0.4)'
+                                        : 'rgba(22, 119, 255, 0.4)'
+                                    }`,
+                                opacity: isDefaultWeight ? 0.7 : 1,
+                                flexShrink: 0,
+                                userSelect: 'none',
+                              }}
+                            >
+                              ×{weightValue.toFixed(1)}
+                            </span>
+                          </Popover>
+                        )}
+                        </span>
                       );
                     })}
                     {/* 新增临时标签入口 */}
+                    {/* 【Spec: implement-local-tag-autocomplete / Task 7】原 Input 替换为 TagAutocomplete，
+                        提供基于本地标签库的实时推荐。onTagSelect 选中推荐 tag 后追加到 editedTraits
+                        并清空输入框（不退出新增模式，允许连续添加多个 tag）；onPressEnter 仍走原
+                        handleConfirmAddTrait（输入自定义 tag 后按 Enter 添加并退出新增模式）；
+                        Escape 仍走 handleCancelAddTrait 退出新增模式。降级开关关闭时由
+                        TagAutocomplete 内部回退为普通 Input（onPressEnter / onKeyDown 已透传）。 */}
                     {isAdding ? (
                       <span
                         style={{
@@ -1856,12 +2871,29 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
                           gap: 2,
                         }}
                       >
-                        <Input
+                        <TagAutocomplete
                           size="small"
                           autoFocus
                           placeholder="输入临时标签"
                           value={addingText}
-                          onChange={(e) => setAddingText(e.target.value)}
+                          onChange={setAddingText}
+                          onTagSelect={(tag) => {
+                            // 选中推荐 tag 后：直接添加到 editedTraits 并清空输入框。
+                            // 不退出新增模式（不调用 handleConfirmAddTrait，避免 setAddingCategoryId(null)），
+                            // 允许用户连续添加多个推荐 tag。Escape 键仍可退出，旁边 ✓ 按钮也可主动退出。
+                            // addingCategoryId 在 isAdding=true 时必然非空（isAdding = addingCategoryId === category.id）。
+                            if (!addingCategoryId) return;
+                            const newTrait: CharacterTraitItem = {
+                              id: genTraitId(),
+                              text: tag.name,
+                              categoryId: addingCategoryId,
+                              enabled: true,
+                            };
+                            setEditedTraits((prev) =>
+                              prev ? [...prev, newTrait] : prev,
+                            );
+                            setAddingText('');
+                          }}
                           onPressEnter={handleConfirmAddTrait}
                           onKeyDown={(e) => {
                             if (e.key === 'Escape') {
@@ -1869,6 +2901,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
                               handleCancelAddTrait();
                             }
                           }}
+                          showSortButton={false}
                           style={{ width: 140, fontSize: 11 }}
                         />
                         <Button
@@ -2231,7 +3264,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
 
   /**
    * 单次模式参数面板（左栏内容）
-   * 包含 Alert + 动态场景下拉 + 参数概览 + 正/负面提示词 + 生成按钮
+   * 包含 Alert + 参数概览 + 正/负面提示词 + 生成按钮
    * 由 Modal body 的左栏容器包裹（与 renderHeader / renderTraitsPanel / SizeSelector 等并列）
    */
   const renderParamsColumn = () => {
@@ -2248,76 +3281,16 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
       mode === 'single-expression'
         ? '点击「生成」按钮，将通过 SD img2img 基于角色卡基底图片生成该情绪表情。'
         : mode === 'illustration'
-        ? '点击「生成」按钮，将通过 SD 文生图（提示词 + 角色 LoRA）生成角色立绘（full body, standing），不使用图像参考。'
+    ? '点击「生成」按钮，将通过 SD 文生图（提示词 + 角色 LoRA）生成角色立绘（{camera} 默认 full body，可在上方视角镜头下拉调整），不使用图像参考。'
         : mode === 'general'
-        ? '在左侧选择动态场景方案（可选），点击「生成」按钮通过 SD 文生图（提示词 + 角色 LoRA）生成一般场景图像，不使用图像参考。'
-        : `点击「生成」按钮，将通过 SD 文生图（提示词 + 角色 LoRA）生成${threeViewSlotLabel}三视图（character sheet 风格），不使用图像参考。`;
+        ? '点击「生成」按钮，将通过 SD 文生图（提示词 + 角色 LoRA）生成一般场景图像，不使用图像参考。'
+        : `点击「生成」按钮，将通过 SD 文生图（提示词 + 角色 LoRA）生成${threeViewSlotLabel}三视图（solo 单角色 + white background），不使用图像参考。`;
 
     const isGenerating = singleStage === 'generating';
 
     return (
       <>
         <Alert type="info" showIcon message={idleTitle} description={idleDesc} />
-
-        {/* 动态场景方案选择下拉（Spec: fix-asset-trait-and-scene-defects / Task 6）
-            * 替代原 userScene 文本输入框（Task 7 已移除）。用户可在生成弹窗内直接选择
-            * 已保存的动态场景方案，无需返回 AssetManagerModal 激活。
-            * - 选项来自 store.dynamicScenePrompts（与 AssetManagerModal 共享同一 state）
-            * - 当前激活方案作为 Select 的 value（activeDynamicScenePromptId）
-            * - onChange 调用 applyDynamicScenePrompt(id) 立即激活并持久化
-            * - 空状态（无方案）：Select disabled + placeholder 提示去素材管理添加
-            * - 允许清除（allowClear）：清除后 activeDynamicScenePromptId 保持原值
-            *   （applyDynamicScenePrompt 仅在 id 为非空字符串时调用，清除为 no-op）
-            * - 三视图模式：模板不含 {clothing}/{pose}/{scene} 占位符，选择方案无副作用
-            * - 表情模式：模板不含动态场景占位符，下拉仅作便捷入口（不阻塞生成）
-            * - 生成中（isGenerating）时 Select disabled，避免生成期间切换方案 */}
-        <div>
-          <div
-            style={{
-              color: 'var(--text-secondary, #94a3b8)',
-              fontSize: 12,
-              marginBottom: 6,
-            }}
-          >
-            动态场景方案：
-          </div>
-          <Select
-            value={activeDynamicScenePromptId ?? undefined}
-            onChange={(id) => {
-              // allowClear 触发时 id 为 undefined，此时不调用 applyDynamicScenePrompt
-              // （store 的 activeDynamicScenePromptId 保持原值，用户需在 AssetManagerModal
-              //   显式删除方案才会重置为 null；此处清除为 no-op，避免误清空激活状态）
-              if (typeof id === 'string' && id) {
-                applyDynamicScenePrompt(id);
-              }
-            }}
-            placeholder="选择动态场景方案"
-            style={{
-              width: '100%',
-              background: 'rgba(15, 15, 26, 0.6)',
-              color: 'var(--text-primary, #e2e8f0)',
-              borderColor: 'rgba(255, 255, 255, 0.1)',
-            }}
-            allowClear
-            disabled={dynamicScenePrompts.length === 0 || isGenerating}
-            options={dynamicScenePrompts.map((p) => ({ label: p.name, value: p.id }))}
-            notFoundContent={
-              dynamicScenePrompts.length === 0
-                ? '暂无动态场景方案，请在素材管理中添加'
-                : undefined
-            }
-          />
-          <div
-            style={{
-              color: 'var(--text-secondary, #94a3b8)',
-              fontSize: 11,
-              marginTop: 4,
-            }}
-          >
-            选择已保存的动态场景方案后，其服装/动作/场景 tag 会自动替换提示词模板中的{' '}
-            {'{clothing}'} / {'{pose}'} / {'{scene}'} 占位符。无方案时占位符替换为空字符串。
-          </div>
-        </div>
 
         {/* 参数概览 */}
         {renderParamsOverview()}
@@ -2479,7 +3452,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
             type="success"
             showIcon
             message={successTitle}
-            description="点击「保存」将当前预览图片写入角色卡素材目录；点击「重新生成」将追加一张新图到历史。可用左右按钮浏览本次会话已生成的所有图片。"
+            description="点击「保存」将当前预览图片写入角色卡素材目录（保存后弹窗保持打开，可继续生成更多图像）；点击「重新生成」将追加一张新图到历史。可用左右按钮浏览本次会话已生成的所有图片。"
           />
 
           <div style={{ display: 'flex', justifyContent: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -2578,6 +3551,14 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
   // ====== 主渲染 ======
   const modalTitle = `AI 素材生成 - ${characterName} · ${MODE_TITLE_MAP[mode]}`;
 
+  // 【Spec: optimize-trait-translation-and-temp-scheme / Task 5】
+  // 原「AI 图片识别」按钮渲染入口已移除（替换为「组合方案」下拉 + 存方案/删方案按钮），
+  // 但保留 supportsVision / imageRecognizing / handleImageRecognize 定义（spec 要求不删除），
+  // 以便未来恢复按钮渲染入口时可直接复用。void 引用避免 noUnusedLocals 报错（TS6133）。
+  void supportsVision;
+  void imageRecognizing;
+  void handleImageRecognize;
+
   return (
     <Modal
       title={modalTitle}
@@ -2627,6 +3608,8 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
           // 批量生成模式：保持原上下式布局（批量模式无「参数 + 状态」并行需求）
           <>
             {renderHeader()}
+            {/* 【Spec: add-prompt-generation-in-asset-modal】提示词生成面板（携带角色特征区域正上方） */}
+            {renderPromptGenPanel()}
             {renderTraitsPanel()}
             {/* 2026-07-29 新增 - 用户自定义输出尺寸选择器（所有生成模式可见） */}
             <SizeSelector
@@ -2658,12 +3641,26 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
               }}
             >
               {renderHeader()}
+              {/* 【Spec: add-prompt-generation-in-asset-modal】提示词生成面板（携带角色特征区域正上方） */}
+              {renderPromptGenPanel()}
               {renderTraitsPanel()}
               <SizeSelector
                 width={selectedSize.width}
                 height={selectedSize.height}
                 onChange={(w, h) => setSelectedSize({ width: w, height: h })}
               />
+              {/* 视角镜头选择（2026-08-06 新增，2026-08-06 重构为按模式默认值）
+                  * 三视图模式不渲染（视角由 targetSlot 程序化决定 front/side/back，不可用户选择）
+                  * 立绘/表情（SDXL）/一般图像模板含 {camera} 占位符，选中 tag 由 applyTraitsAndLora 替换
+                  * 弹窗打开/模式切换时自动初始化为模式默认值（立绘=full body，表情=portrait, looking at viewer）
+                  * 生成中禁用，避免切换 */ }
+              {mode !== 'three-view' && (
+                <CameraAngleSelector
+                  value={selectedCameraAngle}
+                  onChange={setSelectedCameraAngle}
+                  disabled={singleStage === 'generating'}
+                />
+              )}
               {renderSdUnavailableAlert()}
               {renderAdetailerWarning()}
               {renderParamsColumn()}

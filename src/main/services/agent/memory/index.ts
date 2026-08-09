@@ -19,6 +19,7 @@ export {
 export {
   MemoryStore,
   getMemoryStore,
+  isMemoryStoreInitialized,
   resetMemoryStore,
   type MemoryStoreConfig,
   type IMemoryAdapter,

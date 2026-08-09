@@ -14,6 +14,8 @@ export enum VectorSourceType {
   MANUAL_KNOWLEDGE = 'manual_knowledge',
   /** 角色卡聊天记录（预留接口） */
   CHARACTER_CHAT = 'character_chat',
+  /** RAG 标签库（Danbooru/e621 标签向量化，用于 AI 生成特征时语义检索参考） */
+  TAG_LIBRARY = 'tag_library',
 }
 
 /** 源类型中文标签字典 */
@@ -22,6 +24,7 @@ export const VectorSourceTypeLabel: Record<VectorSourceType, string> = {
   [VectorSourceType.KNOWLEDGE]: '知识库文档',
   [VectorSourceType.MANUAL_KNOWLEDGE]: '手动知识',
   [VectorSourceType.CHARACTER_CHAT]: '角色聊天记录',
+  [VectorSourceType.TAG_LIBRARY]: '标签库 RAG',
 };
 
 /** 源类型描述字典 */
@@ -30,6 +33,7 @@ export const VectorSourceTypeDescription: Record<VectorSourceType, string> = {
   [VectorSourceType.KNOWLEDGE]: '通过文档上传功能处理的 PDF/Word/Excel/TXT/MD 文件向量化数据',
   [VectorSourceType.MANUAL_KNOWLEDGE]: '用户手动创建的知识条目向量化数据，存储于 default 目录',
   [VectorSourceType.CHARACTER_CHAT]: '角色卡聊天记录向量化数据',
+  [VectorSourceType.TAG_LIBRARY]: 'Danbooru/e621 标签库向量化数据，用于 AI 生成特征时语义检索参考',
 };
 
 /**
@@ -83,6 +87,11 @@ export const VectorSourceTypeStorageConfig: Record<VectorSourceType, SourceTypeS
     storageDir: 'character_chat',
     perEntrySubdir: true,
     filePrefix: 'chat',
+  },
+  [VectorSourceType.TAG_LIBRARY]: {
+    storageDir: 'tag_library',
+    perEntrySubdir: true, // sourceId = csvHash，支持多 CSV 切换
+    filePrefix: 'tag',
   },
 };
 

@@ -1323,13 +1323,15 @@ ${frameworkList}
 
 【输出格式要求】
 请以JSON格式返回审核结果，不要输出任何其他文字、前缀或后缀：
-{"passed": true/false, "suggestions": "具体的修改建议，如果通过则为空字符串或'无'", "revisedText": "审核并修改后的文本，如果通过则返回原文"}
+{"passed": true/false, "suggestions": "审核说明", "revisedText": "修改后文本", "optimizationSuggestions": "优化建议", "optimizedText": "优化后文本"}
 
 其中：
 - passed：布尔值，表示内容是否通过审核（四个维度均合格则为true）
-- suggestions：字符串，具体的修改建议和问题说明
+- suggestions：字符串，审核说明。无论审核是否通过，都必须填写具体原因：通过时说明各维度合格的理由，不通过时说明存在的问题和修改建议。绝不能为空字符串或"无"
 - revisedText：字符串，审核并修改后的文本。如果通过审核，返回原文；如果不通过，返回修改后的版本
-- 如果原文包含{{}}格式的变量/通配符，在revisedText中保持其原样不修改`;
+- optimizationSuggestions：字符串，优化建议。仅在 passed=true 时填写，针对已通过的内容提出进一步的优化提升建议（如表达更精炼、细节更丰富、逻辑更连贯等）。如果内容已无优化空间，填写"内容已较为完善，暂无进一步优化建议"
+- optimizedText：字符串，优化后的文本。仅在 passed=true 时填写，根据优化建议对原文进行优化后的版本。如果内容已无优化空间，返回原文
+- 如果原文包含{{}}格式的变量/通配符，在revisedText和optimizedText中保持其原样不修改`;
 
     const wbAuditContentFixedContent = `【审核要求】
 {{audit_requirements}}`;
@@ -2330,6 +2332,7 @@ ${frameworkList}
 5. 使用符合角色身份的语言风格
 6. 在回复中使用 {{char_name}} 代替 {{char}}，使用 {{user_name}} 代替 {{user}}
 7. 【强制要求】角色直接说出的对话内容必须用标准英文双引号（" "）完整包裹，确保引号准确包裹对话文本的起始与结束位置
+8. 【格式要求】角色的动作、神态、心理活动等非对话描写必须用星号包裹（如 *微微一笑* 或 *她低下头，脸微微泛红*），对话与动作可自然交替
 
 【严格禁止】
 - 禁止输出任何元信息、系统说明或格式说明
@@ -2345,9 +2348,10 @@ ${frameworkList}
 - HTML 注释标签 <!-- ... --> 是系统通信格式，用于传递控制指令
 - <tableEdit> 标签及其内部命令（insertRow/updateRow/deleteRow）是系统记忆表格功能的必需格式
 - 当你在提示词末尾看到"记忆表格异步整理指令"时，【必须】在回复最后生成 <!--  <tableEdit> ... </tableEdit> --> 标签
+- 星号 *动作描写* 是格式标记，不属于"额外标记或说明"
 
 【输出格式】
-直接输出角色的对话和行动描写，像真实的人在说话一样。不要添加任何额外的标记或说明。`;
+直接输出角色的对话和行动描写。对话内容用英文双引号（" "）包裹，动作和神态描写用星号（* *）包裹。像真实的人在说话一样自然交替。`;
 
     const ccDialogueCharacterInfoContent = `【角色信息】
 {{character_context}}

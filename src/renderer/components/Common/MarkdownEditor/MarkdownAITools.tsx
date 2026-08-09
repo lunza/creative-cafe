@@ -32,8 +32,8 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
   getEditorContent,
   setEditorContent
 }) => {
-  const { setting } = useSettingStore();
-  const { addLog } = useLogStore();
+  const setting = useSettingStore(s => s.setting);
+  const addLog = useLogStore(s => s.addLog);
   
   const [toolState, setToolState] = useState<AIToolState>({
     isProcessing: false,

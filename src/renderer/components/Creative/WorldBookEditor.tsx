@@ -14,16 +14,15 @@ const { Text, Title } = Typography;
 const { Option } = Select;
 
 const WorldBookEditor: React.FC = () => {
-  const {
-    creatives,
-    currentCreativeId,
-    updateWorldBook,
-    addWorldBookVersion,
-    addWorldBookChatMessage
-  } = useCreativeStore();
-  const { setting, fetchSetting } = useSettingStore();
-  const { addLog } = useLogStore();
-  const { theme } = useUIStore();
+  const creatives = useCreativeStore(s => s.creatives);
+  const currentCreativeId = useCreativeStore(s => s.currentCreativeId);
+  const updateWorldBook = useCreativeStore(s => s.updateWorldBook);
+  const addWorldBookVersion = useCreativeStore(s => s.addWorldBookVersion);
+  const addWorldBookChatMessage = useCreativeStore(s => s.addWorldBookChatMessage);
+  const setting = useSettingStore(s => s.setting);
+  const fetchSetting = useSettingStore(s => s.fetchSetting);
+  const addLog = useLogStore(s => s.addLog);
+  const theme = useUIStore(s => s.theme);
 
   const [activeTab, setActiveTab] = useState('edit');
   const [editingContent, setEditingContent] = useState('');
@@ -209,7 +208,7 @@ const WorldBookEditor: React.FC = () => {
       const apiUrl = buildEngineApiUrl(activeEngine);
       const apiKey = activeEngine.api_key;
       const modelName = activeEngine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
-      const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
+      const apiKeyTransmission = activeEngine.api_key_transmission || 'header';
       const apiMode = activeEngine.api_mode || 'chat_completion';
 
       const requestHeaders: Record<string, string> = {

@@ -10,7 +10,7 @@ const EXIT_DURATION = 300;
 const ENTER_DURATION = 450;
 
 const PageTransition: React.FC<PageTransitionProps> = ({ children, activeKey }) => {
-  const { animationEnabled } = useUIStore();
+  const animationEnabled = useUIStore(s => s.animationEnabled);
   const [displayChildren, setDisplayChildren] = useState(children);
   const [displayKey, setDisplayKey] = useState(activeKey);
   const [animClass, setAnimClass] = useState('');

@@ -90,8 +90,48 @@ const formatTime = (timestamp: number): string => {
   return new Date(timestamp).toLocaleString('zh-CN');
 };
 
+// [perf] 列表数据量典型 < 50 项（MODULE_GROUPS 静态定义 ~20 项），未启用虚拟滚动
+//        （阈值 50）；已应用 React.memo + useCallback。若数据量增长可改用 useVirtualizer。
+
+interface ModuleListItemProps {
+  module: ModuleInfo;
+  template: PromptTemplate | undefined;
+  isActive: boolean;
+  onSelect: (moduleId: string) => void;
+}
+
+/**
+ * 侧边栏单个模块项（React.memo）。
+ *
+ * 拆分目的：避免父级 PromptManagement 因 activeTab / editedParts / isDirty 等
+ * 与列表无关的状态变化时整列重渲染。props 仅在 module / template / isActive /
+ * onSelect 引用变化时才重渲染。
+ */
+const ModuleListItem = React.memo<ModuleListItemProps>(({ module, template, isActive, onSelect }) => (
+  <div
+    className={`prompt-management-module-item ${isActive ? 'active' : ''}`}
+    onClick={() => onSelect(module.moduleId)}
+  >
+    <div className="prompt-management-module-name">
+      <span className="prompt-management-module-title">{module.name}</span>
+      {template && (
+        <Tag color="blue" className="prompt-management-version-tag">
+          v{template.metadata.version}
+        </Tag>
+      )}
+    </div>
+    <div className="prompt-management-module-desc">{module.description}</div>
+    {template && (
+      <div className="prompt-management-module-time">
+        更新于 {formatTime(template.metadata.updatedAt)}
+      </div>
+    )}
+  </div>
+));
+
 const PromptManagement: React.FC = () => {
-  const { theme } = useUIStore();
+  const theme = useUIStore(s => s.theme);
+  // TODO(perf): 整体订阅，待拆分为 selector（9 字段，>5 暂缓）
   const {
     templates,
     selectedModuleId,
@@ -233,26 +273,13 @@ const PromptManagement: React.FC = () => {
               const tpl = templates.find((t) => t.moduleId === module.moduleId);
               const isActive = selectedModuleId === module.moduleId;
               return (
-                <div
+                <ModuleListItem
                   key={module.moduleId}
-                  className={`prompt-management-module-item ${isActive ? 'active' : ''}`}
-                  onClick={() => handleSelectModule(module.moduleId)}
-                >
-                  <div className="prompt-management-module-name">
-                    <span className="prompt-management-module-title">{module.name}</span>
-                    {tpl && (
-                      <Tag color="blue" className="prompt-management-version-tag">
-                        v{tpl.metadata.version}
-                      </Tag>
-                    )}
-                  </div>
-                  <div className="prompt-management-module-desc">{module.description}</div>
-                  {tpl && (
-                    <div className="prompt-management-module-time">
-                      更新于 {formatTime(tpl.metadata.updatedAt)}
-                    </div>
-                  )}
-                </div>
+                  module={module}
+                  template={tpl}
+                  isActive={isActive}
+                  onSelect={handleSelectModule}
+                />
               );
             })}
           </div>

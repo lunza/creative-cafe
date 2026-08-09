@@ -16,7 +16,9 @@ const { Title, Text } = Typography;
 const { Content } = Layout;
 
 const CreativeManager: React.FC = () => {
-  const { creativeTab, creativeView, theme } = useUIStore();
+  const creativeTab = useUIStore(s => s.creativeTab);
+  const creativeView = useUIStore(s => s.creativeView);
+  const theme = useUIStore(s => s.theme);
   const [creativeDir, setCreativeDir] = useState<string>('');
 
   useEffect(() => {

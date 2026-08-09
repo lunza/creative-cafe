@@ -24,7 +24,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { resolveTheme, type ThemeMode } from '../../styles/themeTokens';
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const { theme: themeMode } = useUIStore();
+  const themeMode = useUIStore(s => s.theme);
   const [systemDark, setSystemDark] = useState(
     window.matchMedia('(prefers-color-scheme: dark)').matches
   );
@@ -43,6 +43,19 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     document.body.classList.remove('dark', 'light');
     document.body.classList.add(effectiveTheme);
+  }, [effectiveTheme]);
+
+  // ⚠️ 同步全局主题供 antd 静态方法（message / notification / Modal.confirm 等）消费。
+  // 静态方法会在 document.body 上独立挂载 React root，不消费 React 树内的 ConfigProvider，
+  // 因此暗色模式下 message.success / Modal.confirm 等会以默认亮色主题渲染 → 与应用主题不符。
+  // 通过 ConfigProvider.config 注入与当前主题一致的 algorithm + token，让所有静态弹出框自动跟随主题。
+  useEffect(() => {
+    ConfigProvider.config({
+      theme: {
+        algorithm: effectiveTheme === 'dark' ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
+        token: { colorPrimary: '#1890ff', borderRadius: 6 },
+      },
+    });
   }, [effectiveTheme]);
 
   return (

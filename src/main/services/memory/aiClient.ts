@@ -59,7 +59,7 @@ export function buildOrganizeConfig(
 /**
  * 获取 AI 引擎配置参数
  */
-export function getEngineAIParams(): { temperature: number; max_tokens: number; top_p: number; frequency_penalty: number; presence_penalty: number } | null {
+export function getEngineAIParams(): { temperature: number; max_tokens?: number; top_p: number; frequency_penalty: number; presence_penalty: number } | null {
   try {
     const storageService = getStorageService();
     const settings = storageService.getSettings();
@@ -74,7 +74,7 @@ export function getEngineAIParams(): { temperature: number; max_tokens: number; 
           activeEngine?.presence_penalty !== undefined) {
         return {
           temperature: activeEngine.temperature,
-          max_tokens: activeEngine.max_tokens,
+          max_tokens: undefined,
           top_p: activeEngine.top_p,
           frequency_penalty: activeEngine.frequency_penalty,
           presence_penalty: activeEngine.presence_penalty
@@ -135,10 +135,7 @@ export async function callAIAPI(
         max_tokens: aiParams.max_tokens,
         top_p: aiParams.top_p,
         frequency_penalty: aiParams.frequency_penalty,
-        presence_penalty: aiParams.presence_penalty,
-        extra_body: {
-          enable_thinking: false
-        }
+        presence_penalty: aiParams.presence_penalty
       };
     } else {
       requestBody = {

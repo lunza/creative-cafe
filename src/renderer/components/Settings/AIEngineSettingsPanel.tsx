@@ -50,7 +50,7 @@ interface AIEngineSettingsPanelProps {
  * 所有业务逻辑由 useAIEngineSettings Hook 提供。
  */
 const AIEngineSettingsPanel: React.FC<AIEngineSettingsPanelProps> = ({ form }) => {
-  const { setting } = useSettingStore();
+  const setting = useSettingStore(s => s.setting);
   const {
     activeEngine,
     engines,

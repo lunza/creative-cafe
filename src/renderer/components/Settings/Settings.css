@@ -79,3 +79,22 @@
 .settings .ant-modal {
   z-index: 1001;
 }
+
+/* 页签内首个卡片去除顶部间距，避免页签栏下方出现多余空白 */
+.settings .ant-tabs-tabpane > .ant-card:first-child {
+  margin-top: 0 !important;
+}
+
+/* 页签内容区顶部留白 */
+.settings .ant-tabs-tabpane {
+  padding-top: 4px;
+}
+
+/* 页签标签文字颜色适配主题 */
+.settings .ant-tabs-tab {
+  color: var(--text-secondary);
+}
+.settings .ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: var(--color-primary, #1677ff);
+  font-weight: 500;
+}

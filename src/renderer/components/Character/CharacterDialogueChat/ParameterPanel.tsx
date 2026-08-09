@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { Tooltip, Button, Slider, Switch, Input, Select } from 'antd';
 import { QuestionCircleOutlined, ReloadOutlined, DownOutlined, RightOutlined, SlidersOutlined, ExperimentOutlined } from '@ant-design/icons';
-import { AIParameterConfig, EffectiveAIParams } from './CharacterDialogueChat.types';
+import { AIParameterConfig, EffectiveAIParams, ThinkTagMode } from './CharacterDialogueChat.types';
 import { EngineCapabilities } from '../../Common/ChatEngine/ChatEngine.types';
 import {
   PARAMETER_CONFIGS,
@@ -25,12 +25,9 @@ interface ParameterPanelProps {
   customStopSequences?: string[];
   onCustomStopSequencesToggle?: (enabled: boolean) => void;
   onCustomStopSequencesChange?: (stops: string[]) => void;
-  // 开启表情开关（Spec: add-character-expression-system）
-  expressionDisplay?: boolean;
-  onExpressionDisplayToggle?: (enabled: boolean) => void;
-  // Think 标签处理开关（Spec: handle-think-tags-overflow）
-  stripThinkTags?: boolean;
-  onStripThinkTagsToggle?: (enabled: boolean) => void;
+  // Think 标签处理三态选择
+  thinkTagMode?: ThinkTagMode;
+  onThinkTagModeChange?: (mode: ThinkTagMode) => void;
   // 辅助模式开关（Spec: add-assist-mode-options）
   assistMode?: boolean;
   onAssistModeToggle?: (enabled: boolean) => void;
@@ -54,10 +51,8 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
   customStopSequences = [],
   onCustomStopSequencesToggle,
   onCustomStopSequencesChange,
-  expressionDisplay = false,
-  onExpressionDisplayToggle,
-  stripThinkTags = true,
-  onStripThinkTagsToggle,
+  thinkTagMode = 'strip',
+  onThinkTagModeChange,
   assistMode = false,
   onAssistModeToggle,
   language = 'zh',
@@ -303,7 +298,7 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
 
           {/* 防重复强度预设（Spec: fix-ai-response-length-degradation / Task 5） */}
           {/* 三档预设避免用户不理解 freq/pres/dry 关系导致过度惩罚叠加，从而过度缩短回复。 */}
-          <div className="parameter-anti-repeat-preset-section" style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
+          <div className="parameter-anti-repeat-preset-section" style={{ paddingTop: 12, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
             <div className="parameter-label-group" style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
               <span className="parameter-label" style={{ fontSize: 13 }}>防重复强度预设</span>
               <Tooltip title="防重复强度预设。宽松=关闭所有防重复；标准=轻微惩罚；严格=强惩罚（可能导致回复缩短）">
@@ -327,7 +322,7 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
 
           {/* 回复长度引导（Spec: fix-ai-response-length-degradation / Task 7） */}
           {/* Slider 写入 customParameters.min_response_chars，PromptBuilder 读取并注入系统提示末尾。 */}
-          <div className="parameter-min-response-chars-section" style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
+          <div className="parameter-min-response-chars-section" style={{ paddingTop: 12, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
             <div className="parameter-header">
               <div className="parameter-label-group">
                 <span className="parameter-label" style={{ fontSize: 13 }}>回复长度引导</span>
@@ -351,7 +346,7 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
           </div>
 
           {/* 语言要求 */}
-          <div className="parameter-language-section" style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
+          <div className="parameter-language-section" style={{ paddingTop: 12, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
             <div className="parameter-language-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
               <div className="parameter-label-group" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span className="parameter-label" style={{ fontSize: 13 }}>语言</span>
@@ -373,41 +368,25 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
             </div>
           </div>
 
-          {/* 开启表情（Spec: add-character-expression-system） */}
-          {/* 代替原 Emoji 增强模式：开启后 AI 回复根据语境动态切换角色表情头像。
-              需先在「表情管理」中为角色卡上传表情图片。默认关闭。 */}
-          <div className="parameter-expression-display-section" style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
-            <div className="parameter-expression-display-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          {/* Think 标签处理（合并原 strip_think_tags + show_thinking 两开关） */}
+          <div className="parameter-think-tag-mode-section" style={{ paddingTop: 12, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
+            <div className="parameter-think-tag-mode-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
               <div className="parameter-label-group" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span className="parameter-label" style={{ fontSize: 13 }}>开启表情</span>
-                <Tooltip title="开启后，AI 回复时根据语境动态切换角色表情头像（需先在「表情管理」中上传表情图片）。代替原 Emoji 增强模式。默认关闭。">
+                <span className="parameter-label" style={{ fontSize: 13 }}>思考内容处理</span>
+                <Tooltip title="控制 AI 回复中 think/thinking/thought 推理标签的处理方式。移除：存储前彻底剥离；仅渲染剥离：存储保留但界面不可见；折叠展示：以可展开折叠块显示 AI 思考过程。">
                   <QuestionCircleOutlined className="parameter-tooltip-icon" />
                 </Tooltip>
               </div>
-              <Switch
+              <Select
                 size="small"
-                checked={expressionDisplay}
-                onChange={onExpressionDisplayToggle}
-              />
-            </div>
-          </div>
-
-          {/* Think 标签处理（Spec: handle-think-tags-overflow） */}
-          {/* 针对 deepseek3.2 等老模型返回的 think 推理标签，在 AI 完成回复或润色后
-              （写入存储前）剥离其内容，避免污染 chat history / RAG / 回传上下文。
-              默认开启；关闭时渲染层仍由 processMessage 内 stripThinkingTags 兜底。 */}
-          <div className="parameter-strip-think-tags-section" style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
-            <div className="parameter-strip-think-tags-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-              <div className="parameter-label-group" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span className="parameter-label" style={{ fontSize: 13 }}>Think 标签处理</span>
-                <Tooltip title="开启后，AI 完成回复或润色后自动剥离 think、thinking、thought 等推理标签内容（针对 deepseek3.2 等老模型）。默认开启。剥离发生在写入存储前，避免污染历史与上下文。">
-                  <QuestionCircleOutlined className="parameter-tooltip-icon" />
-                </Tooltip>
-              </div>
-              <Switch
-                size="small"
-                checked={stripThinkTags}
-                onChange={onStripThinkTagsToggle}
+                value={thinkTagMode}
+                onChange={onThinkTagModeChange}
+                style={{ width: 120 }}
+                options={[
+                  { value: 'strip', label: '移除' },
+                  { value: 'strip_render', label: '仅渲染剥离' },
+                  { value: 'fold', label: '折叠展示' },
+                ]}
               />
             </div>
           </div>
@@ -415,7 +394,7 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
           {/* 自定义停止序列配置区（Spec: optimize-chat-ai-intelligence / Task 3.4） */}
           {/* 借鉴 SillyTavern names_as_stop_strings 防抢话机制；默认用户名变体停止序列已内置，
               此处供用户追加自定义停止串，与默认数组合并注入请求体 stop 字段。 */}
-          <div className="parameter-stop-sequences-section" style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
+          <div className="parameter-stop-sequences-section" style={{ paddingTop: 12, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
             <div className="parameter-stop-sequences-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
               <div className="parameter-label-group" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span className="parameter-label" style={{ fontSize: 13 }}>自定义停止序列</span>
@@ -443,7 +422,7 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
 
           {/* 辅助模式（Spec: add-assist-mode-options） */}
           {/* 开启后，AI 在常规回复之外额外生成 3 个推荐选项，用户可点击选项快速填入输入框 */}
-          <div className="parameter-assist-mode-section" style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
+          <div className="parameter-assist-mode-section" style={{ paddingTop: 12, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
             <div className="parameter-assist-mode-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
               <div className="parameter-label-group" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span className="parameter-label" style={{ fontSize: 13 }}>辅助模式</span>
@@ -463,7 +442,7 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
           {/* DRY 采样作为防重复采样层第二道防线，与应用层 n-gram Jaccard 去重形成双重防护。
               仅当 engineCapabilities.supportsDrySampler=true 时显示。默认折叠避免 UI 过载。 */}
           {showDrySection && (
-            <div className="parameter-advanced-section" style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
+            <div className="parameter-advanced-section" style={{ paddingTop: 12, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
               <div
                 className="parameter-advanced-header"
                 onClick={() => setAdvancedCollapsed(!advancedCollapsed)}

@@ -6,6 +6,8 @@ export interface RenderConfig {
     enableUnderscoreItalic: boolean;
     enableQuoteNormalize: boolean;
     enableEmoji: boolean;
+    /** 显示思考过程：true=保留为折叠 details 块，false=移除（默认） */
+    showThinking?: boolean;
   };
   
   html: {

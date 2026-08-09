@@ -334,27 +334,12 @@
   height: 4px;
 }
 
-.parameter-slider .ant-slider-handle {
-  border: 2px solid var(--config-panel-slider-thumb-border, #8b5cf6);
-  background: var(--config-panel-slider-thumb);
-  box-shadow: var(--config-panel-slider-thumb-shadow);
-  transition: all 0.2s ease;
-}
-
-.parameter-slider .ant-slider-handle:hover {
-  border-color: #a855f7;
-  box-shadow: 0 2px 8px rgba(139, 92, 246, 0.6);
-}
-
-.parameter-slider .ant-slider-handle:focus {
-  border-color: #a855f7;
-  box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.2);
-}
-
 .parameter-slider .ant-slider-mark-text {
   font-size: 10px;
   color: var(--config-panel-tooltip-color, #94a3b8);
 }
+
+/* Slider handle 和 Switch handle 的 antd v6 兼容修复已迁移至 styles/antd-v6-fixes.css */
 
 .parameter-actions {
   display: flex;

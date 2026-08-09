@@ -3,7 +3,7 @@ import { Tooltip } from 'antd';
 import { CopyOutlined, CheckOutlined, ReloadOutlined, DoubleRightOutlined, RetweetOutlined, LoadingOutlined, EditOutlined, TableOutlined, WarningOutlined, RollbackOutlined } from '@ant-design/icons';
 import { MessageRenderer } from './MessageRenderer';
 import { ChatMessage, ChatMessageVersionInfo } from './CharacterDialogueChat.types';
-import ToolCallCard from './ToolCallCard';
+import { EMOTION_PRESETS } from './PromptBuilder';
 import './ChatMessageBubble.css';
 import { formatTimestamp } from './CharacterDialogueChat.utils';
 
@@ -24,6 +24,8 @@ interface ChatMessageBubbleProps {
   onSelectOption?: (optionText: string) => void;
   /** AI 回复序号（从 1 开始，仅 assistant 消息有值，user 消息为 0） */
   aiSequenceNumber?: number;
+  /** 显示思考过程（true=折叠展示，false=移除） */
+  showThinking?: boolean;
 }
 
 const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
@@ -41,6 +43,7 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
   isGenerating = false,
   onSelectOption,
   aiSequenceNumber = 0,
+  showThinking = false,
 }) => {
   const [copied, setCopied] = useState(false);
   const [showActions, setShowActions] = useState(false);
@@ -173,30 +176,11 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
   const showFullActions = !isUser && (isLatestVersion || !hasVersionInfo) && message.status === 'sent';
 
   const actionButtons = !isUser && !shouldHideAllButtons && (
-    <div style={{
-      display: 'flex',
-      gap: '4px',
-      padding: '4px 8px',
-      borderRadius: '12px',
-      background: 'var(--chat-action-bg, rgba(255, 255, 255, 0.05))',
-      border: '1px solid var(--chat-action-border, rgba(255, 255, 255, 0.08))',
-      opacity: isActionVisible && !isStreaming && !isGenerating ? 1 : 0,
-      transform: isActionVisible && !isStreaming && !isGenerating ? 'translateY(0)' : 'translateY(4px)',
-      transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-    }}>
+    <div className={`chat-msg-actions ${isActionVisible && !isStreaming && !isGenerating ? 'visible' : ''}`}>
       <Tooltip title="复制">
         <button
           onClick={handleCopy}
-          className="chat-action-btn"
-          style={copied ? { color: 'var(--success-color, #22c55e)' } : undefined}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = 'var(--chat-action-hover, rgba(255, 255, 255, 0.1))';
-            e.currentTarget.style.color = 'var(--text-primary, #e2e8f0)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = 'none';
-            e.currentTarget.style.color = copied ? 'var(--success-color, #22c55e)' : 'var(--chat-action-text, #9ca3af)';
-          }}
+          className={`chat-action-btn${copied ? ' copied' : ''}`}
         >
           {copied ? <CheckOutlined /> : <CopyOutlined />}
         </button>
@@ -213,16 +197,7 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
                   handleEditStart();
                 }
               }}
-              className="chat-action-btn"
-              style={isEditing ? { color: 'var(--primary-color, #6366f1)' } : undefined}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'var(--chat-action-hover, rgba(255, 255, 255, 0.1))';
-                e.currentTarget.style.color = 'var(--primary-color, #6366f1)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'none';
-                e.currentTarget.style.color = isEditing ? 'var(--primary-color, #6366f1)' : 'var(--chat-action-text, #9ca3af)';
-              }}
+              className={`chat-action-btn${isEditing ? ' edit-active' : ''}`}
             >
               <EditOutlined />
             </button>
@@ -234,24 +209,7 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
         <button
           onClick={showRegenerateOnly ? handleRetryFromVersion : handleRetry}
           disabled={isGenerating || isStreaming || message.status === 'error'}
-          className="chat-action-btn"
-          style={{
-            color: message.status === 'error' ? 'var(--error-color, #ef4444)' : undefined,
-            cursor: isGenerating || isStreaming ? 'not-allowed' : undefined,
-            opacity: isGenerating || isStreaming ? 0.5 : undefined,
-          }}
-          onMouseEnter={(e) => {
-            if (!isGenerating && !isStreaming) {
-              e.currentTarget.style.background = 'var(--chat-action-hover, rgba(255, 255, 255, 0.1))';
-              e.currentTarget.style.color = 'var(--text-primary, #e2e8f0)';
-            }
-          }}
-          onMouseLeave={(e) => {
-            if (!isGenerating && !isStreaming) {
-              e.currentTarget.style.background = 'none';
-              e.currentTarget.style.color = message.status === 'error' ? 'var(--error-color, #ef4444)' : 'var(--chat-action-text, #9ca3af)';
-            }
-          }}
+          className={`chat-action-btn${message.status === 'error' ? ' error' : ''}`}
         >
           {isGenerating && isLastMessage ? (
             <LoadingOutlined style={{ fontSize: '12px' }} spin />
@@ -267,22 +225,6 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
             onClick={handleContinue}
             disabled={isGenerating || isStreaming || message.status !== 'sent'}
             className="chat-action-btn"
-            style={{
-              cursor: isGenerating || isStreaming || message.status !== 'sent' ? 'not-allowed' : undefined,
-              opacity: isGenerating || isStreaming || message.status !== 'sent' ? 0.5 : undefined,
-            }}
-            onMouseEnter={(e) => {
-              if (!isGenerating && !isStreaming && message.status === 'sent') {
-                e.currentTarget.style.background = 'rgba(99, 102, 241, 0.2)';
-                e.currentTarget.style.color = 'var(--primary-color, #6366f1)';
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (!isGenerating && !isStreaming && message.status === 'sent') {
-                e.currentTarget.style.background = 'none';
-                e.currentTarget.style.color = 'var(--chat-action-text, #9ca3af)';
-              }
-            }}
           >
             <DoubleRightOutlined />
           </button>
@@ -292,37 +234,12 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
   );
 
   const userEditButton = isUser && message.status !== 'sending' && (
-    <div style={{
-      display: 'flex',
-      gap: '4px',
-      padding: '4px 8px',
-      borderRadius: '12px',
-      background: 'var(--chat-action-bg, rgba(255, 255, 255, 0.05))',
-      border: '1px solid var(--chat-action-border, rgba(255, 255, 255, 0.08))',
-      opacity: isActionVisible ? 1 : 0,
-      transform: isActionVisible ? 'translateY(0)' : 'translateY(4px)',
-      transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-      justifyContent: 'flex-end',
-    }}>
+    <div className={`chat-msg-actions is-user ${isActionVisible ? 'visible' : ''}`}>
       <Tooltip title="卷回到输入框">
         <button
           onClick={() => onRollback?.(message.id)}
           disabled={isStreaming && !isLastMessage}
           className="chat-action-btn"
-          style={{
-            cursor: isStreaming && !isLastMessage ? 'not-allowed' : undefined,
-            opacity: isStreaming && !isLastMessage ? 0.5 : undefined,
-          }}
-          onMouseEnter={(e) => {
-            if (!(isStreaming && !isLastMessage)) {
-              e.currentTarget.style.background = 'var(--chat-action-hover, rgba(255, 255, 255, 0.1))';
-              e.currentTarget.style.color = 'var(--primary-color, #6366f1)';
-            }
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = 'none';
-            e.currentTarget.style.color = 'var(--chat-action-text, #9ca3af)';
-          }}
         >
           <RollbackOutlined />
         </button>
@@ -331,101 +248,46 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
   );
 
   return (
-    <div className="chat-message-bubble-wrapper" style={{
-      display: 'flex',
-      marginBottom: '20px',
-      justifyContent: isUser ? 'flex-end' : 'flex-start',
-      animation: 'fadeInUp 0.3s ease-out',
-    }}>
+    <div className={`chat-msg-wrapper ${isUser ? 'is-user' : 'is-assistant'}${!isUser && aiSequenceNumber > 0 && aiSequenceNumber % 2 === 1 ? ' chat-msg-stripe' : ''}`}>
       <div
-        className="chat-message-bubble-inner"
-        style={{
-          display: 'flex',
-          gap: '12px',
-          maxWidth: '75%',
-          minWidth: 0,
-          flexDirection: isUser ? 'row-reverse' : 'row',
-        }}
+        className={`chat-msg-inner ${isUser ? 'is-user' : 'is-assistant'}`}
         onMouseEnter={handleBubbleMouseEnter}
         onMouseLeave={handleBubbleMouseLeave}
       >
-        <div style={{
-          width: '36px',
-          height: '36px',
-          borderRadius: '50%',
-          overflow: 'hidden',
-          flexShrink: 0,
-          boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-          border: '2px solid ' + (isUser ? 'var(--primary-color, #6366f1)' : 'var(--secondary-color, #8b5cf6)'),
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          background: isUser
-            ? 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)'
-            : 'linear-gradient(135deg, #8b5cf6 0%, #a855f7 100%)',
-        }}>
-          {(expressionImage || avatarPath) && !isUser ? (
-            <img
-              src={expressionImage || avatarPath}
-              alt={characterName}
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-            />
-          ) : (
-            <span style={{ color: '#fff', fontSize: '16px', fontWeight: 'bold' }}>
-              {isUser ? 'U' : characterName.charAt(0).toUpperCase()}
-            </span>
-          )}
-        </div>
+        {expressionImage && !isUser ? (
+          <div className="chat-msg-expression">
+            <img src={expressionImage} alt={characterName} />
+          </div>
+        ) : (
+          <div className={`chat-msg-avatar ${isUser ? 'is-user' : 'is-assistant'}`}>
+            {avatarPath && !isUser ? (
+              <img src={avatarPath} alt={characterName} />
+            ) : (
+              <span className="chat-msg-avatar-fallback">
+                {isUser ? 'U' : characterName.charAt(0).toUpperCase()}
+              </span>
+            )}
+          </div>
+        )}
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: 0, flex: 1 }}>
-          <div style={{
-            fontSize: '12px',
-            color: 'var(--text-secondary, #6b7280)',
-            padding: isUser ? '0 12px' : '0 4px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-          }}>
+        <div className="chat-msg-content-col">
+          <div className={`chat-msg-name ${isUser ? 'is-user' : 'is-assistant'}`}>
             {isUser ? 'You' : characterName}
+            {!isUser && message.emotion && (() => {
+              const preset = EMOTION_PRESETS.find(e => e.key === message.emotion);
+              const label = preset?.label || message.emotion;
+              return <span className="chat-msg-emotion-label">({label})</span>;
+            })()}
             {!isUser && aiSequenceNumber > 0 && (
-              <span style={{
-                fontSize: '10px',
-                color: 'var(--text-tertiary, rgba(255,255,255,0.35))',
-                background: 'rgba(255,255,255,0.06)',
-                padding: '1px 6px',
-                borderRadius: '8px',
-                fontWeight: 500,
-              }}>
+              <span className="chat-msg-seq-badge">
                 #{aiSequenceNumber}
               </span>
             )}
           </div>
 
-          <div style={{
-            background: isUser
-              ? 'var(--chat-bubble-user-bg, linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%))'
-              : 'var(--chat-bubble-assistant-bg, rgba(30, 30, 46, 0.8))',
-            color: isUser
-              ? 'var(--chat-bubble-user-color, #fff)'
-              : 'var(--chat-bubble-assistant-color, #e2e8f0)',
-            padding: '12px 16px',
-            borderRadius: isUser ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
-            wordBreak: 'break-word',
-            overflowWrap: 'break-word',
-            overflow: 'hidden',
-            backdropFilter: 'blur(10px)',
-            boxShadow: isUser
-              ? 'var(--chat-bubble-user-shadow, 0 4px 12px rgba(99, 102, 241, 0.3))'
-              : 'var(--chat-bubble-assistant-shadow, 0 4px 12px rgba(0,0,0,0.2))',
-            position: 'relative',
-            transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-          }}>
+          <div className={`chat-msg-bubble ${isUser ? 'is-user' : 'is-assistant'}`}>
             {isEditing && (
-              <div style={{
-                opacity: 0,
-                pointerEvents: 'none',
-                userSelect: 'none',
-              }}>
+              <div className="chat-msg-edit-placeholder">
                 <MessageRenderer
                   content={String(message.content)}
                   charName={characterName}
@@ -434,6 +296,9 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
                     style: {
                       theme: 'dark',
                       codeHighlight: true,
+                    },
+                    markdown: {
+                      showThinking,
                     },
                   }}
                 />
@@ -441,61 +306,18 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
             )}
 
             {isEditing ? (
-              <div style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '10px',
-                animation: 'fadeInUp 0.2s ease-out',
-                position: 'absolute',
-                inset: 0,
-                zIndex: 2,
-                padding: '12px 16px',
-                borderRadius: isUser ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
-              }}>
+              <div className={`chat-msg-edit-container ${isUser ? 'is-user' : 'is-assistant'}`}>
                 <textarea
                   ref={textareaRef}
+                  className="chat-msg-edit-textarea"
                   value={editContent}
                   onChange={(e) => setEditContent(e.target.value)}
                   onKeyDown={handleEditKeyDown}
                   placeholder="输入内容..."
-                  style={{
-                    width: '100%',
-                    flex: 1,
-                    boxSizing: 'border-box',
-                    minHeight: '80px',
-                    maxHeight: '100%',
-                    padding: '12px 14px',
-                    fontSize: '13px',
-                    lineHeight: '1.7',
-                    fontFamily: 'inherit',
-                    color: 'var(--chat-edit-color, #e2e8f0)',
-                    background: 'var(--chat-edit-bg, rgba(0, 0, 0, 0.25))',
-                    border: '1px solid var(--chat-edit-border, rgba(255, 255, 255, 0.15))',
-                    borderRadius: '10px',
-                    resize: 'none',
-                    outline: 'none',
-                    overflow: 'auto',
-                  }}
-                  onFocus={(e) => {
-                    e.currentTarget.style.borderColor = 'var(--chat-edit-border-focus, var(--primary-color, #6366f1))';
-                    e.currentTarget.style.boxShadow = '0 0 0 2px rgba(99, 102, 241, 0.15)';
-                  }}
-                  onBlur={(e) => {
-                    e.currentTarget.style.borderColor = 'var(--chat-edit-border, rgba(255, 255, 255, 0.15))';
-                    e.currentTarget.style.boxShadow = 'none';
-                  }}
                 />
               </div>
             ) : (
               <>
-                {/* 工具调用卡片（Spec: optimize-agent-interaction-from-openclaw / M2-Task5） */}
-                {!isUser && message.toolCalls && message.toolCalls.length > 0 && (
-                  <div style={{ marginBottom: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    {message.toolCalls.map(tc => (
-                      <ToolCallCard key={tc.id} toolCall={tc} />
-                    ))}
-                  </div>
-                )}
                 <MessageRenderer
                   content={String(message.content)}
                   charName={characterName}
@@ -505,18 +327,13 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
                       theme: 'dark',
                       codeHighlight: true,
                     },
+                    markdown: {
+                      showThinking,
+                    },
                   }}
                 />
                 {isStreaming && isLastMessage && !isUser && (
-                  <span style={{
-                    display: 'inline-block',
-                    width: '2px',
-                    height: '1em',
-                    backgroundColor: 'var(--chat-cursor-color, #e2e8f0)',
-                    marginLeft: '2px',
-                    animation: 'blink 1s step-end infinite',
-                    verticalAlign: 'text-bottom',
-                  }} />
+                  <span className="chat-msg-cursor" />
                 )}
                 {/* 辅助模式：推荐选项渲染（Spec: add-assist-mode-options） */}
                 {!isUser && !isStreaming && message.suggestedOptions && message.suggestedOptions.length > 0 && (
@@ -543,17 +360,7 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
               </>
             )}
             {!isEditing && (
-              <span style={{
-                position: 'absolute',
-                bottom: '4px',
-                right: '10px',
-                fontSize: '11px',
-                color: 'var(--chat-action-text, #8c8c8c)',
-                opacity: isHovered ? 1 : 0,
-                transition: 'opacity 0.2s ease',
-                pointerEvents: 'none',
-                userSelect: 'none',
-              }}>
+              <span className={`chat-msg-timestamp ${isHovered ? 'visible' : ''}`}>
                 {formatTimestamp(message.timestamp)}
               </span>
             )}
@@ -564,15 +371,7 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
           {userEditButton}
 
           {!isUser && versionInfo && (
-            <div style={{
-              display: 'flex',
-              gap: '6px',
-              padding: '2px 8px 0',
-              alignItems: 'center',
-              justifyContent: 'flex-end',
-              opacity: isActionVisible ? 1 : 0,
-              transition: 'opacity 0.3s ease',
-            }}>
+            <div className={`chat-msg-version-info ${isActionVisible ? 'visible' : ''}`}>
               {versionInfo.tableSnapshotExists && (
                 <Tooltip title="包含表格快照">
                   <TableOutlined style={{ fontSize: '11px', color: 'var(--primary-color, #6366f1)' }} />
@@ -601,18 +400,8 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
           )}
 
           {!showActions && isGenerating && isLastMessage && (
-            <div style={{
-              display: 'flex',
-              gap: '8px',
-              padding: '0 4px',
-            }}>
-              <span style={{
-                fontSize: '11px',
-                color: 'var(--chat-action-text, #6b7280)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-              }}>
+            <div className="chat-msg-generating">
+              <span className="chat-msg-generating-text">
                 <LoadingOutlined style={{ fontSize: '10px' }} spin />
                 Generating...
               </span>

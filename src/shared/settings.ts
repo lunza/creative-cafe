@@ -157,7 +157,7 @@ export const AppSetting = {
         request_timeout: 300000,
         encrypt_api_key: false,
         enable_access_control: false,
-        api_key_transmission: 'body'
+        api_key_transmission: 'header'
       }
     ],
     activeEngineId: 'default',
@@ -236,6 +236,9 @@ export const AppSetting = {
       adNegativePrompt: '',
       adUseNoiseMultiplier: true,
       adNoiseMultiplier: 1.0,
+      // 【重点标记 - Furry/拟人生物面部识别扩展（2026-08-07）】
+      // 仅 YOLO-World 系列模型生效，空字符串=使用模型默认 COCO 80 类。
+      adModelClasses: '',
       modelType: 'sdxl' as const,
       nlPromptTemplate: 'A portrait of a character. {traits} The character has {emotion}, looking at the viewer. High quality, detailed.',
       txt2imgWidth: 1024,
@@ -256,6 +259,38 @@ export const AppSetting = {
       initialNoiseMultiplier: 1.0,
       // 【img2img 高清模式】默认两步放大（768→1024）
       img2imgHiresMode: 'two-step',
+    },
+
+    // Spec: implement-local-tag-autocomplete / Task 4
+    // 标签自动推荐默认配置（TagAutocomplete 组件读取）
+    // enabled=true 默认开启本地标签推荐；csvPath=空字符串表示未配置 CSV 文件路径，
+    //   用户需在 Settings 面板（Task 6 实现）选择标签库 CSV 后才会真正加载索引；
+    //   未配置时 TagAutocomplete 组件显示提示文案，不阻塞普通 Input 行为。
+    // sortBy='relevance' 默认按匹配相关度排序（前缀>开头>包含>别名 + count 降序）。
+    //
+    // 持久化策略：作为 AppSetting 嵌套字段随 setting.save / setting.load IPC 整体持久化
+    // 到 electron-store（settings.json）。settingStore.ts 通过整体合并保存/加载，
+    // 新增字段自动包含，无需修改 settingStore.ts 状态管理逻辑。
+    //
+    // 参考标签库路径（用户文档说明，非内置默认值）：
+    // G:\AI\sd-webui-forge-neo\models\Stable-diffusion\Furry\tags\danbooru_e621_merged_2026-03-01_pt20-ia-dd-ed-spc.csv
+    tagAutocomplete: {
+      enabled: true,
+      csvPath: '',
+      sortBy: 'relevance' as const,
+    },
+    // RAG 标签库配置（语义检索 + prompt 注入）
+    tagRag: {
+      enabled: false,              // 默认关闭，用户向量标签库后手动开启
+      topK: 40,                    // 检索数量
+      minScore: 0.15,              // 最低相似度阈值（cosine）
+      autoRevectorizeOnCsvChange: true,
+      autoRevectorizeOnDimensionChange: true,
+      batchSize: 500,              // 远程 API 批大小（OpenAI 支持最高 2048）
+      localBatchSize: 32,          // 本地 ONNX 批大小
+      concurrency: 3,              // 远程 API 并发请求数
+      retryMaxAttempts: 3,         // 单批失败重试次数
+      retryDelayMs: 1000,
     }
   }
 };

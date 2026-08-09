@@ -277,6 +277,30 @@ interface ElectronAPI {
       traits?: CategorizedTrait[];
       appearanceDescription?: string;
       error?: string;
+      /**
+       * RAG 标签库质检报告（含检索参考 + 生成标签验证结果）。
+       * - enabled=false：RAG 未启用
+       * - status≠ready：索引未就绪
+       * - status=ready：含 retrievedTags（检索参考）+ tagValidation（标签验证）
+       */
+      ragDebug?: {
+        enabled: boolean;
+        status: string;
+        retrievedTags: Array<{ name: string; category: number; count: number; score: number }>;
+        tagValidation: Array<{
+          tag: string;
+          isValid: boolean;
+          canonicalName?: string;
+          category?: number;
+          count?: number;
+          /** invalid tag 跳过原因：'rating'=评级词不纠错；'no_suggestion'=无相似标签 */
+          skipReason?: 'rating' | 'no_suggestion';
+          /** invalid tag 的语义相似替换建议（top-3，按 score 降序） */
+          suggestions: Array<{ name: string; category: number; count: number; score: number }>;
+          /** 自动替换后对应的库内标签名（前端据此展示替换关系 + 撤销） */
+          replacedBy?: string;
+        }>;
+      };
     }>;
     /**
      * AI 图片识别特征提取（Spec: add-model-capability-detection-and-image-recognition / Task 6）
@@ -300,50 +324,81 @@ interface ElectronAPI {
         error?: string;
       }>;
     /**
-     * 动态场景提示词生成（Spec: add-dynamic-scene-prompt-generation / Task 3）
+     * 提示词生成（Spec: add-prompt-generation-in-asset-modal）
      *
-     * 将自然语言指令（如「让角色穿上一套哥特风的衣服，骑着摩托驰骋在高速公路上」）
-     * 通过 LLM 解析为三组独立的英文 SD tag（服装/动作/场景），未提及的维度返回空字符串 ""。
-     * 主进程内部复用 aiConfigProvider 读取激活 AI 引擎配置，调用 DYNAMIC_SCENE_SYSTEM_PROMPT，
-     * 非流式调用 /v1/chat/completions，按 ---CLOTHING--- / ---POSE--- / ---SCENE--- 分隔符解析。
+     * 将用户在 AI 素材生成弹窗「提示词生成」面板输入的自由文本提示词
+     * （如 "red hair, blue dress, forest background"），通过 LLM 解析为分类特征 tag 列表
+     * （含 categoryId / translation / originalText），可直接追加到 editedTraits。
+     *
+     * 与 generateCharacterTraits 的区别：
+     *   - 不读取角色卡图片（无需 characterCardId）
+     *   - 输入是用户自由文本提示词，不是角色卡 description/personality/scenario
+     *   - 不返回 appearanceDescription（用户只需要 tag）
+     *
+     * 审计流程与 generateCharacterTraits 完全一致（L0-L5 完整审计链）：
+     *   - L0 自定义同义词映射 / L1 name / L2 alias 精确匹配
+     *   - L3 颜色拆分 / L3b 否定性修饰词剥离
+     *   - L4 语义 KNN 替换 / L5 AI 兜底
      *
      * 入参：
-     *   - naturalLanguageInput：用户原始自然语言指令（必填非空，空/纯空白触发兜底错误）
-     *   - baseTraits：角色基础特征拼接字符串（可选，给 LLM 提供角色上下文，
-     *     避免生成与基础特征矛盾的 tag，例如基础特征有 tail 时不生成 no tail）
+     *   - prompt：用户输入的提示词（必填非空，空/纯空白触发兜底错误）
+     *   - baseTraits：当前已有特征文本（可选，逗号分隔，作为上下文避免重复生成）
      *
      * 返回：
-     *   - success=true：clothing / pose / scene 三组英文 SD tag 字符串
-     *     （未提及的维度为空字符串 ""，与 spec「未提及的维度返回空」一致）
+     *   - success=true：traits 为分类特征数组（含 translation + originalText）
+     *     ragDebug 为 RAG 标签库质检报告（结构与 generateCharacterTraits.ragDebug 兼容）
      *   - success=false：error 为友好错误信息（非堆栈）
      *
      * 错误场景：
-     *   - 空输入：naturalLanguageInput 为空或纯空白 → 「请输入动态场景指令」（不调用 LLM）
-     *   - AI 引擎未配置：baseUrl / apiKey / modelName / temperature / max_tokens 任一缺失
+     *   - 空输入：prompt 为空或纯空白 → 「请输入提示词」（不调用 LLM）
+     *   - AI 引擎未配置：baseUrl / apiKey / modelName 任一缺失
+     *   - 引擎参数缺失：temperature / max_tokens 未配置
      *   - 调用失败：网络 / 超时 / HTTP 错误
-     *   - 解析失败：LLM 返回空内容 / 无分隔符 / 无法识别三组 tag
-     *
-     * 类型声明策略（与 generateCharacterTraits / recognizeImageTraits 一致）：
-     *   - 主进程 `GenerateDynamicScenePromptsParams` / `GenerateDynamicScenePromptsResult`
-     *     定义于 src/main/services/characterTraitAIService.ts，渲染进程不直接引用主进程类型
-     *   - 此处使用内联类型签名，与现有 ai 命名空间下其他方法保持一致
-     *     （electron.d.ts 顶部注释亦说明「主进程类型不可直接被渲染进程引用」）
+     *   - 解析失败：LLM 返回空内容 / 无法解析为分类 tag
      */
-    generateDynamicScenePrompts: (args: {
-      /** 用户原始自然语言指令（中文/英文均可，必填非空） */
-      naturalLanguageInput: string;
-      /** 角色基础特征拼接字符串（可选，给 LLM 提供角色上下文避免生成矛盾 tag） */
+    generateTraitPrompts: (args: {
+      /** 用户输入的提示词（如 "red hair, blue dress, forest background"），必填非空 */
+      prompt: string;
+      /** 当前已有特征文本（逗号分隔，作为上下文避免重复生成） */
       baseTraits?: string;
     }) => Promise<{
       success: boolean;
-      /** 服装相关英文 SD tag 字符串（逗号分隔，未提及时为空字符串 ""） */
-      clothing?: string;
-      /** 动作/姿势英文 SD tag 字符串（逗号分隔，未提及时为空字符串 ""） */
-      pose?: string;
-      /** 场景/环境英文 SD tag 字符串（逗号分隔，未提及时为空字符串 ""） */
-      scene?: string;
+      /** 生成的分类特征数组（含 translation + originalText，可直接追加到 editedTraits） */
+      traits?: CategorizedTrait[];
       /** 友好错误信息（success=false 时存在，非堆栈） */
       error?: string;
+      /**
+       * RAG 标签库质检报告（结构与 generateCharacterTraits.ragDebug 完全兼容，
+       * 前端可复用 RagQualityReport 组件渲染）。
+       */
+      ragDebug?: {
+        enabled: boolean;
+        status: string;
+        retrievedTags: Array<{ name: string; category: number; count: number; score: number }>;
+        tagValidation: Array<{
+          tag: string;
+          isValid: boolean;
+          canonicalName?: string;
+          category?: number;
+          count?: number;
+          skipReason?: 'rating' | 'no_suggestion';
+          suggestions: Array<{ name: string; category: number; count: number; score: number }>;
+          replacedBy?: string;
+          splitTags?: { colorPartTag: string; featureTag: string };
+          source?:
+            | 'user-map'
+            | 'name'
+            | 'alias'
+            | 'color-split'
+            | 'negation-strip'
+            | 'knn'
+            | 'ai-fallback';
+          manuallyReplaced?: boolean;
+          manualReplacement?: string;
+          aiFallbackAttempted?: boolean;
+          aiFallbackCandidates?: string[];
+        }>;
+      };
     }>;
     /**
      * 探测 AI 模型能力（Spec: add-model-capability-detection-and-image-recognition / Task 3）
@@ -1179,6 +1234,182 @@ interface ElectronAPI {
     }>;
   };
 
+  // 标签自动推荐 API（Spec: implement-local-tag-autocomplete / Task 3）
+  // 4 个 IPC 通道：tag:search / tag:getLoadStatus / tag:reload / tag:setCsvPath
+  // 渲染进程通过 window.api.tag.* 调用，主进程由 tagAutocompleteService 单例处理
+  tag: {
+    /** 查询标签库（子串匹配 + 排序，返回最多 50 条结果） */
+    search: (args: {
+      query: string;
+      sortBy?: 'relevance' | 'count' | 'alphabetical';
+      limit?: number;
+    }) => Promise<{
+      success: boolean;
+      results: Array<{
+        name: string;
+        category: number;
+        count: number;
+        aliases: string[];
+        matchType: 'prefix' | 'includes' | 'alias';
+      }>;
+      total: number;
+      error?: string;
+      loading?: boolean;
+    }>;
+    /** 获取加载状态（设置面板展示 csvPath / 总数 / 错误用） */
+    getLoadStatus: () => Promise<{
+      loaded: boolean;
+      loading: boolean;
+      totalCount: number;
+      csvPath: string;
+      error?: string;
+    }>;
+    /** 重新加载标签库（不传 csvPath 沿用当前路径；传入则切换路径并重新加载） */
+    reload: (args?: { csvPath?: string }) => Promise<{
+      success: boolean;
+      totalCount: number;
+      error?: string;
+    }>;
+    /** 设置新 CSV 路径并重新加载（语义等同于 reload 传 csvPath） */
+    setCsvPath: (args: { csvPath: string }) => Promise<{
+      success: boolean;
+      totalCount: number;
+      error?: string;
+    }>;
+  };
+
+  // RAG 标签库 API（Spec: rag-tag-library-for-ai-trait-generation / Task 8）
+  // 5 个 IPC 通道 + 1 个进度事件订阅，调用 tagRagService 单例
+  // 用途：将 31.7 万 Danbooru/e621 标签向量化后语义检索，
+  //       在 AI 生成特征时注入「标签库参考」段落，防止生成标签库以外的新 tag
+  tagRag: {
+    /**
+     * 获取当前状态快照。
+     * - status: idle（未向量化）/ vectorizing（向量化中）/ ready（就绪）/ error（失败）/ stale（索引过期）
+     * - 调用时会懒校验 csvHash/dimension/model 是否变更，变更则降级为 'stale'
+     */
+    getStatus: () => Promise<{
+      status: 'idle' | 'vectorizing' | 'ready' | 'error' | 'stale';
+      current: number;
+      total: number;
+      failedCount: number;
+      startedAt?: number;
+      finishedAt?: number;
+      lastError?: string;
+      meta: {
+        csvHash: string;
+        dimension: number;
+        model: string;
+        totalTags: number;
+        vectorizedCount: number;
+        failedCount: number;
+        lastVectorizedAt: number;
+        durationMs: number;
+        status: 'ready' | 'error';
+      } | null;
+    }>;
+
+    /**
+     * 启动向量化（异步长任务，本 Promise 在向量化完成时 resolve）。
+     * 进度通过 onProgress 实时推送，无需轮询 getStatus。
+     * 并发去重：vectorizeAll 期间再次调用复用同一 Promise。
+     * @param args.force 强制重新向量化（即使索引就绪且指纹匹配）
+     */
+    startVectorization: (args?: { force?: boolean }) => Promise<{
+      success: boolean;
+      vectorized: number;
+      failed: number;
+      durationMs?: number;
+      error?: string;
+    }>;
+
+    /** 取消进行中的向量化（在当前批次结束后生效；已写入向量保留） */
+    cancelVectorization: () => Promise<{
+      success: boolean;
+      message?: string;
+    }>;
+
+    /**
+     * 语义检索相关标签。
+     * 降级返回空数组的条件：tagRag.enabled=false / status!=='ready' / query 为空 / embedding 失败。
+     * @param args.query 查询文本（角色描述 / 自然语言指令等）
+     * @param args.topK 返回结果数量（默认 40，从配置读取）
+     * @param args.minScore 最低相似度阈值（默认 0.15，cosine similarity）
+     * @param args.categoryFilter Danbooru 分类过滤（如 [0, 5] 仅返回 general + meta）
+     */
+    search: (args: {
+      query: string;
+      topK?: number;
+      minScore?: number;
+      categoryFilter?: number[];
+    }) => Promise<{
+      success: boolean;
+      results: Array<{
+        name: string;
+        category: number;
+        count: number;
+        aliases: string[];
+        score: number;
+      }>;
+      error?: string;
+    }>;
+
+    /** 清空索引（删除向量数据文件 + meta 文件；vectorizing 中需先 cancel） */
+    clearIndex: () => Promise<{
+      success: boolean;
+      error?: string;
+    }>;
+
+    /**
+     * 订阅向量化进度事件（主进程 → 渲染进程单向广播）。
+     * @returns 取消订阅函数（组件卸载时调用，避免内存泄漏）
+     */
+    onProgress: (
+      callback: (event: {
+        phase: 'starting' | 'embedding' | 'storing' | 'finalizing' | 'done' | 'error' | 'cancelled';
+        current: number;
+        total: number;
+        percentage: number;
+        eta?: number;
+        failedCount: number;
+        message?: string;
+        error?: string;
+      }) => void
+    ) => () => void;
+
+    // ====== 多轮标签审计扩展（Spec: add-multi-round-tag-audit / Task 1.3） ======
+    // 用户自定义同义词映射表 IPC：用于末轮人工审核入口持久化用户指定的替换映射
+    //   - getUserSynonymMap：读取全部映射（key 小写 → 替换词）
+    //   - addUserSynonymMapping：末轮人工审核替换时写入（original → replacement）
+    //   - removeUserSynonymMapping：撤销手动替换时删除对应映射
+    // 持久化到 {userData}/data/user-synonym-map.json，下次 validateTagsAgainstLibrary L0 首轮命中
+
+    /** 读取用户自定义同义词映射表（key 小写 → 替换词；文件不存在/损坏返回空对象） */
+    getUserSynonymMap: () => Promise<{
+      success: boolean;
+      map: Record<string, string>;
+      error?: string;
+    }>;
+
+    /**
+     * 新增/更新一条用户自定义同义词映射。
+     * @param args.original 原始 tag（如 "B-cup"）
+     * @param args.replacement 替换 tag（如 "medium_breasts"）
+     */
+    addUserSynonymMapping: (args: {
+      original: string;
+      replacement: string;
+    }) => Promise<{ success: boolean; error?: string }>;
+
+    /**
+     * 删除一条用户自定义同义词映射（按 original，大小写不敏感，幂等）。
+     * @param args.original 原始 tag
+     */
+    removeUserSynonymMapping: (args: {
+      original: string;
+    }) => Promise<{ success: boolean; error?: string }>;
+  };
+
   /** 会话管理 API（Task 6: 会话管理后端） */
   session: {
     /** 创建新会话（默认标题"新对话"） */
@@ -1275,6 +1506,28 @@ interface ElectronAPI {
       messages?: Array<{ role: string; content: string; timestamp?: number; [key: string]: unknown }>;
       error?: string;
     }>;
+  };
+
+  // ============================================================================
+  // 缩略图管线 API（Spec: optimize-system-rendering-performance / Task 7）
+  // ============================================================================
+  // 类型镜像 preload.ts 的 thumbnail 命名空间；主进程实现见
+  // src/main/ipc/handlers/thumbnailHandlers.ts 与 src/main/services/thumbnailService.ts。
+  // 供渲染进程 <LazyImage>（Task 6.1）+ imageCache（Task 8.1）走 IPC 取压缩缩略图。
+  thumbnail: {
+    /**
+     * 生成或读取指定源图片的缩略图 dataUrl。
+     * @param args.sourcePath 源图片绝对路径
+     * @param args.size       缩略图最大边长（256 | 384，默认 256）
+     * @returns 成功：{ dataUrl, mime, fromCache }；失败：{ error }
+     *          dataUrl 可直接用于 <img src>（CSP 兼容）
+     */
+    get: (args: { sourcePath: string; size?: 256 | 384 }) => Promise<
+      | { dataUrl: string; mime: string; fromCache: boolean; error?: undefined }
+      | { error: string; dataUrl?: undefined }
+    >;
+    /** 粗粒度清空全部缩略图缓存（内存 LRU + 磁盘 thumbnails 目录内容） */
+    invalidate: () => Promise<{ ok: boolean; error?: string }>;
   };
 }
 

@@ -249,8 +249,8 @@ const PromptEditor: React.FC<PromptEditorProps> = ({
             size="small"
             style={{
               marginBottom: 16,
-              background: '#f6ffed',
-              borderColor: '#b7eb8f',
+              background: 'var(--color-success-light)',
+              borderColor: 'var(--color-success)',
             }}
           >
             <Space direction="vertical" style={{ width: '100%' }} size="small">

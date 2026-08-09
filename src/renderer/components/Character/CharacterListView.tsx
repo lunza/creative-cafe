@@ -142,30 +142,6 @@ const CharacterListView: React.FC<CharacterListViewProps> = ({
       render: (text) => text || '无'
     },
     {
-      title: '卡片版本',
-      dataIndex: 'cardVersion',
-      key: 'cardVersion',
-      width: 100,
-      render: (version) => {
-        const colorMap = { v1: 'default', v2: 'blue', v3: 'green' };
-        return <Tag color={colorMap[version as 'v1' | 'v2' | 'v3'] || 'default'}>{(version || 'v1').toUpperCase()}</Tag>;
-      }
-    },
-    {
-      title: '版本信息',
-      dataIndex: 'version',
-      key: 'version',
-      sorter: (a, b) => (a.version || '').localeCompare(b.version || ''),
-      render: (text) => text || '无'
-    },
-    {
-      title: '创建者',
-      dataIndex: 'creator',
-      key: 'creator',
-      sorter: (a, b) => (a.creator || '').localeCompare(b.creator || ''),
-      render: (text) => text || '无'
-    },
-    {
       title: '标签',
       dataIndex: 'tags',
       key: 'tags',
@@ -198,6 +174,7 @@ const CharacterListView: React.FC<CharacterListViewProps> = ({
       title: '修改时间',
       dataIndex: 'modified',
       key: 'modified',
+      defaultSortOrder: 'descend',
       render: (date: Date) => new Date(date).toLocaleString(),
       sorter: (a, b) => new Date(a.modified).getTime() - new Date(b.modified).getTime()
     },
@@ -254,7 +231,7 @@ const CharacterListView: React.FC<CharacterListViewProps> = ({
           onOpenFolder={onOpenFolder}
           onCopyPath={onCopyPath}
         />
-        <Card size="small" style={{ marginBottom: 16, background: '#fffbe6', borderColor: '#ffe58f' }}>
+        <Card size="small" style={{ marginBottom: 16, background: 'var(--color-warning-light)', borderColor: 'var(--color-warning)' }}>
           <Space>
             <Text type="warning">ℹ️ 提示：</Text>
             <Text>仅支持图片类角色卡（PNG、JPG、JPEG、WebP），支持 SillyTavern V2/V3 规范。不支持 JSON 格式角色卡。</Text>
@@ -283,6 +260,12 @@ const CharacterListView: React.FC<CharacterListViewProps> = ({
           rowKey="path"
           loading={loading}
           bordered
+          // [perf] 启用 antd v6 Table 内置虚拟滚动（virtual prop），与 KnowledgeItemList
+          //        保持一致。当用户调大 pageSize 或滚动大量角色卡时，仅渲染可视区行。
+          //        行高均匀（缩略图列固定 60x60，无 expandable），适合虚拟模式。
+          //        scroll.y 为 virtual 生效所必需（数值类型）。
+          virtual
+          scroll={{ y: 500 }}
           pagination={{
             pageSize,
             showSizeChanger: true,
@@ -734,7 +717,7 @@ const CharacterListView: React.FC<CharacterListViewProps> = ({
                       fontSize: 16,
                       fontWeight: 600,
                       color: 'var(--text-color, #000)',
-                      borderBottom: '1px solid #f0f0f0',
+                      borderBottom: '1px solid var(--border-base)',
                       paddingBottom: 8
                     }}>
                       条目

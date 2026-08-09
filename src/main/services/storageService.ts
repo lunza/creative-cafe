@@ -240,7 +240,7 @@ class StorageService {
               proxy_port: 7890,
               encrypt_api_key: false,
               enable_access_control: false,
-              api_key_transmission: 'body'
+              api_key_transmission: 'header'
             }
           ],
           activeEngineId: 'default',

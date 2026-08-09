@@ -9,6 +9,7 @@ interface ChatMessage {
   content: string;
   timestamp: number;
   suggestedOptions?: string[];
+  emotion?: string;
 }
 
 interface ChatData {

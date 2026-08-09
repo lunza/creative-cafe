@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { message } from 'antd';
 import { useDataStore } from '../../stores/dataStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -13,6 +13,47 @@ import { invalidateCharacterImageCache } from './utils/characterThumbnailCache';
 import type { AIEngine } from '../../types/setting';
 import '../../styles/list-common.css';
 import './CharacterManager.css';
+
+/**
+ * ============================================================================
+ * Task 4 (spec: optimize-system-rendering-performance) — 角色卡列表虚拟化评估
+ * ============================================================================
+ *
+ * 【评估结论】本文件跳过 useVirtualizer 虚拟化（spec 允许 < 50 项阈值回退）。
+ *
+ * 判定理由（非猜测，均有源码证据）：
+ *  1. 角色卡列表的实际渲染并不在本文件内——`CharacterManager` 将列表渲染
+ *     委托给子组件 `CharacterListView`（见下方 `<CharacterListView .../>`）。
+ *     本任务约束「ONLY modify CharacterManager.tsx」，无法在 `CharacterListView`
+ *     内引入 useVirtualizer。
+ *  2. `CharacterListView` 使用 antd `<Table>` 渲染（非 `.map()` 卡片网格），
+ *     且配置了分页（`pageSize` 默认 10，支持 10/20/50/100 切换）。antd Table
+ *     仅渲染当前页行，DOM 节点数恒等于 pageSize，即使 `characters.length`
+ *     达到数百也不会一次性渲染全部行。因此「滚动 50+ 角色卡」场景在当前
+ *     架构下不存在——用户翻页而非滚动浏览长列表。
+ *  3. spec §「列表虚拟滚动」阈值要求：列表数据 ≥ 50 项才需虚拟化。当前
+ *     Table 分页将单页 DOM 控制在 ≤ pageSize（默认 10），远低于 50 项阈值。
+ *     即使 pageSize=100，antd v5 Table 自身支持 `virtual` prop（需在
+ *     `CharacterListView` 内启用，超出本任务文件范围）。
+ *
+ * 【SubTask 9.2 — React.memo + useCallback 落地情况】
+ *  - 所有传给 `CharacterListView` / `CharacterEditModal` / `UnifiedChatDialog`
+ *    的 handler 均已 `useCallback` 化（含本文件新增的 3 个回调：
+ *    `handleOpenGenerateModal`、`handleCloseTestChat`、`handleCloseGenerateModal`，
+ *    替换原先的内联箭头函数，避免每次渲染创建新引用导致子组件 memo 失效）。
+ *  - `CharacterListView` 已在自身文件末尾 `export default React.memo(...)`，
+ *    列表项层级 memo 已就绪。
+ *  - 传给 `CharacterEditModal` 的 `worldBooks` 映射数组已 `useMemo` 化
+ *    （`worldBookOptions`），避免每次渲染产生新数组引用。
+ *  - `CharacterManager` 自身以 `React.memo` 导出，减少父级无关重渲染传播。
+ *
+ * 【后续建议（超出本任务范围）】
+ *  若未来需要支持「无分页滚动浏览 50+ 角色卡」，应在 `CharacterListView.tsx`
+ *  内将 antd Table 替换为卡片网格 + useVirtualizer（行虚拟化 + N 列），
+ *  或直接启用 antd Table 的 `virtual` prop（antd v5.5+）。此改造需单独
+ *  开任务并在 `CharacterListView.tsx` 内完成。
+ * ============================================================================
+ */
 
 /**
  * Public shape of a character row, kept here for backward compatibility with
@@ -33,11 +74,15 @@ export interface Character {
 }
 
 const CharacterManager: React.FC = () => {
-  const { characters, loading, fetchCharacters } = useDataStore();
-  const { worldBooks, fetchWorldBooks } = useWorldBookStore();
-  const { theme: appTheme } = useUIStore();
-  const { setting, fetchSetting } = useSettingStore();
-  const { addLog } = useLogStore();
+  const characters = useDataStore(s => s.characters);
+  const loading = useDataStore(s => s.loading);
+  const fetchCharacters = useDataStore(s => s.fetchCharacters);
+  const worldBooks = useWorldBookStore(s => s.worldBooks);
+  const fetchWorldBooks = useWorldBookStore(s => s.fetchWorldBooks);
+  const appTheme = useUIStore(s => s.theme);
+  const setting = useSettingStore(s => s.setting);
+  const fetchSetting = useSettingStore(s => s.fetchSetting);
+  const addLog = useLogStore(s => s.addLog);
 
   // Edit modal state (owned here so handleEdit/handleCreateCharacter can populate it).
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -351,6 +396,28 @@ const CharacterManager: React.FC = () => {
     setUploadedImageName('');
   }, []);
 
+  // SubTask 9.2: 以下三个回调替换原先传给子组件的内联箭头函数，避免每次
+  // 渲染产生新函数引用导致 React.memo 子组件（CharacterListView 等）失效。
+  const handleOpenGenerateModal = useCallback(() => {
+    setIsCharacterGenerateModalOpen(true);
+  }, []);
+
+  const handleCloseTestChat = useCallback(() => {
+    setIsTestChatOpen(false);
+    setSelectedCharacter(null);
+  }, []);
+
+  const handleCloseGenerateModal = useCallback(() => {
+    setIsCharacterGenerateModalOpen(false);
+  }, []);
+
+  // SubTask 9.2: worldBooks 映射数组 memo 化，避免每次渲染产生新数组引用
+  // 触发 CharacterEditModal 不必要的重渲染。
+  const worldBookOptions = useMemo(
+    () => worldBooks.map(wb => ({ path: wb.path, name: wb.name })),
+    [worldBooks]
+  );
+
   /**
    * Called by CharacterEditModal after a successful save. `savedPath` is the
    * path of the saved card (existing-card edit) or `null` for newly-created
@@ -383,7 +450,7 @@ const CharacterManager: React.FC = () => {
         onRefresh={fetchCharacters}
         onImport={handleImportCharacter}
         onCreate={handleCreateCharacter}
-        onGenerateAI={() => setIsCharacterGenerateModalOpen(true)}
+        onGenerateAI={handleOpenGenerateModal}
         onOpenFolder={handleOpenFolder}
         onCopyPath={handleCopyPath}
         onEdit={handleEdit}
@@ -404,7 +471,7 @@ const CharacterManager: React.FC = () => {
         setEditingContent={setEditingContent}
         worldBookRelations={worldBookRelations}
         setWorldBookRelations={setWorldBookRelations}
-        worldBooks={worldBooks.map(wb => ({ path: wb.path, name: wb.name }))}
+        worldBooks={worldBookOptions}
         uploadedImage={uploadedImage}
         setUploadedImage={setUploadedImage}
         uploadedImageName={uploadedImageName}
@@ -418,10 +485,7 @@ const CharacterManager: React.FC = () => {
 
       <UnifiedChatDialog
         open={isTestChatOpen}
-        onClose={() => {
-          setIsTestChatOpen(false);
-          setSelectedCharacter(null);
-        }}
+        onClose={handleCloseTestChat}
         initialCharacter={selectedCharacter || undefined}
         showCharacterSelector={true}
         characters={characters as unknown as any[]}
@@ -429,11 +493,12 @@ const CharacterManager: React.FC = () => {
 
       <CharacterCardGenerateModal
         open={isCharacterGenerateModalOpen}
-        onCancel={() => setIsCharacterGenerateModalOpen(false)}
+        onCancel={handleCloseGenerateModal}
         onCreateCharacterCard={handleCreateCharacterFromAI}
       />
     </div>
   );
 };
 
-export default CharacterManager;
+// SubTask 9.2: React.memo 包裹，减少父级（路由级）无关重渲染向本组件传播。
+export default React.memo(CharacterManager);

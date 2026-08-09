@@ -45,15 +45,27 @@ function buildMenuItem(route: RouteConfig, isChild = false): any {
 }
 
 const Sidebar: React.FC = () => {
-  const { activeTab, setActiveTab, sidebarCollapsed, toggleSidebar, theme } = useUIStore();
-  const { setting } = useSettingStore();
+  const activeTab = useUIStore(s => s.activeTab);
+  const setActiveTab = useUIStore(s => s.setActiveTab);
+  const sidebarCollapsed = useUIStore(s => s.sidebarCollapsed);
+  const toggleSidebar = useUIStore(s => s.toggleSidebar);
+  const theme = useUIStore(s => s.theme);
+  const setting = useSettingStore(s => s.setting);
   const debugMode = setting?.debugMode || false;
   const { isActive: isAgentModeActive } = useAgentMode();
 
   const menuRoutes = getMenuRoutes(debugMode);
   // Agent 模式关闭时隐藏智能体中心菜单
   const visibleRoutes = menuRoutes.filter(route => route.key !== 'agent-center' || isAgentModeActive);
-  const menuItems = visibleRoutes.map((route) => buildMenuItem(route, false));
+  // 将固定在底部的菜单项（如设置）分离出来，中间插入分割线
+  const normalRoutes = visibleRoutes.filter(route => !route.pinnedBottom);
+  const pinnedRoutes = visibleRoutes.filter(route => route.pinnedBottom);
+  const menuItems = [
+    ...normalRoutes.map((route) => buildMenuItem(route, false)),
+    ...(pinnedRoutes.length > 0
+      ? [{ type: 'divider' as const }, ...pinnedRoutes.map((route) => buildMenuItem(route, false))]
+      : [])
+  ];
 
   // 根据主题设置背景色
   const isDark = theme === 'dark';

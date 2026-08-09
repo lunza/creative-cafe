@@ -34,12 +34,12 @@ const styles: { [key: string]: React.CSSProperties } = {
   h5: { fontSize: '1rem', fontWeight: 600, marginTop: '0.6rem', marginBottom: '0.3rem' },
   h6: { fontSize: '0.95rem', fontWeight: 600, marginTop: '0.5rem', marginBottom: '0.25rem' },
   p: { marginTop: '0.3rem', marginBottom: '0.6rem' },
-  a: { color: '#1890ff', textDecoration: 'underline' },
+  a: { color: 'var(--mr-link, #4a9eff)', textDecoration: 'underline' },
   img: { maxWidth: '100%', height: 'auto', borderRadius: '4px', marginTop: '0.5rem', marginBottom: '0.5rem' },
   pre: { backgroundColor: 'rgba(0,0,0,0.3)', padding: '12px', borderRadius: '6px', overflowX: 'auto', marginTop: '0.5rem', marginBottom: '0.5rem' },
   codeBlock: { fontFamily: 'Consolas, Monaco, "Courier New", monospace', fontSize: '0.9rem' },
   codeInline: { backgroundColor: 'rgba(0,0,0,0.3)', padding: '2px 6px', borderRadius: '3px', fontFamily: 'Consolas, Monaco, "Courier New", monospace', fontSize: '0.9em' },
-  blockquote: { borderLeft: '4px solid #4a9eff', paddingLeft: '12px', color: 'inherit', fontStyle: 'italic', marginTop: '0.5rem', marginBottom: '0.5rem', backgroundColor: 'rgba(74,158,255,0.05)', borderRadius: '0 4px 4px 0' },
+  blockquote: { borderLeft: '4px solid var(--mr-blockquote-border, #4a9eff)', paddingLeft: '12px', color: 'inherit', fontStyle: 'italic', marginTop: '0.5rem', marginBottom: '0.5rem', backgroundColor: 'var(--mr-blockquote-bg, rgba(74,158,255,0.05))', borderRadius: '0 4px 4px 0' },
   ul: { paddingLeft: '1.5rem', marginTop: '0.3rem', marginBottom: '0.6rem' },
   ol: { paddingLeft: '1.5rem', marginTop: '0.3rem', marginBottom: '0.6rem' },
   li: { marginBottom: '0.25rem' },
@@ -81,6 +81,7 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
       userPlaceholder: mergedConfig.template.userPlaceholder,
       normalizeQuotes: false,
       encodeAngleBrackets: false,
+      showThinking: mergedConfig.markdown.showThinking,
     });
   }, [content, charName, userName, mergedConfig.template]);
 
@@ -233,7 +234,7 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
     sup: ({ ...props }: any) => <sup style={styles.sup} {...props} />,
     sub: ({ ...props }: any) => <sub style={styles.sub} {...props} />,
     strong: ({ ...props }: any) => <strong style={styles.strong} {...props} />,
-    em: ({ ...props }: any) => <em style={styles.em} {...props} />,
+    em: ({ ...props }: any) => <em className="message-renderer-action" {...props} />,
   }), [onLinkClick, onImageClick]);
 
   return (

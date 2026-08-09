@@ -101,21 +101,7 @@
   padding: 4px 11px;
 }
 
-/* 开关紧凑 */
-.compact-mode .ant-switch {
-  height: 20px;
-  min-width: 38px;
-}
-
-.compact-mode .ant-switch-handle {
-  width: 16px;
-  height: 16px;
-  top: 2px;
-}
-
-.compact-mode .ant-switch-checked .ant-switch-handle {
-  left: calc(100% - 18px);
-}
+/* 开关/时间轴紧凑样式已迁移至 antd-v6-fixes.css */
 
 /* 消息提示紧凑 */
 .compact-mode .ant-message-notice-content {
@@ -324,15 +310,7 @@
   padding-bottom: 12px;
 }
 
-.compact-mode .ant-timeline-item-head {
-  width: 10px;
-  height: 10px;
-  left: -5px;
-}
-
-.compact-mode .ant-timeline-item-tail {
-  left: 0;
-}
+/* 时间轴紧凑样式已迁移至 antd-v6-fixes.css */
 
 .compact-mode .ant-timeline-item-content {
   font-size: 13px;

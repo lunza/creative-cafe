@@ -158,6 +158,9 @@ const DEFAULT_SD_CONFIG: SDWebuiConfig = {
   adNegativePrompt: '',
   adUseNoiseMultiplier: true,
   adNoiseMultiplier: 1.0,
+  // 【重点标记 - Furry/拟人生物面部识别扩展（2026-08-07）】
+  // 仅 YOLO-World 系列模型生效，空字符串=使用模型默认 COCO 80 类。
+  adModelClasses: '',
   // NL 模型相关（Spec: integrate-nl-driven-sd-models / Task 6.5）
   // 【重点标记 - DEFAULT_SD_CONFIG 字段同步】需与 SDWebuiConfig 接口及
   // settings.ts 的 defaultSetting.sdWebui 同步，否则旧配置缺失新字段时为 undefined。
@@ -213,34 +216,35 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
   onGenerated,
 }) => {
   // ====== Store 订阅 ======
-  const { saveExpression, loadExpressions } = useExpressionStore();
+  const saveExpression = useExpressionStore(s => s.saveExpression);
+  const loadExpressions = useExpressionStore(s => s.loadExpressions);
 
   // 【重点标记 - 按角色独立存储 LoRA（2026-07-29 bug 修复）】
   // LoRA 配置不再从全局 setting.sdWebui.selectedLoras 读取，而是按角色卡独立存储，
   // 避免 A 角色选择的 LoRA 污染 B 角色的生成。
-  const {
-    loras: characterLoras,
-    loadLoras: loadCharacterLoras,
-    saveLoras: saveCharacterLoras,
-  } = useCharacterLoraStore();
+  const characterLoras = useCharacterLoraStore(s => s.loras);
+  const loadCharacterLoras = useCharacterLoraStore(s => s.loadLoras);
+  const saveCharacterLoras = useCharacterLoraStore(s => s.saveLoras);
 
   // 【重点标记 - 角色特征缓存 Bug 修复（2026-07-29）】
   // 原实现 characterTraits 始终传 undefined（遗留 TODO），导致表情生成不携带角色特征。
   // 现订阅 characterTraitStore，与 AssetManagerModal 特征 Tab 共享 state，
   // init 时仅当 store 未加载当前角色 traits 时才 loadTraits。
-  const {
-    traits: characterTraits,
-    currentCharacterCardId: traitStoreCardId,
-    loadTraits: loadStoreTraits,
-  } = useCharacterTraitStore();
+  const characterTraits = useCharacterTraitStore(s => s.traits);
+  const traitStoreCardId = useCharacterTraitStore(s => s.currentCharacterCardId);
+  const loadStoreTraits = useCharacterTraitStore(s => s.loadTraits);
 
   // 【Spec: add-trait-category-grouping / Task 6 下游适配】
   // store.traits 升级为 CharacterTraitItem[] 后，下游 PromptBuilder / sdGenerationService
-  // 仍接收 string[]。这里派生「启用特征的 text 数组」，与 AssetGenerateModal 一致，
-  // 覆盖表情生成（single-expression / batch-expression）两条路径。
-  // 仅 enabled=true 的特征 text 被拼接为 SD 提示词，实现跨分类组合选择。
-  const enabledTraitTexts = useMemo(
-    () => characterTraits.filter((t) => t.enabled).map((t) => t.text),
+  // 接收 Array<{ text: string; weight?: number }>。这里派生「启用特征的结构化数组」，
+  // 与 AssetGenerateModal 一致，覆盖表情生成（single-expression / batch-expression）两条路径。
+  // 仅 enabled=true 的特征被拼接为 SD 提示词，实现跨分类组合选择。
+  // 【Spec: add-sdxl-prompt-weight-support / Task 3.4】透传 weight 到下游 SD 生成管线。
+  const enabledTraitTexts: Array<{ text: string; weight?: number }> = useMemo(
+    () =>
+      characterTraits
+        .filter((t) => t.enabled)
+        .map((t) => ({ text: t.text, weight: t.weight })),
     [characterTraits],
   );
 
@@ -521,6 +525,9 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
       adNegativePrompt: sdConfig.adNegativePrompt,
       adUseNoiseMultiplier: sdConfig.adUseNoiseMultiplier,
       adNoiseMultiplier: sdConfig.adNoiseMultiplier,
+      // 【重点标记 - Furry/拟人生物面部识别扩展（2026-08-07）】
+      // 仅 YOLO-World 系列模型生效，透传到 sdGenerationService 条件写入 ad_model_classes
+      adModelClasses: sdConfig.adModelClasses,
       // NL 模型相关（Spec: integrate-nl-driven-sd-models / Task 6.4）
       // modelType 由 sdGenerationService.generateExpression 读取以分流生成路径；
       // txt2imgWidth/txt2imgHeight 供 qwen-image / flux2 txt2img 路径使用。

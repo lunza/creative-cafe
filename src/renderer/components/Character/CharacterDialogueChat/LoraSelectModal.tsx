@@ -195,49 +195,52 @@ const LoraSelectModal: React.FC<LoraSelectModalProps> = ({
     const imageFailed = failedImages.has(lora.name);
 
     return (
-      <Tooltip
+      <div
         key={lora.name}
-        title={<span style={{ whiteSpace: 'pre-line' }}>{buildTooltipContent(lora)}</span>}
-        placement="top"
+        onClick={() => handleToggleSelect(lora.name)}
+        style={{
+          border: `2px solid ${isSelected ? 'var(--primary-color, #6366f1)' : 'transparent'}`,
+          borderRadius: 6,
+          overflow: 'hidden',
+          cursor: 'pointer',
+          background: 'var(--chat-bubble-assistant-bg, rgba(30, 30, 46, 0.5))',
+          transition: 'border-color 0.2s',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
       >
+        {/* 预览图 / 占位（不包裹 Tooltip，避免元数据过长遮盖图片导致无法点击） */}
         <div
-          onClick={() => handleToggleSelect(lora.name)}
           style={{
-            border: `2px solid ${isSelected ? 'var(--primary-color, #6366f1)' : 'transparent'}`,
-            borderRadius: 6,
-            overflow: 'hidden',
-            cursor: 'pointer',
-            background: 'var(--chat-bubble-assistant-bg, rgba(30, 30, 46, 0.5))',
-            transition: 'border-color 0.2s',
+            width: '100%',
+            height: 120,
+            background: '#0f0f1a',
             display: 'flex',
-            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            overflow: 'hidden',
           }}
         >
-          {/* 预览图 / 占位 */}
-          <div
-            style={{
-              width: '100%',
-              height: 120,
-              background: '#0f0f1a',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              overflow: 'hidden',
-            }}
-          >
-            {lora.previewUrl && !imageFailed ? (
-              <img
-                src={lora.previewUrl}
-                alt={lora.name}
-                loading="lazy"
-                onError={() => handleImageError(lora.name)}
-                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-              />
-            ) : (
-              <PictureOutlined style={{ fontSize: 28, color: 'var(--text-tertiary, #6b7280)' }} />
-            )}
-          </div>
-          {/* 模型名 */}
+          {lora.previewUrl && !imageFailed ? (
+            <img
+              src={lora.previewUrl}
+              alt={lora.name}
+              loading="lazy"
+              onError={() => handleImageError(lora.name)}
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            />
+          ) : (
+            <PictureOutlined style={{ fontSize: 28, color: 'var(--text-tertiary, #6b7280)' }} />
+          )}
+        </div>
+        {/* 模型名（Tooltip 仅包裹名称，placement=bottom 避免遮盖上方图片；
+            maxWidth/maxHeight 限制尺寸，长内容可滚动） */}
+        <Tooltip
+          title={<span style={{ whiteSpace: 'pre-line' }}>{buildTooltipContent(lora)}</span>}
+          placement="bottom"
+          overlayStyle={{ maxWidth: 320 }}
+          overlayInnerStyle={{ maxHeight: 200, overflowY: 'auto' }}
+        >
           <div
             style={{
               padding: '4px 6px',
@@ -252,8 +255,8 @@ const LoraSelectModal: React.FC<LoraSelectModalProps> = ({
           >
             {lora.name}
           </div>
-        </div>
-      </Tooltip>
+        </Tooltip>
+      </div>
     );
   };
 

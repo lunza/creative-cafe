@@ -16,11 +16,14 @@ const MAX_DESCRIPTION_LENGTH = 2000;
 const MAX_AVATAR_SIZE_MB = 5;
 const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'];
 
+// [perf] 列表数据量典型 < 50 项（用户人设为手工创建的少量条目），未启用虚拟滚动
+//        （阈值 50）；已应用 React.memo + useCallback。若数据量增长可改用 useVirtualizer。
+
 interface AvatarCardProps {
   src: string;
 }
 
-const AvatarCard: React.FC<AvatarCardProps> = ({ src }) => {
+const AvatarCard = React.memo<AvatarCardProps>(({ src }) => {
   const [displayUrl, setDisplayUrl] = useState<string>('');
   const [loading, setLoading] = useState(true);
 
@@ -44,13 +47,96 @@ const AvatarCard: React.FC<AvatarCardProps> = ({ src }) => {
   }, [src]);
 
   return (
-    <Avatar 
-      size={120} 
+    <Avatar
+      size={120}
       src={displayUrl || undefined}
       icon={!displayUrl && !loading ? <UserOutlined /> : undefined}
     />
   );
-};
+});
+
+interface ProfileCardProps {
+  profile: UserAvatarProfile;
+  onEdit: (profile: UserAvatarProfile) => void;
+  onDelete: (profile: UserAvatarProfile) => void;
+}
+
+/**
+ * 单个人设卡片（React.memo）。
+ *
+ * 拆分目的：父级 AvatarManager 因 saving / avatarDisplayUrl / profileForm 等
+ * 与列表无关的状态变化时避免整列重渲染。卡片内部包含 AvatarCard（异步加载头像），
+ * memo 化后只在 profile / onEdit / onDelete 引用变化时重渲染。
+ */
+const ProfileCard = React.memo<ProfileCardProps>(({ profile, onEdit, onDelete }) => (
+  <Card
+    hoverable
+    className="avatar-card"
+    onClick={() => onEdit(profile)}
+    cover={
+      <div className="avatar-card-cover">
+        {profile.avatarPath ? (
+          <AvatarCard src={profile.avatarPath} />
+        ) : (
+          <Avatar size={120} icon={<UserOutlined />} />
+        )}
+      </div>
+    }
+    actions={[
+      <Button
+        key="edit"
+        type="text"
+        icon={<EditOutlined />}
+        onClick={(e) => {
+          e.stopPropagation();
+          onEdit(profile);
+        }}
+      >
+        编辑
+      </Button>,
+      <Popconfirm
+        key="delete"
+        title="确定删除此人设？"
+        onConfirm={(e) => {
+          e?.stopPropagation();
+          onDelete(profile);
+        }}
+        onCancel={(e) => e?.stopPropagation()}
+      >
+        <Button
+          type="text"
+          danger
+          icon={<DeleteOutlined />}
+          onClick={(e) => e.stopPropagation()}
+        >
+          删除
+        </Button>
+      </Popconfirm>,
+    ]}
+  >
+    <Card.Meta
+      title={profile.name || '未命名'}
+      description={
+        <div>
+          <div style={{
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            display: '-webkit-box',
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: 'vertical'
+          }}>
+            {profile.description || '暂无描述'}
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <Tag>
+              {new Date(profile.updatedAt).toLocaleDateString()}
+            </Tag>
+          </div>
+        </div>
+      }
+    />
+  </Card>
+));
 
 interface UserAvatarProfile {
   id: string;
@@ -64,8 +150,8 @@ interface UserAvatarProfile {
 }
 
 const AvatarManager: React.FC = () => {
-  const { fetchAvatars } = useDataStore();
-  const { addLog } = useLogStore();
+  const fetchAvatars = useDataStore(s => s.fetchAvatars);
+  const addLog = useLogStore(s => s.addLog);
 
   const [viewMode, setViewMode] = useState<'list' | 'detail'>('list');
   const [profiles, setProfiles] = useState<UserAvatarProfile[]>([]);
@@ -470,73 +556,11 @@ const AvatarManager: React.FC = () => {
         <Row gutter={[16, 16]}>
           {profiles.map((profile) => (
             <Col xs={24} sm={12} md={8} lg={6} key={profile.id}>
-              <Card
-                hoverable
-                className="avatar-card"
-                onClick={() => handleEditProfile(profile)}
-                cover={
-                  <div className="avatar-card-cover">
-                    {profile.avatarPath ? (
-                      <AvatarCard src={profile.avatarPath} />
-                    ) : (
-                      <Avatar size={120} icon={<UserOutlined />} />
-                    )}
-                  </div>
-                }
-                actions={[
-                  <Button 
-                    key="edit" 
-                    type="text" 
-                    icon={<EditOutlined />}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleEditProfile(profile);
-                    }}
-                  >
-                    编辑
-                  </Button>,
-                  <Popconfirm
-                    key="delete"
-                    title="确定删除此人设？"
-                    onConfirm={(e) => {
-                      e?.stopPropagation();
-                      handleDeleteProfile(profile);
-                    }}
-                    onCancel={(e) => e?.stopPropagation()}
-                  >
-                    <Button 
-                      type="text" 
-                      danger 
-                      icon={<DeleteOutlined />}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      删除
-                    </Button>
-                  </Popconfirm>
-                ]}
-              >
-                <Card.Meta
-                  title={profile.name || '未命名'}
-                  description={
-                    <div>
-                      <div style={{ 
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        display: '-webkit-box',
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: 'vertical'
-                      }}>
-                        {profile.description || '暂无描述'}
-                      </div>
-                      <div style={{ marginTop: 8 }}>
-                        <Tag>
-                          {new Date(profile.updatedAt).toLocaleDateString()}
-                        </Tag>
-                      </div>
-                    </div>
-                  }
-                />
-              </Card>
+              <ProfileCard
+                profile={profile}
+                onEdit={handleEditProfile}
+                onDelete={handleDeleteProfile}
+              />
             </Col>
           ))}
         </Row>

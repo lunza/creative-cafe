@@ -9,8 +9,13 @@ const { Text, Title } = Typography;
 const { TextArea } = Input;
 
 const CreativeEditPage: React.FC = () => {
-  const { theme, setCreativeTab, setCreativeView } = useUIStore();
-  const { currentCreativeId, creatives, updateCreative, loadCreatives } = useCreativeStore();
+  const theme = useUIStore(s => s.theme);
+  const setCreativeTab = useUIStore(s => s.setCreativeTab);
+  const setCreativeView = useUIStore(s => s.setCreativeView);
+  const currentCreativeId = useCreativeStore(s => s.currentCreativeId);
+  const creatives = useCreativeStore(s => s.creatives);
+  const updateCreative = useCreativeStore(s => s.updateCreative);
+  const loadCreatives = useCreativeStore(s => s.loadCreatives);
 
   const [editingTitle, setEditingTitle] = useState('');
   const [editingDescription, setEditingDescription] = useState('');

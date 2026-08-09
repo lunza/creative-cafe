@@ -27,6 +27,7 @@ const GeneralSettingsPanel: React.FC<GeneralSettingsPanelProps> = ({
   debugMode,
   onDebugModeChange,
 }) => {
+  // TODO(perf): 整体订阅，待拆分为 selector（6 字段，>5 暂缓）
   const { theme, setTheme, animationEnabled, setAnimationEnabled, compactMode, setCompactMode } = useUIStore();
 
   const handleImageUpload = (file: File) => {

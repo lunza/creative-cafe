@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { Layout } from 'antd';
+import { Suspense, useEffect } from 'react';
+import { Layout, Spin } from 'antd';
 import { useUIStore } from './stores/uiStore';
 import Sidebar from './components/Layout/Sidebar';
 import Header from './components/Layout/Header';
@@ -12,10 +12,19 @@ import './styles/App.css';
 import './styles/animations.css';
 import './styles/compact.css';
 
+// 路由懒加载时的占位 fallback（居中 Spin）
+const routeFallback = (
+  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
+    <Spin size="large" />
+  </div>
+);
+
 const { Content } = Layout;
 
 function App() {
-  const { activeTab, compactMode, animationEnabled } = useUIStore();
+  const activeTab = useUIStore(s => s.activeTab);
+  const compactMode = useUIStore(s => s.compactMode);
+  const animationEnabled = useUIStore(s => s.animationEnabled);
 
   useEffect(() => {
     if (compactMode) {
@@ -50,7 +59,8 @@ function App() {
           <Header />
           <Content className="app-content">
             <PageTransition activeKey={activeTab}>
-              {renderContent()}
+              {/* Suspense 仅包裹路由内容，保持 Sidebar/Header 始终可见 */}
+              <Suspense fallback={routeFallback}>{renderContent()}</Suspense>
             </PageTransition>
           </Content>
         </Layout>

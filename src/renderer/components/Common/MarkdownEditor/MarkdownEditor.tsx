@@ -70,8 +70,8 @@ const MarkdownEditorComponent = (
     containerStyle,
   } = props;
 
-  const { fetchSetting } = useSettingStore();
-  const { addLog } = useLogStore();
+  const fetchSetting = useSettingStore(s => s.fetchSetting);
+  const addLog = useLogStore(s => s.addLog);
   const { token } = antTheme.useToken();
 
   const rootRef = useRef<HTMLDivElement>(null);

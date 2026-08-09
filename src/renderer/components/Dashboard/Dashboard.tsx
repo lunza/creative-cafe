@@ -26,12 +26,23 @@ import { ANIMATIONS, ANIMATION_DELAYS, CARD_ANIMATIONS, HOVER_EFFECTS, BUTTON_AN
 import './Dashboard.css';
 
 const Dashboard: React.FC = () => {
-  const { characters, avatars, fetchCharacters, fetchAvatars, error: dataError } = useDataStore();
-  const { worldBooks, fetchWorldBooks, error: worldBookError } = useWorldBookStore();
-  const { setting, fetchSetting, testConnection } = useSettingStore();
-  const { animationEnabled } = useUIStore();
-  const { addLog } = useLogStore();
-  const { testConnection: testVectorConnection, testStorage: testVectorStorage, lastTestResult, clearTestResult } = useVectorStore();
+  const characters = useDataStore(s => s.characters);
+  const avatars = useDataStore(s => s.avatars);
+  const fetchCharacters = useDataStore(s => s.fetchCharacters);
+  const fetchAvatars = useDataStore(s => s.fetchAvatars);
+  const dataError = useDataStore(s => s.error);
+  const worldBooks = useWorldBookStore(s => s.worldBooks);
+  const fetchWorldBooks = useWorldBookStore(s => s.fetchWorldBooks);
+  const worldBookError = useWorldBookStore(s => s.error);
+  const setting = useSettingStore(s => s.setting);
+  const fetchSetting = useSettingStore(s => s.fetchSetting);
+  const testConnection = useSettingStore(s => s.testConnection);
+  const animationEnabled = useUIStore(s => s.animationEnabled);
+  const addLog = useLogStore(s => s.addLog);
+  const testVectorConnection = useVectorStore(s => s.testConnection);
+  const testVectorStorage = useVectorStore(s => s.testStorage);
+  const lastTestResult = useVectorStore(s => s.lastTestResult);
+  const clearTestResult = useVectorStore(s => s.clearTestResult);
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
   const backgroundRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(800);

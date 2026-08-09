@@ -39,9 +39,12 @@ const WorldBookList: React.FC<WorldBookListProps> = ({
   onImportWorldBook,
   onCreateWorldBook
 }) => {
-  const { worldBooks, loading, fetchWorldBooks, optimizeWorldBook } = useWorldBookStore();
-  const { theme: appTheme } = useUIStore();
-  const { addLog } = useLogStore();
+  const worldBooks = useWorldBookStore(s => s.worldBooks);
+  const loading = useWorldBookStore(s => s.loading);
+  const fetchWorldBooks = useWorldBookStore(s => s.fetchWorldBooks);
+  const optimizeWorldBook = useWorldBookStore(s => s.optimizeWorldBook);
+  const appTheme = useUIStore(s => s.theme);
+  const addLog = useLogStore(s => s.addLog);
   const [worldBookDir, setWorldBookDir] = useState<string>('');
   const [pageSize, setPageSize] = useState(10);
 

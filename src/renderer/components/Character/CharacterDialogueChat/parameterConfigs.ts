@@ -102,6 +102,24 @@ export const PARAMETER_CONFIGS: ParameterConfig[] = [
     tooltip: '重复惩罚系数（仅 textgen-webui/koboldcpp 等后端支持）。借鉴 SillyTavern Default.json (rep_pen=1.1~1.2)。值 > 1 减少重复，过高会影响流畅性。推荐值：1.1-1.2',
     capability: 'supportsRepPen',
   },
+  {
+    key: 'top_k',
+    label: 'Top K',
+    min: 0,
+    max: 100,
+    step: 1,
+    defaultValue: 40,
+    tooltip: '限制模型从概率最高的 K 个 token 中采样。值越小输出越确定，值越大越多样。0 表示禁用（使用后端默认）。默认 40。',
+  },
+  {
+    key: 'min_p',
+    label: 'Min P',
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultValue: 0,
+    tooltip: '动态最低概率阈值，仅保留概率 >= top_p * min_p 的 token。0 表示禁用。默认 0。',
+  },
 ];
 
 /**

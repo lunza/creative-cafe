@@ -68,7 +68,7 @@ const EVENT_META: Record<AgentWritingEventType, EventMeta> = {
   chapter_organizing: { icon: <TableOutlined />, color: '#722ed1', label: '整理表格中' },
   chapter_organized: { icon: <TableOutlined />, color: '#52c41a', label: '表格整理完成' },
   chapter_completed: { icon: <CheckCircleOutlined />, color: '#52c41a', label: '章节完成' },
-  chapter_skipped: { icon: <MinusCircleOutlined />, color: '#8c8c8c', label: '跳过' },
+  chapter_skipped: { icon: <MinusCircleOutlined />, color: 'var(--text-secondary)', label: '跳过' },
   chapter_failed: { icon: <CloseCircleOutlined />, color: '#ff4d4f', label: '失败' },
   progress: { icon: <LoadingOutlined />, color: '#1890ff', label: '进度' },
   completed: { icon: <CheckCircleOutlined />, color: '#52c41a', label: '完成' },
@@ -164,7 +164,7 @@ const WritingAgentModal: React.FC<WritingAgentModalProps> = ({
   const renderEventList = () => {
     if (state.events.length === 0) {
       return (
-        <div style={{ padding: '24px 0', textAlign: 'center', color: '#8c8c8c' }}>
+        <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--text-secondary)' }}>
           等待编排事件...
         </div>
       );
@@ -176,9 +176,9 @@ const WritingAgentModal: React.FC<WritingAgentModalProps> = ({
           maxHeight: 260,
           overflowY: 'auto',
           padding: '8px 12px',
-          background: '#fafafa',
+          background: 'var(--bg-elevated)',
           borderRadius: 6,
-          border: '1px solid #f0f0f0',
+          border: '1px solid var(--border-base)',
           fontSize: 12,
         }}
       >
@@ -200,7 +200,7 @@ const WritingAgentModal: React.FC<WritingAgentModalProps> = ({
                 {new Date(evt.timestamp).toLocaleTimeString('zh-CN', { hour12: false })}
               </span>
               <span style={{ flexShrink: 0, minWidth: 64, fontWeight: 500 }}>{meta.label}</span>
-              <span style={{ color: '#595959', flex: 1 }}>{evt.message}</span>
+              <span style={{ color: 'var(--text-secondary)', flex: 1 }}>{evt.message}</span>
             </div>
           );
         })}
@@ -528,13 +528,13 @@ const StatCard: React.FC<{ label: string; value: React.ReactNode; color: string 
     style={{
       textAlign: 'center',
       padding: '12px 8px',
-      background: '#fafafa',
+      background: 'var(--bg-elevated)',
       borderRadius: 6,
-      border: '1px solid #f0f0f0',
+      border: '1px solid var(--border-base)',
     }}
   >
     <div style={{ fontSize: 22, fontWeight: 600, color }}>{value}</div>
-    <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 4 }}>{label}</div>
+    <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>{label}</div>
   </div>
 );
 

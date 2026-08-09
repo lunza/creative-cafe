@@ -325,7 +325,9 @@ export class EmbeddingService {
         method: 'POST',
         headers,
         body: JSON.stringify(requestBody),
-        signal: AbortSignal.timeout(60000)
+        // 批量请求超时：根据输入数量动态调整（每 100 条 30s，最少 60s，最多 300s）
+        // 500 条 batch 约 150s，覆盖大多数远程 API 的处理时间
+        signal: AbortSignal.timeout(Math.min(300, Math.max(60, validTexts.length * 0.3)) * 1000)
       });
 
       if (!response.ok) {

@@ -143,6 +143,16 @@ export interface AIEngineConfig {
   dry_base?: number;
   dry_allowed_length?: number;
   no_repeat_ngram_size?: number;
+  /**
+   * Top-K 采样：保留概率最高的 K 个 token，其余截断。
+   * 常见采样参数，与 top_p 类似由请求体直接注入（不经过 capability 门控）。
+   */
+  top_k?: number;
+  /**
+   * Min-P 采样：动态最低概率阈值，仅保留概率 >= top_p * min_p 的 token。
+   * 常见采样参数，与 top_p 类似由请求体直接注入（不经过 capability 门控）。
+   */
+  min_p?: number;
 }
 
 // 流式回调函数类型

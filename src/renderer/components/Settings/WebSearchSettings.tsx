@@ -114,7 +114,7 @@ const PROVIDER_OPTIONS: Array<{
  */
 const WebSearchSettings = forwardRef<WebSearchSettingsRef>((_props, ref) => {
   const [form] = Form.useForm<WebSearchConfig>();
-  const { setting } = useSettingStore();
+  const setting = useSettingStore(s => s.setting);
 
   const [testLoading, setTestLoading] = useState(false);
   const [testResult, setTestResult] = useState<

@@ -26,13 +26,11 @@ interface UploadDocumentModalProps {
 }
 
 const UploadDocumentModal: React.FC<UploadDocumentModalProps> = ({ pageSize, onPageSizeChange }) => {
-  const {
-    uploadProgress,
-    isUploading,
-    fetchItems,
-    uploadDocument,
-    selectDocumentFile,
-  } = useKnowledgeBaseStore();
+  const uploadProgress = useKnowledgeBaseStore(s => s.uploadProgress);
+  const isUploading = useKnowledgeBaseStore(s => s.isUploading);
+  const fetchItems = useKnowledgeBaseStore(s => s.fetchItems);
+  const uploadDocument = useKnowledgeBaseStore(s => s.uploadDocument);
+  const selectDocumentFile = useKnowledgeBaseStore(s => s.selectDocumentFile);
 
   const [uploadCategory] = useState<string[]>(['文档知识']);
   const [uploadTags] = useState<string[]>([]);
@@ -413,7 +411,7 @@ const UploadDocumentModal: React.FC<UploadDocumentModalProps> = ({ pageSize, onP
         {chunksLoading ? (
           <div style={{ textAlign: 'center', padding: 40 }}>
             <Progress type="circle" percent={0} status="active" />
-            <div style={{ marginTop: 16, color: '#8c8c8c' }}>加载分块数据中...</div>
+            <div style={{ marginTop: 16, color: 'var(--text-secondary)' }}>加载分块数据中...</div>
           </div>
         ) : docChunks.length > 0 ? (
           <div className="table-container">

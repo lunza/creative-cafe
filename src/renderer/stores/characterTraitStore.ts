@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 角色卡视觉特征 Zustand store（Spec: add-asset-and-trait-management / Task 3 + add-trait-category-grouping / Task 4 + fix-asset-trait-and-scene-defects / Task 4）
  *
  * 职责：
@@ -59,7 +59,6 @@ import type {
   CategorizedTrait,
   CharacterTraitItem,
   CharacterTraitManifestV2,
-  DynamicScenePrompt,
   TraitCategory,
   TraitCombination,
 } from '@shared/types';
@@ -78,8 +77,6 @@ import type {
  *   旧实现从 manifest 读取，现改为全局字典；saveTraits 写入 `[]`，不再更新此字段
  * - `combinations`：组合方案列表（命名快照，支持一键切换启用集合）
  * - `activeCombinationId`：当前激活的组合方案 ID（null 表示手动模式）
- * - `dynamicScenePrompts`：动态场景方案列表（Spec: add-dynamic-scene-prompt-generation / Task 5）
- * - `activeDynamicScenePromptId`：当前激活动态场景方案 ID（null 表示无激活方案）
  * - `appearanceDescription`：角色外观描述（中文自然语言，AI 生成特征时自动提取，可手动编辑）
  * - `loading`：加载中标志
  * - `error`：最近一次错误信息（null 表示无错误）
@@ -96,9 +93,9 @@ import type {
  * - `moveTrait`：移动特征到指定分类（目标可为系统分类 / 全局自定义分类 / uncategorized）
  * - `toggleTraitEnabled`：切换特征启用状态（进入手动模式：activeCombinationId=null）
  * - `saveCombination` / `applyCombination` / `deleteCombination`：组合方案 CRUD
- * - `saveDynamicScenePrompt` / `applyDynamicScenePrompt` / `updateDynamicScenePrompt` / `deleteDynamicScenePrompt`：
- *   动态场景方案 CRUD（Spec: add-dynamic-scene-prompt-generation / Task 5），
- *   与组合方案不同——这些 action 修改本地 state 后立即调用 `saveTraits()` 持久化（Spec: 「并持久化到角色卡的 traits.json」）
+ *   （【Spec: optimize-trait-translation-and-temp-scheme】saveCombination 新增 traitSnapshot 快照支持，
+ *   saveCombination / deleteCombination 修改本地 state 后立即 fire-and-forget 调 `saveTraits()` 持久化；
+ *   applyCombination 不改变方案列表，无需持久化）
  * - `setAppearanceDescription`：设置角色外观描述（仅本地 state）
  * - `clear`：重置所有状态
  */
@@ -127,20 +124,14 @@ interface CharacterTraitState {
   /** 当前激活的组合方案 ID（null 表示手动模式） */
   activeCombinationId: string | null;
   /**
-   * 动态场景方案列表（Spec: add-dynamic-scene-prompt-generation / Task 5）。
+   * 应用 traitSnapshot 方案前的 traits 备份（内存态，不持久化）。
    *
-   * 与基础特征 `traits` 分离：存储 AI 解析或用户手动编辑的一次性服装/动作/场景提示词。
-   * 每个方案独立于基础特征，激活后通过 `{clothing}` / `{pose}` / `{scene}` 占位符注入 SD 生成链路。
-   * 加载时由 service 层 `loadTraitData()` 兜底为 `[]`，保存时由 `saveTraits` 完整写入磁盘。
+   * - `applyCombination(traitSnapshot 方案)` 时备份当前 traits
+   * - `applyCombination(null)` 时从备份恢复 traits（手动模式回到方案应用前的状态）
+   * - traitIds 方案不修改此字段（仅切换 enabled，不替换 traits 数组）
+   * - 切换到手动模式后清空（避免多次切换累积旧备份）
    */
-  dynamicScenePrompts: DynamicScenePrompt[];
-  /**
-   * 当前激活动态场景方案 ID（null 表示无激活方案，生成回退到无动态场景状态）。
-   *
-   * Spec Scenario: 切换激活动态场景方案时设为该方案 ID；
-   * 删除当前激活方案时重置为 null（与 `activeCombinationId` 删除激活组合时的回退策略一致）。
-   */
-  activeDynamicScenePromptId: string | null;
+  preCombinationTraits: CharacterTraitItem[] | null;
   /** 角色外观描述（中文自然语言，AI 生成特征时自动提取，可手动编辑） */
   appearanceDescription: string;
   /** 加载中标志 */
@@ -169,24 +160,19 @@ interface CharacterTraitState {
   /**
    * 保存当前 store 全部 v2 state 到主进程（乐观更新 + 失败回滚）。
    * - 保存旧 v2 state 引用（traits / customCategories / combinations / activeCombinationId /
-   *   dynamicScenePrompts / activeDynamicScenePromptId / appearanceDescription）
-   * - `characterCardId` 可选：未传入时使用 `get().currentCharacterCardId`（供动态场景 action 链式调用 `get().saveTraits()`）
+   *   appearanceDescription）
+   * - `characterCardId` 可选：未传入时使用 `get().currentCharacterCardId`
    * - 若显式传入 appearanceDescription（含空串），先 set 更新 store.appearanceDescription 再保存；undefined 时使用 store 当前值
-   * - 调用 `window.electronAPI.characterTrait.saveData` 持久化完整 v2 manifest（含 dynamicScenePrompts / activeDynamicScenePromptId）
-   * - 失败时回滚全部 v2 字段（含动态场景字段）
+   * - 调用 `window.electronAPI.characterTrait.saveData` 持久化完整 v2 manifest
+   * - 失败时回滚全部 v2 字段
    * - 返回 `{ success, error? }`
-   *
-   * 【重点标记 - 新增字段持久化】Spec: add-dynamic-scene-prompt-generation / Task 5
-   * - v2 manifest 构造新增 `dynamicScenePrompts` + `activeDynamicScenePromptId` 两字段（修复 Task 1 引入的 TS2739）
-   * - 失败回滚同步覆盖这两个字段，保证本地 state 与磁盘一致
    *
    * 【重点标记 - customCategories 不再写入】Spec: fix-asset-trait-and-scene-defects / Task 4
    * - v2 manifest 构造时 `customCategories` 强制写 `[]`（不再从 store 读取，因 store 中此字段永远为 `[]`）
    * - 自定义分类由全局字典 `categoryDictionary.*` IPC 独立持久化，不依赖 saveTraits
    * - 保留 `customCategories: []` 字段以兼容 `CharacterTraitManifestV2` 类型签名与旧文件读取
    *
-   * 注：traits / combinations / activeCombinationId / dynamicScenePrompts /
-   *     activeDynamicScenePromptId 已由各 action 修改完毕，
+   * 注：traits / combinations / activeCombinationId 已由各 action 修改完毕，
    *     saveTraits 仅负责持久化，不再接收 traits 参数（v1 旧签名已废弃）。
    */
   saveTraits: (
@@ -219,8 +205,35 @@ interface CharacterTraitState {
    * - 更新 text 字段（id / categoryId / enabled 不变）
    * - 调用方需在合适时机调用 saveTraits 持久化
    * - 返回 `{ success, error? }`
+   *
+   * 【重点标记 - 编辑清空翻译】Spec: add-ai-tag-chinese-translation / Task 4
+   * - 更新 text 时同步置 `translation: undefined`，避免翻译与新 tag 文本不符
+   *   （translation 由 AI 生成时产出，与原 text 配对；text 变更后翻译失效）
+   * - 此 action 同时覆盖两条调用路径，无需在调用方重复清空：
+   *   1. `AssetManagerModal.handleSaveEdit`（行内编辑保存）
+   *   2. `AssetManagerModal.handleManualReplace`（末轮人工审核替换）
+   *   以及 `AssetGenerateModal` 的行内编辑路径
+   * - 持久化由调用方在「保存」按钮点击时统一调用 saveTraits 落盘
    */
   updateTrait: (traitId: string, newText: string) => { success: boolean; error?: string };
+
+  /**
+   * 更新指定 traitId 的 SDXL 权重字段（仅本地 state，不调 IPC）。
+   *
+   * 【Spec: add-sdxl-prompt-weight-support / Task 6.3】
+   * - 用于 UI 权重编辑器（Task 7/8）修改单个 trait 的 weight
+   * - 仅修改 weight 字段，不影响 id / text / categoryId / enabled / translation / originalText
+   *   （与 `updateTrait` 编辑 text 时清空 translation 的策略不同：编辑 weight 不清空任何其他字段）
+   * - weight 为 undefined / 非数字 / NaN 时清空 weight 字段（恢复默认 1.0 语义）
+   * - 范围校验（0.1-10.0）由 `normalizeTraitItem` 在持久化时兜底，此处仅做类型校验，
+   *   便于 UI 实时显示用户输入（含越界值，由 saveTraits 落盘时统一兜底）
+   * - 调用方需在合适时机调用 saveTraits 持久化
+   * - 返回 `{ success, error? }`
+   */
+  updateTraitWeight: (
+    traitId: string,
+    weight: number | undefined,
+  ) => { success: boolean; error?: string };
 
   /**
    * 批量合并 AI 生成的「带分类」特征项数组到本地 state（仅本地 state，不调 IPC）。
@@ -251,6 +264,26 @@ interface CharacterTraitState {
    * - 返回 `{ success: true }`（此 action 永不失败）
    */
   setAppearanceDescription: (description: string) => { success: boolean; error?: string };
+
+  /**
+   * 清空当前所有特征标签 + 外观描述（仅本地 state，不调 IPC，不持久化）。
+   *
+   * Spec: add-clear-traits-button（角色特征页面「清空」按钮）
+   *
+   * 与 `setTraits([])` 的区别：
+   *  - `setTraits([])` 采用 MERGE 策略，**保留已分类项**（categoryId !== uncategorized），
+   *    仅移除未分类项 —— 用于 AI 生成特征时合并，不适合「一键清空」场景
+   *  - `clearTraits` 直接 `set({ traits: [], appearanceDescription: '' })`，绕过 MERGE，
+   *    真正清空全部特征（含已分类项），用于用户主动「清空」操作
+   *
+   * 不清空 combinations / activeCombinationId / globalCategories：
+   *  - 组合方案是用户保存的命名快照，清空特征不应删除方案
+   *  - globalCategories 是全局字典缓存，清空特征不影响分类体系
+   *
+   * 调用方需在合适时机调用 saveTraits 持久化（清空后用户点「保存」才真正落盘）。
+   * 返回 `{ success: true }`（此 action 永不失败）
+   */
+  clearTraits: () => { success: boolean; error?: string };
 
   // -------- 分类管理（全局字典 IPC，Spec: fix-asset-trait-and-scene-defects / Task 4） --------
 
@@ -327,94 +360,65 @@ interface CharacterTraitState {
   // -------- 组合方案 --------
 
   /**
-   * 保存当前启用特征集合为命名组合方案（仅本地 state，不调 IPC）。
+   * 保存当前启用特征集合为命名组合方案（修改本地 state 后立即调用 `saveTraits()` 持久化）。
+   *
+   * 【Spec: optimize-trait-translation-and-temp-scheme】traitSnapshot 支持：
+   * - 新增可选 `snapshot` 参数：传入时同时保存 traits 完整快照（深拷贝），applyCombination 时
+   *   用快照完整替换 traits（而非仅切换 enabled），解决「保存方案后编辑特征 → 应用方案时特征丢失」问题
+   * - 不传 `snapshot` 时仅保存 traitIds（向后兼容 AssetManagerModal 旧调用 + 旧方案加载）
+   * - 旧方案（无 traitSnapshot）在 applyCombination 中走 traitIds 分支，行为不变
+   *
    * - trim 后非空；与现有组合名去重（大小写敏感）
-   * - 创建 `{ id: genTraitId(), name, traitIds: 当前 enabled=true 的 trait id 快照, createdAt, updatedAt }`
+   * - 创建 `{ id: genTraitId(), name, traitIds: 当前 enabled=true 的 trait id 快照, traitSnapshot?, createdAt, updatedAt }`
    * - 追加到 combinations
    * - 不自动设 activeCombinationId（保存方案不等于应用方案）
-   * - 返回 `{ success, error? }`
+   * - 立即持久化（fire-and-forget 调 `get().saveTraits()`；
+ *   持久化失败时 saveTraits 内部回滚 combinations，仅记录日志，不向调用方抛错）
+   * - 返回 `{ success, error? }`（同步签名，调用方无需 await）
    */
-  saveCombination: (name: string) => { success: boolean; error?: string };
+  saveCombination: (
+    name: string,
+    snapshot?: CharacterTraitItem[],
+  ) => { success: boolean; error?: string };
 
   /**
-   * 应用指定组合方案（仅本地 state，不调 IPC）。
-   * - 找到 combination；将 traits 中所有 trait.enabled 按 traitIds 集合设置（在集合内=true，不在=false）
-   * - traitIds 中失效的 id（trait 已删除）静默跳过
-   * - `activeCombinationId = combinationId`
-   * - 返回 `{ success, error? }`
+   * 覆盖已有的同名组合方案（保留原 id / createdAt，更新 traitIds / traitSnapshot / updatedAt）。
+   *
+   * - 按名称精确匹配（大小写敏感），找不到时返回 `{ success: false, error }`
+   * - traitIds 从 store `traits` 派生（与 saveCombination 一致）
+   * - snapshot 非空时深拷贝写入 traitSnapshot（与 saveCombination 一致）
+   * - 立即持久化（fire-and-forget 调 `get().saveTraits()`）
+   * - 返回 `{ success, error? }`（同步签名）
    */
-  applyCombination: (combinationId: string) => { success: boolean; error?: string };
+  overwriteCombination: (
+    name: string,
+    snapshot?: CharacterTraitItem[],
+  ) => { success: boolean; error?: string };
 
   /**
-   * 删除指定组合方案（仅本地 state，不调 IPC）。
+   * 应用指定组合方案（仅本地 state，不调 IPC——applyCombination 不改变方案列表，无需持久化）。
+   *
+   * 【Spec: optimize-trait-translation-and-temp-scheme】traitSnapshot 分支：
+   * - 若 combination.traitSnapshot 存在且非空 → 用快照完整替换 traits（深拷贝，保留 text/categoryId/enabled/id 等全部字段）
+   * - 否则走 traitIds 分支（向后兼容旧方案）：仅切换 enabled 状态，trait 本身不变
+   *
+   * - `combinationId === null` 时取消激活（设 `activeCombinationId = null`，
+ *   便于 UI allowClear 场景；现有调用方仍传 string，非破坏性扩展）
+   * - 找不到 combination 时返回 `{ success: false, error }`
+   * - traitIds 分支：traitIds 中失效的 id（trait 已删除）静默跳过
+   * - 返回 `{ success, error? }`
+   */
+  applyCombination: (combinationId: string | null) => { success: boolean; error?: string };
+
+  /**
+   * 删除指定组合方案（修改本地 state 后立即调用 `saveTraits()` 持久化）。
    * - 从 combinations 移除
    * - 若它是 activeCombinationId，置 `activeCombinationId = null`（进入手动模式）
    * - 不影响任何特征项本身
+   * - 立即持久化（fire-and-forget 调 `get().saveTraits()`，与 saveCombination 一致）
    * - 返回 `{ success, error? }`
    */
   deleteCombination: (combinationId: string) => { success: boolean; error?: string };
-
-  // -------- 动态场景方案（Spec: add-dynamic-scene-prompt-generation / Task 5） --------
-
-  /**
-   * 保存一个动态场景方案并自动激活（修改本地 state 后立即调用 `saveTraits()` 持久化）。
-   *
-   * Spec Scenario: 「保存为方案并自动激活」——创建方案后 `activeDynamicScenePromptId` 自动指向新 id，
-   * 后续生成图片时携带该方案的 clothing/pose/scene。
-   *
-   * - 用 `genTraitId()` 生成 id，`createdAt` / `updatedAt` 设为 `Date.now()`
-   * - 追加到 `dynamicScenePrompts`
-   * - **自动设 `activeDynamicScenePromptId` 为新 id**（与 `saveCombination` 不自动激活的策略不同，
-   *   因 Spec 明确要求「保存为方案并自动激活」）
-   * - 调用 `get().saveTraits()` 持久化（characterCardId 缺省取 `currentCharacterCardId`）
-   * - 返回 `{ success, error? }`，持久化失败时返回 saveTraits 的错误
-   */
-  saveDynamicScenePrompt: (
-    name: string,
-    clothing: string,
-    pose: string,
-    scene: string,
-    sourceCommand: string,
-  ) => Promise<{ success: boolean; error?: string }>;
-
-  /**
-   * 切换激活动态场景方案（修改本地 state 后立即调用 `saveTraits()` 持久化）。
-   * - 设 `activeDynamicScenePromptId` 为给定 id
-   * - 若 id 不在 `dynamicScenePrompts` 中，静默 no-op（防御性，不抛异常）
-   * - 调用 `get().saveTraits()` 持久化
-   * - 返回 `{ success, error? }`
-   */
-  applyDynamicScenePrompt: (
-    id: string,
-  ) => Promise<{ success: boolean; error?: string }>;
-
-  /**
-   * 更新指定动态场景方案的 clothing/pose/scene/name 字段（修改本地 state 后立即调用 `saveTraits()` 持久化）。
-   * - 找到方案后合并 `updates`（`Partial<DynamicScenePrompt>`，但 `id` / `createdAt` 不可改）
-   * - 自动 bump `updatedAt = Date.now()`
-   * - 若 id 不存在，静默 no-op（防御性）
-   * - 调用 `get().saveTraits()` 持久化
-   * - 返回 `{ success, error? }`
-   *
-   * Spec Scenario: 手动编辑解析结果——用户修改 pose 后保存，写入修改后的值（非 AI 原始值）。
-   */
-  updateDynamicScenePrompt: (
-    id: string,
-    updates: Partial<Omit<DynamicScenePrompt, 'id' | 'createdAt'>>,
-  ) => Promise<{ success: boolean; error?: string }>;
-
-  /**
-   * 删除指定动态场景方案（修改本地 state 后立即调用 `saveTraits()` 持久化）。
-   * - 从 `dynamicScenePrompts` 移除
-   * - **若删除的是当前激活方案，重置 `activeDynamicScenePromptId = null`**
-   *   （Spec Scenario: 删除当前激活的方案 → activeDynamicScenePromptId 重置为 null）
-   * - 若 id 不存在，静默 no-op（防御性）
-   * - 调用 `get().saveTraits()` 持久化
-   * - 返回 `{ success, error? }`
-   */
-  deleteDynamicScenePrompt: (
-    id: string,
-  ) => Promise<{ success: boolean; error?: string }>;
 
   /** 重置所有 v2 状态（离开角色卡编辑界面时调用） */
   clear: () => void;
@@ -434,10 +438,8 @@ export const useCharacterTraitStore = create<CharacterTraitState>((set, get) => 
   customCategories: [],
   combinations: [],
   activeCombinationId: null,
-  // 【重点标记 - 新增 state】Spec: add-dynamic-scene-prompt-generation / Task 5
-  // - 初始值与 service 层 emptyV2Manifest / v1→v2 迁移兜底保持一致（[] / null）
-  dynamicScenePrompts: [],
-  activeDynamicScenePromptId: null,
+  // 【Spec: optimize-trait-translation-and-temp-scheme】traitSnapshot 方案应用前的 traits 备份
+  preCombinationTraits: null,
   appearanceDescription: '',
   loading: false,
   error: null,
@@ -465,16 +467,14 @@ export const useCharacterTraitStore = create<CharacterTraitState>((set, get) => 
           globalCategories: [],
           combinations: [],
           activeCombinationId: null,
-          // 兜底与 service 层 emptyV2Manifest 一致
-          dynamicScenePrompts: [],
-          activeDynamicScenePromptId: null,
+          preCombinationTraits: null, // 重置备份（加载新角色卡时无方案激活）
           appearanceDescription: '',
         });
         return;
       }
 
       // 调用 loadData 一次性获取完整 v2 manifest（含 traits / combinations /
-      // activeCombinationId / appearanceDescription / dynamicScenePrompts / activeDynamicScenePromptId）
+      // activeCombinationId / appearanceDescription）
       //
       // 【重点标记 - 不再读取 manifest.customCategories】Spec: fix-asset-trait-and-scene-defects / Task 4
       // - 主进程 loadTraitData 仍会返回 customCategories 字段（兼容旧文件），但本 store 不再使用它
@@ -494,15 +494,6 @@ export const useCharacterTraitStore = create<CharacterTraitState>((set, get) => 
           : String(data.activeCombinationId);
       const safeDescription: string =
         typeof data?.appearanceDescription === 'string' ? data.appearanceDescription : '';
-      // 【重点标记 - 新增字段加载】Spec: add-dynamic-scene-prompt-generation / Task 5
-      // - 主进程 loadTraitData 已对旧 v2 文件 / v1 文件兜底为 [] / null，此处二次防御
-      const safeDynamicScenePrompts: DynamicScenePrompt[] = Array.isArray(data?.dynamicScenePrompts)
-        ? data.dynamicScenePrompts
-        : [];
-      const safeActiveDynamicScenePromptId: string | null =
-        typeof data?.activeDynamicScenePromptId === 'string'
-          ? data.activeDynamicScenePromptId
-          : null;
 
       // 【重点标记 - 加载全局分类字典】Spec: fix-asset-trait-and-scene-defects / Task 4
       // - 调用 categoryDictionary.load() IPC 拉取全局分类字典，填充 globalCategories
@@ -540,8 +531,7 @@ export const useCharacterTraitStore = create<CharacterTraitState>((set, get) => 
         globalCategories: safeGlobalCategories,
         combinations: safeCombinations,
         activeCombinationId: safeActiveCombinationId,
-        dynamicScenePrompts: safeDynamicScenePrompts,
-        activeDynamicScenePromptId: safeActiveDynamicScenePromptId,
+        preCombinationTraits: null, // 从磁盘加载时清空备份（applyCombination 不持久化，无需恢复）
         appearanceDescription: safeDescription,
         loading: false,
         error: null,
@@ -562,19 +552,17 @@ export const useCharacterTraitStore = create<CharacterTraitState>((set, get) => 
       }
 
       const state = get();
-      // characterCardId 缺省时使用 currentCharacterCardId（供动态场景 action 链式调用 get().saveTraits()）
+      // characterCardId 缺省时使用 currentCharacterCardId
       const cardId = characterCardId ?? state.currentCharacterCardId;
       if (!cardId) {
         return { success: false, error: 'characterCardId 为空（未加载角色卡）' };
       }
 
-      // 保存旧 v2 state 引用，用于失败回滚（含动态场景字段）
+      // 保存旧 v2 state 引用，用于失败回滚
       const prevTraits = state.traits;
       const prevCustomCategories = state.customCategories;
       const prevCombinations = state.combinations;
       const prevActiveCombinationId = state.activeCombinationId;
-      const prevDynamicScenePrompts = state.dynamicScenePrompts;
-      const prevActiveDynamicScenePromptId = state.activeDynamicScenePromptId;
       const prevDescription = state.appearanceDescription;
 
       // 若显式传入 appearanceDescription（含空串），先 set 更新 store 再保存；undefined 时使用 store 当前值
@@ -585,10 +573,7 @@ export const useCharacterTraitStore = create<CharacterTraitState>((set, get) => 
         set({ appearanceDescription: descToSave });
       }
 
-      // 构建完整 v2 manifest 持久化（含动态场景字段）
-      // 【重点标记 - 修复 TS2739】Spec: add-dynamic-scene-prompt-generation / Task 5
-      // - 原 manifest 构造缺失 dynamicScenePrompts / activeDynamicScenePromptId（Task 1 扩展类型后报 TS2739）
-      // - 现补全这两字段，从当前 store state 读取（已由各 action 修改完毕）
+      // 构建完整 v2 manifest 持久化
       const data: CharacterTraitManifestV2 = {
         characterCardId: cardId,
         version: 2,
@@ -597,8 +582,6 @@ export const useCharacterTraitStore = create<CharacterTraitState>((set, get) => 
         customCategories: state.customCategories,
         combinations: state.combinations,
         activeCombinationId: state.activeCombinationId,
-        dynamicScenePrompts: state.dynamicScenePrompts,
-        activeDynamicScenePromptId: state.activeDynamicScenePromptId,
       };
 
       const result = await window.electronAPI.characterTrait.saveData({
@@ -607,14 +590,12 @@ export const useCharacterTraitStore = create<CharacterTraitState>((set, get) => 
       });
 
       if (!result?.success) {
-        // 失败回滚全部 v2 字段（含动态场景字段）
+        // 失败回滚全部 v2 字段
         set({
           traits: prevTraits,
           customCategories: prevCustomCategories,
           combinations: prevCombinations,
           activeCombinationId: prevActiveCombinationId,
-          dynamicScenePrompts: prevDynamicScenePrompts,
-          activeDynamicScenePromptId: prevActiveDynamicScenePromptId,
           appearanceDescription: prevDescription,
         });
         return { success: false, error: result?.error ?? '保存特征失败' };
@@ -705,8 +686,11 @@ export const useCharacterTraitStore = create<CharacterTraitState>((set, get) => 
       }
 
       // 浅拷贝构造新引用，更新指定 traitId 的 text 字段
+      // 【重点标记 - 编辑清空翻译】Spec: add-ai-tag-chinese-translation / Task 4
+      // 同步置 translation: undefined（避免翻译与新 tag 文本不符），覆盖 handleSaveEdit +
+      // handleManualReplace + AssetGenerateModal 行内编辑三条调用路径，无需调用方重复清空。
       const nextTraits = traits.map((t) =>
-        t.id === traitId ? { ...t, text: trimmed } : t
+        t.id === traitId ? { ...t, text: trimmed, translation: undefined } : t
       );
       set({ traits: nextTraits });
       return { success: true };
@@ -715,6 +699,38 @@ export const useCharacterTraitStore = create<CharacterTraitState>((set, get) => 
       return {
         success: false,
         error: error instanceof Error ? error.message : '更新特征失败',
+      };
+    }
+  },
+
+  // 【Spec: add-sdxl-prompt-weight-support / Task 6.3】更新单个 trait 的 weight 字段
+  updateTraitWeight: (traitId: string, weight: number | undefined) => {
+    try {
+      const { traits } = get();
+      const exists = traits.some((t) => t.id === traitId);
+      if (!exists) {
+        return { success: false, error: '特征不存在' };
+      }
+
+      // 类型校验：非数字 / NaN 兜底为 undefined（清空 weight，恢复默认 1.0 语义）
+      // 范围校验（0.1-10.0）由 normalizeTraitItem 在持久化时兜底，此处仅做类型校验，
+      // 便于 UI 实时显示用户输入（含越界值，由 saveTraits 落盘时统一兜底）
+      const safeWeight =
+        typeof weight === 'number' && !Number.isNaN(weight) ? weight : undefined;
+
+      // 浅拷贝构造新引用，仅更新 weight 字段
+      // 【Spec: add-sdxl-prompt-weight-support】编辑 weight 不影响 id / text / categoryId /
+      // enabled / translation / originalText（与 updateTrait 编辑 text 时清空 translation 不同）
+      const nextTraits = traits.map((t) =>
+        t.id === traitId ? { ...t, weight: safeWeight } : t,
+      );
+      set({ traits: nextTraits });
+      return { success: true };
+    } catch (error) {
+      console.error('[characterTraitStore] updateTraitWeight failed:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '更新权重失败',
       };
     }
   },
@@ -734,6 +750,10 @@ export const useCharacterTraitStore = create<CharacterTraitState>((set, get) => 
       ]);
       const seen = new Set<string>();
       let duplicateCount = 0;
+      // 【重点标记 - 透传 translation】Spec: add-ai-tag-chinese-translation / Task 4
+      // safeTraits 映射时保留 AI 产出的 translation 字段（trim 后非空才保留），
+      // 供后续 path 2（未分类项重新分类时刷新翻译）+ path 4（新增项携带翻译）使用。
+      // 旧实现 return { text, categoryId } 丢弃 translation，导致 AI 翻译无法持久化。
       const safeTraits: CategorizedTrait[] = Array.isArray(traits)
         ? traits
             .map((t) => {
@@ -746,7 +766,21 @@ export const useCharacterTraitStore = create<CharacterTraitState>((set, get) => 
               if (!validCategoryIds.has(categoryId)) {
                 categoryId = UNCATEGORIZED_CATEGORY_ID;
               }
-              return { text, categoryId };
+              // translation 防御性兜底：仅保留非空字符串，其余置 undefined（与 CategorizedTrait 可选字段语义一致）
+              const translation =
+                typeof t?.translation === 'string' && t.translation.trim()
+                  ? t.translation.trim()
+                  : undefined;
+              // 【Spec: add-sdxl-prompt-weight-support / Task 6.1】weight 透传：
+              // 仅保留有效数字（NaN 兜底 undefined），范围校验（0.1-10.0）由 normalizeTraitItem 在持久化时兜底
+              const weight =
+                typeof t?.weight === 'number' && !Number.isNaN(t.weight) ? t.weight : undefined;
+              return {
+                text,
+                categoryId,
+                ...(translation !== undefined ? { translation } : {}),
+                ...(weight !== undefined ? { weight } : {}),
+              };
             })
             .filter((t) => t.text.length > 0)
             .filter((t) => {
@@ -778,9 +812,22 @@ export const useCharacterTraitStore = create<CharacterTraitState>((set, get) => 
       // 索引：新集合中按 text（大小写敏感）→ categoryId，用于未分类项的归类更新
       // 注意：若同一 text 在新集合中以多个 categoryId 出现（去重后），取首次出现的 categoryId
       const newByText = new Map<string, string>();
+      // 【重点标记 - 透传 translation】Spec: add-ai-tag-chinese-translation / Task 4
+      // 同步建立 text → translation 索引，供 path 2（未分类项重新分类时刷新翻译）使用。
+      // 仅当 AI 显式提供非空 translation 时才覆盖既有 trait 的 translation，否则保留既有值。
+      const newByTranslation = new Map<string, string>();
+      // 【Spec: add-sdxl-prompt-weight-support / Task 6.1】同步建立 text → weight 索引，
+      // 供 path 2（未分类项重新分类时刷新 weight）使用。仅当 AI 显式提供有效数字时才覆盖既有 weight。
+      const newByWeight = new Map<string, number>();
       for (const t of safeTraits) {
         if (!newByText.has(t.text)) {
           newByText.set(t.text, t.categoryId);
+          if (typeof t.translation === 'string') {
+            newByTranslation.set(t.text, t.translation);
+          }
+          if (typeof t.weight === 'number') {
+            newByWeight.set(t.text, t.weight);
+          }
         }
       }
       const newTextSet = new Set(newByText.keys());
@@ -797,15 +844,25 @@ export const useCharacterTraitStore = create<CharacterTraitState>((set, get) => 
         } else if (newTextSet.has(t.text)) {
           // 2. 未分类但在新集合中：用 AI 的 categoryId 更新（可能仍为 uncategorized）
           const newCategoryId = newByText.get(t.text) ?? UNCATEGORIZED_CATEGORY_ID;
+          // 若 AI 提供新 translation 则覆盖（AI 重新生成翻译），否则保留既有 translation
+          const newTranslation = newByTranslation.get(t.text);
+          // 【Spec: add-sdxl-prompt-weight-support / Task 6.1】若 AI 提供新 weight 则覆盖，否则保留既有 weight
+          const newWeight = newByWeight.get(t.text);
           preservedTraits.push({
             ...t,
             categoryId: newCategoryId,
+            ...(typeof newTranslation === 'string' ? { translation: newTranslation } : {}),
+            ...(typeof newWeight === 'number' ? { weight: newWeight } : {}),
           });
         }
         // 3. 未分类且不在新集合中：跳过（移除）
       }
 
       // 4. 新集合中不存在于现有 traits（任意分类）的 → 追加为 { id, text, categoryId: AI's, enabled: true }
+      // 【重点标记 - 透传 translation】Spec: add-ai-tag-chinese-translation / Task 4
+      // - 新增项携带 AI 产出的 translation（若存在）
+      // - 仅当 translation 为非空字符串时写入字段，否则省略（与 CategorizedTrait 可选字段语义一致）
+      // 【Spec: add-sdxl-prompt-weight-support / Task 6.1】新增项携带 AI 产出的 weight（若为有效数字）
       const existingTexts = new Set(existingTraits.map((t) => t.text));
       const traitsToAdd: CharacterTraitItem[] = safeTraits
         .filter((t) => !existingTexts.has(t.text))
@@ -814,6 +871,8 @@ export const useCharacterTraitStore = create<CharacterTraitState>((set, get) => 
           text: t.text,
           categoryId: t.categoryId,
           enabled: true,
+          ...(typeof t.translation === 'string' ? { translation: t.translation } : {}),
+          ...(typeof t.weight === 'number' ? { weight: t.weight } : {}),
         }));
 
       // 浅拷贝构造新引用，保留项 + 新增项
@@ -838,6 +897,21 @@ export const useCharacterTraitStore = create<CharacterTraitState>((set, get) => 
       return {
         success: false,
         error: error instanceof Error ? error.message : '设置外观描述失败',
+      };
+    }
+  },
+
+  clearTraits: () => {
+    try {
+      // 直接置空，绕过 setTraits 的 MERGE 策略（MERGE 会保留已分类项）
+      // 仅清空本地 state，不调 IPC；用户需点「保存」才持久化清空结果
+      set({ traits: [], appearanceDescription: '' });
+      return { success: true };
+    } catch (error) {
+      console.error('[characterTraitStore] clearTraits failed:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '清空特征失败',
       };
     }
   },
@@ -1018,7 +1092,8 @@ export const useCharacterTraitStore = create<CharacterTraitState>((set, get) => 
         t.id === traitId ? { ...t, enabled: !t.enabled } : t
       );
       // 进入手动模式：activeCombinationId = null（Spec Scenario: 手动编辑进入手动模式）
-      set({ traits: nextTraits, activeCombinationId: null });
+      // 清空 preCombinationTraits：用户手动编辑意味着接受当前特征列表，无需在切换方案时恢复旧备份
+      set({ traits: nextTraits, activeCombinationId: null, preCombinationTraits: null });
       return { success: true };
     } catch (error) {
       console.error('[characterTraitStore] toggleTraitEnabled failed:', error);
@@ -1031,7 +1106,7 @@ export const useCharacterTraitStore = create<CharacterTraitState>((set, get) => 
 
   // ==================== 组合方案 ====================
 
-  saveCombination: (name: string) => {
+  saveCombination: (name: string, snapshot?: CharacterTraitItem[]) => {
     try {
       const trimmed = (name ?? '').trim();
       if (!trimmed) {
@@ -1044,19 +1119,39 @@ export const useCharacterTraitStore = create<CharacterTraitState>((set, get) => 
         return { success: false, error: '组合名已存在' };
       }
 
-      // traitIds = 当前 enabled=true 的 trait id 快照
+      // traitIds = 当前 enabled=true 的 trait id 快照（始终保存，向后兼容旧 applyCombination 逻辑）
       const traitIds = traits.filter((t) => t.enabled).map((t) => t.id);
       const now = Date.now();
       const newCombination: TraitCombination = {
         id: genTraitId(),
         name: trimmed,
         traitIds,
+        // 【Spec: optimize-trait-translation-and-temp-scheme】traitSnapshot：
+        // 保存当前 traits 完整快照，applyCombination 时用快照完整替换 traits（而非仅切换 enabled），
+        // 解决「保存方案后编辑特征 → 应用方案时特征丢失」问题。
+        // 深拷贝（{ ...t }）避免后续 trait 编辑污染快照；snapshot 为 undefined 时省略字段，
+        // 与旧方案（仅 traitIds）兼容，applyCombination 会自动走 traitIds 分支。
+        ...(snapshot ? { traitSnapshot: snapshot.map((t) => ({ ...t })) } : {}),
         createdAt: now,
         updatedAt: now,
       };
 
       set({ combinations: [...combinations, newCombination] });
       // 不自动设 activeCombinationId（保存方案不等于应用方案）
+
+      // 【Spec: optimize-trait-translation-and-temp-scheme】立即持久化
+      // fire-and-forget：保持同步签名（调用方无需 await），saveTraits 失败时内部已回滚 combinations，
+      // 此处仅记录日志，不向调用方抛错（与 deleteCombination 的 await 模式不同，
+      // 因 saveCombination 调用方 AssetManagerModal.handleOpenSaveCombination 同步消费 result.success）
+      void get()
+        .saveTraits()
+        .catch((e) => {
+          console.error(
+            '[characterTraitStore] saveCombination: saveTraits 持久化失败（state 已回滚）',
+            e,
+          );
+        });
+
       return { success: true };
     } catch (error) {
       console.error('[characterTraitStore] saveCombination failed:', error);
@@ -1067,23 +1162,102 @@ export const useCharacterTraitStore = create<CharacterTraitState>((set, get) => 
     }
   },
 
-  applyCombination: (combinationId: string) => {
+  overwriteCombination: (name: string, snapshot?: CharacterTraitItem[]) => {
     try {
+      const trimmed = (name ?? '').trim();
+      if (!trimmed) {
+        return { success: false, error: '组合名不能为空' };
+      }
+
+      const { traits, combinations } = get();
+      const existing = combinations.find((c) => c.name === trimmed);
+      if (!existing) {
+        return { success: false, error: '组合方案不存在' };
+      }
+
+      // traitIds = 当前 enabled=true 的 trait id（与 saveCombination 一致）
+      const traitIds = traits.filter((t) => t.enabled).map((t) => t.id);
+      const updatedCombinations = combinations.map((c) =>
+        c.id === existing.id
+          ? {
+              ...c,
+              traitIds,
+              // snapshot 深拷贝写入（undefined 时移除 traitSnapshot，回退为纯 traitIds 方案）
+              ...(snapshot ? { traitSnapshot: snapshot.map((t) => ({ ...t })) } : {}),
+              updatedAt: Date.now(),
+            }
+          : c,
+      );
+
+      set({ combinations: updatedCombinations });
+
+      void get()
+        .saveTraits()
+        .catch((e) => {
+          console.error(
+            '[characterTraitStore] overwriteCombination: saveTraits 持久化失败（state 已回滚）',
+            e,
+          );
+        });
+
+      return { success: true };
+    } catch (error) {
+      console.error('[characterTraitStore] overwriteCombination failed:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '覆盖组合失败',
+      };
+    }
+  },
+
+  applyCombination: (combinationId: string | null) => {
+    try {
+      // 【Spec: optimize-trait-translation-and-temp-scheme】支持 null 取消激活
+      // （便于 UI allowClear 场景；
+      // 现有调用方 AssetManagerModal.handleApplyCombination 仍传 string，非破坏性扩展）
+      if (combinationId === null) {
+        const { preCombinationTraits } = get();
+        // 从备份恢复 traits（若有），让手动模式回到方案应用前的状态
+        set({
+          ...(preCombinationTraits
+            ? { traits: preCombinationTraits.map((t) => ({ ...t })) }
+            : {}),
+          activeCombinationId: null,
+          preCombinationTraits: null, // 清空备份，避免多次切换累积
+        });
+        return { success: true };
+      }
+
       const { traits, combinations } = get();
       const combination = combinations.find((c) => c.id === combinationId);
       if (!combination) {
         return { success: false, error: '组合方案不存在' };
       }
 
-      // 将 traits 中所有 trait.enabled 按 traitIds 集合设置（在集合内=true，不在=false）
-      const enabledIdSet = new Set(combination.traitIds);
-      const nextTraits = traits.map((t) => ({
-        ...t,
-        enabled: enabledIdSet.has(t.id),
-      }));
-      // traitIds 中失效的 id（trait 已删除）静默跳过（Set.has 自然处理）
+      // 【Spec: optimize-trait-translation-and-temp-scheme】traitSnapshot 分支：
+      // 用快照完整替换 traits（深拷贝，保留 text/categoryId/enabled/id/translation 等全部字段），
+      // 解决「保存方案后编辑特征 → 应用方案时特征丢失」问题。
+      // 同时备份当前 traits 到 preCombinationTraits，供切换到手动模式时恢复。
+      if (combination.traitSnapshot && combination.traitSnapshot.length > 0) {
+        set({
+          preCombinationTraits: traits.map((t) => ({ ...t })),
+          traits: combination.traitSnapshot.map((t) => ({ ...t })),
+          activeCombinationId: combinationId,
+        });
+      } else {
+        // traitIds 分支（向后兼容旧方案）：仅切换 enabled 状态，trait 本身不变
+        const enabledIdSet = new Set(combination.traitIds);
+        set({
+          traits: traits.map((t) => ({
+            ...t,
+            enabled: enabledIdSet.has(t.id),
+          })),
+          activeCombinationId: combinationId,
+        });
+        // traitIds 中失效的 id（trait 已删除）静默跳过（Set.has 自然处理）
+      }
 
-      set({ traits: nextTraits, activeCombinationId: combinationId });
+      // applyCombination 不改变方案列表，无需持久化（仅切换当前 traits / activeCombinationId）
       return { success: true };
     } catch (error) {
       console.error('[characterTraitStore] applyCombination failed:', error);
@@ -1104,179 +1278,41 @@ export const useCharacterTraitStore = create<CharacterTraitState>((set, get) => 
 
       const nextCombinations = combinations.filter((c) => c.id !== combinationId);
       // 若它是 activeCombinationId，置 null（进入手动模式）
-      const nextActiveCombinationId =
-        activeCombinationId === combinationId ? null : activeCombinationId;
+      const wasActive = activeCombinationId === combinationId;
+      const nextActiveCombinationId = wasActive ? null : activeCombinationId;
+
+      // 删除的是激活的 traitSnapshot 方案时，从备份恢复 traits（与切换到手动模式行为一致）
+      const { preCombinationTraits } = get();
+      const shouldRestore = wasActive && preCombinationTraits;
 
       set({
         combinations: nextCombinations,
         activeCombinationId: nextActiveCombinationId,
+        ...(shouldRestore
+          ? {
+              traits: preCombinationTraits!.map((t) => ({ ...t })),
+              preCombinationTraits: null,
+            }
+          : {}),
       });
+
+      // 【Spec: optimize-trait-translation-and-temp-scheme】立即持久化（与 saveCombination 一致）
+      // fire-and-forget：保持同步签名，saveTraits 失败时内部已回滚 combinations，仅记录日志
+      void get()
+        .saveTraits()
+        .catch((e) => {
+          console.error(
+            '[characterTraitStore] deleteCombination: saveTraits 持久化失败（state 已回滚）',
+            e,
+          );
+        });
+
       return { success: true };
     } catch (error) {
       console.error('[characterTraitStore] deleteCombination failed:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : '删除组合失败',
-      };
-    }
-  },
-
-  // ==================== 动态场景方案（Spec: add-dynamic-scene-prompt-generation / Task 5） ====================
-  //
-  // 与组合方案（combinations）的差异：
-  // - 组合方案 action（saveCombination/applyCombination/deleteCombination）仅修改本地 state，
-  //   持久化由调用方在「保存」按钮点击时统一调用 saveTraits。
-  // - 动态场景方案 action 修改本地 state 后立即调用 get().saveTraits() 持久化，
-  //   因 Spec 明确要求「并持久化到角色卡的 traits.json」（即时持久化语义）。
-  // - 两者均复用同一 saveTraits（写入完整 v2 manifest），无需新增 IPC 通道。
-
-  saveDynamicScenePrompt: async (
-    name: string,
-    clothing: string,
-    pose: string,
-    scene: string,
-    sourceCommand: string,
-  ) => {
-    try {
-      const { dynamicScenePrompts } = get();
-      const now = Date.now();
-      const newPrompt: DynamicScenePrompt = {
-        id: genTraitId(),
-        // name 允许重名（与 TraitCombination.name 拒绝重名策略不同），仅 trim
-        name: typeof name === 'string' ? name.trim() : '',
-        clothing: typeof clothing === 'string' ? clothing : '',
-        pose: typeof pose === 'string' ? pose : '',
-        scene: typeof scene === 'string' ? scene : '',
-        sourceCommand: typeof sourceCommand === 'string' ? sourceCommand : '',
-        createdAt: now,
-        updatedAt: now,
-      };
-
-      // 浅拷贝构造新引用，追加到末尾
-      // 【重点标记 - 自动激活】Spec Scenario: 「保存为方案并自动激活」
-      // - 创建后立即设 activeDynamicScenePromptId 为新 id（与 saveCombination 不自动激活的策略不同）
-      set({
-        dynamicScenePrompts: [...dynamicScenePrompts, newPrompt],
-        activeDynamicScenePromptId: newPrompt.id,
-      });
-
-      // 立即持久化（characterCardId 缺省取 currentCharacterCardId）
-      const result = await get().saveTraits();
-      if (!result.success) {
-        // 持久化失败时 saveTraits 内部已回滚 dynamicScenePrompts / activeDynamicScenePromptId
-        return { success: false, error: result.error };
-      }
-      return { success: true };
-    } catch (error) {
-      console.error('[characterTraitStore] saveDynamicScenePrompt failed:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : '保存动态场景方案失败',
-      };
-    }
-  },
-
-  applyDynamicScenePrompt: async (id: string) => {
-    try {
-      const { dynamicScenePrompts, activeDynamicScenePromptId } = get();
-      // 防御性：id 不在列表中则 no-op（不抛异常）
-      const exists = dynamicScenePrompts.some((p) => p.id === id);
-      if (!exists) {
-        return { success: true };
-      }
-      // 已是激活方案则无需重复设置 / 持久化
-      if (activeDynamicScenePromptId === id) {
-        return { success: true };
-      }
-
-      set({ activeDynamicScenePromptId: id });
-
-      const result = await get().saveTraits();
-      if (!result.success) {
-        return { success: false, error: result.error };
-      }
-      return { success: true };
-    } catch (error) {
-      console.error('[characterTraitStore] applyDynamicScenePrompt failed:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : '应用动态场景方案失败',
-      };
-    }
-  },
-
-  updateDynamicScenePrompt: async (
-    id: string,
-    updates: Partial<Omit<DynamicScenePrompt, 'id' | 'createdAt'>>,
-  ) => {
-    try {
-      const { dynamicScenePrompts } = get();
-      const idx = dynamicScenePrompts.findIndex((p) => p.id === id);
-      // 防御性：id 不存在则 no-op
-      if (idx === -1) {
-        return { success: true };
-      }
-
-      // 浅拷贝构造新引用，合并 updates（id / createdAt 不可改），bump updatedAt
-      const nextDynamicScenePrompts = dynamicScenePrompts.map((p) =>
-        p.id === id
-          ? {
-              ...p,
-              ...updates,
-              // 显式覆写不可改字段，防止调用方通过 updates 蛇足修改
-              id: p.id,
-              createdAt: p.createdAt,
-              updatedAt: Date.now(),
-            }
-          : p,
-      );
-      set({ dynamicScenePrompts: nextDynamicScenePrompts });
-
-      const result = await get().saveTraits();
-      if (!result.success) {
-        return { success: false, error: result.error };
-      }
-      return { success: true };
-    } catch (error) {
-      console.error('[characterTraitStore] updateDynamicScenePrompt failed:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : '更新动态场景方案失败',
-      };
-    }
-  },
-
-  deleteDynamicScenePrompt: async (id: string) => {
-    try {
-      const { dynamicScenePrompts, activeDynamicScenePromptId } = get();
-      const exists = dynamicScenePrompts.some((p) => p.id === id);
-      // 防御性：id 不存在则 no-op
-      if (!exists) {
-        return { success: true };
-      }
-
-      const nextDynamicScenePrompts = dynamicScenePrompts.filter((p) => p.id !== id);
-      // 【重点标记 - 删除激活方案回退】Spec Scenario:
-      // 「删除当前激活的方案 → activeDynamicScenePromptId 重置为 null」
-      // - 与 deleteCombination 删除激活组合时置 null 的策略一致
-      const nextActiveDynamicScenePromptId =
-        activeDynamicScenePromptId === id ? null : activeDynamicScenePromptId;
-
-      set({
-        dynamicScenePrompts: nextDynamicScenePrompts,
-        activeDynamicScenePromptId: nextActiveDynamicScenePromptId,
-      });
-
-      const result = await get().saveTraits();
-      if (!result.success) {
-        return { success: false, error: result.error };
-      }
-      return { success: true };
-    } catch (error) {
-      console.error('[characterTraitStore] deleteDynamicScenePrompt failed:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : '删除动态场景方案失败',
       };
     }
   },
@@ -1292,9 +1328,7 @@ export const useCharacterTraitStore = create<CharacterTraitState>((set, get) => 
       globalCategories: [],
       combinations: [],
       activeCombinationId: null,
-      // 重置动态场景字段（与初始值一致）
-      dynamicScenePrompts: [],
-      activeDynamicScenePromptId: null,
+      preCombinationTraits: null, // 清空备份
       appearanceDescription: '',
       loading: false,
       error: null,

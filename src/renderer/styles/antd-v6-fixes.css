@@ -1,0 +1,95 @@
+/*
+ * antd v6 兼容性修复
+ * 统一处理 antd v5 → v6 升级后的 CSS 选择器不匹配问题
+ *
+ * 核心变化：
+ * - Slider 可见圆点: .ant-slider-handle → .ant-slider-handle::after（有 border-radius: 50%）
+ * - Switch 可见圆圈: .ant-switch-handle → .ant-switch-handle::before
+ * - 定位属性: left/right → insetInlineStart/insetInlineEnd（RTL 兼容）
+ * - Switch handle 定位: top: trackPadding → top: 50% + translateY(-50%)（垂直居中）
+ */
+
+/* ==========================================================================
+   Slider — 可见圆点 targeting ::after 伪元素
+   antd v5 直接给 .ant-slider-handle 设置 border/background/box-shadow
+   antd v6 容器无 border-radius（显示为正方形），需 targeting ::after
+   ========================================================================== */
+
+/* 暗色主题 */
+.dark .ant-slider-rail {
+  background-color: var(--border-base);
+}
+
+.dark .ant-slider-track {
+  background-color: var(--color-primary);
+}
+
+.dark .ant-slider-handle::after {
+  background-color: var(--bg-container) !important;
+  box-shadow: 0 0 0 2px var(--color-primary) !important;
+}
+
+/* 角色对话配置面板 */
+.parameter-slider .ant-slider-handle::after {
+  border: 2px solid var(--config-panel-slider-thumb-border, #8b5cf6) !important;
+  background: var(--config-panel-slider-thumb) !important;
+  box-shadow: 0 0 0 2px var(--config-panel-slider-thumb-border, #8b5cf6), var(--config-panel-slider-thumb-shadow) !important;
+  transition: all 0.2s ease;
+}
+
+.parameter-slider .ant-slider-handle:hover::after {
+  border-color: #a855f7 !important;
+  box-shadow: 0 0 0 2px #a855f7, 0 2px 8px rgba(139, 92, 246, 0.6) !important;
+}
+
+.parameter-slider .ant-slider-handle:focus::after {
+  border-color: #a855f7 !important;
+  box-shadow: 0 0 0 2px #a855f7, 0 0 0 6px rgba(139, 92, 246, 0.2) !important;
+}
+
+/* ==========================================================================
+   Switch — handle 垂直居中修复
+   antd v6 使用 top: trackPadding (2px) 定位 handle，
+   在自定义高度/尺寸配置下 handleSize 与 trackHeight 不匹配导致圆圈偏移。
+   统一使用 top: 50% + translateY(-50%) 强制垂直居中。
+   ========================================================================== */
+
+/* 全局 Switch handle 垂直居中 */
+.ant-switch-handle {
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+}
+
+/* ==========================================================================
+   Switch — 紧凑模式兼容
+   antd v6 使用 insetInlineStart 替代 left 定位 checked 状态
+   ========================================================================== */
+
+.compact-mode .ant-switch {
+  height: 20px;
+  min-width: 38px;
+}
+
+.compact-mode .ant-switch-handle::before {
+  width: 16px;
+  height: 16px;
+}
+
+.compact-mode .ant-switch-checked .ant-switch-handle {
+  insetInlineStart: calc(100% - 18px);
+}
+
+/* ==========================================================================
+   Timeline — 逻辑属性兼容
+   antd v6 内部使用 insetInlineStart，物理 left 在 RTL 下会冲突
+   ========================================================================== */
+
+.compact-mode .ant-timeline-item-head {
+  width: 10px;
+  height: 10px;
+  insetInlineStart: -5px;
+}
+
+.compact-mode .ant-timeline-item-tail {
+  insetInlineStart: 0;
+}

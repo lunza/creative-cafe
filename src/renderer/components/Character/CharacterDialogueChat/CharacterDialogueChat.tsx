@@ -10,12 +10,11 @@ import ConfigPanel from './ConfigPanel';
 import CharacterSelectorPanel from './CharacterSelectorPanel';
 import AssetManagerModal from './AssetManagerModal';
 import { CommandPalette, CommandPaletteItem } from '../../Common/CommandPalette';
-import type { SkillInfo } from '../../Common/SkillQuickAccess';
 import { useCharacterDialogueChat } from './CharacterDialogueChat.hooks';
 import { useFavoritesStore } from '../../../stores/favoritesStore';
 import { useExpressionStore } from '../../../stores/expressionStore';
 import { exportConversation } from './CharacterDialogueChat.utils';
-import { CharacterInfo, AIParameterConfig } from './CharacterDialogueChat.types';
+import { CharacterInfo, AIParameterConfig, deriveThinkTagMode } from './CharacterDialogueChat.types';
 import { getDefaultEngineCapabilities } from '../../Common/ChatEngine/ChatEngine.types';
 import './CharacterDialogueChat.css';
 
@@ -94,19 +93,14 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
     handleTokenManagementConfigChange,
     handleStopOrganizing,
     getActiveEngineConfig,
-    sessions,
-    currentSessionId,
-    createNewSession,
-    switchToSession,
-    renameSession,
-    deleteSession,
     tokenUsage,
     compressContext,
     isCompressing,
-    addToolCall,
   } = useCharacterDialogueChat(characterInfo);
   
-  const { toggleFavorite, isFavorite, getFavoritePaths } = useFavoritesStore();
+  const toggleFavorite = useFavoritesStore(s => s.toggleFavorite);
+  const isFavorite = useFavoritesStore(s => s.isFavorite);
+  const getFavoritePaths = useFavoritesStore(s => s.getFavoritePaths);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -116,9 +110,6 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
   const [polishFlashKey, setPolishFlashKey] = useState(0);
   const [expressionManagerOpen, setExpressionManagerOpen] = useState(false);
   const [commandPaletteVisible, setCommandPaletteVisible] = useState(false);
-  // 技能快捷调用状态（Spec: optimize-agent-interaction-from-openclaw / M1-Task4）
-  const [skills, setSkills] = useState<SkillInfo[]>([]);
-  const [invokingSkill, setInvokingSkill] = useState<string | null>(null);
   const favoritePaths = getFavoritePaths();
 
   // 表情系统订阅（Spec: add-character-expression-system / Task 10.3 + 12.1）
@@ -129,8 +120,13 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
   const imageCache = useExpressionStore((s) => s.imageCache);
   const loadExpressions = useExpressionStore((s) => s.loadExpressions);
 
-  // 表情显示开关（Spec: Task 11.4 + 12.1）
-  const expressionDisplay = characterConfig?.customParameters?.expression_display === true;
+  // 预加载当前角色卡的表情包（Spec: add-character-expression-system / Task 12.1）
+  // 表情系统默认永久开启，characterCardId 变化时自动加载
+  useEffect(() => {
+    if (characterInfo.characterCardId) {
+      loadExpressions(characterInfo.characterCardId);
+    }
+  }, [characterInfo.characterCardId, loadExpressions]);
 
   useEffect(() => {
     if (stateWithVersionInfo.messages.length > 0 || stateWithVersionInfo.isStreaming) {
@@ -160,98 +156,6 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
-
-  // 技能列表获取（Spec: optimize-agent-interaction-from-openclaw / M1-Task4）
-  // 组件挂载时获取 + 每 30 秒刷新一次（技能可能动态安装）
-  useEffect(() => {
-    let mounted = true;
-    const fetchSkills = async () => {
-      try {
-        const result = await window.electronAPI.skill.list();
-        if (mounted && result?.success && Array.isArray(result.skills)) {
-          // 过滤 userInvocable=true 的技能
-          const userSkills = result.skills.filter((s: any) => s.userInvocable !== false) as SkillInfo[];
-          setSkills(userSkills);
-        }
-      } catch {
-        // 静默失败，不影响主流程
-      }
-    };
-    fetchSkills();
-    const timer = setInterval(fetchSkills, 30000);
-    return () => { mounted = false; clearInterval(timer); };
-  }, []);
-
-  // 技能调用处理（Spec: optimize-agent-interaction-from-openclaw / M1-Task4.3）
-  // 结果以工具调用卡片形式展示在消息流中 + toast 即时反馈
-  const handleInvokeSkill = useCallback(async (skillName: string, args: string) => {
-    setInvokingSkill(skillName);
-    const toolCallId = `skill_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-    const startTime = Date.now();
-
-    // 创建 pending 状态的工具调用卡片
-    addToolCall({
-      id: toolCallId,
-      toolName: skillName,
-      args: { input: args },
-      status: 'pending',
-      startTime,
-    });
-
-    try {
-      const result = await window.electronAPI.skill.invoke({
-        skillName,
-        args: { input: args },
-        context: undefined,
-      });
-
-      if (result?.success) {
-        addToolCall({
-          id: toolCallId,
-          toolName: skillName,
-          args: { input: args },
-          status: 'success',
-          result: typeof result.content === 'string' ? result.content : JSON.stringify(result.content ?? ''),
-          startTime,
-          endTime: Date.now(),
-        });
-        message.success(`技能 "${skillName}" 调用成功`);
-      } else {
-        addToolCall({
-          id: toolCallId,
-          toolName: skillName,
-          args: { input: args },
-          status: 'error',
-          error: result?.error || '未知原因',
-          startTime,
-          endTime: Date.now(),
-        });
-        message.warning(`技能 "${skillName}" 调用未成功：${result?.error || '未知原因'}`);
-      }
-    } catch (err) {
-      addToolCall({
-        id: toolCallId,
-        toolName: skillName,
-        args: { input: args },
-        status: 'error',
-        error: err instanceof Error ? err.message : String(err),
-        startTime,
-        endTime: Date.now(),
-      });
-      message.error(`技能 "${skillName}" 调用失败：${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setInvokingSkill(null);
-    }
-  }, [addToolCall]);
-
-  // 预加载当前角色卡的表情包（Spec: add-character-expression-system / Task 12.1）
-  // 触发条件：开启表情显示 + characterCardId 变化（含首次加载）
-  // 加载完成后 imageCache 引用变化，触发下方 no-op effect 与消息列表重渲染
-  useEffect(() => {
-    if (expressionDisplay && characterInfo.characterCardId) {
-      loadExpressions(characterInfo.characterCardId);
-    }
-  }, [expressionDisplay, characterInfo.characterCardId, loadExpressions]);
 
   // 订阅 imageCache 引用变化以触发消息列表重渲染（Spec: Task 10.3）
   // resolveExpressionImage 通过 zustand get() 读取最新缓存，但需要订阅引用变化
@@ -504,26 +408,6 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
       onExecute: () => handleGenerateUserReply(),
     });
 
-    // 会话管理（Spec: optimize-agent-interaction-from-openclaw / M2-Task7）
-    items.push({
-      key: 'session-new',
-      label: '新建会话',
-      description: '创建新的对话会话',
-      category: 'actions',
-      onExecute: () => createNewSession(),
-    });
-
-    // 技能类（Spec: optimize-agent-interaction-from-openclaw / M1-Task4.4）
-    skills.forEach(skill => {
-      items.push({
-        key: `skill-${skill.name}`,
-        label: `${skill.emoji || '\u{1F527}'} ${skill.title}`,
-        description: skill.description,
-        category: 'skills',
-        onExecute: () => handleInvokeSkill(skill.name, ''),
-      });
-    });
-
     // 设置类
     items.push({
       key: 'settings-params',
@@ -537,7 +421,7 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
     });
 
     return items;
-  }, [clearChat, isFullscreen, handleExportMenuClick, retryMessage, continueConversation, handleGenerateUserReply, stateWithVersionInfo.messages, skills, handleInvokeSkill, createNewSession]);
+  }, [clearChat, isFullscreen, handleExportMenuClick, retryMessage, continueConversation, handleGenerateUserReply, stateWithVersionInfo.messages]);
 
   if (!open && !isFullscreen) return null;
 
@@ -569,9 +453,9 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
         characterName={characterInfo.characterCardName}
         avatarPath={avatarPath}
         expressionImage={
-          msg.role === 'assistant' && msg.emotion &&
+          msg.role === 'assistant' &&
           !(stateWithVersionInfo.isStreaming && index === stateWithVersionInfo.messages.length - 1)
-            ? resolveExpressionImage(msg.emotion) ?? undefined
+            ? resolveExpressionImage(msg.emotion || 'default') ?? undefined
             : undefined
         }
         onRetry={retryMessage}
@@ -584,6 +468,7 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
         isGenerating={stateWithVersionInfo.isLoading && index === stateWithVersionInfo.messages.length - 1 && msg.role === 'assistant' && msg.status === 'sending'}
         onSelectOption={handleSelectOption}
         aiSequenceNumber={aiSequenceNumber}
+        showThinking={deriveThinkTagMode(characterConfig?.customParameters) === 'fold'}
       />
     );
   };
@@ -662,12 +547,6 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
           isFavorite={isFavorite(characterInfo.characterCardId)}
           onToggleFavorite={handleToggleFavorite}
           onOpenExpressionManager={() => setExpressionManagerOpen(true)}
-          sessions={sessions}
-          currentSessionId={currentSessionId}
-          onCreateSession={createNewSession}
-          onSwitchSession={switchToSession}
-          onRenameSession={renameSession}
-          onDeleteSession={deleteSession}
         />
 
         <div
@@ -927,9 +806,6 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
               },
             ],
           }}
-          skills={skills}
-          onInvokeSkill={handleInvokeSkill}
-          invokingSkill={invokingSkill}
           tokenUsage={tokenUsage}
           onCompressContext={compressContext}
           isCompressing={isCompressing}
@@ -953,10 +829,8 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
         tokenManagementConfig={tokenManagementConfig}
         customStopSequencesEnabled={characterConfig?.customStopSequencesEnabled ?? false}
         customStopSequences={characterConfig?.customStopSequences}
-        expressionDisplay={expressionDisplay}
-        onExpressionDisplayToggle={(enabled) => handleParameterChange({ expression_display: enabled })}
-        stripThinkTags={characterConfig?.customParameters?.strip_think_tags !== false}
-        onStripThinkTagsToggle={(enabled) => handleParameterChange({ strip_think_tags: enabled })}
+        thinkTagMode={deriveThinkTagMode(characterConfig?.customParameters)}
+        onThinkTagModeChange={(mode) => handleParameterChange({ think_tag_mode: mode })}
         assistMode={characterConfig?.customParameters?.assist_mode === true}
         onAssistModeToggle={(enabled) => handleParameterChange({ assist_mode: enabled })}
         language={characterConfig?.customParameters?.language ?? 'zh'}

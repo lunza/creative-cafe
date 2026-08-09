@@ -35,8 +35,8 @@ interface UseCreativeAIReturn {
 }
 
 export const useCreativeAI = (): UseCreativeAIReturn => {
-  const { setting } = useSettingStore();
-  const { addLog } = useLogStore();
+  const setting = useSettingStore(s => s.setting);
+  const addLog = useLogStore(s => s.addLog);
 
   const getActiveEngine = useCallback(() => {
     if (!setting) return null;
@@ -61,13 +61,12 @@ export const useCreativeAI = (): UseCreativeAIReturn => {
   const buildRequestBody = useCallback((engine: any, messages: any[], customPrompt?: string) => {
     const modelName = engine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })();
     const apiKey = engine.api_key;
-    const apiKeyTransmission = engine.api_key_transmission || 'body';
+    const apiKeyTransmission = engine.api_key_transmission || 'header';
 
     const requestHeaders: Record<string, string> = {
       'Content-Type': 'application/json'
     };
 
-    const maxTokens = (typeof engine.max_tokens === 'number' && engine.max_tokens > 0) ? engine.max_tokens : 10240;
     const temperature = (typeof engine.temperature === 'number' && engine.temperature >= 0 && engine.temperature <= 2)
       ? engine.temperature
       : 0.7;
@@ -75,7 +74,6 @@ export const useCreativeAI = (): UseCreativeAIReturn => {
     const requestBody: any = {
       model: modelName,
       messages,
-      max_tokens: maxTokens,
       temperature
     };
 

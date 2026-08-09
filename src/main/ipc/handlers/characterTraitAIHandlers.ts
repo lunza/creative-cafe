@@ -5,8 +5,10 @@
  *   - ai:generateCharacterTraits       基于角色卡 description/personality/scenario 调用 LLM
  *                                      生成视觉特征 tag 列表（非流式）
  *   - ai:recognizeImageTraits          通过多模态模型识别角色卡 PNG 图片提取视觉特征 tag
- *   - ai:generateDynamicScenePrompts  将自然语言指令解析为三组英文 SD tag（服装/动作/场景）
- *                                      （Spec: add-dynamic-scene-prompt-generation / Task 3）
+ *   - ai:generateTraitPrompts          将用户自由文本提示词解析为分类 SD tag（Spec: add-prompt-generation-in-asset-modal）
+ *                                      在 AI 素材生成弹窗中提供「提示词生成」入口，
+ *                                      生成结果携带 categoryId / translation / originalText，
+ *                                      可直接追加到 editedTraits，复用 L0-L5 完整审计链
  *
  * 注册模式参照 registerCharacterTraitHandlers() / registerAssetHandlers()：
  * 导出 registerCharacterTraitAIHandlers() 函数，由 ipc/index.ts 调用。
@@ -14,7 +16,7 @@
  * 参数与返回值与 characterTraitAIService 各方法签名对齐：
  *   - generateCharacterTraits：{ characterCardId, description, personality?, scenario? } → { success, traits?, error? }
  *   - recognizeImageTraits：{ characterCardPath, characterName? } → { success, traits?, error? }
- *   - generateDynamicScenePrompts：{ naturalLanguageInput, baseTraits? } → { success, clothing?, pose?, scene?, error? }
+ *   - generateTraitPrompts：{ prompt, baseTraits? } → { success, traits?, error?, ragDebug? }
  *
  * 与 aiHandlers.ts（ai:request / ai:cancel / ai:listModels）的关系：
  *   - aiHandlers.ts 提供通用 HTTP 转发（前端自己拼 messages），是低层通道
@@ -28,7 +30,7 @@ import { ipcMain } from 'electron';
 import { characterTraitAIService } from '../../services/characterTraitAIService';
 import type {
   GenerateCharacterTraitsParams,
-  GenerateDynamicScenePromptsParams,
+  GenerateTraitPromptsParams,
   RecognizeImageTraitsParams
 } from '../../services/characterTraitAIService';
 
@@ -101,40 +103,45 @@ export function registerCharacterTraitAIHandlers() {
   );
 
   /**
-   * 将自然语言指令解析为三组英文 SD tag（服装 / 动作 / 场景）。
-   *
-   * Spec: add-dynamic-scene-prompt-generation / Task 3
+   * 将用户自由文本提示词解析为分类 SD tag（Spec: add-prompt-generation-in-asset-modal）。
    *
    * 通道用途：
-   *   - 接收用户的中文自然语言场景指令（如「让角色穿上一套哥特风的衣服，
-   *     骑着摩托驰骋在高速公路上」），由主进程 LLM 解析为三组独立的英文 SD tag
-   *   - 输出三组维度独立、未提及维度返回空字符串 ""，供前端写入
-   *     `DynamicScenePrompt` 后在 SD 生成时替换 `{clothing}` / `{pose}` / `{scene}` 占位符
+   *   - 接收用户在 AI 素材生成弹窗「提示词生成」面板输入的自由文本提示词
+   *     （如 "red hair, blue dress, forest background"），由主进程 LLM 解析为
+   *     分类特征 tag 列表（含 categoryId / translation / originalText）
+   *   - 输出可直接追加到 AssetGenerateModal.editedTraits，无需二次处理
    *
    * 入参：
-   *   - naturalLanguageInput：用户原始自然语言指令（必填非空，空/纯空白触发兜底错误）
-   *   - baseTraits：角色基础特征拼接字符串（可选，给 LLM 提供角色上下文，
-   *     避免生成与基础特征矛盾的 tag，例如基础特征有 tail 时不生成 no tail）
+   *   - prompt：用户输入的提示词（必填非空，空/纯空白触发兜底错误）
+   *   - baseTraits：当前已有特征文本（可选，逗号分隔，作为上下文避免重复生成）
    *
    * 返回：
-   *   - success=true：clothing / pose / scene 三组英文 SD tag 字符串
-   *     （未提及的维度为空字符串 ""，与 spec「未提及的维度返回空」一致）
+   *   - success=true：traits 为分类特征数组（含 translation + originalText）
+   *     ragDebug 为 RAG 标签库质检报告（与 generateCharacterTraits 结构兼容）
    *   - success=false：error 为友好错误信息（非堆栈）
    *
    * 错误场景（service 内部已兜底为 `{ success: false, error }`，handler 再 try/catch
    * 提供 IPC 序列化兜底，保证渲染进程永不收到 reject）：
-   *   - 空输入：naturalLanguageInput 为空或纯空白 → 「请输入动态场景指令」（不调用 LLM）
-   *   - AI 引擎未配置：baseUrl / apiKey / modelName / temperature / max_tokens 任一缺失
+   *   - 空输入：prompt 为空或纯空白 → 「请输入提示词」（不调用 LLM）
+   *   - AI 引擎未配置：baseUrl / apiKey / modelName 任一缺失
+   *   - 引擎参数缺失：temperature / max_tokens 未配置
    *   - 调用失败：网络 / 超时 / HTTP 错误
-   *   - 解析失败：LLM 返回空内容 / 无分隔符 / 无法识别三组 tag
+   *   - 解析失败：LLM 返回空内容 / 无法解析为分类 tag
+   *
+   * 审计流程（与 generateCharacterTraits 完全一致，L0-L5 完整审计链）：
+   *   - L0 自定义同义词映射（userSynonymMapService）
+   *   - L1 name 精确匹配 / L2 alias 精确匹配
+   *   - L3 颜色复合词拆分 / L3b 否定性修饰词剥离
+   *   - L4 语义 KNN 替换（score >= 0.3 自动替换）
+   *   - L5 AI 兜底（LLM 生成候选词 → 再走 L0-L4 → 命中替换 + 持久化）
    */
   ipcMain.handle(
-    'ai:generateDynamicScenePrompts',
-    async (_event, args: GenerateDynamicScenePromptsParams) => {
+    'ai:generateTraitPrompts',
+    async (_event, args: GenerateTraitPromptsParams) => {
       try {
-        return await characterTraitAIService.generateDynamicScenePrompts(args);
+        return await characterTraitAIService.generateTraitPrompts(args);
       } catch (error) {
-        console.error('[CharacterTraitAIHandler] generateDynamicScenePrompts failed:', error);
+        console.error('[CharacterTraitAIHandler] generateTraitPrompts failed:', error);
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error',

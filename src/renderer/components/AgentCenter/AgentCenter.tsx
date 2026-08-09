@@ -22,7 +22,7 @@ import './AgentCenter.css';
 
 const AgentCenter: React.FC = () => {
   const { configs, loading, error, toggleStatus, updateSkills, updateConfig, createAgent, deleteAgent } = useAgentConfigs();
-  const { theme: appTheme } = useUIStore();
+  const appTheme = useUIStore(s => s.theme);
   const [selectedAgent, setSelectedAgent] = useState<AgentConfig | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
 

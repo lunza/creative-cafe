@@ -51,6 +51,35 @@ export interface CharacterTraitItem {
   categoryId: string;
   /** 是否启用（下游生成仅拼接 `enabled=true` 项的 text） */
   enabled: boolean;
+  /**
+   * 中文翻译（Spec: add-ai-tag-chinese-translation）。
+   * 语义同 `CategorizedTrait.translation`：AI 生成时产出，手动编辑 / AI 审计替换 / 颜色拆分 / 人工审核替换后置为 undefined。
+   * 旧数据无此字段时兜底 undefined，前端 Tooltip 不显示。
+   * 随 v2 manifest 持久化（`CharacterTraitManifestV2.traits[].translation`）。
+   */
+  translation?: string;
+  /**
+   * 拆分前原始标签文本（Spec: optimize-trait-translation-and-temp-scheme）。
+   * 语义同 `CategorizedTrait.originalText`：L3 颜色拆分时设置，手动编辑后清空。
+   * 随 v2 manifest 持久化（`CharacterTraitManifestV2.traits[].originalText`）。
+   * 旧数据无此字段时兜底 undefined，前端不显示拆分图标。
+   */
+  originalText?: string;
+  /**
+   * SDXL 提示词权重（Spec: add-sdxl-prompt-weight-support）。
+   *
+   * - 表示该 tag 在 SD prompt 中的权重，用于 SD WebUI（含 Forge Neo）的 per-tag 加权/弱化
+   * - 默认值 undefined 等价于 1.0（不加权），此时 prompt 中 tag 文本原样输出
+   * - weight !== 1.0 且 !== undefined 时，applyTraitsAndLora 将 tag 格式化为 `(text:weight)` 语法
+   *   （如 weight=1.5 的 `blue_eyes` → `(blue_eyes:1.5)`，兼容 Forge Neo lark 解析器）
+   * - 有效范围 0.1 ~ 10.0（保留 1 位小数），越界由 normalizeTraitItem 兜底为 undefined
+   * - AI 生成时可选产出（LLM 输出格式 `分类:tag|中文翻译|权重`，第三段可选）
+   * - 手动编辑 tag.text 时 weight 保持不变（与 originalText 清空策略不同）
+   * - L4/L5 审计替换 tag 时继承原 weight；L3 颜色拆分后两个 trait weight 均重置为 undefined
+   * - 随 v2 manifest 持久化（`CharacterTraitManifestV2.traits[].weight`）
+   * - 旧数据无此字段时兜底 undefined，等价于 1.0，不影响现有行为
+   */
+  weight?: number;
 }
 
 /**
@@ -81,6 +110,31 @@ export interface CategorizedTrait {
    *  - 或 `UNCATEGORIZED_CATEGORY_ID`（无法识别分类时的兜底）
    */
   categoryId: string;
+  /**
+   * 中文翻译（Spec: add-ai-tag-chinese-translation）。
+   * - AI 生成特征时同时产出（prompt 输出 `分类:tag|中文翻译` 格式，parseTraitsFromContent 解析）
+   * - 手动编辑 trait.text / AI 审计替换（L2-L5） / 颜色拆分 / 人工审核替换后置为 undefined
+   * - 旧数据（无此字段）加载时兜底 undefined，前端 Tooltip 不显示
+   * - 仅 AI 原创生成的 tag 携带翻译；标签库标准 tag（被替换后）无翻译
+   */
+  translation?: string;
+  /**
+   * 拆分前原始标签文本（Spec: optimize-trait-translation-and-temp-scheme）。
+   * - 仅 L3 颜色拆分生成的标签设置此字段（如 `grey long hair` 拆分为 `grey_hair` + `long_hair`，
+   *   两者 originalText 均为 `grey long hair`）
+   * - 手动编辑标签文本后清空（编辑后的标签不再是"拆分生成"）
+   * - 非拆分标签无此字段（undefined），前端不显示拆分图标
+   */
+  originalText?: string;
+  /**
+   * SDXL 提示词权重（Spec: add-sdxl-prompt-weight-support）。
+   *
+   * 语义同 `CharacterTraitItem.weight`：AI 生成时可选产出，由 `characterTraitStore.setTraits` 透传到 `CharacterTraitItem.weight`。
+   * - LLM 输出格式 `分类:tag|中文翻译|权重`（第三段可选，不存在时兜底 undefined）
+   * - `parseTraitsFromContent` 解析第三段为浮点数，范围 0.1-10.0，越界兜底 undefined
+   * - 审计替换/拆分 tag 时 weight 继承或重置（与 `CharacterTraitItem.weight` 策略一致）
+   */
+  weight?: number;
 }
 
 /**
@@ -97,54 +151,17 @@ export interface TraitCombination {
   name: string;
   /** 启用特征 id 快照（应用时仅这些 id 的特征置 enabled=true） */
   traitIds: string[];
+  /**
+   * 完整特征快照（Spec: optimize-trait-translation-and-temp-scheme）。
+   * - 从 AssetGenerateModal 保存时写入（含临时新增/编辑的标签、启用状态、translation、originalText）
+   * - 从 AssetManagerModal 保存时不写入（仅 traitIds，向后兼容）
+   * - 应用方案时优先使用 traitSnapshot（若存在），否则回退到 traitIds 逻辑
+   * - 与 traitIds 可共存（traitIds 仍记录启用 id，traitSnapshot 记录完整数据）
+   */
+  traitSnapshot?: CharacterTraitItem[];
   /** 创建时间戳（ms） */
   createdAt: number;
   /** 最后更新时间戳（ms） */
-  updatedAt: number;
-}
-
-/**
- * 动态场景提示词方案（Spec: add-dynamic-scene-prompt-generation / Task 1）。
- *
- * 设计动机：
- *  - 与 `CharacterTraitItem[]` 基础特征分离，存储动态解析出的服装/动作/场景提示词
- *  - 基础特征描述角色「固有」视觉属性（种族/发色/瞳色/体型等），不应被一次性场景指令污染
- *  - 用户通过自然语言命令（如「让角色穿上一套哥特风的衣服，骑着摩托驰骋在高速公路上」）
- *    由 AI 解析为三组独立英文 SD tag，保存为方案后可在生成图片时一键切换
- *
- * 三组字段语义（clothing / pose / scene）：
- *  - 均为英文 SD tag 字符串，逗号分隔（如 `"gothic dress, black lace, choker"`）
- *  - 任一组未在用户指令中提及时为空字符串 `""`（不视为缺失，下游生成时占位符替换为空）
- *  - 字段值可由用户在 UI 中手动编辑（覆盖 AI 原始解析结果后再保存）
- *
- * 与 `TraitCombination`（特征组合方案）的区别：
- *  - `TraitCombination` 是基础特征 `enabled` 状态的命名快照（仅保存 traitIds 数组），
- *    应用时切换基础特征的 enabled 标志，不引入新的 prompt 内容
- *  - `DynamicScenePrompt` 是独立的动态内容，携带全新的 clothing/pose/scene tag 字符串，
- *    与基础特征并行注入 SD 生成链路，不修改基础特征的 enabled 状态
- *  - 两者可同时激活：基础特征组合决定 `{traits}` 拼接内容，
- *    动态场景方案决定 `{clothing}` / `{pose}` / `{scene}` 占位符替换
- *  - 命名策略不同：`TraitCombination.name` 拒绝空名/重名，
- *    `DynamicScenePrompt.name` 允许重名（与 spec「用户输入，可重名」一致）
- *
- * 引用 spec: `add-dynamic-scene-prompt-generation`
- */
-export interface DynamicScenePrompt {
-  /** 方案唯一 ID（用 `genTraitId()` 生成，复用基础特征的 ID 生成器，避免引入新 ID 命名空间） */
-  id: string;
-  /** 方案名（用户输入，可重名；与 `TraitCombination.name` 的「空名/重名拒绝」策略不同） */
-  name: string;
-  /** 服装相关英文 SD tag 字符串（逗号分隔，可能为空字符串 `""`） */
-  clothing: string;
-  /** 动作/姿势英文 SD tag 字符串（逗号分隔，可能为空字符串 `""`） */
-  pose: string;
-  /** 场景/环境英文 SD tag 字符串（逗号分隔，可能为空字符串 `""`） */
-  scene: string;
-  /** 原始自然语言指令（用户最初输入的中文命令，用于溯源、重新解析与 UI 展示） */
-  sourceCommand: string;
-  /** 创建时间戳（ms） */
-  createdAt: number;
-  /** 最后更新时间戳（ms；用户手动编辑 clothing/pose/scene 后更新） */
   updatedAt: number;
 }
 
@@ -156,13 +173,6 @@ export interface DynamicScenePrompt {
  * - `traits` 由 `string[]` 升级为 `CharacterTraitItem[]`
  * - 新增 `customCategories` / `combinations` / `activeCombinationId`
  * - 保留 `appearanceDescription`（可选）
- *
- * 【重点标记 - 新增字段】Spec: add-dynamic-scene-prompt-generation
- * - v2 manifest 新增动态场景字段 `dynamicScenePrompts` 与 `activeDynamicScenePromptId`
- * - 这两个字段为「存储可选、内存必填」语义：磁盘上的旧 v2 文件可能缺失这两个字段，
- *   由 service 层 `loadTraitData()` 在加载时兜底为 `[]` / `null`，保证 v2 迁移兼容
- * - 类型上为必填字段（避免消费方反复判空），由 service 层负责兜底补全
- * - 保存时完整写入这两个字段（`saveTraitData()` 不删除/不压缩）
  *
  * 存储路径不变：`{userData}/data/character-traits/{sha256(cardId).slice(0,16)}/traits.json`
  */
@@ -181,10 +191,6 @@ export interface CharacterTraitManifestV2 {
   combinations: TraitCombination[];
   /** 当前激活的组合方案 ID（null 表示手动模式） */
   activeCombinationId: string | null;
-  /** 动态场景方案列表（默认 `[]`，由 service 层 `loadTraitData()` 兜底补全；存储独立于基础特征） */
-  dynamicScenePrompts: DynamicScenePrompt[];
-  /** 当前激活动态场景方案 ID（null 表示无激活方案，默认 null，由 service 层兜底补全） */
-  activeDynamicScenePromptId: string | null;
 }
 
 /**

@@ -32,7 +32,7 @@ const loadEngineSystemPrompt = async (): Promise<string> => {
 };
 
 const PromptAssemblyView: React.FC<PromptAssemblyViewProps> = ({ template }) => {
-  const { theme } = useUIStore();
+  const theme = useUIStore(s => s.theme);
   const isDark = theme === 'dark';
 
   const [engineSystemPrompt, setEngineSystemPrompt] = useState('');

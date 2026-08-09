@@ -1,7 +1,5 @@
 // 角色测试聊天类型定义
 
-import type { ToolCallInfo } from './chatReducer';
-
 // 聊天消息接口
 export interface ChatMessage {
   id: string;
@@ -14,8 +12,6 @@ export interface ChatMessage {
   suggestedOptions?: string[];
   /** AI 回复情绪键名（Spec: add-character-expression-system），用于驱动表情图像渲染 */
   emotion?: string;
-  /** 关联的工具调用列表（Spec: optimize-agent-interaction-from-openclaw / M2-Task5） */
-  toolCalls?: ToolCallInfo[];
   versionInfo?: ChatMessageVersionInfo;
 }
 
@@ -99,6 +95,25 @@ export interface UserPersona {
   isSystem?: boolean;
 }
 
+/**
+ * Think 标签处理三态模式。
+ * - 'strip'：存储前剥离（默认，彻底移除）
+ * - 'strip_render'：存储时保留，渲染时剥离
+ * - 'fold'：折叠展示
+ */
+export type ThinkTagMode = 'strip' | 'strip_render' | 'fold';
+
+/**
+ * 从 AIParameterConfig 推导 ThinkTagMode（向后兼容旧字段）。
+ * 优先读 think_tag_mode；未设置时从 strip_think_tags / show_thinking 推导。
+ */
+export function deriveThinkTagMode(params: AIParameterConfig | undefined): ThinkTagMode {
+  if (params?.think_tag_mode) return params.think_tag_mode;
+  if (params?.show_thinking === true) return 'fold';
+  if (params?.strip_think_tags === false) return 'strip_render';
+  return 'strip';
+}
+
 // AI参数配置
 export interface AIParameterConfig {
   temperature?: number;
@@ -130,6 +145,20 @@ export interface AIParameterConfig {
   dry_allowed_length?: number;
   no_repeat_ngram_size?: number;
   /**
+   * Top-K 采样参数（仅对支持的后端生效）。
+   *
+   * 限制模型从概率最高的 K 个 token 中采样。值越小输出越确定，值越大越多样。
+   * 默认 40，范围 0-100。0 或 -1 表示禁用（使用后端默认）。
+   */
+  top_k?: number;
+  /**
+   * Min-P 采样参数（仅对支持的后端生效）。
+   *
+   * 动态最低概率阈值，仅保留概率 >= top_p * min_p 的 token。
+   * 默认 0，范围 0-1。0 表示禁用。
+   */
+  min_p?: number;
+  /**
    * 最小回复字数（中文字符数）下限。
    *
    * Spec: fix-ai-response-length-degradation / Task 3.1
@@ -157,15 +186,19 @@ export interface AIParameterConfig {
    */
   expression_display?: boolean;
   /**
-   * Think 标签处理开关。
+   * Think 标签处理模式（合并原 strip_think_tags + show_thinking 两开关）。
    *
-   * 开启后，在 AI 完成回复或润色后（写入存储前）自动剥离 think、
-   * thinking、thought 等推理标签及其内容，针对 deepseek3.2 等
-   * 老模型返回的 think 标签做清理，避免污染 chat history / RAG / 回传上下文。
-   * 默认开启（undefined 视为开启）。关闭时渲染层仍由 processMessage 内的
-   * stripThinkingTags 兜底剥离，保持显示干净，但存储与上下文仍含标签。
+   * - 'strip'（默认）：存储前剥离 think 标签，彻底移除思考内容
+   * - 'strip_render'：存储时保留，渲染时剥离（不在写入前清理，但用户不可见）
+   * - 'fold'：保留并以折叠 details 块展示，用户可点击展开查看 AI 思考过程
+   *
+   * 向后兼容：未设置时由 deriveThinkTagMode() 从旧字段 strip_think_tags / show_thinking 推导。
    */
+  think_tag_mode?: ThinkTagMode;
+  /** @deprecated 已由 think_tag_mode 替代，保留用于向后兼容旧角色卡数据 */
   strip_think_tags?: boolean;
+  /** @deprecated 已由 think_tag_mode 替代，保留用于向后兼容旧角色卡数据 */
+  show_thinking?: boolean;
   /**
    * 辅助模式开关。
    *

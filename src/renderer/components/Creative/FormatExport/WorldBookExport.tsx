@@ -12,8 +12,8 @@ interface WorldBookExportProps {
 }
 
 const WorldBookExport: React.FC<WorldBookExportProps> = ({ creativeId }) => {
-  const { creatives } = useCreativeStore();
-  const { addLog } = useLogStore();
+  const creatives = useCreativeStore(s => s.creatives);
+  const addLog = useLogStore(s => s.addLog);
 
   const [isExporting, setIsExporting] = useState(false);
 

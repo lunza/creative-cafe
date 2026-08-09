@@ -107,10 +107,9 @@ export class ChatEngine implements IChatEngine {
       if (!config.model_name) {
         throw new Error('未配置 AI 模型名称');
       }
-      // max_tokens=0 表示不限制最大 token 数，此时不发送 max_tokens 字段，由后端/模型决定
-      const maxTokens = (typeof config.max_tokens === 'number' && config.max_tokens > 0)
-        ? config.max_tokens
-        : undefined;
+      // max_tokens 配置值表示上下文窗口大小，非 API 输出限制，不发送给 API
+      // 让 API 自行使用模型默认的最大输出长度
+      const maxTokens = undefined;
       const temperature = Number(config.temperature) ?? 0.8;
 
       const requestBody: any = {
@@ -140,6 +139,14 @@ export class ChatEngine implements IChatEngine {
       if (config.presence_penalty !== undefined) {
         const parsedPresence = Number(config.presence_penalty);
         if (!isNaN(parsedPresence)) requestBody.presence_penalty = parsedPresence;
+      }
+      if (config.top_k !== undefined) {
+        const parsedTopK = Number(config.top_k);
+        if (!isNaN(parsedTopK)) requestBody.top_k = parsedTopK;
+      }
+      if (config.min_p !== undefined) {
+        const parsedMinP = Number(config.min_p);
+        if (!isNaN(parsedMinP)) requestBody.min_p = parsedMinP;
       }
 
       // DRY 采样 + repetition_penalty 注入（Spec: optimize-chat-ai-intelligence / Task 6.5）

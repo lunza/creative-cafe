@@ -468,7 +468,7 @@ export function useCharacterAIOperations(args: UseCharacterAIOperationsArgs): Us
     addLog(`[Character] ====== 润色 - AI引擎完整配置 ======`, 'info');
     addLog(`[Character] API地址: ${activeEngine.api_url}`);
     addLog(`[Character] 模型名称: ${activeEngine.model_name ?? '未配置'}`);
-    addLog(`[Character] API密钥传输方式: ${activeEngine.api_key_transmission || 'body'}`);
+    addLog(`[Character] API密钥传输方式: ${activeEngine.api_key_transmission || 'header'}`);
     addLog(`[Character] API模式: ${activeEngine.api_mode}`);
     addLog(`[Character] 是否有全局system_prompt: ${activeEngine.system_prompt ? '✅ 有' : '❌ 无'}`);
     if (activeEngine.system_prompt) {

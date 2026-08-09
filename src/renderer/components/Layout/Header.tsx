@@ -35,8 +35,9 @@ const AppLogo: React.FC = () => (
 );
 
 const Header: React.FC = () => {
-  const { theme, setTheme } = useUIStore();
-  const { setting } = useSettingStore();
+  const theme = useUIStore(s => s.theme);
+  const setTheme = useUIStore(s => s.setTheme);
+  const setting = useSettingStore(s => s.setting);
   const { isActive, status } = useAgentMode();
   const activeEngine = setting?.aiEngines?.find((e) => e.id === setting?.activeEngineId);
   const capabilities = activeEngine?.capabilities;

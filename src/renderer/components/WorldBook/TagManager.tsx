@@ -37,7 +37,7 @@ interface TagManagerProps {
 }
 
 const TagManager: React.FC<TagManagerProps> = ({ worldBookPath, worldBookEntries, onTagsChanged }) => {
-  const { addLog } = useLogStore();
+  const addLog = useLogStore(s => s.addLog);
   const [tags, setTags] = useState<Tag[]>([]);
   const [associations, setAssociations] = useState<TagAssociation[]>([]);
   const [isAddTagModalOpen, setIsAddTagModalOpen] = useState(false);

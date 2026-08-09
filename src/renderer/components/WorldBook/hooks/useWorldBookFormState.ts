@@ -138,8 +138,8 @@ export function useWorldBookFormState() {
   const [auditAllRequirements, setAuditAllRequirements] = useState<string>('');
   // 一键审核 Modal 开关
   const [isAuditAllModalOpen, setIsAuditAllModalOpen] = useState<boolean>(false);
-  // 审核结果（{ passed, suggestions, revisedText }）
-  const [auditResult, setAuditResult] = useState<{ passed: boolean; suggestions: string; revisedText: string } | null>(null);
+  // 审核结果（{ passed, suggestions, revisedText, optimizationSuggestions?, optimizedText? }）
+  const [auditResult, setAuditResult] = useState<{ passed: boolean; suggestions: string; revisedText: string; optimizationSuggestions?: string; optimizedText?: string } | null>(null);
   // 审核结果 Modal 开关
   const [isAuditResultModalOpen, setIsAuditResultModalOpen] = useState<boolean>(false);
 

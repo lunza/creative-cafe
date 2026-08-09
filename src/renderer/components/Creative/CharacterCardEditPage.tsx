@@ -39,13 +39,13 @@ interface FormattedFields {
 }
 
 const CharacterCardEditPage: React.FC = () => {
-  const { theme, setCreativeTab, setCreativeView } = useUIStore();
-  const {
-    currentCreativeId,
-    creatives,
-    updateCharacterCard,
-    loadCreatives
-  } = useCreativeStore();
+  const theme = useUIStore(s => s.theme);
+  const setCreativeTab = useUIStore(s => s.setCreativeTab);
+  const setCreativeView = useUIStore(s => s.setCreativeView);
+  const currentCreativeId = useCreativeStore(s => s.currentCreativeId);
+  const creatives = useCreativeStore(s => s.creatives);
+  const updateCharacterCard = useCreativeStore(s => s.updateCharacterCard);
+  const loadCreatives = useCreativeStore(s => s.loadCreatives);
   const { generate, isEngineConfigured } = useCreativeAI();
 
   const creative = currentCreativeId ? creatives.find(c => c.id === currentCreativeId) : null;

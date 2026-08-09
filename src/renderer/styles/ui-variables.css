@@ -106,10 +106,13 @@
   --chat-bubble-user-bg: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
   --chat-bubble-user-color: #ffffff;
   --chat-bubble-user-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
-  --chat-bubble-assistant-bg: rgba(255, 255, 255, 0.9);
+  --chat-bubble-user-shadow-hover: 0 6px 16px rgba(99, 102, 241, 0.4);
+  --chat-bubble-assistant-bg: rgba(255, 255, 255, 0.95);
   --chat-bubble-assistant-color: #1a1a2e;
-  --chat-bubble-assistant-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-  --chat-bubble-assistant-border: rgba(0, 0, 0, 0.06);
+  --chat-bubble-assistant-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  --chat-bubble-assistant-shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.1);
+  --chat-bubble-assistant-border: rgba(0, 0, 0, 0.04);
+  --chat-bubble-assistant-border-hover: rgba(0, 0, 0, 0.08);
 
   /* 聊天编辑框 - Chat Edit Box Colors */
   --chat-edit-bg: rgba(255, 255, 255, 0.8);
@@ -179,6 +182,21 @@
   --chat-send-btn-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
   --chat-send-btn-disabled-bg: rgba(0, 0, 0, 0.08);
   --chat-send-btn-disabled-border: rgba(0, 0, 0, 0.15);
+
+  /* 消息内容增强 - Message Content Enhancement Colors (Light) */
+  --chat-character-name-color: #7c3aed;
+  --chat-username-color: #4f46e5;
+  --chat-msg-stripe-bg: rgba(0, 0, 0, 0.015);
+  --chat-option-action-color: rgba(0, 0, 0, 0.55);
+  --chat-option-dialogue-color: rgba(0, 0, 0, 0.9);
+  --mr-thought-bg: rgba(100, 116, 139, 0.06);
+  --mr-thought-border: rgba(100, 116, 139, 0.25);
+  --mr-thought-color: #6b7280;
+  --mr-action-bg: rgba(124, 58, 237, 0.05);
+  --mr-action-color: #6d28d9;
+  --mr-quote-highlight-color: #D97706;
+  --mr-quote-highlight-bg: rgba(255, 152, 0, 0.12);
+  --mr-quote-highlight-border: rgba(255, 152, 0, 0.2);
 
   /* 角色选择器面板 - Character Selector Panel Colors */
   --char-selector-bg-gradient: linear-gradient(135deg, #f0f2f5 0%, #e8eaf0 50%, #f0f2f5 100%);
@@ -575,10 +593,13 @@
   --chat-bubble-user-bg: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
   --chat-bubble-user-color: #ffffff;
   --chat-bubble-user-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
-  --chat-bubble-assistant-bg: rgba(30, 30, 46, 0.8);
+  --chat-bubble-user-shadow-hover: 0 6px 16px rgba(99, 102, 241, 0.4);
+  --chat-bubble-assistant-bg: linear-gradient(135deg, rgba(30, 30, 46, 0.8), rgba(40, 40, 60, 0.8));
   --chat-bubble-assistant-color: #e2e8f0;
-  --chat-bubble-assistant-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  --chat-bubble-assistant-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  --chat-bubble-assistant-shadow-hover: 0 4px 20px rgba(0, 0, 0, 0.3);
   --chat-bubble-assistant-border: rgba(255, 255, 255, 0.06);
+  --chat-bubble-assistant-border-hover: rgba(255, 255, 255, 0.12);
 
   /* 聊天编辑框 - Chat Edit Box Colors (Dark) */
   --chat-edit-bg: rgba(0, 0, 0, 0.25);
@@ -642,6 +663,21 @@
   --chat-header-persona-bg: rgba(99, 102, 241, 0.1);
   --chat-header-persona-border: rgba(99, 102, 241, 0.3);
   --chat-header-persona-text: #e2e8f0;
+
+  /* 消息内容增强 - Message Content Enhancement Colors (Dark) */
+  --chat-character-name-color: #a78bfa;
+  --chat-username-color: #818cf8;
+  --chat-msg-stripe-bg: rgba(255, 255, 255, 0.015);
+  --chat-option-action-color: rgba(255, 255, 255, 0.55);
+  --chat-option-dialogue-color: rgba(255, 255, 255, 0.95);
+  --mr-thought-bg: rgba(148, 163, 184, 0.08);
+  --mr-thought-border: rgba(148, 163, 184, 0.3);
+  --mr-thought-color: #9ca3af;
+  --mr-action-bg: rgba(168, 85, 247, 0.06);
+  --mr-action-color: #c4b5fd;
+  --mr-quote-highlight-color: #F0B670;
+  --mr-quote-highlight-bg: rgba(255, 179, 71, 0.1);
+  --mr-quote-highlight-border: rgba(255, 179, 71, 0.18);
 
   /* 角色选择器面板 - Character Selector Panel Colors (Dark) */
   --char-selector-bg-gradient: linear-gradient(135deg, #1e1e2e 0%, #2d2b42 50%, #1e1e2e 100%);

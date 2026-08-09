@@ -17,8 +17,14 @@ interface CharacterCardRow {
 const { Text } = Typography;
 
 const CharacterCardListPage: React.FC = () => {
-  const { theme, creativeTab, setCreativeTab, setCreativeView } = useUIStore();
-  const { creatives, loadCreatives, setCurrentCreativeId, removeCharacterCard } = useCreativeStore();
+  const theme = useUIStore(s => s.theme);
+  const creativeTab = useUIStore(s => s.creativeTab);
+  const setCreativeTab = useUIStore(s => s.setCreativeTab);
+  const setCreativeView = useUIStore(s => s.setCreativeView);
+  const creatives = useCreativeStore(s => s.creatives);
+  const loadCreatives = useCreativeStore(s => s.loadCreatives);
+  const setCurrentCreativeId = useCreativeStore(s => s.setCurrentCreativeId);
+  const removeCharacterCard = useCreativeStore(s => s.removeCharacterCard);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalForm] = Form.useForm();

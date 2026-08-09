@@ -23,7 +23,7 @@ const { Text, Title } = Typography;
 const MemoryChatManager: React.FC = () => {
   const [activeTab, setActiveTab] = useState('templates');
   const [memoryDir, setMemoryDir] = useState<string>('');
-  const { theme: appTheme } = useUIStore();
+  const appTheme = useUIStore(s => s.theme);
 
   useEffect(() => {
     loadMemoryDir();

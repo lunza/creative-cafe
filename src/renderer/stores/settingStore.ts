@@ -215,14 +215,14 @@ export const useSettingStore = create<SettingState>((set, get) => ({
               content: '测试连接'
             }
           ],
-          max_tokens: activeEngine.max_tokens ?? 1,
+          max_tokens: 1,
           temperature: activeEngine.temperature ?? 0.7
         },
         timeout: 5000
       };
 
       if (activeEngine.api_key) {
-        const apiKeyTransmission = activeEngine.api_key_transmission || 'body';
+        const apiKeyTransmission = activeEngine.api_key_transmission || 'header';
         if (apiKeyTransmission === 'header') {
           const trimmedApiKey = activeEngine.api_key.trim();
           if (trimmedApiKey.startsWith('Bearer ')) {

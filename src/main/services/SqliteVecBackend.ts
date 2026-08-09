@@ -26,6 +26,7 @@ import * as fsPromises from 'fs/promises';
 import { app } from 'electron';
 import { VectorItem, SearchResult, VectorStoreMode } from '../types/vectorConfig';
 import { getStorageService } from './storageService';
+import { getDatabaseDir } from '../utils/appPath';
 import type { IVectorBackend } from './vector/IVectorBackend';
 import type { SqliteDatabase } from './agent/infra/sqliteUtils';
 import {
@@ -201,9 +202,9 @@ export class SqliteVecBackend implements IVectorBackend {
     const safeSourceId = this.getSafeSourceId();
     const dim = String(this.dimension || 1024);
     if (this.source === 'default' && (safeSourceId === 'default' || !safeSourceId)) {
-      return path.join(app.getPath('userData'), 'vectors', this.source, dim, DB_FILE);
+      return path.join(getDatabaseDir(), 'vectors', this.source, dim, DB_FILE);
     }
-    return path.join(app.getPath('userData'), 'vectors', this.source, safeSourceId, dim, DB_FILE);
+    return path.join(getDatabaseDir(), 'vectors', this.source, safeSourceId, dim, DB_FILE);
   }
 
   // ============ IVectorBackend 核心方法 ============
@@ -674,9 +675,9 @@ export class SqliteVecBackend implements IVectorBackend {
     const safeSourceId = this.getSafeSourceId();
     let baseDir: string;
     if (this.source === 'default' && (safeSourceId === 'default' || !safeSourceId)) {
-      baseDir = path.join(app.getPath('userData'), 'vectors', this.source, String(this.dimension || 1024));
+      baseDir = path.join(getDatabaseDir(), 'vectors', this.source, String(this.dimension || 1024));
     } else {
-      baseDir = path.join(app.getPath('userData'), 'vectors', this.source, safeSourceId, String(this.dimension || 1024));
+      baseDir = path.join(getDatabaseDir(), 'vectors', this.source, safeSourceId, String(this.dimension || 1024));
     }
     await fsPromises.mkdir(baseDir, { recursive: true });
   }
@@ -702,8 +703,10 @@ export class SqliteVecBackend implements IVectorBackend {
         this.db.prepare('INSERT INTO vec_items(rowid, embedding) VALUES (?, ?)').run(row.r, vec);
       }
     } else {
-      // TEXT 主键方案：直接 INSERT OR REPLACE
-      this.db.prepare('INSERT OR REPLACE INTO vec_items(id, embedding) VALUES (?, ?)').run(id, vec);
+      // TEXT 主键方案：vec0 虚拟表不支持 INSERT OR REPLACE 冲突解决，
+      // 需先 DELETE 旧记录再 INSERT（与 rowid 方案一致）
+      this.db.prepare('DELETE FROM vec_items WHERE id = ?').run(id);
+      this.db.prepare('INSERT INTO vec_items(id, embedding) VALUES (?, ?)').run(id, vec);
     }
 
     // metadata 表始终用 TEXT id（无论 vec0 用什么主键）

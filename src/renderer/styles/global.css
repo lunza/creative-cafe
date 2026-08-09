@@ -5,6 +5,7 @@
 
 @import './ui-variables.css';
 @import './responsive.css';
+@import './antd-v6-fixes.css';
 
 /* ==========================================================================
    基础样式重置 - Base Reset

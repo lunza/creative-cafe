@@ -79,6 +79,18 @@ export interface SDWebuiConfig {
   // 字段名与 ADetailer-Neo 的 ADetailerArgs 严格对齐，避免 pydantic extra="forbid" 报错。
   /** ADetailer 检测模型，默认 "face_yolov8n.pt"（2D/真实人脸，速度快） */
   adModel: string;
+  /**
+   * ADetailer 检测类别（2026-08-07 新增，仅 YOLO-World 模型生效）。
+   *
+   * 【重点标记 - Furry/拟人生物面部识别扩展】
+   * 源码位置：ADetailer-Neo args.py `ad_model_classes`。
+   * 仅当 adModel 为 YOLO-World 系列（文件名含 "world"）时生效，
+   * 透传给 ultralytics_predict 的 classes 参数实现零样本开放词汇检测。
+   * 空字符串=使用模型默认 COCO 80 类；填入文本提示如
+   * "furry face, anthro head, animal head, kemono face" 可检测任意类别。
+   * 非 YOLO-World 模型此字段被忽略。
+   */
+  adModelClasses?: string;
   /** 检测置信度阈值（0.0-1.0），默认 0.3 */
   adConfidence: number;
   /** ADetailer 面部修复去噪强度（0.0-1.0），默认 0.4 */
@@ -399,6 +411,64 @@ export interface WebSearchConfig {
 }
 
 /**
+ * 标签自动推荐配置（Spec: implement-local-tag-autocomplete / Task 4）
+ *
+ * 用于 TagAutocomplete 组件的本地标签库推荐功能。配置由 Settings 页面
+ * TagAutocompleteSettings 组件（Task 6 实现）编辑，主进程 TagAutocompleteService 读取。
+ *
+ * 设计要点：
+ * - 采用嵌套对象模式，与 webSearch / sdWebui 配置块保持一致
+ * - csvPath 为空字符串时表示未配置，组件显示提示引导用户在 Settings 面板选择 CSV 文件
+ * - enabled=false 时 TagAutocomplete 组件降级为普通 Input（Task 5 实现）
+ *
+ * 标签库默认路径（用户文档说明，非内置默认值）：
+ * G:\AI\sd-webui-forge-neo\models\Stable-diffusion\Furry\tags\danbooru_e621_merged_2026-03-01_pt20-ia-dd-ed-spc.csv
+ */
+export interface TagAutocompleteConfig {
+  /** 是否启用标签自动推荐（关闭时 TagAutocomplete 组件降级为普通 Input） */
+  enabled: boolean;
+  /** 标签库 CSV 文件路径（空字符串表示未配置，组件显示提示） */
+  csvPath: string;
+  /** 默认排序规则：relevance=按匹配相关度 / count=按使用次数降序 / alphabetical=按字母升序 */
+  sortBy: 'relevance' | 'count' | 'alphabetical';
+}
+
+/**
+ * RAG 标签库配置（Spec: rag-tag-library-for-ai-trait-generation / Task 3）。
+ *
+ * 与 TagAutocompleteConfig（子串匹配查询）正交，本配置控制「向量化 + 语义检索」：
+ *  - 将 31.7 万标签向量化存储到 sqlite-vec
+ *  - AI 生成特征时用角色描述检索 top-K 相关标签注入 prompt
+ *  - 引导 LLM 使用 Danbooru/e621 标签库内的有效 tag（下划线格式）
+ *
+ * 持久化策略：作为 AppSetting 嵌套字段随整体 setting.save / setting.load IPC 自动持久化到
+ * electron-store（settings.json），与 tagAutocomplete 一致。
+ * 旧配置兼容：可选字段，旧 settings.json 缺失此字段时 TagRagService 使用代码内默认值。
+ */
+export interface TagRagConfig {
+  /** 是否启用 RAG 标签库注入（关闭时 characterTraitAIService 完全跳过 RAG 检索） */
+  enabled: boolean;
+  /** 检索返回的标签数量（默认 40；增大可提供更多参考但增加 prompt 长度） */
+  topK: number;
+  /** 最低相似度阈值（0-1，cosine similarity；低于此分数的标签被过滤） */
+  minScore: number;
+  /** CSV 文件变更时自动标记索引为 stale（下次启动后提示重新向量化） */
+  autoRevectorizeOnCsvChange: boolean;
+  /** embedding 维度变更时自动标记索引为 stale */
+  autoRevectorizeOnDimensionChange: boolean;
+  /** 远程 API 向量化批大小（默认 500，受 API 单次输入限制，OpenAI 支持最高 2048） */
+  batchSize: number;
+  /** 本地 ONNX 向量化批大小（默认 32，受 CPU/GPU 推理速度影响） */
+  localBatchSize: number;
+  /** 远程 API 并发请求数（默认 3，提高可显著加快向量化速度，受 API 速率限制约束） */
+  concurrency: number;
+  /** 单批 embedding 失败时的重试次数（线性退避） */
+  retryMaxAttempts: number;
+  /** 重试间隔基础延迟（ms，乘以 attempt 次数） */
+  retryDelayMs: number;
+}
+
+/**
  * 设置类型定义
  */
 export interface AppSetting {
@@ -451,6 +521,23 @@ export interface AppSetting {
 
   /** 网络搜索配置（Spec: add-agent-web-search-tool） */
   webSearch?: WebSearchConfig;
+
+  /**
+   * 标签自动推荐配置（Spec: implement-local-tag-autocomplete / Task 4）。
+   *
+   * 持久化策略：作为 AppSetting 嵌套字段随整体 setting.save / setting.load IPC 自动持久化到
+   * electron-store（settings.json），无需独立 store 或独立 IPC 通道。
+   * 旧配置兼容：可选字段，旧 settings.json 缺失此字段时 TagAutocomplete 组件降级处理。
+   */
+  tagAutocomplete?: TagAutocompleteConfig;
+
+  /**
+   * RAG 标签库配置（Spec: rag-tag-library-for-ai-trait-generation / Task 3）。
+   *
+   * 持久化策略：与 tagAutocomplete 一致，随整体 setting.save / setting.load 自动持久化。
+   * 旧配置兼容：可选字段，缺失时 TagRagService 使用代码内默认值。
+   */
+  tagRag?: TagRagConfig;
 }
 
 export type AIEngine = AIEngineSetting;

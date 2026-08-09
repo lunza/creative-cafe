@@ -247,8 +247,8 @@ const ChatManager: React.FC = () => {
   const [consistencyReport, setConsistencyReport] = useState<any>(null);
   const [consistencyChecking, setConsistencyChecking] = useState(false);
 
-  const { addLog } = useLogStore();
-  const { fetchSetting } = useSettingStore();
+  const addLog = useLogStore(s => s.addLog);
+  const fetchSetting = useSettingStore(s => s.fetchSetting);
   // 统一 AI 引擎配置读取（替代原 handleOpenTableOrganize 中的 legacy setting?.api_*
   // 与 startProgressiveProcessing 中的手动 aiEngines 查找）
   const { activeEngine, getAiConfig } = useAiConfig();

@@ -133,7 +133,9 @@ class FakeVectorDb {
 
     // ==================== vec_items ====================
 
-    if (/^INSERT OR REPLACE INTO vec_items\(id, embedding\) VALUES \(\?, \?\)/i.test(norm)) {
+    // INSERT OR REPLACE（旧）和 INSERT（新，配合 DELETE 使用）两种模式都支持
+    // vec0 虚拟表不支持 INSERT OR REPLACE 冲突解决，upsertInternal 已改为 DELETE + INSERT
+    if (/^(INSERT OR REPLACE INTO|INSERT INTO) vec_items\(id, embedding\) VALUES \(\?, \?\)/i.test(norm)) {
       return {
         run: (...params) => {
           const [id, embedding] = params as [string, Float32Array];
@@ -507,10 +509,11 @@ describe('SqliteVecBackend', () => {
   });
 
   describe('getStoreFilePath', () => {
-    it('default source 路径应为 vectors/default/{dim}/vectors.db', async () => {
+    it('default source 路径应为 database/vectors/default/{dim}/vectors.db', async () => {
       const backend = await createBackend({ dimension: 1024 });
       const filePath = backend.getStoreFilePath();
-      expect(filePath).toBe(path.join('/tmp/test-userdata', 'vectors', 'default', '1024', 'vectors.db'));
+      // 路径收敛到 getDatabaseDir()：userData/database/vectors/...
+      expect(filePath).toBe(path.join('/tmp/test-userdata', 'database', 'vectors', 'default', '1024', 'vectors.db'));
     });
 
     it('非 default source 路径应含 sourceId', async () => {
@@ -520,7 +523,7 @@ describe('SqliteVecBackend', () => {
         dimension: 4096,
       });
       const filePath = backend.getStoreFilePath();
-      expect(filePath).toBe(path.join('/tmp/test-userdata', 'vectors', 'worldbook', 'wb_test.json', '4096', 'vectors.db'));
+      expect(filePath).toBe(path.join('/tmp/test-userdata', 'database', 'vectors', 'worldbook', 'wb_test.json', '4096', 'vectors.db'));
     });
 
     it('含冒号的 sourceId 应取 doc_ 部分', async () => {

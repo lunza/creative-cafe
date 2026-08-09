@@ -73,8 +73,10 @@ export interface UseAIEngineSettingsResult {
  * - 获取模型列表
  */
 export function useAIEngineSettings(): UseAIEngineSettingsResult {
-  const { setting, saveSetting, testConnection } = useSettingStore();
-  const { addLog } = useLogStore();
+  const setting = useSettingStore(s => s.setting);
+  const saveSetting = useSettingStore(s => s.saveSetting);
+  const testConnection = useSettingStore(s => s.testConnection);
+  const addLog = useLogStore(s => s.addLog);
   const [engineForm] = Form.useForm();
 
   const [showEngineModal, setShowEngineModal] = useState(false);
@@ -108,7 +110,7 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
       api_key: '',
       model_name: 'qwen3.5-27b-heretic-v3',
       api_mode: 'chat_completion',
-      api_key_transmission: 'body',
+      api_key_transmission: 'header',
       max_tokens: 10240,
       temperature: 0.7,
       top_p: 0.95,
@@ -184,7 +186,7 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
           api_key: values.api_key || '',
           model_name: values.model_name || 'qwen3.5-27b-heretic-v3',
           api_mode: values.api_mode || 'chat_completion',
-          api_key_transmission: values.api_key_transmission || 'body',
+          api_key_transmission: values.api_key_transmission || 'header',
           max_tokens: Number(values.max_tokens) || 10240,
           temperature: Number(values.temperature) ?? 0.7,
           top_p: Number(values.top_p) || undefined,
@@ -371,7 +373,7 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
     try {
       setTestResult(null);
       addLog('开始测试 AI 引擎连通性', 'info');
-      addLog(`API 密钥传输方式: ${formValues.api_key_transmission || 'body'}`, 'info');
+      addLog(`API 密钥传输方式: ${formValues.api_key_transmission || 'header'}`, 'info');
 
       const testSetting = {
         ...setting,
@@ -491,7 +493,7 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
       const values = await engineForm.validateFields();
       setEngineTestResult(null);
       addLog('开始测试引擎连通性', 'info');
-      addLog(`API 密钥传输方式: ${values.api_key_transmission || 'body'}`, 'info');
+      addLog(`API 密钥传输方式: ${values.api_key_transmission || 'header'}`, 'info');
 
       const testSetting = {
         ...setting,

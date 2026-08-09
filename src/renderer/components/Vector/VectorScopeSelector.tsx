@@ -28,6 +28,7 @@ export const VectorScopeSelector: React.FC<VectorScopeSelectorProps> = ({
     setSelectedScopes,
     toggleScope 
   } = useVectorStore();
+  // TODO(perf): 整体订阅，待拆分为 selector（6 字段，>5 暂缓）
 
   const [loading, setLoading] = useState(false);
   const [initialized, setInitialized] = useState(false);
@@ -190,7 +191,7 @@ export const VectorScopeSelector: React.FC<VectorScopeSelectorProps> = ({
 };
 
 export const VectorScopeTag: React.FC<{ scopeId: string }> = ({ scopeId }) => {
-  const { availableScopes } = useVectorStore();
+  const availableScopes = useVectorStore(s => s.availableScopes);
   const scope = availableScopes.find(s => s.id === scopeId);
 
   if (!scope) {

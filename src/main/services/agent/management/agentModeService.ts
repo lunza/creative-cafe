@@ -24,7 +24,7 @@ import type {
   AgentModeReason,
   AgentModeStatus,
 } from './agentConfigTypes';
-import { getMemoryStore } from '../memory/memoryStore';
+import { getMemoryStore, isMemoryStoreInitialized } from '../memory/memoryStore';
 
 /**
  * reevaluate 接收的最小引擎描述。
@@ -187,6 +187,10 @@ export class AgentModeService {
     to: boolean,
     reason: AgentModeReason,
   ): Promise<void> {
+    // MemoryStore 在应用启动早期可能尚未初始化，此时跳过审计日志（非错误）
+    if (!isMemoryStoreInitialized()) {
+      return;
+    }
     try {
       const store = getMemoryStore();
       await store.write({

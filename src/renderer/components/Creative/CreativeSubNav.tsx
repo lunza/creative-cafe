@@ -7,7 +7,8 @@ import './CreativeSubNav.css';
 export type CreativeTabType = 'creative' | 'character' | 'worldbook' | 'writing';
 
 const CreativeSubNav: React.FC = () => {
-  const { creativeTab, setCreativeTab } = useUIStore();
+  const creativeTab = useUIStore(s => s.creativeTab);
+  const setCreativeTab = useUIStore(s => s.setCreativeTab);
 
   const tabItems = [
     {

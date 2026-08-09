@@ -19,7 +19,7 @@ const { TextArea } = Input;
 const { Option } = Select;
 
 const VectorSearchPanel: React.FC = () => {
-  const { searchWithScopes } = useVectorStore();
+  const searchWithScopes = useVectorStore(s => s.searchWithScopes);
 
   // 相似性查询状态
   const [vectorSearchQuery, setVectorSearchQuery] = useState('');

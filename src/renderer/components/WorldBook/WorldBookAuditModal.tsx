@@ -8,11 +8,20 @@ import { StopOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-des
  * 包含三个 Modal：
  *  1. AI 单字段审核要求输入 Modal（输入审核要求后执行 performAudit）
  *  2. 一键审核要求输入 Modal（输入统一要求后执行 performAuditAll）
- *  3. 审核结果展示 Modal（展示通过/不通过状态 + 修改建议 + 修改后文本）
+ *  3. 审核结果展示 Modal（展示通过/不通过状态 + 审核说明 + 优化建议/修改后文本）
  *
  * 组件仅为 UI 容器，业务逻辑通过 props 由 WorldBookManager 编排层注入。
  * 审核结果 Modal 提供"采用审核文本"、"重新审核"、"关闭"三个操作按钮。
+ * 通过时"采用审核文本"采用优化后文本，不通过时采用修改后文本。
  */
+export interface AuditResult {
+  passed: boolean;
+  suggestions: string;
+  revisedText: string;
+  optimizationSuggestions?: string;
+  optimizedText?: string;
+}
+
 export interface WorldBookAuditModalProps {
   // 单字段审核要求输入
   isAuditModalOpen: boolean;
@@ -32,7 +41,7 @@ export interface WorldBookAuditModalProps {
   performAuditAll: () => void;
   // 审核结果展示
   isAuditResultModalOpen: boolean;
-  auditResult: { passed: boolean; suggestions: string; revisedText: string } | null;
+  auditResult: AuditResult | null;
   applyAuditResult: () => void;
   applyAuditResultForBatch: () => void;
   closeAuditResult: () => void;
@@ -206,9 +215,9 @@ const WorldBookAuditModal: React.FC<WorldBookAuditModalProps> = ({
               )}
             </div>
 
-            {/* 修改建议 */}
+            {/* 审核说明 */}
             <div style={{ marginBottom: 16 }}>
-              <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>修改建议：</label>
+              <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>审核说明：</label>
               <Input.TextArea
                 value={auditResult.suggestions}
                 rows={3}
@@ -217,16 +226,41 @@ const WorldBookAuditModal: React.FC<WorldBookAuditModalProps> = ({
               />
             </div>
 
-            {/* 修改后文本 */}
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>审核并修改后的文本：</label>
-              <Input.TextArea
-                value={auditResult.revisedText}
-                rows={8}
-                readOnly
-                style={{ backgroundColor: 'var(--bg-secondary, #1a1a1a)' }}
-              />
-            </div>
+            {/* 通过时：展示优化建议 + 优化后文本 */}
+            {auditResult.passed ? (
+              <>
+                <div style={{ marginBottom: 16 }}>
+                  <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>优化建议：</label>
+                  <Input.TextArea
+                    value={auditResult.optimizationSuggestions || ''}
+                    rows={3}
+                    readOnly
+                    style={{ backgroundColor: 'var(--bg-secondary, #1a1a1a)' }}
+                  />
+                </div>
+
+                <div style={{ marginBottom: 16 }}>
+                  <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>优化后的文本：</label>
+                  <Input.TextArea
+                    value={auditResult.optimizedText || auditResult.revisedText}
+                    rows={8}
+                    readOnly
+                    style={{ backgroundColor: 'var(--bg-secondary, #1a1a1a)' }}
+                  />
+                </div>
+              </>
+            ) : (
+              /* 不通过时：展示修改后文本 */
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>审核并修改后的文本：</label>
+                <Input.TextArea
+                  value={auditResult.revisedText}
+                  rows={8}
+                  readOnly
+                  style={{ backgroundColor: 'var(--bg-secondary, #1a1a1a)' }}
+                />
+              </div>
+            )}
           </div>
         )}
       </Modal>

@@ -391,7 +391,7 @@ const PlotCheckReportModal: React.FC<PlotCheckReportModalProps> = ({
               key={dim.dimension}
               size="small"
               style={{
-                borderColor: dim.passed ? '#d9d9d9' : scoreColor,
+                borderColor: dim.passed ? 'var(--border-secondary)' : scoreColor,
                 borderWidth: dim.passed ? 1 : 1.5
               }}
             >
@@ -457,7 +457,7 @@ const PlotCheckReportModal: React.FC<PlotCheckReportModalProps> = ({
                               </a>
                             )}
                             {fixed && issue.correctedText && (
-                              <div style={{ marginTop: 12, padding: '10px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 4 }}>
+                              <div style={{ marginTop: 12, padding: '10px', background: 'var(--color-success-light)', border: '1px solid var(--color-success)', borderRadius: 4 }}>
                                 <Text strong style={{ color: '#52c41a', fontSize: 12 }}>修正后文本:</Text>
                                 <div style={{ marginTop: 4, padding: '6px', background: '#f0f9eb', borderRadius: 4, borderLeft: '3px solid #52c41a' }}>
                                   {issue.correctedText}
@@ -558,7 +558,7 @@ const PlotCheckReportModal: React.FC<PlotCheckReportModalProps> = ({
                                 {renderOriginalText((issue as LogicCheckIssue).originalText)}
                                 {renderReferences((issue as LogicCheckIssue).references)}
                                 {fixed && issue.correctedText && (
-                                  <div style={{ marginTop: 12, padding: '10px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 4 }}>
+                                  <div style={{ marginTop: 12, padding: '10px', background: 'var(--color-success-light)', border: '1px solid var(--color-success)', borderRadius: 4 }}>
                                     <Text strong style={{ color: '#52c41a', fontSize: 12 }}>修正后文本:</Text>
                                     <div style={{ marginTop: 4, padding: '6px', background: '#f0f9eb', borderRadius: 4, borderLeft: '3px solid #52c41a' }}>
                                       {issue.correctedText}

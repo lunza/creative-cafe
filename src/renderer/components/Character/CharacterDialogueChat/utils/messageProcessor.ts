@@ -5,6 +5,8 @@ interface MessageProcessorOptions {
   userPlaceholder?: string;
   encodeAngleBrackets?: boolean;
   normalizeQuotes?: boolean;
+  /** 显示思考过程：true=保留为折叠 details 块，false=移除（默认） */
+  showThinking?: boolean;
 }
 
 const DEFAULT_OPTIONS: Required<MessageProcessorOptions> = {
@@ -14,6 +16,7 @@ const DEFAULT_OPTIONS: Required<MessageProcessorOptions> = {
   userPlaceholder: '{{user}}',
   encodeAngleBrackets: false,
   normalizeQuotes: true,
+  showThinking: false,
 };
 
 export function replaceTemplates(
@@ -163,10 +166,85 @@ export function stripThinkingTags(text: string): string {
     return match.startsWith('\n') ? '\n' : '';
   });
 
-  // 4. 清理多余的连续空行 (将3个或更多连续换行符替换为2个)
+  // 清理多余的连续空行 (将3个或更多连续换行符替换为2个)
   result = result.replace(/\n{3,}/g, '\n\n');
 
   return result;
+}
+
+/**
+ * 将思考标签内容转为折叠 details 块（保留思考过程供用户查看）
+ * 支持标签变体: mindmap, <thinking>, <thought> (不区分大小写)
+ */
+export function convertThinkingTags(text: string): string {
+  if (!text) return '';
+
+  let result = text;
+
+  const wrapInDetails = (content: string): string => {
+    const trimmed = content.trim();
+    if (!trimmed) return '';
+    return `<details class="message-renderer-thought-block"><summary>💭 AI 思考过程</summary>${trimmed}</details>`;
+  };
+
+  // 1. 完整标签对:  ...  , <thinking>...</thinking>, <thought>...</thought>
+  const completePattern = /<(think|thinking|thought)\b[^>]*>([\s\S]*?)<\/\1\s*>/gi;
+  result = result.replace(completePattern, (_match, _tag, content: string) => wrapInDetails(content));
+
+  // 2. 未关闭标签(流式场景): 仅匹配位于行首的  ... 到文本末尾
+  const unclosedPattern = /(?:^|\n)([ \t]*)<(think|thinking|thought)\b[^>]*>([\s\S]*)$/gi;
+  result = result.replace(unclosedPattern, (match, leadingWhitespace: string, _tag, content: string) => {
+    const detailsBlock = wrapInDetails(content);
+    return match.startsWith('\n') ? '\n' + detailsBlock : detailsBlock;
+  });
+
+  // 3. 移除自闭合标签: <think />, <thinking/>, <thought />
+  const selfClosingPattern = /<(think|thinking|thought)\b[^>]*\/\s*>/gi;
+  result = result.replace(selfClosingPattern, '');
+
+  // 4. 清理多余空行
+  result = result.replace(/\n{3,}/g, '\n\n');
+
+  return result;
+}
+
+/**
+ * ⚠️【重点标记】剥离系统控制标签
+ *
+ * 修复 Bug：<<<EXPRESSION>>>key<<<END_EXPRESSION>>> 等系统标签如果残留在内容中，
+ * 会被 rehypeRaw 当作 HTML 标签解析，rehypeSanitize 删除未知标签后留下碎片
+ * （如 <<>>annoyance<<<END_EXPR>>>），同时可能破坏 hast 树导致 *text* 的 <em>
+ * 元素也被影响。
+ *
+ * 此函数在渲染前始终剥离所有系统控制标签，确保它们不进入 HTML 解析管线。
+ * 即使 hooks 层的 parseExpressionFromContent 已剥离，此处作为防御性兜底，
+ * 也处理旧消息或解析失败的情况。
+ */
+export function stripSystemTags(text: string): string {
+  if (!text) return '';
+
+  let result = text;
+
+  // 1. 剥离表情标签：<<<EXPRESSION>>>key<<<END_EXPRESSION>>> 及所有残缺变体
+  //    主格式
+  result = result.replace(/<<<EXPRESSION>>>\s*[a-z_][a-z0-9_]*\s*<<<END_EXPRESSION>>>/gi, '');
+  //    残缺变体：任意 < > _ 组合 + EXPRESSION 字样 + key + 任意 < > _ 组合 + END EXPRESSION 字样
+  result = result.replace(/[<>_]+EXPRESSION[<>_]+\s*[a-z_][a-z0-9_]*\s*[<>_]+(?:END[_]*EXPRESSION|EXPRESSION)[<>_]+/gi, '');
+  //    残缺变体：仅有开始标记到末尾
+  result = result.replace(/[<>_]+EXPRESSION[<>_]+\s*[a-z_][a-z0-9_]*\s*$/gi, '');
+  //    终极兜底：key + EXPRESSION 字样到末尾
+  result = result.replace(/\b[a-z_][a-z0-9_]*\s*[<>_]+(?:END[_]*EXPRESSION|EXPRESSION)[<>_]+\s*$/gi, '');
+  //    清理残留的孤立尖括号碎片（如 <<>>）
+  result = result.replace(/[<>_]{2,}\s*$/, '').trimEnd();
+
+  // 2. 剥离建议选项标签：<<<SUGGESTED_OPTIONS>>>...<<<END_OPTIONS>>>
+  result = result.replace(/<<<SUGGESTED_OPTIONS>>>[\s\S]*?<<<END_OPTIONS>>>/gi, '');
+  result = result.replace(/<<<SUGGESTED_OPTIONS>>>[\s\S]*$/gi, '');
+
+  // 3. 清理多余空行
+  result = result.replace(/\n{3,}/g, '\n\n');
+
+  return result.trim();
 }
 
 export function processMessage(
@@ -183,8 +261,11 @@ export function processMessage(
     userPlaceholder: opts.userPlaceholder,
   });
 
-  // 在模板替换之后、引号规范化之前移除思考标签
-  result = stripThinkingTags(result);
+  // 在模板替换之后、引号规范化之前处理思考标签
+  result = opts.showThinking ? convertThinkingTags(result) : stripThinkingTags(result);
+
+  // ⚠️ 始终剥离系统控制标签（expression/options），防止 rehypeRaw 解析损坏
+  result = stripSystemTags(result);
 
   if (opts.normalizeQuotes) {
     result = normalizeQuotes(result);

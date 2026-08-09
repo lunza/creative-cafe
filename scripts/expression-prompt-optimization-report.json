@@ -1,0 +1,7320 @@
+{
+  "totalEmotions": 31,
+  "successCount": 31,
+  "failedCount": 0,
+  "passRate": 1,
+  "totalTagsGenerated": 692,
+  "totalTagsValid": 606,
+  "totalTagsReplaced": 92,
+  "totalTagsFailed": 86,
+  "details": [
+    {
+      "emotionKey": "default",
+      "emotionLabel": "默认",
+      "candidateTags": {
+        "face": [
+          "neutral_expression",
+          "calm_face",
+          "closed_mouth",
+          "soft_smile",
+          "serene_expression",
+          "looking_at_viewer"
+        ],
+        "action": [
+          "looking_at_viewer",
+          "standing",
+          "relaxed_posture",
+          "neutral_pose",
+          "arms_at_sides"
+        ],
+        "symbol": [
+          "sparkle",
+          "soft_light"
+        ],
+        "background": [
+          "simple_background",
+          "white_background",
+          "plain_background",
+          "depth_of_field"
+        ]
+      },
+      "auditedTags": [
+        "neutral_expression",
+        "closed_mouth",
+        "light_smile",
+        "looking_at_viewer",
+        "standing",
+        "arms_at_sides",
+        "sparkle",
+        "simple_background",
+        "white_background",
+        "depth_of_field"
+      ],
+      "failedTags": [
+        "calm_face",
+        "serene_expression",
+        "relaxed_posture",
+        "neutral_pose",
+        "soft_light"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "neutral_expression",
+          "isValid": true,
+          "canonicalName": "neutral_expression",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "calm_face",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "closed_mouth",
+          "isValid": true,
+          "canonicalName": "closed_mouth",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "soft_smile",
+          "isValid": true,
+          "canonicalName": "light_smile",
+          "replacedBy": "light_smile",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "serene_expression",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "looking_at_viewer",
+          "isValid": true,
+          "canonicalName": "looking_at_viewer",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_at_viewer",
+          "isValid": true,
+          "canonicalName": "looking_at_viewer",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "standing",
+          "isValid": true,
+          "canonicalName": "standing",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "relaxed_posture",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "neutral_pose",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "arms_at_sides",
+          "isValid": true,
+          "canonicalName": "arms_at_sides",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sparkle",
+          "isValid": true,
+          "canonicalName": "sparkle",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "soft_light",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "white_background",
+          "isValid": true,
+          "canonicalName": "white_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "plain_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "replacedBy": "simple_background",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "depth_of_field",
+          "isValid": true,
+          "canonicalName": "depth_of_field",
+          "source": "name",
+          "failed": false
+        }
+      ],
+      "finalPositive": "neutral_expression, closed_mouth, light_smile, looking_at_viewer, standing, arms_at_sides, sparkle, simple_background, white_background, depth_of_field"
+    },
+    {
+      "emotionKey": "admiration",
+      "emotionLabel": "钦佩",
+      "candidateTags": {
+        "face": [
+          "sparkling_eyes",
+          "wide_eyes",
+          "smile",
+          "blush",
+          "open_mouth",
+          "dilated_pupils",
+          "happy"
+        ],
+        "action": [
+          "looking_up",
+          "looking_at_viewer",
+          "leaning_forward",
+          "hands_together",
+          "clenched_hands",
+          "tilting_head"
+        ],
+        "symbol": [
+          "sparkle",
+          "star",
+          "heart",
+          "exclamation_mark"
+        ],
+        "background": [
+          "simple_background",
+          "white_background",
+          "gradient_background",
+          "light_rays",
+          "ambient_lighting"
+        ]
+      },
+      "auditedTags": [
+        "sparkling_eyes",
+        "wide-eyed",
+        "smile",
+        "blush",
+        "open_mouth",
+        "dilated_pupils",
+        "happy",
+        "looking_up",
+        "looking_at_viewer",
+        "leaning_forward",
+        "hands_together",
+        "clenched_hands",
+        "head_tilt",
+        "sparkle",
+        "star",
+        "heart",
+        "exclamation_point",
+        "simple_background",
+        "white_background",
+        "gradient_background",
+        "light_rays",
+        "ambient_lighting"
+      ],
+      "failedTags": [],
+      "tagAuditDetails": [
+        {
+          "originalTag": "sparkling_eyes",
+          "isValid": true,
+          "canonicalName": "sparkling_eyes",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "wide_eyes",
+          "isValid": true,
+          "canonicalName": "wide-eyed",
+          "replacedBy": "wide-eyed",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "smile",
+          "isValid": true,
+          "canonicalName": "smile",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "blush",
+          "isValid": true,
+          "canonicalName": "blush",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "open_mouth",
+          "isValid": true,
+          "canonicalName": "open_mouth",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "dilated_pupils",
+          "isValid": true,
+          "canonicalName": "dilated_pupils",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "happy",
+          "isValid": true,
+          "canonicalName": "happy",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_up",
+          "isValid": true,
+          "canonicalName": "looking_up",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_at_viewer",
+          "isValid": true,
+          "canonicalName": "looking_at_viewer",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "leaning_forward",
+          "isValid": true,
+          "canonicalName": "leaning_forward",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hands_together",
+          "isValid": true,
+          "canonicalName": "hands_together",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "clenched_hands",
+          "isValid": true,
+          "canonicalName": "clenched_hands",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "tilting_head",
+          "isValid": true,
+          "canonicalName": "head_tilt",
+          "replacedBy": "head_tilt",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "sparkle",
+          "isValid": true,
+          "canonicalName": "sparkle",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "star",
+          "isValid": true,
+          "canonicalName": "star",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "heart",
+          "isValid": true,
+          "canonicalName": "heart",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "exclamation_mark",
+          "isValid": true,
+          "canonicalName": "exclamation_point",
+          "replacedBy": "exclamation_point",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "white_background",
+          "isValid": true,
+          "canonicalName": "white_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "gradient_background",
+          "isValid": true,
+          "canonicalName": "gradient_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "light_rays",
+          "isValid": true,
+          "canonicalName": "light_rays",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "ambient_lighting",
+          "isValid": true,
+          "canonicalName": "ambient_lighting",
+          "source": "name",
+          "failed": false
+        }
+      ],
+      "finalPositive": "sparkling_eyes, wide-eyed, smile, blush, open_mouth, dilated_pupils, happy, looking_up, looking_at_viewer, leaning_forward, hands_together, clenched_hands, head_tilt, sparkle, star, heart, exclamation_point, simple_background, white_background, gradient_background, light_rays, ambient_lighting"
+    },
+    {
+      "emotionKey": "amusement",
+      "emotionLabel": "愉悦",
+      "candidateTags": {
+        "face": [
+          "smile",
+          "grin",
+          "laughing",
+          "closed_eyes",
+          "happy",
+          "open_mouth",
+          "sparkling_eyes",
+          "playful_expression"
+        ],
+        "action": [
+          "looking_at_viewer",
+          "hand_on_mouth",
+          "tilting_head",
+          "shoulders_shrugged",
+          "leaning_back",
+          "winking"
+        ],
+        "symbol": [
+          "sparkle",
+          "music_note",
+          "heart",
+          "emotion_symbol"
+        ],
+        "background": [
+          "simple_background",
+          "white_background",
+          "gradient_background",
+          "bright_lighting",
+          "soft_lighting"
+        ]
+      },
+      "auditedTags": [
+        "smile",
+        "grin",
+        "laughing",
+        "closed_eyes",
+        "happy",
+        "open_mouth",
+        "sparkling_eyes",
+        "playful_expression",
+        "looking_at_viewer",
+        "hand_on_mouth",
+        "head_tilt",
+        "leaning_back",
+        "wink",
+        "sparkle",
+        "musical_note",
+        "heart",
+        "simple_background",
+        "white_background",
+        "gradient_background",
+        "soft_lighting"
+      ],
+      "failedTags": [
+        "shoulders_shrugged",
+        "emotion_symbol",
+        "bright_lighting"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "smile",
+          "isValid": true,
+          "canonicalName": "smile",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "grin",
+          "isValid": true,
+          "canonicalName": "grin",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "laughing",
+          "isValid": true,
+          "canonicalName": "laughing",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "closed_eyes",
+          "isValid": true,
+          "canonicalName": "closed_eyes",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "happy",
+          "isValid": true,
+          "canonicalName": "happy",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "open_mouth",
+          "isValid": true,
+          "canonicalName": "open_mouth",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sparkling_eyes",
+          "isValid": true,
+          "canonicalName": "sparkling_eyes",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "playful_expression",
+          "isValid": true,
+          "canonicalName": "playful_expression",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_at_viewer",
+          "isValid": true,
+          "canonicalName": "looking_at_viewer",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_on_mouth",
+          "isValid": true,
+          "canonicalName": "hand_on_mouth",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "tilting_head",
+          "isValid": true,
+          "canonicalName": "head_tilt",
+          "replacedBy": "head_tilt",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "shoulders_shrugged",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "leaning_back",
+          "isValid": true,
+          "canonicalName": "leaning_back",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "winking",
+          "isValid": true,
+          "canonicalName": "wink",
+          "replacedBy": "wink",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "sparkle",
+          "isValid": true,
+          "canonicalName": "sparkle",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "music_note",
+          "isValid": true,
+          "canonicalName": "musical_note",
+          "replacedBy": "musical_note",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "heart",
+          "isValid": true,
+          "canonicalName": "heart",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "emotion_symbol",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "white_background",
+          "isValid": true,
+          "canonicalName": "white_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "gradient_background",
+          "isValid": true,
+          "canonicalName": "gradient_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "bright_lighting",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "soft_lighting",
+          "isValid": true,
+          "canonicalName": "soft_lighting",
+          "source": "name",
+          "failed": false
+        }
+      ],
+      "finalPositive": "smile, grin, laughing, closed_eyes, happy, open_mouth, sparkling_eyes, playful_expression, looking_at_viewer, hand_on_mouth, head_tilt, leaning_back, wink, sparkle, musical_note, heart, simple_background, white_background, gradient_background, soft_lighting"
+    },
+    {
+      "emotionKey": "anger",
+      "emotionLabel": "愤怒",
+      "candidateTags": {
+        "face": [
+          "angry",
+          "furrowed_brows",
+          "scowl",
+          "open_mouth",
+          "shouting",
+          "grit_teeth",
+          "glaring",
+          "flushed_face"
+        ],
+        "action": [
+          "looking_at_viewer",
+          "clenched_fist",
+          "pointing",
+          "arms_crossed",
+          "leaning_forward",
+          "shaking"
+        ],
+        "symbol": [
+          "anger_vein",
+          "exclamation_mark",
+          "fire",
+          "lightning",
+          "symbol"
+        ],
+        "background": [
+          "simple_background",
+          "red_background",
+          "speed_lines",
+          "motion_blur",
+          "ambient_lighting"
+        ]
+      },
+      "auditedTags": [
+        "angry",
+        "scowl",
+        "open_mouth",
+        "shouting",
+        "clenched_teeth",
+        "glaring",
+        "flushed_face",
+        "looking_at_viewer",
+        "clenched_hand",
+        "pointing",
+        "crossed_arms",
+        "leaning_forward",
+        "shaking",
+        "anger_vein",
+        "exclamation_point",
+        "fire",
+        "lightning",
+        "symbol",
+        "simple_background",
+        "red_background",
+        "speed_lines",
+        "motion_blur",
+        "ambient_lighting"
+      ],
+      "failedTags": [
+        "furrowed_brows"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "angry",
+          "isValid": true,
+          "canonicalName": "angry",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "furrowed_brows",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "scowl",
+          "isValid": true,
+          "canonicalName": "scowl",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "open_mouth",
+          "isValid": true,
+          "canonicalName": "open_mouth",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "shouting",
+          "isValid": true,
+          "canonicalName": "shouting",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "grit_teeth",
+          "isValid": true,
+          "canonicalName": "clenched_teeth",
+          "replacedBy": "clenched_teeth",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "glaring",
+          "isValid": true,
+          "canonicalName": "glaring",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "flushed_face",
+          "isValid": true,
+          "canonicalName": "flushed_face",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_at_viewer",
+          "isValid": true,
+          "canonicalName": "looking_at_viewer",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "clenched_fist",
+          "isValid": true,
+          "canonicalName": "clenched_hand",
+          "replacedBy": "clenched_hand",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "pointing",
+          "isValid": true,
+          "canonicalName": "pointing",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "arms_crossed",
+          "isValid": true,
+          "canonicalName": "crossed_arms",
+          "replacedBy": "crossed_arms",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "leaning_forward",
+          "isValid": true,
+          "canonicalName": "leaning_forward",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "shaking",
+          "isValid": true,
+          "canonicalName": "shaking",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "anger_vein",
+          "isValid": true,
+          "canonicalName": "anger_vein",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "exclamation_mark",
+          "isValid": true,
+          "canonicalName": "exclamation_point",
+          "replacedBy": "exclamation_point",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "fire",
+          "isValid": true,
+          "canonicalName": "fire",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "lightning",
+          "isValid": true,
+          "canonicalName": "lightning",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "symbol",
+          "isValid": true,
+          "canonicalName": "symbol",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "red_background",
+          "isValid": true,
+          "canonicalName": "red_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "speed_lines",
+          "isValid": true,
+          "canonicalName": "speed_lines",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "motion_blur",
+          "isValid": true,
+          "canonicalName": "motion_blur",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "ambient_lighting",
+          "isValid": true,
+          "canonicalName": "ambient_lighting",
+          "source": "name",
+          "failed": false
+        }
+      ],
+      "finalPositive": "angry, scowl, open_mouth, shouting, clenched_teeth, glaring, flushed_face, looking_at_viewer, clenched_hand, pointing, crossed_arms, leaning_forward, shaking, anger_vein, exclamation_point, fire, lightning, symbol, simple_background, red_background, speed_lines, motion_blur, ambient_lighting"
+    },
+    {
+      "emotionKey": "annoyance",
+      "emotionLabel": "恼怒",
+      "candidateTags": {
+        "face": [
+          "furrowed_brows",
+          "scowl",
+          "frown",
+          "narrowing_eyes",
+          "pouting",
+          "annoyed_expression",
+          "tsk"
+        ],
+        "action": [
+          "arms_crossed",
+          "looking_away",
+          "rolling_eyes",
+          "sighing",
+          "hand_on_hip",
+          "tilting_head"
+        ],
+        "symbol": [
+          "anger_vein",
+          "sweat_drop",
+          "exclamation_mark"
+        ],
+        "background": [
+          "simple_background",
+          "white_background",
+          "gradient_background",
+          "blur"
+        ]
+      },
+      "auditedTags": [
+        "scowl",
+        "frown",
+        "narrowed_eyes",
+        "pouting",
+        "annoyed",
+        "crossed_arms",
+        "looking_away",
+        "rolling_eyes",
+        "sighing",
+        "hand_on_hip",
+        "head_tilt",
+        "anger_vein",
+        "sweatdrop",
+        "exclamation_point",
+        "simple_background",
+        "white_background",
+        "gradient_background"
+      ],
+      "failedTags": [
+        "furrowed_brows",
+        "tsk",
+        "blur"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "furrowed_brows",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "scowl",
+          "isValid": true,
+          "canonicalName": "scowl",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "frown",
+          "isValid": true,
+          "canonicalName": "frown",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "narrowing_eyes",
+          "isValid": true,
+          "canonicalName": "narrowed_eyes",
+          "replacedBy": "narrowed_eyes",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "pouting",
+          "isValid": true,
+          "canonicalName": "pouting",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "annoyed_expression",
+          "isValid": true,
+          "canonicalName": "annoyed",
+          "replacedBy": "annoyed",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "tsk",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "arms_crossed",
+          "isValid": true,
+          "canonicalName": "crossed_arms",
+          "replacedBy": "crossed_arms",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_away",
+          "isValid": true,
+          "canonicalName": "looking_away",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "rolling_eyes",
+          "isValid": true,
+          "canonicalName": "rolling_eyes",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sighing",
+          "isValid": true,
+          "canonicalName": "sighing",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_on_hip",
+          "isValid": true,
+          "canonicalName": "hand_on_hip",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "tilting_head",
+          "isValid": true,
+          "canonicalName": "head_tilt",
+          "replacedBy": "head_tilt",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "anger_vein",
+          "isValid": true,
+          "canonicalName": "anger_vein",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sweat_drop",
+          "isValid": true,
+          "canonicalName": "sweatdrop",
+          "replacedBy": "sweatdrop",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "exclamation_mark",
+          "isValid": true,
+          "canonicalName": "exclamation_point",
+          "replacedBy": "exclamation_point",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "white_background",
+          "isValid": true,
+          "canonicalName": "white_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "gradient_background",
+          "isValid": true,
+          "canonicalName": "gradient_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "blur",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        }
+      ],
+      "finalPositive": "scowl, frown, narrowed_eyes, pouting, annoyed, crossed_arms, looking_away, rolling_eyes, sighing, hand_on_hip, head_tilt, anger_vein, sweatdrop, exclamation_point, simple_background, white_background, gradient_background"
+    },
+    {
+      "emotionKey": "approval",
+      "emotionLabel": "赞同",
+      "candidateTags": {
+        "face": [
+          "smile",
+          "closed_eyes",
+          "gentle_smile",
+          "pleased",
+          "closed_mouth",
+          "blush",
+          "happy",
+          "soft_expression"
+        ],
+        "action": [
+          "nodding",
+          "looking_at_viewer",
+          "thumbs_up",
+          "tilting_head",
+          "hands_on_hips"
+        ],
+        "symbol": [
+          "sparkle",
+          "heart",
+          "star"
+        ],
+        "background": [
+          "simple_background",
+          "white_background",
+          "gradient_background",
+          "bright_lighting"
+        ]
+      },
+      "auditedTags": [
+        "smile",
+        "closed_eyes",
+        "pleased",
+        "closed_mouth",
+        "blush",
+        "happy",
+        "nodding",
+        "looking_at_viewer",
+        "thumbs_up",
+        "head_tilt",
+        "hands_on_hips",
+        "sparkle",
+        "heart",
+        "star",
+        "simple_background",
+        "white_background",
+        "gradient_background"
+      ],
+      "failedTags": [
+        "gentle_smile",
+        "soft_expression",
+        "bright_lighting"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "smile",
+          "isValid": true,
+          "canonicalName": "smile",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "closed_eyes",
+          "isValid": true,
+          "canonicalName": "closed_eyes",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "gentle_smile",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "pleased",
+          "isValid": true,
+          "canonicalName": "pleased",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "closed_mouth",
+          "isValid": true,
+          "canonicalName": "closed_mouth",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "blush",
+          "isValid": true,
+          "canonicalName": "blush",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "happy",
+          "isValid": true,
+          "canonicalName": "happy",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "soft_expression",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "nodding",
+          "isValid": true,
+          "canonicalName": "nodding",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_at_viewer",
+          "isValid": true,
+          "canonicalName": "looking_at_viewer",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "thumbs_up",
+          "isValid": true,
+          "canonicalName": "thumbs_up",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "tilting_head",
+          "isValid": true,
+          "canonicalName": "head_tilt",
+          "replacedBy": "head_tilt",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "hands_on_hips",
+          "isValid": true,
+          "canonicalName": "hands_on_hips",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sparkle",
+          "isValid": true,
+          "canonicalName": "sparkle",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "heart",
+          "isValid": true,
+          "canonicalName": "heart",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "star",
+          "isValid": true,
+          "canonicalName": "star",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "white_background",
+          "isValid": true,
+          "canonicalName": "white_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "gradient_background",
+          "isValid": true,
+          "canonicalName": "gradient_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "bright_lighting",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        }
+      ],
+      "finalPositive": "smile, closed_eyes, pleased, closed_mouth, blush, happy, nodding, looking_at_viewer, thumbs_up, head_tilt, hands_on_hips, sparkle, heart, star, simple_background, white_background, gradient_background"
+    },
+    {
+      "emotionKey": "caring",
+      "emotionLabel": "关切",
+      "candidateTags": {
+        "face": [
+          "gentle_smile",
+          "kind_eyes",
+          "soft_expression",
+          "blush",
+          "furrowed_brows"
+        ],
+        "action": [
+          "looking_at_viewer",
+          "reaching_out",
+          "hand_on_cheek",
+          "tilting_head",
+          "leaning_forward",
+          "hand_to_face"
+        ],
+        "symbol": [
+          "sparkle",
+          "heart",
+          "floating_heart",
+          "soft_glow"
+        ],
+        "background": [
+          "simple_background",
+          "white_background",
+          "blurred_background",
+          "soft_lighting",
+          "ambient_lighting"
+        ]
+      },
+      "auditedTags": [
+        "blush",
+        "looking_at_viewer",
+        "reaching_out",
+        "hand_on_cheek",
+        "head_tilt",
+        "leaning_forward",
+        "hand_to_face",
+        "sparkle",
+        "heart",
+        "floating_heart",
+        "simple_background",
+        "white_background",
+        "blurred_background",
+        "soft_lighting",
+        "ambient_lighting"
+      ],
+      "failedTags": [
+        "gentle_smile",
+        "kind_eyes",
+        "soft_expression",
+        "furrowed_brows",
+        "soft_glow"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "gentle_smile",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "kind_eyes",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "soft_expression",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "blush",
+          "isValid": true,
+          "canonicalName": "blush",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "furrowed_brows",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "looking_at_viewer",
+          "isValid": true,
+          "canonicalName": "looking_at_viewer",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "reaching_out",
+          "isValid": true,
+          "canonicalName": "reaching_out",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_on_cheek",
+          "isValid": true,
+          "canonicalName": "hand_on_cheek",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "tilting_head",
+          "isValid": true,
+          "canonicalName": "head_tilt",
+          "replacedBy": "head_tilt",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "leaning_forward",
+          "isValid": true,
+          "canonicalName": "leaning_forward",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_to_face",
+          "isValid": true,
+          "canonicalName": "hand_to_face",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sparkle",
+          "isValid": true,
+          "canonicalName": "sparkle",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "heart",
+          "isValid": true,
+          "canonicalName": "heart",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "floating_heart",
+          "isValid": true,
+          "canonicalName": "floating_heart",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "soft_glow",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "white_background",
+          "isValid": true,
+          "canonicalName": "white_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "blurred_background",
+          "isValid": true,
+          "canonicalName": "blurred_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "soft_lighting",
+          "isValid": true,
+          "canonicalName": "soft_lighting",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "ambient_lighting",
+          "isValid": true,
+          "canonicalName": "ambient_lighting",
+          "source": "name",
+          "failed": false
+        }
+      ],
+      "finalPositive": "blush, looking_at_viewer, reaching_out, hand_on_cheek, head_tilt, leaning_forward, hand_to_face, sparkle, heart, floating_heart, simple_background, white_background, blurred_background, soft_lighting, ambient_lighting"
+    },
+    {
+      "emotionKey": "confusion",
+      "emotionLabel": "困惑",
+      "candidateTags": {
+        "face": [
+          "confused_expression",
+          "furrowed_brows",
+          "open_mouth",
+          "squinting",
+          "puzzled_look",
+          "blank_stare"
+        ],
+        "action": [
+          "tilting_head",
+          "scratching_head",
+          "hand_on_chin",
+          "hand_on_cheek",
+          "looking_away",
+          "looking_at_viewer"
+        ],
+        "symbol": [
+          "question_mark",
+          "sweat_drop",
+          "ellipsis"
+        ],
+        "background": [
+          "simple_background",
+          "white_background",
+          "gradient_background",
+          "blur"
+        ]
+      },
+      "auditedTags": [
+        "open_mouth",
+        "squinting",
+        "blank_stare",
+        "head_tilt",
+        "scratching_head",
+        "hand_on_chin",
+        "hand_on_cheek",
+        "looking_away",
+        "looking_at_viewer",
+        "question_mark",
+        "sweatdrop",
+        "ellipsis",
+        "simple_background",
+        "white_background",
+        "gradient_background"
+      ],
+      "failedTags": [
+        "confused_expression",
+        "furrowed_brows",
+        "puzzled_look",
+        "blur"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "confused_expression",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "furrowed_brows",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "open_mouth",
+          "isValid": true,
+          "canonicalName": "open_mouth",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "squinting",
+          "isValid": true,
+          "canonicalName": "squinting",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "puzzled_look",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "blank_stare",
+          "isValid": true,
+          "canonicalName": "blank_stare",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "tilting_head",
+          "isValid": true,
+          "canonicalName": "head_tilt",
+          "replacedBy": "head_tilt",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "scratching_head",
+          "isValid": true,
+          "canonicalName": "scratching_head",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_on_chin",
+          "isValid": true,
+          "canonicalName": "hand_on_chin",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_on_cheek",
+          "isValid": true,
+          "canonicalName": "hand_on_cheek",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_away",
+          "isValid": true,
+          "canonicalName": "looking_away",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_at_viewer",
+          "isValid": true,
+          "canonicalName": "looking_at_viewer",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "question_mark",
+          "isValid": true,
+          "canonicalName": "question_mark",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sweat_drop",
+          "isValid": true,
+          "canonicalName": "sweatdrop",
+          "replacedBy": "sweatdrop",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "ellipsis",
+          "isValid": true,
+          "canonicalName": "ellipsis",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "white_background",
+          "isValid": true,
+          "canonicalName": "white_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "gradient_background",
+          "isValid": true,
+          "canonicalName": "gradient_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "blur",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        }
+      ],
+      "finalPositive": "open_mouth, squinting, blank_stare, head_tilt, scratching_head, hand_on_chin, hand_on_cheek, looking_away, looking_at_viewer, question_mark, sweatdrop, ellipsis, simple_background, white_background, gradient_background"
+    },
+    {
+      "emotionKey": "curiosity",
+      "emotionLabel": "好奇",
+      "candidateTags": {
+        "face": [
+          "wide_eyes",
+          "raised_eyebrows",
+          "parted_lips",
+          "slight_smile",
+          "open_mouth",
+          "looking_sideways",
+          "curious_expression"
+        ],
+        "action": [
+          "tilting_head",
+          "leaning_forward",
+          "hand_on_chin",
+          "looking_at_viewer",
+          "hand_on_cheek",
+          "finger_to_chin"
+        ],
+        "symbol": [
+          "question_mark",
+          "sparkle",
+          "thought_bubble",
+          "exclamation_mark",
+          "emoji"
+        ],
+        "background": [
+          "simple_background",
+          "white_background",
+          "blur",
+          "depth_of_field",
+          "ambient_lighting",
+          "gradient_background"
+        ]
+      },
+      "auditedTags": [
+        "wide-eyed",
+        "raised_eyebrows",
+        "parted_lips",
+        "slight_smile",
+        "open_mouth",
+        "looking_sideways",
+        "head_tilt",
+        "leaning_forward",
+        "hand_on_chin",
+        "looking_at_viewer",
+        "hand_on_cheek",
+        "finger_to_own_chin",
+        "question_mark",
+        "sparkle",
+        "thought_bubble",
+        "exclamation_point",
+        "emoji",
+        "simple_background",
+        "white_background",
+        "depth_of_field",
+        "ambient_lighting",
+        "gradient_background"
+      ],
+      "failedTags": [
+        "curious_expression",
+        "blur"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "wide_eyes",
+          "isValid": true,
+          "canonicalName": "wide-eyed",
+          "replacedBy": "wide-eyed",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "raised_eyebrows",
+          "isValid": true,
+          "canonicalName": "raised_eyebrows",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "parted_lips",
+          "isValid": true,
+          "canonicalName": "parted_lips",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "slight_smile",
+          "isValid": true,
+          "canonicalName": "slight_smile",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "open_mouth",
+          "isValid": true,
+          "canonicalName": "open_mouth",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_sideways",
+          "isValid": true,
+          "canonicalName": "looking_sideways",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "curious_expression",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "tilting_head",
+          "isValid": true,
+          "canonicalName": "head_tilt",
+          "replacedBy": "head_tilt",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "leaning_forward",
+          "isValid": true,
+          "canonicalName": "leaning_forward",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_on_chin",
+          "isValid": true,
+          "canonicalName": "hand_on_chin",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_at_viewer",
+          "isValid": true,
+          "canonicalName": "looking_at_viewer",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_on_cheek",
+          "isValid": true,
+          "canonicalName": "hand_on_cheek",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "finger_to_chin",
+          "isValid": true,
+          "canonicalName": "finger_to_own_chin",
+          "replacedBy": "finger_to_own_chin",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "question_mark",
+          "isValid": true,
+          "canonicalName": "question_mark",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sparkle",
+          "isValid": true,
+          "canonicalName": "sparkle",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "thought_bubble",
+          "isValid": true,
+          "canonicalName": "thought_bubble",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "exclamation_mark",
+          "isValid": true,
+          "canonicalName": "exclamation_point",
+          "replacedBy": "exclamation_point",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "emoji",
+          "isValid": true,
+          "canonicalName": "emoji",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "white_background",
+          "isValid": true,
+          "canonicalName": "white_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "blur",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "depth_of_field",
+          "isValid": true,
+          "canonicalName": "depth_of_field",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "ambient_lighting",
+          "isValid": true,
+          "canonicalName": "ambient_lighting",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "gradient_background",
+          "isValid": true,
+          "canonicalName": "gradient_background",
+          "source": "name",
+          "failed": false
+        }
+      ],
+      "finalPositive": "wide-eyed, raised_eyebrows, parted_lips, slight_smile, open_mouth, looking_sideways, head_tilt, leaning_forward, hand_on_chin, looking_at_viewer, hand_on_cheek, finger_to_own_chin, question_mark, sparkle, thought_bubble, exclamation_point, emoji, simple_background, white_background, depth_of_field, ambient_lighting, gradient_background"
+    },
+    {
+      "emotionKey": "desire",
+      "emotionLabel": "渴望",
+      "candidateTags": {
+        "face": [
+          "blush",
+          "dilated_pupils",
+          "parted_lips",
+          "flushed_face",
+          "sweat_drops",
+          "panting"
+        ],
+        "action": [
+          "looking_at_viewer",
+          "leaning_forward",
+          "biting_lip",
+          "hand_on_cheek",
+          "hand_on_own_breast",
+          "tilting_head",
+          "reaching_out"
+        ],
+        "symbol": [
+          "heart",
+          "sweat_drop",
+          "dialogue_heart",
+          "sparkle"
+        ],
+        "background": [
+          "simple_background",
+          "gradient_background",
+          "ambient_lighting",
+          "depth_of_field",
+          "blur"
+        ]
+      },
+      "auditedTags": [
+        "blush",
+        "dilated_pupils",
+        "parted_lips",
+        "flushed_face",
+        "sweatdrop",
+        "panting",
+        "looking_at_viewer",
+        "leaning_forward",
+        "biting_lip",
+        "hand_on_cheek",
+        "hand_on_own_breast",
+        "head_tilt",
+        "reaching_out",
+        "heart",
+        "sparkle",
+        "simple_background",
+        "gradient_background",
+        "ambient_lighting",
+        "depth_of_field"
+      ],
+      "failedTags": [
+        "dialogue_heart",
+        "blur"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "blush",
+          "isValid": true,
+          "canonicalName": "blush",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "dilated_pupils",
+          "isValid": true,
+          "canonicalName": "dilated_pupils",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "parted_lips",
+          "isValid": true,
+          "canonicalName": "parted_lips",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "flushed_face",
+          "isValid": true,
+          "canonicalName": "flushed_face",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sweat_drops",
+          "isValid": true,
+          "canonicalName": "sweatdrop",
+          "replacedBy": "sweatdrop",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "panting",
+          "isValid": true,
+          "canonicalName": "panting",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_at_viewer",
+          "isValid": true,
+          "canonicalName": "looking_at_viewer",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "leaning_forward",
+          "isValid": true,
+          "canonicalName": "leaning_forward",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "biting_lip",
+          "isValid": true,
+          "canonicalName": "biting_lip",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_on_cheek",
+          "isValid": true,
+          "canonicalName": "hand_on_cheek",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_on_own_breast",
+          "isValid": true,
+          "canonicalName": "hand_on_own_breast",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "tilting_head",
+          "isValid": true,
+          "canonicalName": "head_tilt",
+          "replacedBy": "head_tilt",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "reaching_out",
+          "isValid": true,
+          "canonicalName": "reaching_out",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "heart",
+          "isValid": true,
+          "canonicalName": "heart",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sweat_drop",
+          "isValid": true,
+          "canonicalName": "sweatdrop",
+          "replacedBy": "sweatdrop",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "dialogue_heart",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "sparkle",
+          "isValid": true,
+          "canonicalName": "sparkle",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "gradient_background",
+          "isValid": true,
+          "canonicalName": "gradient_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "ambient_lighting",
+          "isValid": true,
+          "canonicalName": "ambient_lighting",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "depth_of_field",
+          "isValid": true,
+          "canonicalName": "depth_of_field",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "blur",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        }
+      ],
+      "finalPositive": "blush, dilated_pupils, parted_lips, flushed_face, sweatdrop, panting, looking_at_viewer, leaning_forward, biting_lip, hand_on_cheek, hand_on_own_breast, head_tilt, reaching_out, heart, sparkle, simple_background, gradient_background, ambient_lighting, depth_of_field"
+    },
+    {
+      "emotionKey": "disappointment",
+      "emotionLabel": "失望",
+      "candidateTags": {
+        "face": [
+          "sad",
+          "disappointed",
+          "frown",
+          "pout",
+          "downcast_eyes",
+          "drooping_eyes",
+          "trembling_lips",
+          "unhappy"
+        ],
+        "action": [
+          "looking_away",
+          "looking_down",
+          "sigh",
+          "slumped_shoulders",
+          "head_down",
+          "hand_on_face"
+        ],
+        "symbol": [
+          "sweat_drop",
+          "tears",
+          "rain_cloud",
+          "blue_lines"
+        ],
+        "background": [
+          "simple_background",
+          "white_background",
+          "grey_background",
+          "dim_lighting",
+          "blur"
+        ]
+      },
+      "auditedTags": [
+        "sad",
+        "disappointed",
+        "frown",
+        "pout",
+        "downcast_eyes",
+        "unhappy",
+        "looking_away",
+        "looking_down",
+        "sigh",
+        "head_down",
+        "hand_on_face",
+        "sweatdrop",
+        "tears",
+        "blue_lines",
+        "simple_background",
+        "white_background",
+        "grey_background",
+        "dim_lighting"
+      ],
+      "failedTags": [
+        "drooping_eyes",
+        "trembling_lips",
+        "slumped_shoulders",
+        "rain_cloud",
+        "blur"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "sad",
+          "isValid": true,
+          "canonicalName": "sad",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "disappointed",
+          "isValid": true,
+          "canonicalName": "disappointed",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "frown",
+          "isValid": true,
+          "canonicalName": "frown",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "pout",
+          "isValid": true,
+          "canonicalName": "pout",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "downcast_eyes",
+          "isValid": true,
+          "canonicalName": "downcast_eyes",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "drooping_eyes",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "trembling_lips",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "unhappy",
+          "isValid": true,
+          "canonicalName": "unhappy",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_away",
+          "isValid": true,
+          "canonicalName": "looking_away",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_down",
+          "isValid": true,
+          "canonicalName": "looking_down",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sigh",
+          "isValid": true,
+          "canonicalName": "sigh",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "slumped_shoulders",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "head_down",
+          "isValid": true,
+          "canonicalName": "head_down",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_on_face",
+          "isValid": true,
+          "canonicalName": "hand_on_face",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sweat_drop",
+          "isValid": true,
+          "canonicalName": "sweatdrop",
+          "replacedBy": "sweatdrop",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "tears",
+          "isValid": true,
+          "canonicalName": "tears",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "rain_cloud",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "blue_lines",
+          "isValid": true,
+          "canonicalName": "blue_lines",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "white_background",
+          "isValid": true,
+          "canonicalName": "white_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "grey_background",
+          "isValid": true,
+          "canonicalName": "grey_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "dim_lighting",
+          "isValid": true,
+          "canonicalName": "dim_lighting",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "blur",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        }
+      ],
+      "finalPositive": "sad, disappointed, frown, pout, downcast_eyes, unhappy, looking_away, looking_down, sigh, head_down, hand_on_face, sweatdrop, tears, blue_lines, simple_background, white_background, grey_background, dim_lighting"
+    },
+    {
+      "emotionKey": "disapproval",
+      "emotionLabel": "不赞同",
+      "candidateTags": {
+        "face": [
+          "furrowed_brows",
+          "narrowed_eyes",
+          "scowl",
+          "frown",
+          "side_eye",
+          "displeased",
+          "closed_mouth",
+          "pout"
+        ],
+        "action": [
+          "crossing_arms",
+          "looking_away",
+          "hand_on_hip",
+          "tilting_head",
+          "looking_at_viewer",
+          "sighing"
+        ],
+        "symbol": [
+          "anger_vein",
+          "sweat_drop",
+          "exclamation_mark",
+          "question_mark"
+        ],
+        "background": [
+          "simple_background",
+          "white_background",
+          "gradient_background",
+          "blur"
+        ]
+      },
+      "auditedTags": [
+        "narrowed_eyes",
+        "scowl",
+        "frown",
+        "side_eye",
+        "displeased",
+        "closed_mouth",
+        "pout",
+        "crossed_arms",
+        "looking_away",
+        "hand_on_hip",
+        "head_tilt",
+        "looking_at_viewer",
+        "sighing",
+        "anger_vein",
+        "sweatdrop",
+        "exclamation_point",
+        "question_mark",
+        "simple_background",
+        "white_background",
+        "gradient_background"
+      ],
+      "failedTags": [
+        "furrowed_brows",
+        "blur"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "furrowed_brows",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "narrowed_eyes",
+          "isValid": true,
+          "canonicalName": "narrowed_eyes",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "scowl",
+          "isValid": true,
+          "canonicalName": "scowl",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "frown",
+          "isValid": true,
+          "canonicalName": "frown",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "side_eye",
+          "isValid": true,
+          "canonicalName": "side_eye",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "displeased",
+          "isValid": true,
+          "canonicalName": "displeased",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "closed_mouth",
+          "isValid": true,
+          "canonicalName": "closed_mouth",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "pout",
+          "isValid": true,
+          "canonicalName": "pout",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "crossing_arms",
+          "isValid": true,
+          "canonicalName": "crossed_arms",
+          "replacedBy": "crossed_arms",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_away",
+          "isValid": true,
+          "canonicalName": "looking_away",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_on_hip",
+          "isValid": true,
+          "canonicalName": "hand_on_hip",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "tilting_head",
+          "isValid": true,
+          "canonicalName": "head_tilt",
+          "replacedBy": "head_tilt",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_at_viewer",
+          "isValid": true,
+          "canonicalName": "looking_at_viewer",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sighing",
+          "isValid": true,
+          "canonicalName": "sighing",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "anger_vein",
+          "isValid": true,
+          "canonicalName": "anger_vein",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sweat_drop",
+          "isValid": true,
+          "canonicalName": "sweatdrop",
+          "replacedBy": "sweatdrop",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "exclamation_mark",
+          "isValid": true,
+          "canonicalName": "exclamation_point",
+          "replacedBy": "exclamation_point",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "question_mark",
+          "isValid": true,
+          "canonicalName": "question_mark",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "white_background",
+          "isValid": true,
+          "canonicalName": "white_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "gradient_background",
+          "isValid": true,
+          "canonicalName": "gradient_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "blur",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        }
+      ],
+      "finalPositive": "narrowed_eyes, scowl, frown, side_eye, displeased, closed_mouth, pout, crossed_arms, looking_away, hand_on_hip, head_tilt, looking_at_viewer, sighing, anger_vein, sweatdrop, exclamation_point, question_mark, simple_background, white_background, gradient_background"
+    },
+    {
+      "emotionKey": "disgust",
+      "emotionLabel": "厌恶",
+      "candidateTags": {
+        "face": [
+          "disgust",
+          "scowling",
+          "sneer",
+          "furrowed_brows",
+          "curled_lip",
+          "frowning",
+          "looking_down"
+        ],
+        "action": [
+          "looking_away",
+          "turning_away",
+          "hand_over_mouth",
+          "crossing_arms",
+          "leaning_away",
+          "shrugging"
+        ],
+        "symbol": [
+          "sweat_drop",
+          "vein",
+          "exclamation_mark"
+        ],
+        "background": [
+          "simple_background",
+          "white_background",
+          "blur",
+          "depth_of_field"
+        ]
+      },
+      "auditedTags": [
+        "disgust",
+        "scowl",
+        "sneer",
+        "frown",
+        "looking_down",
+        "looking_away",
+        "covering_mouth",
+        "crossed_arms",
+        "shrugging",
+        "sweatdrop",
+        "vein",
+        "exclamation_point",
+        "simple_background",
+        "white_background",
+        "depth_of_field"
+      ],
+      "failedTags": [
+        "furrowed_brows",
+        "curled_lip",
+        "turning_away",
+        "leaning_away",
+        "blur"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "disgust",
+          "isValid": true,
+          "canonicalName": "disgust",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "scowling",
+          "isValid": true,
+          "canonicalName": "scowl",
+          "replacedBy": "scowl",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "sneer",
+          "isValid": true,
+          "canonicalName": "sneer",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "furrowed_brows",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "curled_lip",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "frowning",
+          "isValid": true,
+          "canonicalName": "frown",
+          "replacedBy": "frown",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_down",
+          "isValid": true,
+          "canonicalName": "looking_down",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_away",
+          "isValid": true,
+          "canonicalName": "looking_away",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "turning_away",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "hand_over_mouth",
+          "isValid": true,
+          "canonicalName": "covering_mouth",
+          "replacedBy": "covering_mouth",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "crossing_arms",
+          "isValid": true,
+          "canonicalName": "crossed_arms",
+          "replacedBy": "crossed_arms",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "leaning_away",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "shrugging",
+          "isValid": true,
+          "canonicalName": "shrugging",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sweat_drop",
+          "isValid": true,
+          "canonicalName": "sweatdrop",
+          "replacedBy": "sweatdrop",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "vein",
+          "isValid": true,
+          "canonicalName": "vein",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "exclamation_mark",
+          "isValid": true,
+          "canonicalName": "exclamation_point",
+          "replacedBy": "exclamation_point",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "white_background",
+          "isValid": true,
+          "canonicalName": "white_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "blur",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "depth_of_field",
+          "isValid": true,
+          "canonicalName": "depth_of_field",
+          "source": "name",
+          "failed": false
+        }
+      ],
+      "finalPositive": "disgust, scowl, sneer, frown, looking_down, looking_away, covering_mouth, crossed_arms, shrugging, sweatdrop, vein, exclamation_point, simple_background, white_background, depth_of_field"
+    },
+    {
+      "emotionKey": "embarrassment",
+      "emotionLabel": "尴尬",
+      "candidateTags": {
+        "face": [
+          "blush",
+          "averted_gaze",
+          "awkward_smile",
+          "furrowed_brows",
+          "open_mouth",
+          "flushed_face"
+        ],
+        "action": [
+          "looking_away",
+          "covering_mouth",
+          "scratching_head",
+          "fidgeting",
+          "shrugging",
+          "hand_on_cheek",
+          "hunched_shoulders"
+        ],
+        "symbol": [
+          "sweat_drop",
+          "question_mark",
+          "exclamation_mark",
+          "speech_bubble"
+        ],
+        "background": [
+          "simple_background",
+          "white_background",
+          "gradient_background",
+          "blur",
+          "depth_of_field"
+        ]
+      },
+      "auditedTags": [
+        "blush",
+        "awkward_smile",
+        "open_mouth",
+        "flushed_face",
+        "looking_away",
+        "covering_mouth",
+        "scratching_head",
+        "fidgeting",
+        "shrugging",
+        "hand_on_cheek",
+        "sweatdrop",
+        "question_mark",
+        "exclamation_point",
+        "speech_bubble",
+        "simple_background",
+        "white_background",
+        "gradient_background",
+        "depth_of_field"
+      ],
+      "failedTags": [
+        "averted_gaze",
+        "furrowed_brows",
+        "hunched_shoulders",
+        "blur"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "blush",
+          "isValid": true,
+          "canonicalName": "blush",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "averted_gaze",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "awkward_smile",
+          "isValid": true,
+          "canonicalName": "awkward_smile",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "furrowed_brows",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "open_mouth",
+          "isValid": true,
+          "canonicalName": "open_mouth",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "flushed_face",
+          "isValid": true,
+          "canonicalName": "flushed_face",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_away",
+          "isValid": true,
+          "canonicalName": "looking_away",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "covering_mouth",
+          "isValid": true,
+          "canonicalName": "covering_mouth",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "scratching_head",
+          "isValid": true,
+          "canonicalName": "scratching_head",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "fidgeting",
+          "isValid": true,
+          "canonicalName": "fidgeting",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "shrugging",
+          "isValid": true,
+          "canonicalName": "shrugging",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_on_cheek",
+          "isValid": true,
+          "canonicalName": "hand_on_cheek",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hunched_shoulders",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "sweat_drop",
+          "isValid": true,
+          "canonicalName": "sweatdrop",
+          "replacedBy": "sweatdrop",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "question_mark",
+          "isValid": true,
+          "canonicalName": "question_mark",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "exclamation_mark",
+          "isValid": true,
+          "canonicalName": "exclamation_point",
+          "replacedBy": "exclamation_point",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "speech_bubble",
+          "isValid": true,
+          "canonicalName": "speech_bubble",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "white_background",
+          "isValid": true,
+          "canonicalName": "white_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "gradient_background",
+          "isValid": true,
+          "canonicalName": "gradient_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "blur",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "depth_of_field",
+          "isValid": true,
+          "canonicalName": "depth_of_field",
+          "source": "name",
+          "failed": false
+        }
+      ],
+      "finalPositive": "blush, awkward_smile, open_mouth, flushed_face, looking_away, covering_mouth, scratching_head, fidgeting, shrugging, hand_on_cheek, sweatdrop, question_mark, exclamation_point, speech_bubble, simple_background, white_background, gradient_background, depth_of_field"
+    },
+    {
+      "emotionKey": "excitement",
+      "emotionLabel": "兴奋",
+      "candidateTags": {
+        "face": [
+          "wide_eyed",
+          "open_mouth",
+          "blush",
+          "smile",
+          "grinning",
+          "sparkling_eyes",
+          "dilated_pupils",
+          "flushed_face"
+        ],
+        "action": [
+          "looking_at_viewer",
+          "leaning_forward",
+          "arms_up",
+          "clenched_fists",
+          "jumping",
+          "hand_on_cheek"
+        ],
+        "symbol": [
+          "sparkle",
+          "exclamation_mark",
+          "heart",
+          "music_note",
+          "star"
+        ],
+        "background": [
+          "simple_background",
+          "white_background",
+          "gradient_background",
+          "bright_lighting",
+          "depth_of_field"
+        ]
+      },
+      "auditedTags": [
+        "wide_eyed",
+        "open_mouth",
+        "blush",
+        "smile",
+        "grin",
+        "sparkling_eyes",
+        "dilated_pupils",
+        "flushed_face",
+        "looking_at_viewer",
+        "leaning_forward",
+        "arms_up",
+        "clenched_hands",
+        "jumping",
+        "hand_on_cheek",
+        "sparkle",
+        "exclamation_point",
+        "heart",
+        "musical_note",
+        "star",
+        "simple_background",
+        "white_background",
+        "gradient_background",
+        "depth_of_field"
+      ],
+      "failedTags": [
+        "bright_lighting"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "wide_eyed",
+          "isValid": true,
+          "canonicalName": "wide_eyed",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "open_mouth",
+          "isValid": true,
+          "canonicalName": "open_mouth",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "blush",
+          "isValid": true,
+          "canonicalName": "blush",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "smile",
+          "isValid": true,
+          "canonicalName": "smile",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "grinning",
+          "isValid": true,
+          "canonicalName": "grin",
+          "replacedBy": "grin",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "sparkling_eyes",
+          "isValid": true,
+          "canonicalName": "sparkling_eyes",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "dilated_pupils",
+          "isValid": true,
+          "canonicalName": "dilated_pupils",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "flushed_face",
+          "isValid": true,
+          "canonicalName": "flushed_face",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_at_viewer",
+          "isValid": true,
+          "canonicalName": "looking_at_viewer",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "leaning_forward",
+          "isValid": true,
+          "canonicalName": "leaning_forward",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "arms_up",
+          "isValid": true,
+          "canonicalName": "arms_up",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "clenched_fists",
+          "isValid": true,
+          "canonicalName": "clenched_hands",
+          "replacedBy": "clenched_hands",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "jumping",
+          "isValid": true,
+          "canonicalName": "jumping",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_on_cheek",
+          "isValid": true,
+          "canonicalName": "hand_on_cheek",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sparkle",
+          "isValid": true,
+          "canonicalName": "sparkle",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "exclamation_mark",
+          "isValid": true,
+          "canonicalName": "exclamation_point",
+          "replacedBy": "exclamation_point",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "heart",
+          "isValid": true,
+          "canonicalName": "heart",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "music_note",
+          "isValid": true,
+          "canonicalName": "musical_note",
+          "replacedBy": "musical_note",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "star",
+          "isValid": true,
+          "canonicalName": "star",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "white_background",
+          "isValid": true,
+          "canonicalName": "white_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "gradient_background",
+          "isValid": true,
+          "canonicalName": "gradient_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "bright_lighting",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "depth_of_field",
+          "isValid": true,
+          "canonicalName": "depth_of_field",
+          "source": "name",
+          "failed": false
+        }
+      ],
+      "finalPositive": "wide_eyed, open_mouth, blush, smile, grin, sparkling_eyes, dilated_pupils, flushed_face, looking_at_viewer, leaning_forward, arms_up, clenched_hands, jumping, hand_on_cheek, sparkle, exclamation_point, heart, musical_note, star, simple_background, white_background, gradient_background, depth_of_field"
+    },
+    {
+      "emotionKey": "fear",
+      "emotionLabel": "恐惧",
+      "candidateTags": {
+        "face": [
+          "wide_eyed",
+          "dilated_pupils",
+          "open_mouth",
+          "trembling",
+          "furrowed_brows",
+          "pale_skin",
+          "teary_eyes",
+          "sweat_drops"
+        ],
+        "action": [
+          "shaking",
+          "cowering",
+          "covering_mouth",
+          "hugging_self",
+          "backing_away",
+          "looking_away",
+          "hand_on_face"
+        ],
+        "symbol": [
+          "sweat_drop",
+          "exclamation_mark",
+          "shadow",
+          "dark_aura"
+        ],
+        "background": [
+          "simple_background",
+          "dark_background",
+          "vignette",
+          "blur",
+          "depth_of_field"
+        ]
+      },
+      "auditedTags": [
+        "wide_eyed",
+        "dilated_pupils",
+        "open_mouth",
+        "trembling",
+        "pale_skin",
+        "teary_eyes",
+        "sweatdrop",
+        "shaking",
+        "cowering",
+        "covering_mouth",
+        "self_hug",
+        "looking_away",
+        "hand_on_face",
+        "exclamation_point",
+        "shadow",
+        "dark_aura",
+        "simple_background",
+        "dark_background",
+        "vignette",
+        "depth_of_field"
+      ],
+      "failedTags": [
+        "furrowed_brows",
+        "backing_away",
+        "blur"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "wide_eyed",
+          "isValid": true,
+          "canonicalName": "wide_eyed",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "dilated_pupils",
+          "isValid": true,
+          "canonicalName": "dilated_pupils",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "open_mouth",
+          "isValid": true,
+          "canonicalName": "open_mouth",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "trembling",
+          "isValid": true,
+          "canonicalName": "trembling",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "furrowed_brows",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "pale_skin",
+          "isValid": true,
+          "canonicalName": "pale_skin",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "teary_eyes",
+          "isValid": true,
+          "canonicalName": "teary_eyes",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sweat_drops",
+          "isValid": true,
+          "canonicalName": "sweatdrop",
+          "replacedBy": "sweatdrop",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "shaking",
+          "isValid": true,
+          "canonicalName": "shaking",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "cowering",
+          "isValid": true,
+          "canonicalName": "cowering",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "covering_mouth",
+          "isValid": true,
+          "canonicalName": "covering_mouth",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hugging_self",
+          "isValid": true,
+          "canonicalName": "self_hug",
+          "replacedBy": "self_hug",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "backing_away",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "looking_away",
+          "isValid": true,
+          "canonicalName": "looking_away",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_on_face",
+          "isValid": true,
+          "canonicalName": "hand_on_face",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sweat_drop",
+          "isValid": true,
+          "canonicalName": "sweatdrop",
+          "replacedBy": "sweatdrop",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "exclamation_mark",
+          "isValid": true,
+          "canonicalName": "exclamation_point",
+          "replacedBy": "exclamation_point",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "shadow",
+          "isValid": true,
+          "canonicalName": "shadow",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "dark_aura",
+          "isValid": true,
+          "canonicalName": "dark_aura",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "dark_background",
+          "isValid": true,
+          "canonicalName": "dark_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "vignette",
+          "isValid": true,
+          "canonicalName": "vignette",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "blur",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "depth_of_field",
+          "isValid": true,
+          "canonicalName": "depth_of_field",
+          "source": "name",
+          "failed": false
+        }
+      ],
+      "finalPositive": "wide_eyed, dilated_pupils, open_mouth, trembling, pale_skin, teary_eyes, sweatdrop, shaking, cowering, covering_mouth, self_hug, looking_away, hand_on_face, exclamation_point, shadow, dark_aura, simple_background, dark_background, vignette, depth_of_field"
+    },
+    {
+      "emotionKey": "gratitude",
+      "emotionLabel": "感激",
+      "candidateTags": {
+        "face": [
+          "smile",
+          "closed_eyes",
+          "blush",
+          "gentle_smile",
+          "happy",
+          "sparkling_eyes",
+          "soft_expression"
+        ],
+        "action": [
+          "clasped_hands",
+          "bowing",
+          "looking_at_viewer",
+          "hand_on_chest",
+          "tilting_head"
+        ],
+        "symbol": [
+          "sparkle",
+          "heart",
+          "floating_hearts"
+        ],
+        "background": [
+          "simple_background",
+          "white_background",
+          "soft_lighting",
+          "bokeh",
+          "ambient_lighting"
+        ]
+      },
+      "auditedTags": [
+        "smile",
+        "closed_eyes",
+        "blush",
+        "happy",
+        "sparkling_eyes",
+        "clasped_hands",
+        "bowing",
+        "looking_at_viewer",
+        "hand_on_chest",
+        "head_tilt",
+        "sparkle",
+        "heart",
+        "floating_heart",
+        "simple_background",
+        "white_background",
+        "soft_lighting",
+        "bokeh",
+        "ambient_lighting"
+      ],
+      "failedTags": [
+        "gentle_smile",
+        "soft_expression"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "smile",
+          "isValid": true,
+          "canonicalName": "smile",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "closed_eyes",
+          "isValid": true,
+          "canonicalName": "closed_eyes",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "blush",
+          "isValid": true,
+          "canonicalName": "blush",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "gentle_smile",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "happy",
+          "isValid": true,
+          "canonicalName": "happy",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sparkling_eyes",
+          "isValid": true,
+          "canonicalName": "sparkling_eyes",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "soft_expression",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "clasped_hands",
+          "isValid": true,
+          "canonicalName": "clasped_hands",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "bowing",
+          "isValid": true,
+          "canonicalName": "bowing",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_at_viewer",
+          "isValid": true,
+          "canonicalName": "looking_at_viewer",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_on_chest",
+          "isValid": true,
+          "canonicalName": "hand_on_chest",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "tilting_head",
+          "isValid": true,
+          "canonicalName": "head_tilt",
+          "replacedBy": "head_tilt",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "sparkle",
+          "isValid": true,
+          "canonicalName": "sparkle",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "heart",
+          "isValid": true,
+          "canonicalName": "heart",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "floating_hearts",
+          "isValid": true,
+          "canonicalName": "floating_heart",
+          "replacedBy": "floating_heart",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "white_background",
+          "isValid": true,
+          "canonicalName": "white_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "soft_lighting",
+          "isValid": true,
+          "canonicalName": "soft_lighting",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "bokeh",
+          "isValid": true,
+          "canonicalName": "bokeh",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "ambient_lighting",
+          "isValid": true,
+          "canonicalName": "ambient_lighting",
+          "source": "name",
+          "failed": false
+        }
+      ],
+      "finalPositive": "smile, closed_eyes, blush, happy, sparkling_eyes, clasped_hands, bowing, looking_at_viewer, hand_on_chest, head_tilt, sparkle, heart, floating_heart, simple_background, white_background, soft_lighting, bokeh, ambient_lighting"
+    },
+    {
+      "emotionKey": "grief",
+      "emotionLabel": "悲痛",
+      "candidateTags": {
+        "face": [
+          "crying",
+          "tears",
+          "streaming_tears",
+          "sad",
+          "sorrow",
+          "furrowed_brows",
+          "closed_eyes",
+          "open_mouth",
+          "trembling"
+        ],
+        "action": [
+          "covering_face",
+          "hand_on_face",
+          "looking_down",
+          "shaking",
+          "clutching_chest",
+          "kneeling",
+          "sobbing"
+        ],
+        "symbol": [
+          "rain",
+          "broken_heart",
+          "tear_drops",
+          "dark_aura",
+          "gloomy"
+        ],
+        "background": [
+          "simple_background",
+          "dark_background",
+          "rainy_background",
+          "blur",
+          "depth_of_field",
+          "gloomy_lighting"
+        ]
+      },
+      "auditedTags": [
+        "crying",
+        "tears",
+        "streaming_tears",
+        "sad",
+        "sorrow",
+        "closed_eyes",
+        "open_mouth",
+        "trembling",
+        "covering_face",
+        "hand_on_face",
+        "looking_down",
+        "shaking",
+        "clutching_chest",
+        "kneeling",
+        "sobbing",
+        "rain",
+        "broken_heart",
+        "dark_aura",
+        "gloom_(expression)",
+        "simple_background",
+        "dark_background",
+        "depth_of_field"
+      ],
+      "failedTags": [
+        "furrowed_brows",
+        "tear_drops",
+        "rainy_background",
+        "blur",
+        "gloomy_lighting"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "crying",
+          "isValid": true,
+          "canonicalName": "crying",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "tears",
+          "isValid": true,
+          "canonicalName": "tears",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "streaming_tears",
+          "isValid": true,
+          "canonicalName": "streaming_tears",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sad",
+          "isValid": true,
+          "canonicalName": "sad",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sorrow",
+          "isValid": true,
+          "canonicalName": "sorrow",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "furrowed_brows",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "closed_eyes",
+          "isValid": true,
+          "canonicalName": "closed_eyes",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "open_mouth",
+          "isValid": true,
+          "canonicalName": "open_mouth",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "trembling",
+          "isValid": true,
+          "canonicalName": "trembling",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "covering_face",
+          "isValid": true,
+          "canonicalName": "covering_face",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_on_face",
+          "isValid": true,
+          "canonicalName": "hand_on_face",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_down",
+          "isValid": true,
+          "canonicalName": "looking_down",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "shaking",
+          "isValid": true,
+          "canonicalName": "shaking",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "clutching_chest",
+          "isValid": true,
+          "canonicalName": "clutching_chest",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "kneeling",
+          "isValid": true,
+          "canonicalName": "kneeling",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sobbing",
+          "isValid": true,
+          "canonicalName": "sobbing",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "rain",
+          "isValid": true,
+          "canonicalName": "rain",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "broken_heart",
+          "isValid": true,
+          "canonicalName": "broken_heart",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "tear_drops",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "dark_aura",
+          "isValid": true,
+          "canonicalName": "dark_aura",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "gloomy",
+          "isValid": true,
+          "canonicalName": "gloom_(expression)",
+          "replacedBy": "gloom_(expression)",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "dark_background",
+          "isValid": true,
+          "canonicalName": "dark_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "rainy_background",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "blur",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "depth_of_field",
+          "isValid": true,
+          "canonicalName": "depth_of_field",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "gloomy_lighting",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        }
+      ],
+      "finalPositive": "crying, tears, streaming_tears, sad, sorrow, closed_eyes, open_mouth, trembling, covering_face, hand_on_face, looking_down, shaking, clutching_chest, kneeling, sobbing, rain, broken_heart, dark_aura, gloom_(expression), simple_background, dark_background, depth_of_field"
+    },
+    {
+      "emotionKey": "joy",
+      "emotionLabel": "喜悦",
+      "candidateTags": {
+        "face": [
+          "smile",
+          "laughing",
+          "open_mouth",
+          "blush",
+          "closed_eyes",
+          "sparkling_eyes",
+          "wide_smile"
+        ],
+        "action": [
+          "looking_at_viewer",
+          "laughing",
+          "arms_up",
+          "jumping",
+          "tilting_head",
+          "clenched_fists"
+        ],
+        "symbol": [
+          "heart",
+          "sparkle",
+          "musical_note",
+          "flower",
+          "confetti",
+          "star"
+        ],
+        "background": [
+          "simple_background",
+          "white_background",
+          "bright_lighting",
+          "gradient_background",
+          "colorful_background"
+        ]
+      },
+      "auditedTags": [
+        "smile",
+        "laughing",
+        "open_mouth",
+        "blush",
+        "closed_eyes",
+        "sparkling_eyes",
+        "wide_smile",
+        "looking_at_viewer",
+        "arms_up",
+        "jumping",
+        "head_tilt",
+        "clenched_hands",
+        "heart",
+        "sparkle",
+        "musical_note",
+        "flower",
+        "confetti",
+        "star",
+        "simple_background",
+        "white_background",
+        "gradient_background",
+        "colorful_background"
+      ],
+      "failedTags": [
+        "bright_lighting"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "smile",
+          "isValid": true,
+          "canonicalName": "smile",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "laughing",
+          "isValid": true,
+          "canonicalName": "laughing",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "open_mouth",
+          "isValid": true,
+          "canonicalName": "open_mouth",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "blush",
+          "isValid": true,
+          "canonicalName": "blush",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "closed_eyes",
+          "isValid": true,
+          "canonicalName": "closed_eyes",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sparkling_eyes",
+          "isValid": true,
+          "canonicalName": "sparkling_eyes",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "wide_smile",
+          "isValid": true,
+          "canonicalName": "wide_smile",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_at_viewer",
+          "isValid": true,
+          "canonicalName": "looking_at_viewer",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "laughing",
+          "isValid": true,
+          "canonicalName": "laughing",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "arms_up",
+          "isValid": true,
+          "canonicalName": "arms_up",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "jumping",
+          "isValid": true,
+          "canonicalName": "jumping",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "tilting_head",
+          "isValid": true,
+          "canonicalName": "head_tilt",
+          "replacedBy": "head_tilt",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "clenched_fists",
+          "isValid": true,
+          "canonicalName": "clenched_hands",
+          "replacedBy": "clenched_hands",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "heart",
+          "isValid": true,
+          "canonicalName": "heart",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sparkle",
+          "isValid": true,
+          "canonicalName": "sparkle",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "musical_note",
+          "isValid": true,
+          "canonicalName": "musical_note",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "flower",
+          "isValid": true,
+          "canonicalName": "flower",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "confetti",
+          "isValid": true,
+          "canonicalName": "confetti",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "star",
+          "isValid": true,
+          "canonicalName": "star",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "white_background",
+          "isValid": true,
+          "canonicalName": "white_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "bright_lighting",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "gradient_background",
+          "isValid": true,
+          "canonicalName": "gradient_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "colorful_background",
+          "isValid": true,
+          "canonicalName": "colorful_background",
+          "source": "name",
+          "failed": false
+        }
+      ],
+      "finalPositive": "smile, laughing, open_mouth, blush, closed_eyes, sparkling_eyes, wide_smile, looking_at_viewer, arms_up, jumping, head_tilt, clenched_hands, heart, sparkle, musical_note, flower, confetti, star, simple_background, white_background, gradient_background, colorful_background"
+    },
+    {
+      "emotionKey": "love",
+      "emotionLabel": "喜爱",
+      "candidateTags": {
+        "face": [
+          "blush",
+          "closed_eyes",
+          "sweet_smile",
+          "sparkling_eyes",
+          "happy",
+          "joyful",
+          "open_mouth"
+        ],
+        "action": [
+          "looking_at_viewer",
+          "leaning_forward",
+          "hand_on_cheek",
+          "tilting_head",
+          "hand_on_heart",
+          "hugging_self"
+        ],
+        "symbol": [
+          "heart",
+          "heart_bubbles",
+          "sparkle",
+          "music_note",
+          "flower"
+        ],
+        "background": [
+          "simple_background",
+          "white_background",
+          "pink_background",
+          "gradient_background",
+          "pastel_background"
+        ]
+      },
+      "auditedTags": [
+        "blush",
+        "closed_eyes",
+        "sparkling_eyes",
+        "happy",
+        "joyful",
+        "open_mouth",
+        "looking_at_viewer",
+        "leaning_forward",
+        "hand_on_cheek",
+        "head_tilt",
+        "self_hug",
+        "heart",
+        "heart_bubbles",
+        "sparkle",
+        "musical_note",
+        "flower",
+        "simple_background",
+        "white_background",
+        "pink_background",
+        "gradient_background",
+        "pastel_background"
+      ],
+      "failedTags": [
+        "sweet_smile",
+        "hand_on_heart"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "blush",
+          "isValid": true,
+          "canonicalName": "blush",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "closed_eyes",
+          "isValid": true,
+          "canonicalName": "closed_eyes",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sweet_smile",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "sparkling_eyes",
+          "isValid": true,
+          "canonicalName": "sparkling_eyes",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "happy",
+          "isValid": true,
+          "canonicalName": "happy",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "joyful",
+          "isValid": true,
+          "canonicalName": "joyful",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "open_mouth",
+          "isValid": true,
+          "canonicalName": "open_mouth",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_at_viewer",
+          "isValid": true,
+          "canonicalName": "looking_at_viewer",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "leaning_forward",
+          "isValid": true,
+          "canonicalName": "leaning_forward",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_on_cheek",
+          "isValid": true,
+          "canonicalName": "hand_on_cheek",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "tilting_head",
+          "isValid": true,
+          "canonicalName": "head_tilt",
+          "replacedBy": "head_tilt",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_on_heart",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "hugging_self",
+          "isValid": true,
+          "canonicalName": "self_hug",
+          "replacedBy": "self_hug",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "heart",
+          "isValid": true,
+          "canonicalName": "heart",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "heart_bubbles",
+          "isValid": true,
+          "canonicalName": "heart_bubbles",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sparkle",
+          "isValid": true,
+          "canonicalName": "sparkle",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "music_note",
+          "isValid": true,
+          "canonicalName": "musical_note",
+          "replacedBy": "musical_note",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "flower",
+          "isValid": true,
+          "canonicalName": "flower",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "white_background",
+          "isValid": true,
+          "canonicalName": "white_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "pink_background",
+          "isValid": true,
+          "canonicalName": "pink_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "gradient_background",
+          "isValid": true,
+          "canonicalName": "gradient_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "pastel_background",
+          "isValid": true,
+          "canonicalName": "pastel_background",
+          "source": "name",
+          "failed": false
+        }
+      ],
+      "finalPositive": "blush, closed_eyes, sparkling_eyes, happy, joyful, open_mouth, looking_at_viewer, leaning_forward, hand_on_cheek, head_tilt, self_hug, heart, heart_bubbles, sparkle, musical_note, flower, simple_background, white_background, pink_background, gradient_background, pastel_background"
+    },
+    {
+      "emotionKey": "nervousness",
+      "emotionLabel": "紧张",
+      "candidateTags": {
+        "face": [
+          "blush",
+          "sweat_drop",
+          "furrowed_brows",
+          "nervous_smile",
+          "wide_eyes",
+          "trembling_lips",
+          "worried_expression"
+        ],
+        "action": [
+          "looking_away",
+          "fingers_interlocked",
+          "hand_to_mouth",
+          "hand_to_face",
+          "clutching_shirt",
+          "shoulder_shrug"
+        ],
+        "symbol": [
+          "sweat_drop",
+          "exclamation_mark",
+          "question_mark",
+          "swirl",
+          "speech_bubble"
+        ],
+        "background": [
+          "simple_background",
+          "white_background",
+          "gradient_background",
+          "blur",
+          "depth_of_field"
+        ]
+      },
+      "auditedTags": [
+        "blush",
+        "sweatdrop",
+        "nervous_smile",
+        "wide-eyed",
+        "worried",
+        "looking_away",
+        "interlocked_fingers",
+        "hand_to_mouth",
+        "hand_to_face",
+        "exclamation_point",
+        "question_mark",
+        "swirl",
+        "speech_bubble",
+        "simple_background",
+        "white_background",
+        "gradient_background",
+        "depth_of_field"
+      ],
+      "failedTags": [
+        "furrowed_brows",
+        "trembling_lips",
+        "clutching_shirt",
+        "shoulder_shrug",
+        "blur"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "blush",
+          "isValid": true,
+          "canonicalName": "blush",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sweat_drop",
+          "isValid": true,
+          "canonicalName": "sweatdrop",
+          "replacedBy": "sweatdrop",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "furrowed_brows",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "nervous_smile",
+          "isValid": true,
+          "canonicalName": "nervous_smile",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "wide_eyes",
+          "isValid": true,
+          "canonicalName": "wide-eyed",
+          "replacedBy": "wide-eyed",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "trembling_lips",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "worried_expression",
+          "isValid": true,
+          "canonicalName": "worried",
+          "replacedBy": "worried",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_away",
+          "isValid": true,
+          "canonicalName": "looking_away",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "fingers_interlocked",
+          "isValid": true,
+          "canonicalName": "interlocked_fingers",
+          "replacedBy": "interlocked_fingers",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_to_mouth",
+          "isValid": true,
+          "canonicalName": "hand_to_mouth",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_to_face",
+          "isValid": true,
+          "canonicalName": "hand_to_face",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "clutching_shirt",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "shoulder_shrug",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "sweat_drop",
+          "isValid": true,
+          "canonicalName": "sweatdrop",
+          "replacedBy": "sweatdrop",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "exclamation_mark",
+          "isValid": true,
+          "canonicalName": "exclamation_point",
+          "replacedBy": "exclamation_point",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "question_mark",
+          "isValid": true,
+          "canonicalName": "question_mark",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "swirl",
+          "isValid": true,
+          "canonicalName": "swirl",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "speech_bubble",
+          "isValid": true,
+          "canonicalName": "speech_bubble",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "white_background",
+          "isValid": true,
+          "canonicalName": "white_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "gradient_background",
+          "isValid": true,
+          "canonicalName": "gradient_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "blur",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "depth_of_field",
+          "isValid": true,
+          "canonicalName": "depth_of_field",
+          "source": "name",
+          "failed": false
+        }
+      ],
+      "finalPositive": "blush, sweatdrop, nervous_smile, wide-eyed, worried, looking_away, interlocked_fingers, hand_to_mouth, hand_to_face, exclamation_point, question_mark, swirl, speech_bubble, simple_background, white_background, gradient_background, depth_of_field"
+    },
+    {
+      "emotionKey": "neutral",
+      "emotionLabel": "中性",
+      "candidateTags": {
+        "face": [
+          "neutral_expression",
+          "expressionless",
+          "calm_face",
+          "closed_mouth",
+          "serene_expression",
+          "blank_stare"
+        ],
+        "action": [
+          "looking_at_viewer",
+          "standing",
+          "arms_at_sides",
+          "relaxed_posture",
+          "staring"
+        ],
+        "symbol": [
+          "sparkle",
+          "floating_particles"
+        ],
+        "background": [
+          "simple_background",
+          "white_background",
+          "grey_background",
+          "flat_color",
+          "ambient_lighting"
+        ]
+      },
+      "auditedTags": [
+        "neutral_expression",
+        "expressionless",
+        "closed_mouth",
+        "blank_stare",
+        "looking_at_viewer",
+        "standing",
+        "arms_at_sides",
+        "staring",
+        "sparkle",
+        "simple_background",
+        "white_background",
+        "grey_background",
+        "flat_color",
+        "ambient_lighting"
+      ],
+      "failedTags": [
+        "calm_face",
+        "serene_expression",
+        "relaxed_posture",
+        "floating_particles"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "neutral_expression",
+          "isValid": true,
+          "canonicalName": "neutral_expression",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "expressionless",
+          "isValid": true,
+          "canonicalName": "expressionless",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "calm_face",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "closed_mouth",
+          "isValid": true,
+          "canonicalName": "closed_mouth",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "serene_expression",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "blank_stare",
+          "isValid": true,
+          "canonicalName": "blank_stare",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_at_viewer",
+          "isValid": true,
+          "canonicalName": "looking_at_viewer",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "standing",
+          "isValid": true,
+          "canonicalName": "standing",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "arms_at_sides",
+          "isValid": true,
+          "canonicalName": "arms_at_sides",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "relaxed_posture",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "staring",
+          "isValid": true,
+          "canonicalName": "staring",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sparkle",
+          "isValid": true,
+          "canonicalName": "sparkle",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "floating_particles",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "white_background",
+          "isValid": true,
+          "canonicalName": "white_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "grey_background",
+          "isValid": true,
+          "canonicalName": "grey_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "flat_color",
+          "isValid": true,
+          "canonicalName": "flat_color",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "ambient_lighting",
+          "isValid": true,
+          "canonicalName": "ambient_lighting",
+          "source": "name",
+          "failed": false
+        }
+      ],
+      "finalPositive": "neutral_expression, expressionless, closed_mouth, blank_stare, looking_at_viewer, standing, arms_at_sides, staring, sparkle, simple_background, white_background, grey_background, flat_color, ambient_lighting"
+    },
+    {
+      "emotionKey": "optimism",
+      "emotionLabel": "乐观",
+      "candidateTags": {
+        "face": [
+          "smile",
+          "beaming_smile",
+          "happy",
+          "sparkling_eyes",
+          "open_mouth",
+          "wide_eyed",
+          "cheerful"
+        ],
+        "action": [
+          "looking_at_viewer",
+          "waving",
+          "tilting_head",
+          "arms_up",
+          "jumping",
+          "v_sign"
+        ],
+        "symbol": [
+          "sparkle",
+          "star",
+          "music_note",
+          "sun",
+          "heart"
+        ],
+        "background": [
+          "simple_background",
+          "white_background",
+          "bright_lighting",
+          "sunny",
+          "blue_sky"
+        ]
+      },
+      "auditedTags": [
+        "smile",
+        "happy",
+        "sparkling_eyes",
+        "open_mouth",
+        "wide_eyed",
+        "cheerful",
+        "looking_at_viewer",
+        "waving",
+        "head_tilt",
+        "arms_up",
+        "jumping",
+        "v_sign",
+        "sparkle",
+        "star",
+        "musical_note",
+        "sun",
+        "heart",
+        "simple_background",
+        "white_background",
+        "sunny",
+        "blue_sky"
+      ],
+      "failedTags": [
+        "beaming_smile",
+        "bright_lighting"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "smile",
+          "isValid": true,
+          "canonicalName": "smile",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "beaming_smile",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "happy",
+          "isValid": true,
+          "canonicalName": "happy",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sparkling_eyes",
+          "isValid": true,
+          "canonicalName": "sparkling_eyes",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "open_mouth",
+          "isValid": true,
+          "canonicalName": "open_mouth",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "wide_eyed",
+          "isValid": true,
+          "canonicalName": "wide_eyed",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "cheerful",
+          "isValid": true,
+          "canonicalName": "cheerful",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_at_viewer",
+          "isValid": true,
+          "canonicalName": "looking_at_viewer",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "waving",
+          "isValid": true,
+          "canonicalName": "waving",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "tilting_head",
+          "isValid": true,
+          "canonicalName": "head_tilt",
+          "replacedBy": "head_tilt",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "arms_up",
+          "isValid": true,
+          "canonicalName": "arms_up",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "jumping",
+          "isValid": true,
+          "canonicalName": "jumping",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "v_sign",
+          "isValid": true,
+          "canonicalName": "v_sign",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sparkle",
+          "isValid": true,
+          "canonicalName": "sparkle",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "star",
+          "isValid": true,
+          "canonicalName": "star",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "music_note",
+          "isValid": true,
+          "canonicalName": "musical_note",
+          "replacedBy": "musical_note",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "sun",
+          "isValid": true,
+          "canonicalName": "sun",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "heart",
+          "isValid": true,
+          "canonicalName": "heart",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "white_background",
+          "isValid": true,
+          "canonicalName": "white_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "bright_lighting",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "sunny",
+          "isValid": true,
+          "canonicalName": "sunny",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "blue_sky",
+          "isValid": true,
+          "canonicalName": "blue_sky",
+          "source": "name",
+          "failed": false
+        }
+      ],
+      "finalPositive": "smile, happy, sparkling_eyes, open_mouth, wide_eyed, cheerful, looking_at_viewer, waving, head_tilt, arms_up, jumping, v_sign, sparkle, star, musical_note, sun, heart, simple_background, white_background, sunny, blue_sky"
+    },
+    {
+      "emotionKey": "pride",
+      "emotionLabel": "自豪",
+      "candidateTags": {
+        "face": [
+          "smug",
+          "confident_smile",
+          "raised_eyebrow",
+          "grin",
+          "looking_down",
+          "smirk"
+        ],
+        "action": [
+          "arms_crossed",
+          "hand_on_hip",
+          "chin_up",
+          "leaning_back",
+          "looking_at_viewer",
+          "chest_out"
+        ],
+        "symbol": [
+          "sparkle",
+          "star",
+          "light_rays",
+          "shining"
+        ],
+        "background": [
+          "simple_background",
+          "white_background",
+          "spotlight",
+          "gradient_background",
+          "bright_lighting"
+        ]
+      },
+      "auditedTags": [
+        "smug",
+        "raised_eyebrow",
+        "grin",
+        "looking_down",
+        "smirk",
+        "crossed_arms",
+        "hand_on_hip",
+        "chin_up",
+        "leaning_back",
+        "looking_at_viewer",
+        "sparkle",
+        "star",
+        "light_rays",
+        "shining",
+        "simple_background",
+        "white_background",
+        "spotlight",
+        "gradient_background"
+      ],
+      "failedTags": [
+        "confident_smile",
+        "chest_out",
+        "bright_lighting"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "smug",
+          "isValid": true,
+          "canonicalName": "smug",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "confident_smile",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "raised_eyebrow",
+          "isValid": true,
+          "canonicalName": "raised_eyebrow",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "grin",
+          "isValid": true,
+          "canonicalName": "grin",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_down",
+          "isValid": true,
+          "canonicalName": "looking_down",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "smirk",
+          "isValid": true,
+          "canonicalName": "smirk",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "arms_crossed",
+          "isValid": true,
+          "canonicalName": "crossed_arms",
+          "replacedBy": "crossed_arms",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_on_hip",
+          "isValid": true,
+          "canonicalName": "hand_on_hip",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "chin_up",
+          "isValid": true,
+          "canonicalName": "chin_up",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "leaning_back",
+          "isValid": true,
+          "canonicalName": "leaning_back",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_at_viewer",
+          "isValid": true,
+          "canonicalName": "looking_at_viewer",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "chest_out",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "sparkle",
+          "isValid": true,
+          "canonicalName": "sparkle",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "star",
+          "isValid": true,
+          "canonicalName": "star",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "light_rays",
+          "isValid": true,
+          "canonicalName": "light_rays",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "shining",
+          "isValid": true,
+          "canonicalName": "shining",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "white_background",
+          "isValid": true,
+          "canonicalName": "white_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "spotlight",
+          "isValid": true,
+          "canonicalName": "spotlight",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "gradient_background",
+          "isValid": true,
+          "canonicalName": "gradient_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "bright_lighting",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        }
+      ],
+      "finalPositive": "smug, raised_eyebrow, grin, looking_down, smirk, crossed_arms, hand_on_hip, chin_up, leaning_back, looking_at_viewer, sparkle, star, light_rays, shining, simple_background, white_background, spotlight, gradient_background"
+    },
+    {
+      "emotionKey": "realization",
+      "emotionLabel": "顿悟",
+      "candidateTags": {
+        "face": [
+          "wide_eyes",
+          "open_mouth",
+          "raised_eyebrows",
+          "dilated_pupils",
+          "surprised",
+          "shock",
+          "staring"
+        ],
+        "action": [
+          "looking_up",
+          "finger_up",
+          "hand_on_forehead",
+          "gasping",
+          "tilting_head",
+          "looking_at_viewer"
+        ],
+        "symbol": [
+          "exclamation_mark",
+          "sparkle",
+          "sweat_drop",
+          "light_bulb"
+        ],
+        "background": [
+          "simple_background",
+          "white_background",
+          "speed_lines",
+          "gradient_background",
+          "radial_blur"
+        ]
+      },
+      "auditedTags": [
+        "wide-eyed",
+        "open_mouth",
+        "raised_eyebrows",
+        "dilated_pupils",
+        "surprised",
+        "staring",
+        "looking_up",
+        "raised_finger",
+        "hand_on_forehead",
+        "gasp",
+        "head_tilt",
+        "looking_at_viewer",
+        "exclamation_point",
+        "sparkle",
+        "sweatdrop",
+        "light_bulb",
+        "simple_background",
+        "white_background",
+        "speed_lines",
+        "gradient_background"
+      ],
+      "failedTags": [
+        "radial_blur"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "wide_eyes",
+          "isValid": true,
+          "canonicalName": "wide-eyed",
+          "replacedBy": "wide-eyed",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "open_mouth",
+          "isValid": true,
+          "canonicalName": "open_mouth",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "raised_eyebrows",
+          "isValid": true,
+          "canonicalName": "raised_eyebrows",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "dilated_pupils",
+          "isValid": true,
+          "canonicalName": "dilated_pupils",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "surprised",
+          "isValid": true,
+          "canonicalName": "surprised",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "shock",
+          "isValid": true,
+          "canonicalName": "surprised",
+          "replacedBy": "surprised",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "staring",
+          "isValid": true,
+          "canonicalName": "staring",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_up",
+          "isValid": true,
+          "canonicalName": "looking_up",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "finger_up",
+          "isValid": true,
+          "canonicalName": "raised_finger",
+          "replacedBy": "raised_finger",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_on_forehead",
+          "isValid": true,
+          "canonicalName": "hand_on_forehead",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "gasping",
+          "isValid": true,
+          "canonicalName": "gasp",
+          "replacedBy": "gasp",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "tilting_head",
+          "isValid": true,
+          "canonicalName": "head_tilt",
+          "replacedBy": "head_tilt",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_at_viewer",
+          "isValid": true,
+          "canonicalName": "looking_at_viewer",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "exclamation_mark",
+          "isValid": true,
+          "canonicalName": "exclamation_point",
+          "replacedBy": "exclamation_point",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "sparkle",
+          "isValid": true,
+          "canonicalName": "sparkle",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sweat_drop",
+          "isValid": true,
+          "canonicalName": "sweatdrop",
+          "replacedBy": "sweatdrop",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "light_bulb",
+          "isValid": true,
+          "canonicalName": "light_bulb",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "white_background",
+          "isValid": true,
+          "canonicalName": "white_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "speed_lines",
+          "isValid": true,
+          "canonicalName": "speed_lines",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "gradient_background",
+          "isValid": true,
+          "canonicalName": "gradient_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "radial_blur",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        }
+      ],
+      "finalPositive": "wide-eyed, open_mouth, raised_eyebrows, dilated_pupils, surprised, staring, looking_up, raised_finger, hand_on_forehead, gasp, head_tilt, looking_at_viewer, exclamation_point, sparkle, sweatdrop, light_bulb, simple_background, white_background, speed_lines, gradient_background"
+    },
+    {
+      "emotionKey": "relief",
+      "emotionLabel": "宽慰",
+      "candidateTags": {
+        "face": [
+          "closed_eyes",
+          "gentle_smile",
+          "soft_smile",
+          "relaxed_expression",
+          "serene",
+          "slight_blush"
+        ],
+        "action": [
+          "sighing",
+          "hand_on_chest",
+          "leaning_back",
+          "looking_up",
+          "hand_on_forehead",
+          "closing_eyes"
+        ],
+        "symbol": [
+          "sweat_drop",
+          "sparkle",
+          "light_particles",
+          "music_note"
+        ],
+        "background": [
+          "simple_background",
+          "white_background",
+          "gradient_background",
+          "soft_lighting",
+          "blur"
+        ]
+      },
+      "auditedTags": [
+        "closed_eyes",
+        "light_smile",
+        "relaxed_expression",
+        "serene",
+        "slight_blush",
+        "sighing",
+        "hand_on_chest",
+        "leaning_back",
+        "looking_up",
+        "hand_on_forehead",
+        "closing_eyes",
+        "sweatdrop",
+        "sparkle",
+        "light_particles",
+        "musical_note",
+        "simple_background",
+        "white_background",
+        "gradient_background",
+        "soft_lighting"
+      ],
+      "failedTags": [
+        "gentle_smile",
+        "blur"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "closed_eyes",
+          "isValid": true,
+          "canonicalName": "closed_eyes",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "gentle_smile",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "soft_smile",
+          "isValid": true,
+          "canonicalName": "light_smile",
+          "replacedBy": "light_smile",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "relaxed_expression",
+          "isValid": true,
+          "canonicalName": "relaxed_expression",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "serene",
+          "isValid": true,
+          "canonicalName": "serene",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "slight_blush",
+          "isValid": true,
+          "canonicalName": "slight_blush",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sighing",
+          "isValid": true,
+          "canonicalName": "sighing",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_on_chest",
+          "isValid": true,
+          "canonicalName": "hand_on_chest",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "leaning_back",
+          "isValid": true,
+          "canonicalName": "leaning_back",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_up",
+          "isValid": true,
+          "canonicalName": "looking_up",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_on_forehead",
+          "isValid": true,
+          "canonicalName": "hand_on_forehead",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "closing_eyes",
+          "isValid": true,
+          "canonicalName": "closing_eyes",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sweat_drop",
+          "isValid": true,
+          "canonicalName": "sweatdrop",
+          "replacedBy": "sweatdrop",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "sparkle",
+          "isValid": true,
+          "canonicalName": "sparkle",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "light_particles",
+          "isValid": true,
+          "canonicalName": "light_particles",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "music_note",
+          "isValid": true,
+          "canonicalName": "musical_note",
+          "replacedBy": "musical_note",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "white_background",
+          "isValid": true,
+          "canonicalName": "white_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "gradient_background",
+          "isValid": true,
+          "canonicalName": "gradient_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "soft_lighting",
+          "isValid": true,
+          "canonicalName": "soft_lighting",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "blur",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        }
+      ],
+      "finalPositive": "closed_eyes, light_smile, relaxed_expression, serene, slight_blush, sighing, hand_on_chest, leaning_back, looking_up, hand_on_forehead, closing_eyes, sweatdrop, sparkle, light_particles, musical_note, simple_background, white_background, gradient_background, soft_lighting"
+    },
+    {
+      "emotionKey": "remorse",
+      "emotionLabel": "懊悔",
+      "candidateTags": {
+        "face": [
+          "sad",
+          "frown",
+          "downcast_eyes",
+          "tears",
+          "furrowed_brows",
+          "trembling_lips",
+          "pained_expression",
+          "crying"
+        ],
+        "action": [
+          "looking_down",
+          "hand_on_face",
+          "covering_face",
+          "head_down",
+          "kneeling",
+          "curled_up",
+          "clenched_fists"
+        ],
+        "symbol": [
+          "tear_drop",
+          "dark_aura",
+          "rain",
+          "shadow",
+          "broken_heart"
+        ],
+        "background": [
+          "simple_background",
+          "grey_background",
+          "dim_lighting",
+          "dark_background",
+          "blur"
+        ]
+      },
+      "auditedTags": [
+        "sad",
+        "frown",
+        "downcast_eyes",
+        "tears",
+        "pained_expression",
+        "crying",
+        "looking_down",
+        "hand_on_face",
+        "covering_face",
+        "head_down",
+        "kneeling",
+        "curled_up",
+        "clenched_hands",
+        "teardrop",
+        "dark_aura",
+        "rain",
+        "shadow",
+        "broken_heart",
+        "simple_background",
+        "grey_background",
+        "dim_lighting",
+        "dark_background"
+      ],
+      "failedTags": [
+        "furrowed_brows",
+        "trembling_lips",
+        "blur"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "sad",
+          "isValid": true,
+          "canonicalName": "sad",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "frown",
+          "isValid": true,
+          "canonicalName": "frown",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "downcast_eyes",
+          "isValid": true,
+          "canonicalName": "downcast_eyes",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "tears",
+          "isValid": true,
+          "canonicalName": "tears",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "furrowed_brows",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "trembling_lips",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "pained_expression",
+          "isValid": true,
+          "canonicalName": "pained_expression",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "crying",
+          "isValid": true,
+          "canonicalName": "crying",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_down",
+          "isValid": true,
+          "canonicalName": "looking_down",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_on_face",
+          "isValid": true,
+          "canonicalName": "hand_on_face",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "covering_face",
+          "isValid": true,
+          "canonicalName": "covering_face",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "head_down",
+          "isValid": true,
+          "canonicalName": "head_down",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "kneeling",
+          "isValid": true,
+          "canonicalName": "kneeling",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "curled_up",
+          "isValid": true,
+          "canonicalName": "curled_up",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "clenched_fists",
+          "isValid": true,
+          "canonicalName": "clenched_hands",
+          "replacedBy": "clenched_hands",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "tear_drop",
+          "isValid": true,
+          "canonicalName": "teardrop",
+          "replacedBy": "teardrop",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "dark_aura",
+          "isValid": true,
+          "canonicalName": "dark_aura",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "rain",
+          "isValid": true,
+          "canonicalName": "rain",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "shadow",
+          "isValid": true,
+          "canonicalName": "shadow",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "broken_heart",
+          "isValid": true,
+          "canonicalName": "broken_heart",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "grey_background",
+          "isValid": true,
+          "canonicalName": "grey_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "dim_lighting",
+          "isValid": true,
+          "canonicalName": "dim_lighting",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "dark_background",
+          "isValid": true,
+          "canonicalName": "dark_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "blur",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        }
+      ],
+      "finalPositive": "sad, frown, downcast_eyes, tears, pained_expression, crying, looking_down, hand_on_face, covering_face, head_down, kneeling, curled_up, clenched_hands, teardrop, dark_aura, rain, shadow, broken_heart, simple_background, grey_background, dim_lighting, dark_background"
+    },
+    {
+      "emotionKey": "sadness",
+      "emotionLabel": "悲伤",
+      "candidateTags": {
+        "face": [
+          "tears",
+          "crying",
+          "sad",
+          "frown",
+          "downcast_eyes",
+          "watery_eyes",
+          "trembling_lips",
+          "sobbing",
+          "pout"
+        ],
+        "action": [
+          "looking_down",
+          "covering_face",
+          "hugging_self",
+          "wiping_tears",
+          "curled_up",
+          "slouching",
+          "looking_away"
+        ],
+        "symbol": [
+          "teardrop",
+          "broken_heart",
+          "rain",
+          "gloomy"
+        ],
+        "background": [
+          "simple_background",
+          "grey_background",
+          "dark_background",
+          "blur",
+          "depth_of_field",
+          "ambient_lighting"
+        ]
+      },
+      "auditedTags": [
+        "tears",
+        "crying",
+        "sad",
+        "frown",
+        "downcast_eyes",
+        "watery_eyes",
+        "sobbing",
+        "pout",
+        "looking_down",
+        "covering_face",
+        "self_hug",
+        "wiping_tears",
+        "curled_up",
+        "slouching",
+        "looking_away",
+        "teardrop",
+        "broken_heart",
+        "rain",
+        "gloom_(expression)",
+        "simple_background",
+        "grey_background",
+        "dark_background",
+        "depth_of_field",
+        "ambient_lighting"
+      ],
+      "failedTags": [
+        "trembling_lips",
+        "blur"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "tears",
+          "isValid": true,
+          "canonicalName": "tears",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "crying",
+          "isValid": true,
+          "canonicalName": "crying",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sad",
+          "isValid": true,
+          "canonicalName": "sad",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "frown",
+          "isValid": true,
+          "canonicalName": "frown",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "downcast_eyes",
+          "isValid": true,
+          "canonicalName": "downcast_eyes",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "watery_eyes",
+          "isValid": true,
+          "canonicalName": "watery_eyes",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "trembling_lips",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "sobbing",
+          "isValid": true,
+          "canonicalName": "sobbing",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "pout",
+          "isValid": true,
+          "canonicalName": "pout",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_down",
+          "isValid": true,
+          "canonicalName": "looking_down",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "covering_face",
+          "isValid": true,
+          "canonicalName": "covering_face",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hugging_self",
+          "isValid": true,
+          "canonicalName": "self_hug",
+          "replacedBy": "self_hug",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "wiping_tears",
+          "isValid": true,
+          "canonicalName": "wiping_tears",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "curled_up",
+          "isValid": true,
+          "canonicalName": "curled_up",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "slouching",
+          "isValid": true,
+          "canonicalName": "slouching",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_away",
+          "isValid": true,
+          "canonicalName": "looking_away",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "teardrop",
+          "isValid": true,
+          "canonicalName": "teardrop",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "broken_heart",
+          "isValid": true,
+          "canonicalName": "broken_heart",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "rain",
+          "isValid": true,
+          "canonicalName": "rain",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "gloomy",
+          "isValid": true,
+          "canonicalName": "gloom_(expression)",
+          "replacedBy": "gloom_(expression)",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "grey_background",
+          "isValid": true,
+          "canonicalName": "grey_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "dark_background",
+          "isValid": true,
+          "canonicalName": "dark_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "blur",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "depth_of_field",
+          "isValid": true,
+          "canonicalName": "depth_of_field",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "ambient_lighting",
+          "isValid": true,
+          "canonicalName": "ambient_lighting",
+          "source": "name",
+          "failed": false
+        }
+      ],
+      "finalPositive": "tears, crying, sad, frown, downcast_eyes, watery_eyes, sobbing, pout, looking_down, covering_face, self_hug, wiping_tears, curled_up, slouching, looking_away, teardrop, broken_heart, rain, gloom_(expression), simple_background, grey_background, dark_background, depth_of_field, ambient_lighting"
+    },
+    {
+      "emotionKey": "surprise",
+      "emotionLabel": "惊讶",
+      "candidateTags": {
+        "face": [
+          "surprised",
+          "wide_eyed",
+          "open_mouth",
+          "raised_eyebrows",
+          "shocked",
+          "blush",
+          "dilated_pupils"
+        ],
+        "action": [
+          "looking_at_viewer",
+          "hand_over_mouth",
+          "hands_up",
+          "leaning_back",
+          "startled",
+          "tilting_head"
+        ],
+        "symbol": [
+          "exclamation_mark",
+          "sweat_drop",
+          "shock_lines",
+          "sparkle"
+        ],
+        "background": [
+          "simple_background",
+          "white_background",
+          "gradient_background",
+          "blur",
+          "depth_of_field"
+        ]
+      },
+      "auditedTags": [
+        "surprised",
+        "wide_eyed",
+        "open_mouth",
+        "raised_eyebrows",
+        "shocked",
+        "blush",
+        "dilated_pupils",
+        "looking_at_viewer",
+        "covering_mouth",
+        "hands_up",
+        "leaning_back",
+        "startled",
+        "head_tilt",
+        "exclamation_point",
+        "sweatdrop",
+        "sparkle",
+        "simple_background",
+        "white_background",
+        "gradient_background",
+        "depth_of_field"
+      ],
+      "failedTags": [
+        "shock_lines",
+        "blur"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "surprised",
+          "isValid": true,
+          "canonicalName": "surprised",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "wide_eyed",
+          "isValid": true,
+          "canonicalName": "wide_eyed",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "open_mouth",
+          "isValid": true,
+          "canonicalName": "open_mouth",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "raised_eyebrows",
+          "isValid": true,
+          "canonicalName": "raised_eyebrows",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "shocked",
+          "isValid": true,
+          "canonicalName": "shocked",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "blush",
+          "isValid": true,
+          "canonicalName": "blush",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "dilated_pupils",
+          "isValid": true,
+          "canonicalName": "dilated_pupils",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_at_viewer",
+          "isValid": true,
+          "canonicalName": "looking_at_viewer",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_over_mouth",
+          "isValid": true,
+          "canonicalName": "covering_mouth",
+          "replacedBy": "covering_mouth",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "hands_up",
+          "isValid": true,
+          "canonicalName": "hands_up",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "leaning_back",
+          "isValid": true,
+          "canonicalName": "leaning_back",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "startled",
+          "isValid": true,
+          "canonicalName": "startled",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "tilting_head",
+          "isValid": true,
+          "canonicalName": "head_tilt",
+          "replacedBy": "head_tilt",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "exclamation_mark",
+          "isValid": true,
+          "canonicalName": "exclamation_point",
+          "replacedBy": "exclamation_point",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "sweat_drop",
+          "isValid": true,
+          "canonicalName": "sweatdrop",
+          "replacedBy": "sweatdrop",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "shock_lines",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "sparkle",
+          "isValid": true,
+          "canonicalName": "sparkle",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "white_background",
+          "isValid": true,
+          "canonicalName": "white_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "gradient_background",
+          "isValid": true,
+          "canonicalName": "gradient_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "blur",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "depth_of_field",
+          "isValid": true,
+          "canonicalName": "depth_of_field",
+          "source": "name",
+          "failed": false
+        }
+      ],
+      "finalPositive": "surprised, wide_eyed, open_mouth, raised_eyebrows, shocked, blush, dilated_pupils, looking_at_viewer, covering_mouth, hands_up, leaning_back, startled, head_tilt, exclamation_point, sweatdrop, sparkle, simple_background, white_background, gradient_background, depth_of_field"
+    },
+    {
+      "emotionKey": "cheerfulness",
+      "emotionLabel": "快乐",
+      "candidateTags": {
+        "face": [
+          "smile",
+          "open_mouth",
+          "happy",
+          "blush",
+          "closed_eyes",
+          "beaming_smile",
+          "sparkling_eyes",
+          "wide_eyed"
+        ],
+        "action": [
+          "looking_at_viewer",
+          "laughing",
+          "peace_sign",
+          "waving",
+          "jumping",
+          "tilting_head",
+          "arms_up"
+        ],
+        "symbol": [
+          "sparkle",
+          "heart",
+          "music_note",
+          "star",
+          "flower_petal",
+          "confetti"
+        ],
+        "background": [
+          "simple_background",
+          "white_background",
+          "bright_lighting",
+          "sunlight",
+          "colorful_background",
+          "gradient_background"
+        ]
+      },
+      "auditedTags": [
+        "smile",
+        "open_mouth",
+        "happy",
+        "blush",
+        "closed_eyes",
+        "sparkling_eyes",
+        "wide_eyed",
+        "looking_at_viewer",
+        "laughing",
+        "v",
+        "waving",
+        "jumping",
+        "head_tilt",
+        "arms_up",
+        "sparkle",
+        "heart",
+        "musical_note",
+        "star",
+        "petals",
+        "confetti",
+        "simple_background",
+        "white_background",
+        "sunlight",
+        "colorful_background",
+        "gradient_background"
+      ],
+      "failedTags": [
+        "beaming_smile",
+        "bright_lighting"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "smile",
+          "isValid": true,
+          "canonicalName": "smile",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "open_mouth",
+          "isValid": true,
+          "canonicalName": "open_mouth",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "happy",
+          "isValid": true,
+          "canonicalName": "happy",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "blush",
+          "isValid": true,
+          "canonicalName": "blush",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "closed_eyes",
+          "isValid": true,
+          "canonicalName": "closed_eyes",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "beaming_smile",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "sparkling_eyes",
+          "isValid": true,
+          "canonicalName": "sparkling_eyes",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "wide_eyed",
+          "isValid": true,
+          "canonicalName": "wide_eyed",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_at_viewer",
+          "isValid": true,
+          "canonicalName": "looking_at_viewer",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "laughing",
+          "isValid": true,
+          "canonicalName": "laughing",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "peace_sign",
+          "isValid": true,
+          "canonicalName": "v",
+          "replacedBy": "v",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "waving",
+          "isValid": true,
+          "canonicalName": "waving",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "jumping",
+          "isValid": true,
+          "canonicalName": "jumping",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "tilting_head",
+          "isValid": true,
+          "canonicalName": "head_tilt",
+          "replacedBy": "head_tilt",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "arms_up",
+          "isValid": true,
+          "canonicalName": "arms_up",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sparkle",
+          "isValid": true,
+          "canonicalName": "sparkle",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "heart",
+          "isValid": true,
+          "canonicalName": "heart",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "music_note",
+          "isValid": true,
+          "canonicalName": "musical_note",
+          "replacedBy": "musical_note",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "star",
+          "isValid": true,
+          "canonicalName": "star",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "flower_petal",
+          "isValid": true,
+          "canonicalName": "petals",
+          "replacedBy": "petals",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "confetti",
+          "isValid": true,
+          "canonicalName": "confetti",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "white_background",
+          "isValid": true,
+          "canonicalName": "white_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "bright_lighting",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "sunlight",
+          "isValid": true,
+          "canonicalName": "sunlight",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "colorful_background",
+          "isValid": true,
+          "canonicalName": "colorful_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "gradient_background",
+          "isValid": true,
+          "canonicalName": "gradient_background",
+          "source": "name",
+          "failed": false
+        }
+      ],
+      "finalPositive": "smile, open_mouth, happy, blush, closed_eyes, sparkling_eyes, wide_eyed, looking_at_viewer, laughing, v, waving, jumping, head_tilt, arms_up, sparkle, heart, musical_note, star, petals, confetti, simple_background, white_background, sunlight, colorful_background, gradient_background"
+    },
+    {
+      "emotionKey": "in_heat",
+      "emotionLabel": "发情",
+      "candidateTags": {
+        "face": [
+          "blush",
+          "saliva",
+          "tongue_out",
+          "parted_lips",
+          "flushed_face",
+          "sweat_drops",
+          "dilated_pupils"
+        ],
+        "action": [
+          "panting",
+          "looking_at_viewer",
+          "biting_lip",
+          "hand_on_breast",
+          "hand_on_thigh",
+          "leaning_forward",
+          "arching_back"
+        ],
+        "symbol": [
+          "heart",
+          "sweat_drop",
+          "dialogue_heart",
+          "sparkle",
+          "steam"
+        ],
+        "background": [
+          "simple_background",
+          "white_background",
+          "gradient_background",
+          "blur",
+          "depth_of_field"
+        ]
+      },
+      "auditedTags": [
+        "blush",
+        "saliva",
+        "tongue_out",
+        "parted_lips",
+        "flushed_face",
+        "sweatdrop",
+        "dilated_pupils",
+        "panting",
+        "looking_at_viewer",
+        "biting_lip",
+        "hand_on_breast",
+        "hand_on_thigh",
+        "leaning_forward",
+        "arched_back",
+        "heart",
+        "sparkle",
+        "steam",
+        "simple_background",
+        "white_background",
+        "gradient_background",
+        "depth_of_field"
+      ],
+      "failedTags": [
+        "dialogue_heart",
+        "blur"
+      ],
+      "tagAuditDetails": [
+        {
+          "originalTag": "blush",
+          "isValid": true,
+          "canonicalName": "blush",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "saliva",
+          "isValid": true,
+          "canonicalName": "saliva",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "tongue_out",
+          "isValid": true,
+          "canonicalName": "tongue_out",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "parted_lips",
+          "isValid": true,
+          "canonicalName": "parted_lips",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "flushed_face",
+          "isValid": true,
+          "canonicalName": "flushed_face",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sweat_drops",
+          "isValid": true,
+          "canonicalName": "sweatdrop",
+          "replacedBy": "sweatdrop",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "dilated_pupils",
+          "isValid": true,
+          "canonicalName": "dilated_pupils",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "panting",
+          "isValid": true,
+          "canonicalName": "panting",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "looking_at_viewer",
+          "isValid": true,
+          "canonicalName": "looking_at_viewer",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "biting_lip",
+          "isValid": true,
+          "canonicalName": "biting_lip",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_on_breast",
+          "isValid": true,
+          "canonicalName": "hand_on_breast",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "hand_on_thigh",
+          "isValid": true,
+          "canonicalName": "hand_on_thigh",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "leaning_forward",
+          "isValid": true,
+          "canonicalName": "leaning_forward",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "arching_back",
+          "isValid": true,
+          "canonicalName": "arched_back",
+          "replacedBy": "arched_back",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "heart",
+          "isValid": true,
+          "canonicalName": "heart",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "sweat_drop",
+          "isValid": true,
+          "canonicalName": "sweatdrop",
+          "replacedBy": "sweatdrop",
+          "source": "alias",
+          "failed": false
+        },
+        {
+          "originalTag": "dialogue_heart",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "sparkle",
+          "isValid": true,
+          "canonicalName": "sparkle",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "steam",
+          "isValid": true,
+          "canonicalName": "steam",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "simple_background",
+          "isValid": true,
+          "canonicalName": "simple_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "white_background",
+          "isValid": true,
+          "canonicalName": "white_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "gradient_background",
+          "isValid": true,
+          "canonicalName": "gradient_background",
+          "source": "name",
+          "failed": false
+        },
+        {
+          "originalTag": "blur",
+          "isValid": false,
+          "source": "failed",
+          "failed": true
+        },
+        {
+          "originalTag": "depth_of_field",
+          "isValid": true,
+          "canonicalName": "depth_of_field",
+          "source": "name",
+          "failed": false
+        }
+      ],
+      "finalPositive": "blush, saliva, tongue_out, parted_lips, flushed_face, sweatdrop, dilated_pupils, panting, looking_at_viewer, biting_lip, hand_on_breast, hand_on_thigh, leaning_forward, arched_back, heart, sparkle, steam, simple_background, white_background, gradient_background, depth_of_field"
+    }
+  ],
+  "abnormalPrompts": [
+    {
+      "tag": "calm_face",
+      "emotionKey": "default",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "serene_expression",
+      "emotionKey": "default",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "relaxed_posture",
+      "emotionKey": "default",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "neutral_pose",
+      "emotionKey": "default",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "soft_light",
+      "emotionKey": "default",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "shoulders_shrugged",
+      "emotionKey": "amusement",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "emotion_symbol",
+      "emotionKey": "amusement",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "bright_lighting",
+      "emotionKey": "amusement",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "furrowed_brows",
+      "emotionKey": "anger",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "furrowed_brows",
+      "emotionKey": "annoyance",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "tsk",
+      "emotionKey": "annoyance",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "blur",
+      "emotionKey": "annoyance",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "gentle_smile",
+      "emotionKey": "approval",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "soft_expression",
+      "emotionKey": "approval",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "bright_lighting",
+      "emotionKey": "approval",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "gentle_smile",
+      "emotionKey": "caring",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "kind_eyes",
+      "emotionKey": "caring",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "soft_expression",
+      "emotionKey": "caring",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "furrowed_brows",
+      "emotionKey": "caring",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "soft_glow",
+      "emotionKey": "caring",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "confused_expression",
+      "emotionKey": "confusion",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "furrowed_brows",
+      "emotionKey": "confusion",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "puzzled_look",
+      "emotionKey": "confusion",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "blur",
+      "emotionKey": "confusion",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "curious_expression",
+      "emotionKey": "curiosity",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "blur",
+      "emotionKey": "curiosity",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "dialogue_heart",
+      "emotionKey": "desire",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "blur",
+      "emotionKey": "desire",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "drooping_eyes",
+      "emotionKey": "disappointment",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "trembling_lips",
+      "emotionKey": "disappointment",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "slumped_shoulders",
+      "emotionKey": "disappointment",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "rain_cloud",
+      "emotionKey": "disappointment",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "blur",
+      "emotionKey": "disappointment",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "furrowed_brows",
+      "emotionKey": "disapproval",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "blur",
+      "emotionKey": "disapproval",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "furrowed_brows",
+      "emotionKey": "disgust",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "curled_lip",
+      "emotionKey": "disgust",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "turning_away",
+      "emotionKey": "disgust",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "leaning_away",
+      "emotionKey": "disgust",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "blur",
+      "emotionKey": "disgust",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "averted_gaze",
+      "emotionKey": "embarrassment",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "furrowed_brows",
+      "emotionKey": "embarrassment",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "hunched_shoulders",
+      "emotionKey": "embarrassment",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "blur",
+      "emotionKey": "embarrassment",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "bright_lighting",
+      "emotionKey": "excitement",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "furrowed_brows",
+      "emotionKey": "fear",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "backing_away",
+      "emotionKey": "fear",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "blur",
+      "emotionKey": "fear",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "gentle_smile",
+      "emotionKey": "gratitude",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "soft_expression",
+      "emotionKey": "gratitude",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "furrowed_brows",
+      "emotionKey": "grief",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "tear_drops",
+      "emotionKey": "grief",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "rainy_background",
+      "emotionKey": "grief",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "blur",
+      "emotionKey": "grief",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "gloomy_lighting",
+      "emotionKey": "grief",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "bright_lighting",
+      "emotionKey": "joy",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "sweet_smile",
+      "emotionKey": "love",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "hand_on_heart",
+      "emotionKey": "love",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "furrowed_brows",
+      "emotionKey": "nervousness",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "trembling_lips",
+      "emotionKey": "nervousness",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "clutching_shirt",
+      "emotionKey": "nervousness",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "shoulder_shrug",
+      "emotionKey": "nervousness",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "blur",
+      "emotionKey": "nervousness",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "calm_face",
+      "emotionKey": "neutral",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "serene_expression",
+      "emotionKey": "neutral",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "relaxed_posture",
+      "emotionKey": "neutral",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "floating_particles",
+      "emotionKey": "neutral",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "beaming_smile",
+      "emotionKey": "optimism",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "bright_lighting",
+      "emotionKey": "optimism",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "confident_smile",
+      "emotionKey": "pride",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "chest_out",
+      "emotionKey": "pride",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "bright_lighting",
+      "emotionKey": "pride",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "radial_blur",
+      "emotionKey": "realization",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "gentle_smile",
+      "emotionKey": "relief",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "blur",
+      "emotionKey": "relief",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "furrowed_brows",
+      "emotionKey": "remorse",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "trembling_lips",
+      "emotionKey": "remorse",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "blur",
+      "emotionKey": "remorse",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "trembling_lips",
+      "emotionKey": "sadness",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "blur",
+      "emotionKey": "sadness",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "shock_lines",
+      "emotionKey": "surprise",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "blur",
+      "emotionKey": "surprise",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "beaming_smile",
+      "emotionKey": "cheerfulness",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "bright_lighting",
+      "emotionKey": "cheerfulness",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "dialogue_heart",
+      "emotionKey": "in_heat",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    },
+    {
+      "tag": "blur",
+      "emotionKey": "in_heat",
+      "reason": "L0-L3b 全部未命中标签库（L4 KNN / L5 AI 兜底未在脚本中实现）"
+    }
+  ]
+}

@@ -47,7 +47,7 @@ export interface UseAiConfigReturn {
 }
 
 export function useAiConfig(): UseAiConfigReturn {
-  const { setting } = useSettingStore();
+  const setting = useSettingStore(s => s.setting);
 
   const activeEngine = useMemo<AIEngineSetting | null>(() => {
     if (!setting?.aiEngines || setting.aiEngines.length === 0) {

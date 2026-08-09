@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle, useState, useEffect, useCallback } from 'react';
+import { forwardRef, useImperativeHandle, useState, useEffect, useCallback, useMemo } from 'react';
 import { Card, Form, Input, Select, AutoComplete, Button, Slider, InputNumber, Switch, Tooltip, Alert, Space, Collapse, Radio, message } from 'antd';
 import { ApiOutlined, SyncOutlined, QuestionCircleOutlined, SettingOutlined } from '@ant-design/icons';
 import { useSettingStore } from '../../stores/settingStore';
@@ -57,6 +57,9 @@ const DEFAULT_SD_WEBUI_CONFIG: SDWebuiConfig = {
   adNegativePrompt: '',
   adUseNoiseMultiplier: true,
   adNoiseMultiplier: 1.0,
+  // 【重点标记 - Furry/拟人生物面部识别扩展（2026-08-07）】
+  // 仅 YOLO-World 系列模型生效，空字符串=使用模型默认 COCO 80 类。
+  adModelClasses: '',
   // NL 模型相关（Spec: integrate-nl-driven-sd-models / Task 2）
   modelType: 'sdxl',
   nlPromptTemplate: 'A portrait of a character. {traits} The character has {emotion}, looking at the viewer. High quality, detailed.',
@@ -122,6 +125,13 @@ const SCHEDULER_OPTIONS = [
  * - hand_yolov8n.pt：手部检测
  * - person_yolov8n-seg.pt：全身分割
  * - mediapipe_face_*：真实人脸专用
+ *
+ * 【重点标记 - Furry/拟人生物面部识别扩展（2026-08-07）】
+ * 新增 3 个模型，覆盖 furry/兽人/动物面部场景（详见 docs/FIX_RECORDS.md §7.18）：
+ * - yolov8x-worldv2.pt：YOLO-World 开放词汇，ADetailer-Neo 预装，
+ *   配合 adModelClasses 字段可零样本检测任意类别（如 furry face, anthro head）
+ * - Anzhc HeadHair seg y8m.pt：社区头部+毛发分割，对兽人头部覆盖更全（含耳朵/毛发）
+ * - Anzhc Face seg 640 v4 y11n.pt：高精度插画人脸（mAP50=0.835，远超 face_yolov8n 的 0.660）
  */
 const ADETAILER_MODEL_OPTIONS = [
   { label: 'face_yolov8n.pt（默认，2D/真实人脸，速度快）', value: 'face_yolov8n.pt' },
@@ -133,6 +143,15 @@ const ADETAILER_MODEL_OPTIONS = [
   { label: 'mediapipe_face_full（真实人脸）', value: 'mediapipe_face_full' },
   { label: 'mediapipe_face_short（真实人脸）', value: 'mediapipe_face_short' },
   { label: 'mediapipe_face_mesh（真实人脸网格）', value: 'mediapipe_face_mesh' },
+  // 【重点标记 - Furry/拟人生物面部识别扩展（2026-08-07）】
+  // 3 个新增模型，覆盖 furry/兽人/动物面部场景：
+  // - yolov8x-worldv2.pt：YOLO-World 开放词汇，ADetailer-Neo 预装，
+  //   配合 adModelClasses 字段检测任意类别（选择后下方出现「检测类别」输入框）
+  // - Anzhc HeadHair seg y8m.pt：社区头部+毛发分割，对兽人头部覆盖更全（含耳朵/毛发）
+  // - Anzhc Face seg 640 v4 y11n.pt：高精度插画人脸（mAP50=0.835，远超 face_yolov8n 的 0.660）
+  { label: 'yolov8x-worldv2.pt（YOLO-World 开放词汇，furry/兽人，需配合下方「检测类别」）', value: 'yolov8x-worldv2.pt' },
+  { label: 'Anzhc HeadHair seg y8m.pt（社区头部+毛发分割，兽人覆盖更全，需下载）', value: 'Anzhc HeadHair seg y8m.pt' },
+  { label: 'Anzhc Face seg 640 v4 y11n.pt（高精度插画人脸，mAP 0.835，需下载）', value: 'Anzhc Face seg 640 v4 y11n.pt' },
 ];
 
 /**
@@ -176,7 +195,7 @@ const detectModelTypeFromName = (modelName: string): 'sdxl' | 'qwen-image' | 'qw
  * 不混入 Settings.tsx 主表单的扁平字段命名空间。
  */
 const SDWebuiSettings = forwardRef<SDWebuiSettingsRef>((_props, ref) => {
-  const { setting } = useSettingStore();
+  const setting = useSettingStore(s => s.setting);
   const [form] = Form.useForm<SDWebuiConfig>();
 
   // 模型下拉选项：[{ label, value }]，空 value 选项表示「使用当前」
@@ -190,10 +209,34 @@ const SDWebuiSettings = forwardRef<SDWebuiSettingsRef>((_props, ref) => {
   } | null>(null);
   const [testLoading, setTestLoading] = useState(false);
 
+  // 【重点标记 - AutoComplete 搜索词分离（2026-08-07）】
+  // AutoComplete 的 filterOption 默认用输入框值（inputValue）过滤选项。
+  // 当输入框有默认值（如 face_yolov8n.pt）时，filterOption 会用该值过滤，
+  // 导致只显示完全匹配的 1 个选项（用户反馈"下拉只有一个模型"）。
+  // 解决方案：分离「输入框值」与「搜索词」，onFocus 时清空搜索词（显示全部
+  // 12 个选项），onSearch 时更新搜索词（按输入过滤）。filterOption={false}
+  // 禁用 AutoComplete 内部过滤，改由 filteredAdModelOptions 手动过滤。
+  const [adModelSearch, setAdModelSearch] = useState('');
+  const filteredAdModelOptions = useMemo(() => {
+    const search = adModelSearch.toLowerCase().trim();
+    if (!search) return ADETAILER_MODEL_OPTIONS;
+    return ADETAILER_MODEL_OPTIONS.filter((opt) =>
+      (opt.value ?? '').toLowerCase().includes(search),
+    );
+  }, [adModelSearch]);
+
   // 监听模型类型与去噪强度，用于条件渲染（Spec: integrate-nl-driven-sd-models / Task 2）
   // modelType 默认 'sdxl'（初始渲染时 useWatch 返回 undefined 的兜底）
   const modelType = Form.useWatch('modelType', form) ?? 'sdxl';
   const denoisingStrength = Form.useWatch('denoisingStrength', form);
+
+  // 【重点标记 - Furry/拟人生物面部识别扩展（2026-08-07）】
+  // 监听 adModel 用于条件渲染：
+  // - YOLO-World 系列（文件名含 "world"）→ 显示「检测类别」输入框（ad_model_classes）
+  // - Anzhc 系列（文件名以 "Anzhc" 开头）→ 显示下载提示 Alert
+  const adModelValue = Form.useWatch('adModel', form) ?? 'face_yolov8n.pt';
+  const isYoloWorldModel = (adModelValue as string).toLowerCase().includes('world');
+  const isAnzhcModel = (adModelValue as string).startsWith('Anzhc');
 
   useImperativeHandle(ref, () => ({
     getFormValues: () => {
@@ -710,14 +753,60 @@ const SDWebuiSettings = forwardRef<SDWebuiSettingsRef>((_props, ref) => {
                     tooltip="face_yolov8n.pt 默认；face_yolov8s.pt 精度更高；hand_yolov8n.pt 手部；person_yolov8n-seg.pt 全身"
                   >
                     <AutoComplete
-                      options={ADETAILER_MODEL_OPTIONS}
+                      options={filteredAdModelOptions}
                       placeholder="选择或输入检测模型名"
-                      filterOption={(inputValue, option) =>
-                        (option?.value ?? '').toLowerCase().includes(inputValue.toLowerCase())
-                      }
+                      onSearch={setAdModelSearch}
+                      onFocus={() => setAdModelSearch('')}
+                      filterOption={false}
                       allowClear
                     />
                   </Form.Item>
+
+                  {/* 【重点标记 - YOLO-World 检测类别（2026-08-07）】仅 YOLO-World 系列模型显示 */}
+                  {/* ad_model_classes 透传给 ultralytics_predict 的 classes 参数，实现零样本开放词汇检测 */}
+                  {isYoloWorldModel && (
+                    <Form.Item
+                      label={
+                        <Space>
+                          <span>检测类别（ad_model_classes）</span>
+                          <Tooltip title="仅 YOLO-World 模型生效。逗号分隔的文本提示，零样本检测任意对象。例如：furry face, anthro head, animal head, kemono face。留空则使用模型默认 COCO 80 类">
+                            <QuestionCircleOutlined style={{ color: '#999', cursor: 'pointer' }} />
+                          </Tooltip>
+                        </Space>
+                      }
+                      name="adModelClasses"
+                      tooltip="逗号分隔的检测类别文本提示，仅 YOLO-World 模型生效"
+                    >
+                      <Input.TextArea
+                        rows={2}
+                        placeholder="furry face, anthro head, animal head, kemono face（留空=使用默认 COCO 80 类）"
+                      />
+                    </Form.Item>
+                  )}
+
+                  {/* 【重点标记 - Anzhc 社区模型下载提示（2026-08-07）】仅选择 Anzhc 模型时显示 */}
+                  {isAnzhcModel && (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      style={{ marginBottom: 16 }}
+                      message="此模型需手动下载"
+                      description={
+                        <div style={{ fontSize: 12 }}>
+                          从 HuggingFace 下载：
+                          <a
+                            href="https://huggingface.co/Anzhc/Anzhcs_YOLOs"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            Anzhc/Anzhcs_YOLOs
+                          </a>
+                          <br />
+                          下载后放入 SD WebUI 的 <code>models/adetailer/</code> 目录，文件名必须与上方完全一致。
+                        </div>
+                      }
+                    />
+                  )}
 
                   <Form.Item
                     label={

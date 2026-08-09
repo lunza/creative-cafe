@@ -82,6 +82,27 @@ export function getProjectRoot(): string {
 }
 
 /**
+ * 获取数据库文件存储目录。
+ *
+ * 开发环境（!app.isPackaged）：项目根目录/database（用户可直观查看向量文件、meta 文件等）
+ * 生产环境（app.isPackaged）：userData/database（app.asar 只读，无法写入项目根）
+ *
+ * 用于 SqliteVecBackend 的向量 DB 文件路径 + tagRagService 的 meta 文件路径。
+ */
+export function getDatabaseDir(): string {
+  try {
+    if (app && typeof app.isPackaged === 'boolean' && !app.isPackaged) {
+      // 开发环境：项目根目录/database
+      return path.join(getProjectRoot(), 'database');
+    }
+  } catch {
+    // 静默失败，使用兜底方案
+  }
+  // 生产环境或兜底：userData/database
+  return path.join(getUserDataPath(), 'database');
+}
+
+/**
  * 将 __USER_DATA__ 占位符替换为实际用户数据路径
  * 仅当路径以 __USER_DATA__ 开头时执行替换，否则原样返回。
  * @param dir - 可能包含 __USER_DATA__ 占位符的路径

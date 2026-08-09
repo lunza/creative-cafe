@@ -46,7 +46,7 @@ export interface AIConfig {
 
 export interface EngineConfig {
   temperature: number;
-  maxTokens: number;
+  maxTokens?: number;
 }
 
 export interface CallOptions {
@@ -161,7 +161,7 @@ export class AIConfigProvider {
       model: engine.model_name,
       systemPrompt: engine?.system_prompt || '',
       temperature: engine?.temperature,
-      maxTokens: engine?.max_tokens,
+      maxTokens: undefined,
       topP: engine?.top_p,
       frequencyPenalty: engine?.frequency_penalty,
       presencePenalty: engine?.presence_penalty,
@@ -179,13 +179,9 @@ export class AIConfigProvider {
       throw new Error('未配置 AI 温度参数，请在设置中配置 AI 引擎');
     }
 
-    if (engine?.max_tokens === undefined || engine?.max_tokens === null) {
-      throw new Error('未配置 AI 最大令牌数，请在设置中配置 AI 引擎');
-    }
-
     return {
       temperature: engine.temperature,
-      maxTokens: engine.max_tokens
+      maxTokens: undefined
     };
   }
 
@@ -410,10 +406,14 @@ export class AIService {
       config
     });
 
-    // 与 useWorldBookAIOperations 统一：默认禁用推理模型思考过程，
-    // 避免 reasoning_content 占据 token 导致 content 为空。
-    // 仅当引擎配置显式开启 enable_chain_of_thought 时才启用。
-    requestBody.enable_thinking = config.enableChainOfThought === true;
+    // 能力感知：思维链参数仅在双条件满足时注入（与 ChatEngine.ts 对齐）
+    //   1. enable_chain_of_thought === true（用户在引擎设置中启用了思维链）
+    //   2. capabilities.supportsThinking === true（模型探测支持思维链/推理）
+    // 缺任一条件则不注入，避免向不支持该参数的 API（如 DeepSeek）发送非标准字段导致 400
+    const supportsThinking = (config as any).capabilities?.supportsThinking === true;
+    if (config.enableChainOfThought === true && supportsThinking) {
+      requestBody.enable_thinking = true;
+    }
 
     const controller = new AbortController();
     const timeoutId = timeoutMs && timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null;
@@ -502,9 +502,11 @@ export class AIService {
       supportsToolCalling,
     });
 
-    // 与 callChatAPI 统一：默认禁用推理模型思考过程，
-    // 仅当引擎配置显式开启 enable_chain_of_thought 时才启用。
-    requestBody.enable_thinking = config.enableChainOfThought === true;
+    // 能力感知：思维链参数仅在双条件满足时注入（与 ChatEngine.ts 对齐）
+    const supportsThinking = (config as any).capabilities?.supportsThinking === true;
+    if (config.enableChainOfThought === true && supportsThinking) {
+      requestBody.enable_thinking = true;
+    }
 
     let lastError: Error | null = null;
 

@@ -1,37 +1,15 @@
-// 角色对话状态管理 Reducer（Spec: optimize-agent-interaction-from-openclaw / Task 8）
+// 角色卡对话状态管理 Reducer
 //
 // 将 useCharacterDialogueChat hook 中分散的 setState 调用收敛为统一的 reducer 模式，
-// 降低异步回调中状态管理的复杂度，并为后续 Task 5（工具调用卡片）/ Task 7（会话管理）
-// 预留 toolCalls / currentSessionId / tokenUsage 状态字段。
+// 降低异步回调中状态管理的复杂度，预留 tokenUsage 状态字段。
 
 import type { ChatMessage } from './CharacterDialogueChat.types';
-
-// ==================== 工具调用状态 ====================
-
-/**
- * 单次工具调用信息（为 Task 5 工具调用卡片组件预留）。
- *
- * 当前 Task 8 仅定义数据结构与 reducer 分支，实际写入由后续 agent 底座接入后填充。
- */
-export interface ToolCallInfo {
-  id: string;
-  toolName: string;
-  args: Record<string, unknown>;
-  status: 'pending' | 'success' | 'error';
-  result?: string;
-  error?: string;
-  startTime?: number;
-  endTime?: number;
-}
 
 // ==================== Reducer State ====================
 
 /**
  * 对话 Reducer 状态（现有 ChatState 的超集）。
  *
- * 新增字段：
- * - toolCalls：工具调用状态映射（id → ToolCallInfo），为 Task 5 预留
- * - currentSessionId：当前会话 ID，为 Task 7 会话管理预留
  * - tokenUsage：token 用量信息，为 Task 11 上下文窗口守卫预留
  *
  * 注意：CharacterDialogueChat.types.ts 中的 ChatState 接口保留不动（其他地方可能引用），
@@ -43,8 +21,6 @@ export interface ChatReducerState {
   isStreaming: boolean;
   error: string | null;
   // 新增字段（为后续 Task 预留）
-  toolCalls: Record<string, ToolCallInfo>;
-  currentSessionId: string | null;
   tokenUsage: { used: number; total: number } | null;
 }
 
@@ -67,8 +43,6 @@ export type ChatAction =
   | { type: 'CLEAR_MESSAGES' }
   | { type: 'CLEAR_ERROR' }
   | { type: 'UPDATE_MESSAGES'; messages: ChatMessage[] }
-  | { type: 'TOOL_CALL_UPDATE'; toolCall: ToolCallInfo }
-  | { type: 'SESSION_SWITCH'; sessionId: string }
   | { type: 'SET_TOKEN_USAGE'; usage: { used: number; total: number } | null };
 
 // ==================== 初始状态 ====================
@@ -78,8 +52,6 @@ export const initialChatState: ChatReducerState = {
   isLoading: false,
   isStreaming: false,
   error: null,
-  toolCalls: {},
-  currentSessionId: null,
   tokenUsage: null,
 };
 
@@ -142,14 +114,6 @@ export function chatReducer(state: ChatReducerState, action: ChatAction): ChatRe
     case 'UPDATE_MESSAGES':
       // 仅更新消息列表（不改变 loading/streaming/error）
       return { ...state, messages: action.messages };
-
-    case 'TOOL_CALL_UPDATE':
-      // 工具调用状态更新（为 Task 5 预留）
-      return { ...state, toolCalls: { ...state.toolCalls, [action.toolCall.id]: action.toolCall } };
-
-    case 'SESSION_SWITCH':
-      // 会话切换：清理工具调用状态，避免残留上一个会话的工具调用卡片
-      return { ...state, currentSessionId: action.sessionId, toolCalls: {} };
 
     case 'SET_TOKEN_USAGE':
       // Token 用量更新（为 Task 11 预留）

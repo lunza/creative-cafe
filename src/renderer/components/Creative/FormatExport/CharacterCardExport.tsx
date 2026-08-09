@@ -13,8 +13,9 @@ interface CharacterCardExportProps {
 }
 
 const CharacterCardExport: React.FC<CharacterCardExportProps> = ({ creativeId }) => {
-  const { creatives, updateCharacterCard } = useCreativeStore();
-  const { addLog } = useLogStore();
+  const creatives = useCreativeStore(s => s.creatives);
+  const updateCharacterCard = useCreativeStore(s => s.updateCharacterCard);
+  const addLog = useLogStore(s => s.addLog);
 
   const [exportFormat, setExportFormat] = useState<'png' | 'json'>('png');
   const [isExporting, setIsExporting] = useState(false);

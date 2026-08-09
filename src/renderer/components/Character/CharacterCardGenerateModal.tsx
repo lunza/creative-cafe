@@ -76,7 +76,8 @@ const CharacterCardGenerateModal: React.FC<CharacterCardGenerateModalProps> = ({
   const [generatedCard, setGeneratedCard] = useState<CharacterCardData | null>(null);
   const [editingCard, setEditingCard] = useState<CharacterCardData | null>(null);
   const [isLoadingWorldBooks, setIsLoadingWorldBooks] = useState(false);
-  const { setting, fetchSetting } = useSettingStore();
+  const setting = useSettingStore(s => s.setting);
+  const fetchSetting = useSettingStore(s => s.fetchSetting);
   const isGeneratingRef = useRef(false);
 
   useEffect(() => {

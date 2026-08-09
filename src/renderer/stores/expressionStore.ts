@@ -141,17 +141,25 @@ interface ExpressionState {
    * 返回 null 表示未上传该情绪表情，调用方应回退到默认头像（avatarPath）。
    * 不区分自定义/预置类型——只要 imageCache 中有该 key 就返回。
    *
-   * 特殊规则：emotionKey 为 null/undefined/空串/'default' 时直接返回 null
-   * （default 情绪始终使用 avatarPath，无需上传）。
+   * 特殊规则：emotionKey 为 null/undefined/空串时返回 null；
+   * 'default' 键优先查 imageCache（用户上传的角色卡原图），无则返回 null。
    */
   resolveExpressionImage: (emotionKey: string | undefined | null) => string | null;
 
   /**
    * 获取当前角色卡可用的所有情绪键（预置 30 + 自定义）。
-   * 用于 buildExpressionPrompt 的 availableEmotionKeys 参数。
+   * 用于 AssetManagerModal UI 展示所有可选情绪槽位。
    * 去重保序，预置优先。
    */
   getAvailableEmotionKeys: () => string[];
+
+  /**
+   * 获取当前角色卡已上传表情图片的情绪键列表。
+   * 用于 buildExpressionPrompt —— 只告诉 AI 它可以输出哪些有图片的情绪键，
+   * 避免 AI 返回未上传图片的情绪键导致表情不显示。
+   * 去重保序，预置优先。
+   */
+  getUploadedEmotionKeys: () => string[];
 
   /** 重置所有状态（离开角色对话时调用） */
   clear: () => void;
@@ -489,15 +497,16 @@ export const useExpressionStore = create<ExpressionState>((set, get) => ({
   },
 
   resolveExpressionImage: (emotionKey: string | undefined | null) => {
-    // null/undefined/空串 → 回退到默认头像
+    // null/undefined/空串 → 无表情
     if (emotionKey === null || emotionKey === undefined || emotionKey === '') {
       return null;
     }
-    // default 情绪 → 使用 avatarPath 回退（不要求用户上传 default 表情）
-    if (emotionKey === 'default') {
-      return null;
-    }
     const { imageCache } = get();
+    // default 情绪：优先使用用户上传的 default 表情图片（角色卡原图），
+    // 若未上传则返回 null，由调用方回退到 avatarPath
+    if (emotionKey === 'default') {
+      return imageCache['default'] || null;
+    }
     return imageCache[emotionKey] || null;
   },
 
@@ -517,6 +526,17 @@ export const useExpressionStore = create<ExpressionState>((set, get) => ({
       }
     }
     return result;
+  },
+
+  getUploadedEmotionKeys: () => {
+    const { imageCache } = get();
+    const allKeys = get().getAvailableEmotionKeys();
+    // 只返回 imageCache 中有 data URL 的键（即用户已上传图片的情绪）
+    return allKeys.filter((k) => {
+      // default 情绪始终使用 avatarPath 回退，不需要上传图片
+      if (k === 'default') return true;
+      return !!imageCache[k];
+    });
   },
 
   clear: () => {

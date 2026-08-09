@@ -195,7 +195,7 @@ const WorldBookAuthoringModal: React.FC<WorldBookAuthoringModalProps> = ({
   onClose,
 }) => {
   // 从 store 获取世界书列表，用于目标世界书选择
-  const { worldBooks } = useWorldBookStore();
+  const worldBooks = useWorldBookStore(s => s.worldBooks);
 
   // 内部维护选中的世界书路径，优先使用 props 传入的值
   const [selectedPath, setSelectedPath] = useState<string>(worldBookPath);
@@ -213,7 +213,7 @@ const WorldBookAuthoringModal: React.FC<WorldBookAuthoringModalProps> = ({
   // Spec: add-agent-web-search-tool / Task 11 — 读取全局 webSearch.enabled
   // 仅当全局开关开启时显示"启用网络搜索"Switch（spec §SubTask 11.3）。
   // useSettingStore 已在应用启动时 fetchSetting，此处直接读取 setting.webSearch.enabled。
-  const { setting } = useSettingStore();
+  const setting = useSettingStore(s => s.setting);
   const globalWebSearchEnabled = setting?.webSearch?.enabled === true;
 
   // ---- 配置态表单状态 ----
@@ -383,7 +383,7 @@ const WorldBookAuthoringModal: React.FC<WorldBookAuthoringModalProps> = ({
                 value: wb.path,
               }))}
               notFoundContent={
-                <span style={{ fontSize: 12, color: '#8c8c8c' }}>
+                <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
                   暂无世界书，请先创建或导入世界书
                 </span>
               }
@@ -446,7 +446,7 @@ const WorldBookAuthoringModal: React.FC<WorldBookAuthoringModalProps> = ({
                 <GlobalOutlined style={{ color: '#13c2c2' }} />
                 <Text strong>启用网络搜索</Text>
                 <Tooltip title="开启后，智能体在 PLANNING / AUTHORING 阶段会调用网络搜索获取相关资料，作为 LLM 上下文补充。搜索失败时不阻断编写流程。">
-                  <QuestionCircleOutlined style={{ color: '#8c8c8c', fontSize: 12 }} />
+                  <QuestionCircleOutlined style={{ color: 'var(--text-secondary)', fontSize: 12 }} />
                 </Tooltip>
               </Space>
               <Switch
@@ -1023,9 +1023,9 @@ const WorldBookAuthoringModal: React.FC<WorldBookAuthoringModalProps> = ({
           maxHeight: 260,
           overflowY: 'auto',
           padding: '8px 12px',
-          background: '#fafafa',
+          background: 'var(--bg-elevated)',
           borderRadius: 6,
-          border: '1px solid #f0f0f0',
+          border: '1px solid var(--border-base)',
           fontSize: 12,
         }}
       >
@@ -1048,7 +1048,7 @@ const WorldBookAuthoringModal: React.FC<WorldBookAuthoringModalProps> = ({
                 {new Date(evt.timestamp).toLocaleTimeString('zh-CN', { hour12: false })}
               </span>
               <span style={{ flexShrink: 0, minWidth: 64, fontWeight: 500 }}>{meta.label}</span>
-              <span style={{ color: '#595959', flex: 1 }}>
+              <span style={{ color: 'var(--text-secondary)', flex: 1 }}>
                 {evt.message || evt.currentActivity}
               </span>
             </div>
@@ -1158,13 +1158,13 @@ const StatCard: React.FC<{ label: string; value: React.ReactNode; color: string 
     style={{
       textAlign: 'center',
       padding: '12px 8px',
-      background: '#fafafa',
+      background: 'var(--bg-elevated)',
       borderRadius: 6,
-      border: '1px solid #f0f0f0',
+      border: '1px solid var(--border-base)',
     }}
   >
     <div style={{ fontSize: 22, fontWeight: 600, color }}>{value}</div>
-    <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 4 }}>{label}</div>
+    <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>{label}</div>
   </div>
 );
 
@@ -1193,9 +1193,9 @@ const AuditProgressCard: React.FC<{
     <div
       style={{
         padding: '12px',
-        background: '#fafafa',
+        background: 'var(--bg-elevated)',
         borderRadius: 6,
-        border: '1px solid #f0f0f0',
+        border: '1px solid var(--border-base)',
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
@@ -1205,7 +1205,7 @@ const AuditProgressCard: React.FC<{
         </Tag>
       </div>
       <Progress percent={percent} size="small" strokeColor={color} status={status} />
-      <div style={{ fontSize: 11, color: '#8c8c8c', marginTop: 4 }}>{detail}</div>
+      <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4 }}>{detail}</div>
     </div>
   );
 };
@@ -1280,14 +1280,14 @@ const AutoFixesList: React.FC<{ autoFixes: AuditAutoFix[] }> = ({ autoFixes }) =
             </Text>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 8, alignItems: 'center' }}>
-            <div style={{ padding: 6, background: '#fff1f0', borderRadius: 4, fontSize: 11 }}>
+            <div style={{ padding: 6, background: 'var(--color-error-light)', borderRadius: 4, fontSize: 11 }}>
               <Text type="secondary" style={{ fontSize: 10 }}>修复前：</Text>
               <div style={{ marginTop: 2, wordBreak: 'break-all', maxHeight: 60, overflow: 'auto' }}>
                 {fix.oldValue || <Text type="secondary">（空）</Text>}
               </div>
             </div>
             <ArrowRight />
-            <div style={{ padding: 6, background: '#f6ffed', borderRadius: 4, fontSize: 11 }}>
+            <div style={{ padding: 6, background: 'var(--color-success-light)', borderRadius: 4, fontSize: 11 }}>
               <Text type="secondary" style={{ fontSize: 10 }}>修复后：</Text>
               <div style={{ marginTop: 2, wordBreak: 'break-all', maxHeight: 60, overflow: 'auto' }}>
                 {fix.newValue || <Text type="secondary">（空）</Text>}
@@ -1307,7 +1307,7 @@ const AutoFixesList: React.FC<{ autoFixes: AuditAutoFix[] }> = ({ autoFixes }) =
 
 /** 简易右箭头组件（用于修复前→修复后展示） */
 const ArrowRight: React.FC = () => (
-  <span style={{ color: '#8c8c8c', fontSize: 14, textAlign: 'center' }}>→</span>
+  <span style={{ color: 'var(--text-secondary)', fontSize: 14, textAlign: 'center' }}>→</span>
 );
 
 // ==================== 工具函数 ====================

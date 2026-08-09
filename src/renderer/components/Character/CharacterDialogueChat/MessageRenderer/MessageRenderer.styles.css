@@ -307,30 +307,25 @@
 }
 
 .message-renderer-quote-highlight {
-  color: #FFB347;
-  font-weight: 600;
-  text-shadow: 0 0 8px rgba(255, 179, 71, 0.3);
+  color: var(--mr-quote-highlight-color, #E8A87C);
+  font-weight: 500;
+  background: var(--mr-quote-highlight-bg, rgba(255, 179, 71, 0.12));
+  border: 1px solid var(--mr-quote-highlight-border, rgba(255, 179, 71, 0.2));
+  padding: 0 4px;
+  border-radius: 4px;
   transition: all 0.2s ease;
 }
 
 .message-renderer-quote-highlight mark {
   background: transparent;
   padding: 0;
-  font-weight: 600;
+  font-weight: 500;
   color: inherit;
 }
 
-[data-theme="dark"] .message-renderer-quote-highlight {
-  color: #FFCA28;
-  text-shadow: 0 0 10px rgba(255, 202, 40, 0.4);
-}
-
-[data-theme="light"] .message-renderer-quote-highlight {
-  color: #E65100;
-  background: rgba(255, 152, 0, 0.08);
-  padding: 0 2px;
-  border-radius: 3px;
-  text-shadow: none;
+/* 暗色主题覆盖（使用 .dark 类与全局主题系统一致） */
+.dark .message-renderer-quote-highlight {
+  color: var(--mr-quote-highlight-color, #F0B670);
 }
 
 .message-renderer-content .edit-icon {
@@ -343,4 +338,44 @@
 
 .message-renderer-content:hover .edit-icon {
   opacity: 1;
+}
+
+/* ===== 思考内容折叠展示 ===== */
+.message-renderer-thought-block {
+  background: var(--mr-thought-bg, rgba(148, 163, 184, 0.08));
+  border-left: 3px solid var(--mr-thought-border, rgba(148, 163, 184, 0.3));
+  border-radius: 0 6px 6px 0;
+  padding: 8px 12px;
+  margin: 4px 0;
+  font-size: 0.9em;
+  line-height: 1.5;
+  color: var(--mr-thought-color, #9ca3af);
+  font-style: italic;
+}
+
+.message-renderer-thought-block summary {
+  cursor: pointer;
+  font-style: italic;
+  font-size: 0.85em;
+  opacity: 0.8;
+  user-select: none;
+  list-style: none;
+}
+
+.message-renderer-thought-block summary::-webkit-details-marker {
+  display: none;
+}
+
+.message-renderer-thought-block[open] summary {
+  margin-bottom: 6px;
+  opacity: 0.6;
+}
+
+/* ===== 行为描述视觉区分（斜体内容） ===== */
+.message-renderer-action {
+  font-style: italic;
+  background: var(--mr-action-bg, rgba(168, 85, 247, 0.06));
+  padding: 0 8px;
+  border-radius: 4px;
+  color: var(--mr-action-color, #c4b5fd);
 }

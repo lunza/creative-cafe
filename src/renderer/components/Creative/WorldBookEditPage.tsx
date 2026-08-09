@@ -13,8 +13,13 @@ const { Title, Text } = Typography;
 const { TextArea } = Input;
 
 const WorldBookEditPage: React.FC = () => {
-  const { currentCreativeId, creatives, updateWorldBook, loadCreatives } = useCreativeStore();
-  const { theme, setCreativeTab, setCreativeView } = useUIStore();
+  const currentCreativeId = useCreativeStore(s => s.currentCreativeId);
+  const creatives = useCreativeStore(s => s.creatives);
+  const updateWorldBook = useCreativeStore(s => s.updateWorldBook);
+  const loadCreatives = useCreativeStore(s => s.loadCreatives);
+  const theme = useUIStore(s => s.theme);
+  const setCreativeTab = useUIStore(s => s.setCreativeTab);
+  const setCreativeView = useUIStore(s => s.setCreativeView);
   const { generate } = useCreativeAI();
   const editorRef = useRef<TextEditorHandle>(null);
 

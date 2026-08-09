@@ -6,7 +6,7 @@ import ParameterPanel from './ParameterPanel';
 import VectorizationPanel from './VectorizationPanel';
 import MemoryTablePanel from './MemoryTablePanel';
 import TokenManagementPanel from './TokenManagementPanel';
-import { UserPersona, AIParameterConfig, EffectiveAIParams } from './CharacterDialogueChat.types';
+import { UserPersona, AIParameterConfig, EffectiveAIParams, ThinkTagMode } from './CharacterDialogueChat.types';
 import { EngineCapabilities } from '../../Common/ChatEngine/ChatEngine.types';
 import './ConfigPanel.css';
 
@@ -38,9 +38,9 @@ interface ConfigPanelProps {
   // 开启表情（Spec: add-character-expression-system）
   expressionDisplay?: boolean;
   onExpressionDisplayToggle?: (enabled: boolean) => void;
-  // Think 标签处理（Spec: handle-think-tags-overflow）
-  stripThinkTags?: boolean;
-  onStripThinkTagsToggle?: (enabled: boolean) => void;
+  // Think 标签处理三态选择
+  thinkTagMode?: ThinkTagMode;
+  onThinkTagModeChange?: (mode: ThinkTagMode) => void;
   // 辅助模式开关（Spec: add-assist-mode-options）
   assistMode?: boolean;
   onAssistModeToggle?: (enabled: boolean) => void;
@@ -86,8 +86,8 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
   customStopSequences,
   expressionDisplay,
   onExpressionDisplayToggle,
-  stripThinkTags,
-  onStripThinkTagsToggle,
+  thinkTagMode,
+  onThinkTagModeChange,
   assistMode,
   onAssistModeToggle,
   language,
@@ -127,8 +127,8 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
         onCustomStopSequencesChange={onCustomStopSequencesChange}
         expressionDisplay={expressionDisplay}
         onExpressionDisplayToggle={onExpressionDisplayToggle}
-        stripThinkTags={stripThinkTags}
-        onStripThinkTagsToggle={onStripThinkTagsToggle}
+        thinkTagMode={thinkTagMode}
+        onThinkTagModeChange={onThinkTagModeChange}
         assistMode={assistMode}
         onAssistModeToggle={onAssistModeToggle}
         language={language}
@@ -136,33 +136,37 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
         engineCapabilities={engineCapabilities}
       />
       <div className="config-panel-divider" />
-      <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--config-panel-sub-title-color)', marginBottom: 8 }}>
-        记忆与上下文增强
-      </div>
-      <VectorizationPanel
-        characterCardId={characterCardId}
-        boundKnowledgeBaseIds={boundKnowledgeBaseIds}
-        onBindKnowledgeBase={onBindKnowledgeBase}
-        onUnbindKnowledgeBase={onUnbindKnowledgeBase}
-      />
-      <div style={{ fontSize: '12px', color: 'var(--config-panel-sub-text-color, #94a3b8)', marginTop: 4 }}>
-        从文档中检索相关知识注入上下文
+      <div>
+        <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--config-panel-sub-title-color)', marginBottom: 8 }}>
+          记忆与上下文增强
+        </div>
+        <VectorizationPanel
+          characterCardId={characterCardId}
+          boundKnowledgeBaseIds={boundKnowledgeBaseIds}
+          onBindKnowledgeBase={onBindKnowledgeBase}
+          onUnbindKnowledgeBase={onUnbindKnowledgeBase}
+        />
+        <div style={{ fontSize: '12px', color: 'var(--config-panel-sub-text-color, #94a3b8)', marginTop: 4 }}>
+          从文档中检索相关知识注入上下文
+        </div>
       </div>
       <div className="config-panel-divider" />
-      <MemoryTablePanel
-        enabled={memoryTableEnabled}
-        autoOrganize={memoryTableAutoOrganize}
-        organizeMode={memoryTableOrganizeMode}
-        associatedTemplateId={memoryTableTemplateId}
-        associatedTemplateName={memoryTableTemplateName}
-        characterCardName={characterCardName}
-        onToggle={onMemoryTableToggle}
-        onAutoOrganizeToggle={onMemoryTableAutoOrganizeToggle}
-        onOrganizeModeChange={onMemoryTableOrganizeModeChange}
-        onTemplateAssociate={onMemoryTableTemplateAssociate}
-      />
-      <div style={{ fontSize: '12px', color: 'var(--config-panel-sub-text-color, #94a3b8)', marginTop: 4 }}>
-        AI 自动整理对话中的关键信息到表格
+      <div>
+        <MemoryTablePanel
+          enabled={memoryTableEnabled}
+          autoOrganize={memoryTableAutoOrganize}
+          organizeMode={memoryTableOrganizeMode}
+          associatedTemplateId={memoryTableTemplateId}
+          associatedTemplateName={memoryTableTemplateName}
+          characterCardName={characterCardName}
+          onToggle={onMemoryTableToggle}
+          onAutoOrganizeToggle={onMemoryTableAutoOrganizeToggle}
+          onOrganizeModeChange={onMemoryTableOrganizeModeChange}
+          onTemplateAssociate={onMemoryTableTemplateAssociate}
+        />
+        <div style={{ fontSize: '12px', color: 'var(--config-panel-sub-text-color, #94a3b8)', marginTop: 4 }}>
+          AI 自动整理对话中的关键信息到表格
+        </div>
       </div>
       <div className="config-panel-divider" />
       <TokenManagementPanel

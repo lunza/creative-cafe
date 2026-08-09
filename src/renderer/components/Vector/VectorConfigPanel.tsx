@@ -94,8 +94,9 @@ const MODE_FIELD_MAP: Record<EmbeddingMode, string[]> = {
 };
 
 const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
+  // TODO(perf): 整体订阅，待拆分为 selector（6 字段，>5 暂缓）
   const { mode, isConnected, dimension, loading, testConnection, testStorage } = useVectorStore();
-  const { setting } = useSettingStore();
+  const setting = useSettingStore(s => s.setting);
   const [form] = Form.useForm();
   const [activeEmbeddingMode, setActiveEmbeddingMode] = useState<EmbeddingMode>('remote');
   const [showAdvanced, setShowAdvanced] = useState(false);

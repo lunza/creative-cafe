@@ -26,19 +26,25 @@ import {
   RobotOutlined
 } from '@ant-design/icons';
 
-import Dashboard from './components/Dashboard/Dashboard';
-import WorldBookManager from './components/WorldBook/WorldBookManager';
-import AvatarManager from './components/Avatar/AvatarManager';
-import CharacterManager from './components/Character/CharacterManager';
-import Settings from './components/Settings/Settings';
-import MemoryChatManager from './components/MemoryChat/MemoryChatManager';
-import CreativeManager from './components/Creative/CreativeManager';
-import TestPage from './components/Test/TestPage';
-import DocumentVectorPage from './components/Test/DocumentVectorPage';
-import { KnowledgeBaseManager } from './components/KnowledgeBase/KnowledgeBaseManager';
-import { CreationCenter } from './components/Chat/CreationCenter';
-import PromptManagement from './components/PromptManagement/PromptManagement';
-import AgentCenter from './components/AgentCenter/AgentCenter';
+// 路由级代码分割：所有路由组件使用 React.lazy 懒加载，降低首屏 bundle 体积
+const Dashboard = React.lazy(() => import('./components/Dashboard/Dashboard'));
+const WorldBookManager = React.lazy(() => import('./components/WorldBook/WorldBookManager'));
+const AvatarManager = React.lazy(() => import('./components/Avatar/AvatarManager'));
+const CharacterManager = React.lazy(() => import('./components/Character/CharacterManager'));
+const Settings = React.lazy(() => import('./components/Settings/Settings'));
+const MemoryChatManager = React.lazy(() => import('./components/MemoryChat/MemoryChatManager'));
+const CreativeManager = React.lazy(() => import('./components/Creative/CreativeManager'));
+const TestPage = React.lazy(() => import('./components/Test/TestPage'));
+const DocumentVectorPage = React.lazy(() => import('./components/Test/DocumentVectorPage'));
+// 命名导出需要通过 .then(m => ({ default: m.X })) 适配 React.lazy 的 default 导入约定
+const KnowledgeBaseManager = React.lazy(() =>
+  import('./components/KnowledgeBase/KnowledgeBaseManager').then(m => ({ default: m.KnowledgeBaseManager }))
+);
+const CreationCenter = React.lazy(() =>
+  import('./components/Chat/CreationCenter').then(m => ({ default: m.CreationCenter }))
+);
+const PromptManagement = React.lazy(() => import('./components/PromptManagement/PromptManagement'));
+const AgentCenter = React.lazy(() => import('./components/AgentCenter/AgentCenter'));
 
 export interface RouteConfig {
   /** 唯一 key，与 uiStore.activeTab 对应 */
@@ -51,6 +57,10 @@ export interface RouteConfig {
   component?: React.ComponentType<any>;
   /** 是否仅在 debugMode 下显示；DEV 徽标由 Sidebar 渲染 */
   devOnly?: boolean;
+  /** 隐藏菜单项（不显示在侧边栏，但路由仍可用） */
+  hidden?: boolean;
+  /** 固定在菜单列表最下方（如设置） */
+  pinnedBottom?: boolean;
   /** 子菜单（如测试集） */
   children?: RouteConfig[];
 }
@@ -72,7 +82,8 @@ export const routeConfigs: RouteConfig[] = [
     key: 'creative',
     label: '创意管理',
     icon: RocketOutlined,
-    component: CreativeManager
+    component: CreativeManager,
+    hidden: true
   },
   {
     key: 'worldbook',
@@ -103,12 +114,6 @@ export const routeConfigs: RouteConfig[] = [
     label: '知识库',
     icon: FileTextOutlined,
     component: KnowledgeBaseManager
-  },
-  {
-    key: 'settings',
-    label: '设置',
-    icon: SettingOutlined,
-    component: Settings
   },
   {
     key: 'agent-center',
@@ -151,6 +156,13 @@ export const routeConfigs: RouteConfig[] = [
         devOnly: true
       }
     ]
+  },
+  {
+    key: 'settings',
+    label: '设置',
+    icon: SettingOutlined,
+    component: Settings,
+    pinnedBottom: true
   }
 ];
 
@@ -180,5 +192,5 @@ export function findRouteComponent(activeTab: string): React.ComponentType<any> 
  * 此处仅返回数据，避免在数据层耦合视图。
  */
 export function getMenuRoutes(debugMode: boolean): RouteConfig[] {
-  return routeConfigs.filter((route) => !route.devOnly || debugMode);
+  return routeConfigs.filter((route) => (!route.devOnly || debugMode) && !route.hidden);
 }

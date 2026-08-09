@@ -14,7 +14,9 @@ export const SingleChatDialog: React.FC<SingleChatDialogProps> = ({
   onCloseDialog,
   initialCharacterPath,
 }) => {
-  const { characters, fetchCharacters, loading } = useDataStore();
+  const characters = useDataStore(s => s.characters);
+  const fetchCharacters = useDataStore(s => s.fetchCharacters);
+  const loading = useDataStore(s => s.loading);
   const [isFetching, setIsFetching] = useState(false);
   const [fetchAttempted, setFetchAttempted] = useState(false);
 

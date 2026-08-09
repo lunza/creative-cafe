@@ -16,8 +16,11 @@ interface WorldBookListRecord {
 }
 
 const WorldBookListPage: React.FC = () => {
+  // TODO(perf): 整体订阅，待拆分为 selector（6 字段，>5 暂缓）
   const { creatives, loadCreatives, setWorldBook, updateWorldBook, removeWorldBook, setCurrentCreativeId } = useCreativeStore();
-  const { theme, setCreativeTab, setCreativeView } = useUIStore();
+  const theme = useUIStore(s => s.theme);
+  const setCreativeTab = useUIStore(s => s.setCreativeTab);
+  const setCreativeView = useUIStore(s => s.setCreativeView);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [form] = Form.useForm();

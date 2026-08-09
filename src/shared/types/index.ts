@@ -14,6 +14,7 @@
  * - 向量配置 Schema 常量：`./vectorConfigSchema`
  * - 写作类型：`./writing.types`（已通过其顶部 import 集成 WritingTableData）
  * - Prompt 模板类型：`./promptTemplate.types`
+ * - 本地标签自动推荐类型：`./tag.types`（TagInfo / TagSearchResult / TagSortBy / IPC 请求响应）
  *
  * 注意：`./vector.types` 与 `./vector.ts` 不重复 re-export，避免同名冲突；
  * 此处仅从 `./vector.types` 暴露（vector.ts 本身已 re-export 自 vector.types）。
@@ -61,6 +62,12 @@ export * from './game.types';
 // CharacterTraitManifestV2 / CharacterTraitItem / TraitCategory / TraitCombination
 // + SYSTEM_TRAIT_CATEGORIES / UNCATEGORIZED_CATEGORY_ID / UNCATEGORIZED_CATEGORY / genTraitId
 export * from './characterTrait.types';
+
+// 标签自动推荐类型（Spec: implement-local-tag-autocomplete / Task 1）
+// TagInfo / TagMatchType / TagSearchResult / TagSortBy /
+// TagSearchRequest / TagSearchResponse / TagLoadStatus / TagReloadResult
+// 注：TagSearchResult 与 webSearch 的 SearchResult 无同名冲突，可直接 export *
+export * from './tag.types';
 
 // === 冲突消解 ===
 // 显式 re-export 优先于 export *，解决 vector.types 与 writing.types 之间的同名冲突。

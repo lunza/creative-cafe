@@ -35,6 +35,118 @@ interface KnowledgeItemListProps {
   pageSize: number;
 }
 
+// [perf] 知识库列表使用 antd Table，启用 antd v6 内置 virtual prop 实现虚拟滚动
+//        （阈值 50 项以上场景），无需自定义 useVirtualizer。行内操作按钮已抽离为
+//        React.memo 子组件（DocumentActions / LeafActions），避免列定义重建时所有
+//        行重渲染。
+
+interface DocumentActionsProps {
+  record: TreeKnowledgeItem;
+  vectorizing: boolean;
+  onUpdate: (record: TreeKnowledgeItem) => void;
+  onDelete: (id: string) => void;
+}
+
+/** 根节点（文档/世界书/聊天记录）行操作：更新 + 删除整个文档。 */
+const DocumentActions = React.memo<DocumentActionsProps>(({ record, vectorizing, onUpdate, onDelete }) => (
+  <Space size="small">
+    <Button
+      type="link"
+      size="small"
+      icon={<ReloadOutlined />}
+      loading={vectorizing}
+      onClick={() => onUpdate(record)}
+    >
+      更新
+    </Button>
+    <Popconfirm
+      title="确认删除整个文档"
+      description="删除后该文档的所有向量数据和知识条目都将被删除，无法恢复"
+      onConfirm={() => onDelete(record.id || record.documentId || '')}
+      okText="删除"
+      cancelText="取消"
+      okButtonProps={{ danger: true }}
+    >
+      <Button type="link" size="small" danger icon={<DeleteOutlined />}>
+        删除整个文档
+      </Button>
+    </Popconfirm>
+  </Space>
+));
+
+interface LeafActionsProps {
+  record: TreeKnowledgeItem;
+  onView: (record: KnowledgeItem) => void;
+  onEdit: (item: KnowledgeItem) => void;
+  onVectorize: (id: string) => void;
+  onDelete: (id: string) => void;
+}
+
+/** 叶子节点（知识条目）行操作：根据是否只读切换「查看」或「编辑/向量化」。 */
+const LeafActions = React.memo<LeafActionsProps>(({ record, onView, onEdit, onVectorize, onDelete }) => {
+  const isWorldBookItem = record.metadata?.isWorldBook === true || record.source === 'worldbook';
+  const isDocumentItem = !!record.metadata?.documentId;
+  const isReadOnly = isWorldBookItem || isDocumentItem;
+
+  if (isReadOnly) {
+    return (
+      <Space size="small">
+        <Button
+          type="link"
+          size="small"
+          icon={<EyeOutlined />}
+          onClick={() => onView(record as KnowledgeItem)}
+        >
+          查看
+        </Button>
+        <Popconfirm
+          title="确认删除"
+          description="确定要删除这个知识条目吗？"
+          onConfirm={() => onDelete(record.id)}
+          okText="确定"
+          cancelText="取消"
+        >
+          <Button type="link" size="small" danger icon={<DeleteOutlined />}>
+            删除
+          </Button>
+        </Popconfirm>
+      </Space>
+    );
+  }
+
+  return (
+    <Space size="small">
+      <Button
+        type="link"
+        size="small"
+        icon={<EditOutlined />}
+        onClick={() => onEdit(record as KnowledgeItem)}
+      >
+        编辑
+      </Button>
+      <Button
+        type="link"
+        size="small"
+        icon={<CloudUploadOutlined />}
+        onClick={() => onVectorize(record.id)}
+      >
+        向量化
+      </Button>
+      <Popconfirm
+        title="确认删除"
+        description="确定要删除这个知识条目吗？"
+        onConfirm={() => onDelete(record.id)}
+        okText="确定"
+        cancelText="取消"
+      >
+        <Button type="link" size="small" danger icon={<DeleteOutlined />}>
+          删除
+        </Button>
+      </Popconfirm>
+    </Space>
+  );
+});
+
 const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
   const {
     loading,
@@ -44,6 +156,7 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
     vectorizeItem,
     fetchItems,
   } = useKnowledgeBaseStore();
+  // TODO(perf): 整体订阅，待拆分为 selector（6 字段，>5 暂缓）
 
   // 创建/编辑/查看 Modal 状态
   const [isModalVisible, setIsModalVisible] = useState(false);
@@ -182,7 +295,7 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
   }, [fetchItems, loadTreeData]);
 
   // 展开文档时加载子节点
-  const loadDocumentChildren = async (
+  const loadDocumentChildren = useCallback(async (
     docId: string,
     isWorldbook = false,
     isCharacterChat = false,
@@ -327,10 +440,10 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
     } catch {
       return [];
     }
-  };
+  }, []);
 
   // 处理树形表格展开
-  const handleExpand = async (expanded: boolean, record: TreeKnowledgeItem) => {
+  const handleExpand = useCallback(async (expanded: boolean, record: TreeKnowledgeItem) => {
     if (expanded && !record.isLeaf && (!record.children || record.children.length === 0)) {
       // 懒加载子节点
       const isWorldbook = record.metadata?.isWorldBook === true;
@@ -357,10 +470,10 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
         return next;
       });
     }
-  };
+  }, [loadDocumentChildren]);
 
   // 删除整个文档（包括所有子条目）
-  const handleDeleteDocumentTree = async (docId: string) => {
+  const handleDeleteDocumentTree = useCallback(async (docId: string) => {
     try {
       await window.electronAPI.document.delete(docId);
       message.success('文档及所有知识条目已删除');
@@ -368,10 +481,10 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
     } catch {
       message.error('删除失败');
     }
-  };
+  }, [loadTreeData]);
 
   // 批量删除选中的根节点（含其所有向量数据与知识条目）
-  const handleDeleteSelected = async () => {
+  const handleDeleteSelected = useCallback(async () => {
     if (selectedRootKeys.length === 0) return;
     setDeletingSelected(true);
     try {
@@ -401,10 +514,10 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
     } finally {
       setDeletingSelected(false);
     }
-  };
+  }, [selectedRootKeys, treeData, loadTreeData]);
 
   // 删除单个知识条目
-  const handleDeleteItem = async (id: string) => {
+  const handleDeleteItem = useCallback(async (id: string) => {
     const success = await deleteItem(id);
     if (success) {
       message.success('删除成功');
@@ -423,15 +536,15 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
     } else {
       message.error('删除失败');
     }
-  };
+  }, [deleteItem, expandedDocIds, loadDocumentChildren]);
 
-  const handleCreate = () => {
+  const handleCreate = useCallback(() => {
     setEditingItem(null);
     form.resetFields();
     setIsModalVisible(true);
-  };
+  }, [form]);
 
-  const handleViewItem = async (record: KnowledgeItem) => {
+  const handleViewItem = useCallback(async (record: KnowledgeItem) => {
     if (record.metadata?.isWorldBook || record.source === 'worldbook') {
       try {
         const result = await window.electronAPI.vector.getById(record.id);
@@ -447,26 +560,26 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
     } else {
       setViewingItem(record);
     }
-  };
+  }, []);
 
-  const handleEdit = (item: KnowledgeItem) => {
+  const handleEdit = useCallback((item: KnowledgeItem) => {
     setEditingItem(item);
     form.setFieldsValue(item);
     setIsModalVisible(true);
-  };
+  }, [form]);
 
-  const handleVectorize = async (id: string) => {
+  const handleVectorize = useCallback(async (id: string) => {
     const success = await vectorizeItem(id);
     if (success) {
       message.success('向量化成功');
     } else {
       message.error('向量化失败');
     }
-  };
+  }, [vectorizeItem]);
 
   // 更新整个根节点：获取文档/世界书/聊天记录等的最新数据并重新向量化
   // silent=true 时不弹 message，返回处理的条目数（供"全部更新"批量调用汇总）
-  const handleUpdateDocument = async (record: TreeKnowledgeItem, silent = false): Promise<number> => {
+  const handleUpdateDocument = useCallback(async (record: TreeKnowledgeItem, silent = false): Promise<number> => {
     const nodeKey = record.key;
     setVectorizingKeys(prev => new Set(prev).add(nodeKey));
     try {
@@ -555,9 +668,9 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
         return next;
       });
     }
-  };
+  }, [vectorizeItem, loadTreeData]);
 
-  const handleUpdateAll = async () => {
+  const handleUpdateAll = useCallback(async () => {
     setVectorizingAll(true);
     try {
       if (selectedRootKeys.length > 0) {
@@ -583,9 +696,9 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
     } finally {
       setVectorizingAll(false);
     }
-  };
+  }, [selectedRootKeys, treeData, handleUpdateDocument]);
 
-  const handleSubmit = async (values: any) => {
+  const handleSubmit = useCallback(async (values: any) => {
     if (editingItem) {
       const success = await updateItem(editingItem.id, values);
       if (success) {
@@ -609,7 +722,7 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
       }
     }
     setIsModalVisible(false);
-  };
+  }, [editingItem, updateItem, createItem]);
 
   // 树形表格列定义（useMemo 包裹避免每次渲染重建）
   const treeColumns: ColumnsType<TreeKnowledgeItem> = useMemo(
@@ -713,101 +826,36 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
         width: 260,
         render: (_, record) => {
           if (!record.isLeaf) {
-            const isVectorizing = vectorizingKeys.has(record.key);
             return (
-              <Space size="small">
-                <Button
-                  type="link"
-                  size="small"
-                  icon={<ReloadOutlined />}
-                  loading={isVectorizing}
-                  onClick={() => handleUpdateDocument(record)}
-                >
-                  更新
-                </Button>
-                <Popconfirm
-                  title="确认删除整个文档"
-                  description="删除后该文档的所有向量数据和知识条目都将被删除，无法恢复"
-                  onConfirm={() => handleDeleteDocumentTree(record.id || record.documentId || '')}
-                  okText="删除"
-                  cancelText="取消"
-                  okButtonProps={{ danger: true }}
-                >
-                  <Button type="link" size="small" danger icon={<DeleteOutlined />}>
-                    删除整个文档
-                  </Button>
-                </Popconfirm>
-              </Space>
-            );
-          }
-
-          const isWorldBookItem = record.metadata?.isWorldBook === true || record.source === 'worldbook';
-          const isDocumentItem = !!record.metadata?.documentId;
-          const isReadOnly = isWorldBookItem || isDocumentItem;
-
-          if (isReadOnly) {
-            return (
-              <Space size="small">
-                <Button
-                  type="link"
-                  size="small"
-                  icon={<EyeOutlined />}
-                  onClick={() => handleViewItem(record as KnowledgeItem)}
-                >
-                  查看
-                </Button>
-                <Popconfirm
-                  title="确认删除"
-                  description="确定要删除这个知识条目吗？"
-                  onConfirm={() => handleDeleteItem(record.id)}
-                  okText="确定"
-                  cancelText="取消"
-                >
-                  <Button type="link" size="small" danger icon={<DeleteOutlined />}>
-                    删除
-                  </Button>
-                </Popconfirm>
-              </Space>
+              <DocumentActions
+                record={record}
+                vectorizing={vectorizingKeys.has(record.key)}
+                onUpdate={handleUpdateDocument}
+                onDelete={handleDeleteDocumentTree}
+              />
             );
           }
 
           return (
-            <Space size="small">
-              <Button
-                type="link"
-                size="small"
-                icon={<EditOutlined />}
-                onClick={() => handleEdit(record as KnowledgeItem)}
-              >
-                编辑
-              </Button>
-              <Button
-                type="link"
-                size="small"
-                icon={<CloudUploadOutlined />}
-                onClick={() => handleVectorize(record.id)}
-              >
-                向量化
-              </Button>
-              <Popconfirm
-                title="确认删除"
-                description="确定要删除这个知识条目吗？"
-                onConfirm={() => handleDeleteItem(record.id)}
-                okText="确定"
-                cancelText="取消"
-              >
-                <Button type="link" size="small" danger icon={<DeleteOutlined />}>
-                  删除
-                </Button>
-              </Popconfirm>
-            </Space>
+            <LeafActions
+              record={record}
+              onView={handleViewItem}
+              onEdit={handleEdit}
+              onVectorize={handleVectorize}
+              onDelete={handleDeleteItem}
+            />
           );
         },
       },
     ],
     // 依赖 expandedDocIds 以便删除单项后能正确刷新当前展开节点；
-    // 依赖 vectorizingKeys 以便根节点向量化按钮的 loading 状态实时更新
-    [expandedDocIds, vectorizingKeys]
+    // 依赖 vectorizingKeys 以便根节点向量化按钮的 loading 状态实时更新；
+    // 其余 handler 均已 useCallback 包裹（引用稳定），列入 deps 以满足 exhaustive-deps
+    [
+      expandedDocIds, vectorizingKeys,
+      handleUpdateDocument, handleDeleteDocumentTree,
+      handleViewItem, handleEdit, handleVectorize, handleDeleteItem,
+    ]
   );
 
   return (
@@ -863,7 +911,10 @@ const KnowledgeItemList: React.FC<KnowledgeItemListProps> = ({ pageSize }) => {
           loading={treeLoading}
           size="small"
           bordered
-          scroll={{ y: 500 }}
+          // [perf] 启用 antd v6 Table 内置虚拟滚动（virtual prop），避免大量已向量化
+          //        文档时全量渲染行。需配合 scroll.y（数值）与列宽固定，列宽合计 860px。
+          virtual
+          scroll={{ x: 860, y: 500 }}
           rowKey="key"
           rowSelection={{
             selectedRowKeys: selectedRootKeys,

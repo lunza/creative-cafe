@@ -6,7 +6,8 @@ import MarkdownEditor, { type MarkdownEditorHandle } from '../Common/MarkdownEdi
 const { Title, Text } = Typography;
 
 const TestPage: React.FC = () => {
-  const { theme, setTheme } = useUIStore();
+  const theme = useUIStore(s => s.theme);
+  const setTheme = useUIStore(s => s.setTheme);
   const editorRef = useRef<MarkdownEditorHandle>(null);
 
   return (

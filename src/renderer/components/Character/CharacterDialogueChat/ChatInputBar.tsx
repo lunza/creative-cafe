@@ -5,8 +5,6 @@ import { SlashCommandAutoComplete, slashCommandRegistry, registerBuiltinCommands
 import type { SlashCommand } from '../../Common/SlashCommand';
 import { QuickActionsMenu } from '../../Common/QuickActions';
 import type { QuickActionItem } from '../../Common/QuickActions';
-import { SkillQuickAccess } from '../../Common/SkillQuickAccess';
-import type { SkillInfo } from '../../Common/SkillQuickAccess';
 import TokenUsageBar from './TokenUsageBar';
 
 interface ChatInputBarProps {
@@ -39,10 +37,6 @@ interface ChatInputBarProps {
     contentActions?: QuickActionItem[];
     settingActions?: QuickActionItem[];
   };
-  // 技能快捷调用（Spec: optimize-agent-interaction-from-openclaw / M1-Task4）
-  skills?: SkillInfo[];
-  onInvokeSkill?: (skillName: string, args: string) => void;
-  invokingSkill?: string | null;
   // Token 使用量进度条（Spec: optimize-agent-interaction-from-openclaw / M3-Task11）
   tokenUsage?: { used: number; total: number } | null;
   onCompressContext?: () => void;
@@ -71,9 +65,6 @@ const ChatInputBar: React.FC<ChatInputBarProps> = ({
   onClear,
   onReset,
   quickActionItems,
-  skills,
-  onInvokeSkill,
-  invokingSkill,
   tokenUsage,
   onCompressContext,
   isCompressing,
@@ -247,7 +238,7 @@ const ChatInputBar: React.FC<ChatInputBarProps> = ({
       {/* 快捷操作菜单（Spec: optimize-agent-interaction-from-openclaw / M1-Task3） */}
       {/* ⚡按钮，聚合常用操作，在非流式/非整理状态下显示 */}
       {!isStreaming && !isOrganizing && quickActionItems && (
-        <div style={{ alignSelf: 'flex-end', paddingBottom: '0px' }}>
+        <div style={{ alignSelf: 'center', flexShrink: 0 }}>
           <QuickActionsMenu
             dialogueActions={quickActionItems.dialogueActions}
             contentActions={quickActionItems.contentActions}
@@ -265,17 +256,6 @@ const ChatInputBar: React.FC<ChatInputBarProps> = ({
             total={tokenUsage.total}
             onCompress={onCompressContext}
             isCompressing={isCompressing}
-          />
-        </div>
-      )}
-      {/* 技能快捷调用按钮组（Spec: optimize-agent-interaction-from-openclaw / M1-Task4） */}
-      {!isStreaming && !isOrganizing && skills && skills.length > 0 && onInvokeSkill && (
-        <div style={{ display: 'flex', marginBottom: '8px', overflowX: 'auto' }}>
-          <SkillQuickAccess
-            skills={skills}
-            onInvokeSkill={onInvokeSkill}
-            invokingSkill={invokingSkill}
-            disabled={disabled || isGeneratingUserReply || isPolishingInput}
           />
         </div>
       )}
@@ -352,6 +332,8 @@ const ChatInputBar: React.FC<ChatInputBarProps> = ({
               background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
               border: 'none',
               boxShadow: '0 4px 12px rgba(239, 68, 68, 0.4)',
+              alignSelf: 'center',
+              flexShrink: 0,
             }}
           />
         </Tooltip>
@@ -373,11 +355,13 @@ const ChatInputBar: React.FC<ChatInputBarProps> = ({
               background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
               border: 'none',
               boxShadow: '0 4px 12px rgba(245, 158, 11, 0.4)',
+              alignSelf: 'center',
+              flexShrink: 0,
             }}
           />
         </Tooltip>
       ) : (
-        <>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', alignSelf: 'center', flexShrink: 0 }}>
           {/* 人称选择器（Spec: add-person-attribute-to-ai-reply / Task 3.3） */}
           {/* 位于 AI回复按钮左侧，控制生成回复的叙事视角（第一/第二/第三人称） */}
           <Select
@@ -387,8 +371,6 @@ const ChatInputBar: React.FC<ChatInputBarProps> = ({
             disabled={disabled || isStreaming || isOrganizing || isGeneratingUserReply || isPolishingInput}
             style={{
               width: '110px',
-              marginRight: '4px',
-              alignSelf: 'center',
             }}
             popupClassName="person-select-dropdown"
           >
@@ -428,7 +410,6 @@ const ChatInputBar: React.FC<ChatInputBarProps> = ({
                   ? '0 4px 12px rgba(239, 68, 68, 0.4)'
                   : '0 4px 12px rgba(139, 92, 246, 0.4)',
                 transition: 'all 0.2s ease',
-                marginRight: '4px',  // 与 Send 按钮的间距
               }}
             />
           </Tooltip>
@@ -463,7 +444,6 @@ const ChatInputBar: React.FC<ChatInputBarProps> = ({
                   ? '0 4px 12px rgba(239, 68, 68, 0.4)'
                   : '0 4px 12px rgba(20, 184, 166, 0.4)',
                 transition: 'all 0.2s ease',
-                marginRight: '4px',
               }}
             />
           </Tooltip>
@@ -494,7 +474,7 @@ const ChatInputBar: React.FC<ChatInputBarProps> = ({
               }}
             />
           </Tooltip>
-        </>
+        </div>
       )}
     </div>
   );
