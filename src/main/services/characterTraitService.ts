@@ -305,11 +305,33 @@ class CharacterTraitService {
           ? parsed.activeCombinationId
           : null;
 
+      // 【重点标记 - 衣物分类拆分迁移】原 `clothing` 系统分类已拆分为 top/bottom/accessories/underwear。
+      // 旧数据中 `categoryId='clothing'` 的特征已成为悬空引用（不在 SYSTEM_TRAIT_CATEGORIES 中，
+      // UI 会兜底显示在未分类，但 trait.categoryId 字段仍为 'clothing'，导致裸体过滤等逻辑不一致）。
+      // 此处一次性重写为 uncategorized，由用户手动重新归类到 top/bottom/accessories/underwear。
+      // 迁移幂等：重写后下次保存不再有 'clothing' id，再次加载 migratedCount=0。
+      const CLOTHING_LEGACY_CATEGORY_ID = 'clothing';
+      let migratedCount = 0;
+      const migratedTraits = traits.map((t) => {
+        if (t.categoryId === CLOTHING_LEGACY_CATEGORY_ID) {
+          migratedCount++;
+          return { ...t, categoryId: UNCATEGORIZED_CATEGORY_ID };
+        }
+        return t;
+      });
+      if (migratedCount > 0) {
+        console.log(
+          '[CharacterTraitService] loadTraitData: migrated',
+          migratedCount,
+          'legacy clothing traits -> uncategorized (clothing category split into top/bottom/accessories/underwear)'
+        );
+      }
+
       return {
         characterCardId,
         version: 2,
         ...(appearanceDescription ? { appearanceDescription } : { appearanceDescription: '' }),
-        traits,
+        traits: migratedTraits,
         customCategories,
         combinations,
         activeCombinationId,

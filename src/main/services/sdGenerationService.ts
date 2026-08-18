@@ -1,4 +1,5 @@
 import * as fsSync from 'fs';
+import { createLogger } from './logger';
 
 /**
  * SDGenerationService —— Stable Diffusion WebUI API 客户端服务（主进程）
@@ -304,6 +305,27 @@ export interface SDGenerationOptions {
    * 仅在 img2img（sdxl）路径生效。默认 'two-step'。
    */
   img2imgHiresMode?: 'direct' | 'two-step';
+
+  /**
+   * 调用来源上下文（Spec: enhance-conversation-image-auditability / Task 1.3）。
+   *
+   * 用于在 image-generation logger 落盘时区分对话图片 vs 素材管理图片，
+   * 并支持追溯具体消息（messageId）与生成轮次（round）。
+   *
+   * - `source: 'conversation'`：来自对话气泡的「生成图片」按钮（executeImageGeneration）
+   * - `source: 'asset-manager'`：来自素材管理弹窗（AssetGenerateModal / AssetManagerModal）
+   * - `messageId`：仅 conversation 来源有效，关联触发图片生成的父消息 ID
+   * - `characterCardId`：仅 conversation 来源有效，关联的角色卡 ID
+   * - `round`：仅 conversation 来源有效，本次生成在该消息 imageAttachment.history 中的轮次（1-based）
+   *
+   * 调用方可不传，logger 会以 'unknown' 兜底。
+   */
+  sourceContext?: {
+    source: 'conversation' | 'asset-manager';
+    messageId?: string;
+    characterCardId?: string;
+    round?: number;
+  };
 }
 
 /**
@@ -318,6 +340,16 @@ export interface SDGenerationResult {
   error?: string;
   /** 警告信息（成功时可能附带，例如参数推荐提示） */
   warning?: string;
+  /**
+   * 最终提示词（Spec: enhance-conversation-image-auditability / Task 4.3）。
+   *
+   * 【重点标记 - 提示词快照回传】
+   * 仅在成功返回时填充，含 `applyTraitsAndLora` 处理后的完整 prompt 字符串
+   * （已替换 {traits} / {camera} 占位符 + 注入 LoRA 标签 + 清理多余逗号）。
+   * 渲染进程据此快照到 `ImageHistoryItem.usedPrompt`，用于图片下方标签展示与审计。
+   * 失败返回不包含此字段（undefined）。
+   */
+  finalPrompt?: string;
 }
 
 /**
@@ -417,6 +449,15 @@ const GENERATION_TIMEOUT_MS = 120_000;
 
 /** 普通状态/模型查询请求超时（毫秒） */
 const SHORT_TIMEOUT_MS = 10_000;
+
+/**
+ * 【Spec: enhance-conversation-image-auditability / Task 2】image-generation 模块日志实例。
+ *
+ * 用于将 txt2img / img2img 的完整请求快照（含最终 prompt / 负面提示词 / traits / loras /
+ * 采样参数 / sourceContext）落盘到 logs/image-generation/ 目录，便于审计与回溯图片生成链路。
+ * 复用 logger.ts 的 createLogger 工厂，与 tag-rag-service / ai-handler 等模块保持一致风格。
+ */
+const logger = createLogger('image-generation');
 
 /**
  * ADetailer 默认配置（与 ADetailer-Neo `ADetailerArgs` 默认值对齐）。
@@ -839,6 +880,11 @@ class SDGenerationService {
       `[sdGenerationService] applyTraitsAndLora: Applied ${dedupedCount} traits (${weightedCount} with non-default weight), 拼接为:`,
       traitsStr || '(空)',
     );
+    // 【Spec: enhance-conversation-image-auditability / Task 2.5】落盘 traits 拼接中间结果
+    logger.debug(
+      `applyTraitsAndLora: Applied ${dedupedCount} traits (${weightedCount} with non-default weight)`,
+      traitsStr || '(空)'
+    );
     result = result.replace(/\{traits\}/g, () => traitsStr);
 
     // ===== {camera} 占位符替换 =====
@@ -849,6 +895,11 @@ class SDGenerationService {
     console.log(
       '[sdGenerationService] applyTraitsAndLora: camera 字段',
       'camera=', cameraStr || '(空)',
+    );
+    // 【Spec: enhance-conversation-image-auditability / Task 2.5】落盘 camera 字段中间结果
+    logger.debug(
+      'applyTraitsAndLora: camera 字段',
+      cameraStr || '(空)'
     );
     result = result.replace(/\{camera\}/g, () => cameraStr);
 
@@ -865,6 +916,11 @@ class SDGenerationService {
         console.log(
           '[sdGenerationService] applyTraitsAndLora: 注入人物数量约束 tag:',
           genderTag,
+        );
+        // 【Spec: enhance-conversation-image-auditability / Task 2.5】落盘 gender tag 注入
+        logger.debug(
+          'applyTraitsAndLora: 注入人物数量约束 tag',
+          genderTag
         );
       }
     }
@@ -891,6 +947,8 @@ class SDGenerationService {
       if (loraTags) {
         result = `${loraTags} ${result}`;
         console.log('[sdGenerationService] Injected LoRA tags:', loraTags);
+        // 【Spec: enhance-conversation-image-auditability / Task 2.5】落盘 LoRA 标签注入
+        logger.debug('applyTraitsAndLora: Injected LoRA tags', loraTags);
       }
     }
 
@@ -1367,6 +1425,27 @@ class SDGenerationService {
       // 处理 {traits} 占位符替换 + LoRA 标签注入，使 txt2img 路径独立可用
       const processedPrompt = this.applyTraitsAndLora(prompt, options);
 
+      // 【Spec: enhance-conversation-image-auditability / Task 2.2】落盘完整请求快照
+      // 在 applyTraitsAndLora 返回最终 prompt 之后、HTTP 请求发送之前，记录完整请求上下文，
+      // 便于审计与回溯图片生成链路（含 sourceContext 区分对话 vs 素材管理来源）。
+      logger.info(
+        `生成图片请求 [${options.sourceContext?.source || 'unknown'}]`,
+        processedPrompt,
+        {
+          negativePrompt: negativePrompt || '',
+          traits: options.characterTraits || [],
+          loras: options.selectedLoras || [],
+          steps: options.steps,
+          cfgScale: options.cfgScale,
+          sampler: options.sampler,
+          scheduler: options.scheduler,
+          width: options.width,
+          height: options.height,
+          model: options.model,
+          sourceContext: options.sourceContext,
+        }
+      );
+
       // 可选模型切换
       if (options.model) {
         const switchResult = await this.switchModel(normalizedEndpoint, options.model);
@@ -1469,10 +1548,19 @@ class SDGenerationService {
         '[SDGenerationService] generateTxt2Img: success, imageBase64 length=',
         firstImage.length
       );
-      return { success: true, imageBase64: firstImage };
+      // 【Spec: enhance-conversation-image-auditability / Task 4.3】回传最终 prompt
+      // （applyTraitsAndLora 处理后的完整字符串），供渲染进程快照到 ImageHistoryItem.usedPrompt
+      return { success: true, imageBase64: firstImage, finalPrompt: processedPrompt };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error('[SDGenerationService] generateTxt2Img failed:', message);
+      // 【Spec: enhance-conversation-image-auditability / Task 2.3】落盘失败请求快照
+      // 记录错误信息 + sourceContext + 原始 prompt，便于审计失败原因与来源
+      logger.error(
+        `生成图片失败 [${options.sourceContext?.source || 'unknown'}]`,
+        error instanceof Error ? error.message : String(error),
+        { sourceContext: options.sourceContext, prompt: prompt }
+      );
       return { success: false, error: message };
     }
   }

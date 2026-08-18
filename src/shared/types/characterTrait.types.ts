@@ -98,7 +98,7 @@ export interface CharacterTraitItem {
  *    使 AI 生成的特征直接进入对应系统分类，无需用户手动归类
  *
  * `categoryId` 取值：
- *  - 系统分类 id 之一（`head` / `body` / `clothing` / `background` / `pose` / `expression`）
+ *  - 系统分类 id 之一（`basic` / `head` / `body` / `top` / `bottom` / `accessories` / `underwear` / `background` / `pose` / `expression`）
  *  - 或 `UNCATEGORIZED_CATEGORY_ID`（当 AI 未输出分类前缀、或前缀非已知系统分类时的兜底）
  */
 export interface CategorizedTrait {
@@ -106,7 +106,7 @@ export interface CategorizedTrait {
   text: string;
   /**
    * 所属分类 ID：
-   *  - 系统分类 id（`head` / `body` / `clothing` / `background` / `pose` / `expression`）
+   *  - 系统分类 id（`basic` / `head` / `body` / `top` / `bottom` / `accessories` / `underwear` / `background` / `pose` / `expression`）
    *  - 或 `UNCATEGORIZED_CATEGORY_ID`（无法识别分类时的兜底）
    */
   categoryId: string;
@@ -227,24 +227,40 @@ export const UNCATEGORIZED_CATEGORY_ID = 'uncategorized';
  * - `isSystem=true`，UI 不可删除/重命名
  * - 未分类（`UNCATEGORIZED_CATEGORY`）单独导出，由 UI 自行拼接到列表末尾
  *
- * 分类顺序（order 0..6）：
+ * 分类顺序（order 0..9）：
  *  1. `basic` 基本特征 — 物种/种族、性别、内容分级（sfw/nsfw）等角色基底属性，
  *     作为整个角色的基底特征，置于最前
  *  2. `head` 头部特征 — 发色/发型/瞳色/动物耳朵/帽子等
  *  3. `body` 身体特征 — 体型/肤色/毛色/尾巴/翅膀等（不含物种与性别，已移至 basic）
- *  4. `clothing` 衣物配饰
- *  5. `background` 背景环境
- *  6. `pose` 人物姿势
- *  7. `expression` 人物表情
+ *  4. `top` 上装 — 上衣/衬衫/外套/连衣裙等上身衣物
+ *  5. `bottom` 下装 — 裤子/裙子/短裤等下身衣物
+ *  6. `accessories` 配饰 — 眼镜/缎带/首饰/帽子/围巾等装饰物
+ *  7. `underwear` 内衣 — 胸罩/内裤/内衣套装等贴身衣物
+ *  8. `background` 背景环境
+ *  9. `pose` 人物姿势
+ *  10. `expression` 人物表情
+ *
+ * 【分类拆分】原 `clothing` 衣物配饰分类已于本次拆分为 `top`/`bottom`/`accessories`/`underwear`
+ * 四个细分类。旧数据中 `categoryId='clothing'` 的特征由 `characterTraitService.loadTraitData`
+ * 迁移至 `uncategorized`（用户手动重新归类）。
  */
 export const SYSTEM_TRAIT_CATEGORIES: readonly TraitCategory[] = [
   { id: 'basic', name: '基本特征', isSystem: true, order: 0 },
   { id: 'head', name: '头部特征', isSystem: true, order: 1 },
   { id: 'body', name: '身体特征', isSystem: true, order: 2 },
-  { id: 'clothing', name: '衣物配饰', isSystem: true, order: 3 },
-  { id: 'background', name: '背景环境', isSystem: true, order: 4 },
-  { id: 'pose', name: '人物姿势', isSystem: true, order: 5 },
-  { id: 'expression', name: '人物表情', isSystem: true, order: 6 },
+  { id: 'top', name: '上装', isSystem: true, order: 3 },
+  { id: 'bottom', name: '下装', isSystem: true, order: 4 },
+  { id: 'accessories', name: '配饰', isSystem: true, order: 5 },
+  { id: 'underwear', name: '内衣', isSystem: true, order: 6 },
+  { id: 'background', name: '背景环境', isSystem: true, order: 7 },
+  { id: 'pose', name: '人物姿势', isSystem: true, order: 8 },
+  { id: 'expression', name: '人物表情', isSystem: true, order: 9 },
+  // 【Spec: enhance-conversation-interaction-prompt-recognition】
+  // 互动元素分类：专门承载用户与角色之间的动作互动标签（disembodied_hand / hand_on_breast /
+  // hugging_another / holding_hands 等 Danbooru 风格互动标签）。
+  // 与 pose（角色自身姿势）语义分离：pose 是角色自己的姿态，interaction 是与另一个实体的交互。
+  // 仅在对话上下文描述互动动作时由 AI 输出，角色卡描述场景不触发。
+  { id: 'interaction', name: '互动元素', isSystem: true, order: 10 },
 ];
 
 /**

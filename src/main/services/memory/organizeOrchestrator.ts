@@ -701,22 +701,35 @@ function createProgressiveHandler(continueFromLast: boolean, minInterval: number
     calculateStartIndex(ctx, chatId, targetMessages) {
       const existingProgress = getOrganizingProgress(ctx, chatId);
 
+      // 断点续传：进度记录与当前消息数一致，从已处理位置继续
       if (continueFromLast && existingProgress && existingProgress.processedCount > 0 && existingProgress.totalMessages === targetMessages.length) {
         const startIndex = existingProgress.processedCount;
         addLog(`[TableOrganize][Sync] 检测到断点续传记录: 已处理 ${startIndex}/${targetMessages.length} 条消息`, 'info');
         if (startIndex >= targetMessages.length) {
+          addLog(`[TableOrganize][Sync] 断点续传: 所有消息已处理完成，跳过本次整理`, 'info');
           return { startIndex, completed: true, resumed: true };
         }
+        addLog(`[TableOrganize][Sync] 断点续传: 从第 ${startIndex + 1} 条消息继续处理`, 'debug');
         return { startIndex, completed: false, resumed: true };
       }
 
+      // 消息数量变化：根据方向决定是从新增处继续还是重置
       if (existingProgress && existingProgress.totalMessages !== targetMessages.length) {
-        addLog(`[TableOrganize][Sync] 消息数量变化 (${existingProgress.totalMessages} -> ${targetMessages.length})，仅处理新增消息`, 'info');
         if (existingProgress.totalMessages < targetMessages.length) {
           const startIndex = existingProgress.totalMessages;
+          addLog(`[TableOrganize][Sync] 消息数量变化 (${existingProgress.totalMessages} -> ${targetMessages.length})，仅处理新增消息`, 'info');
           addLog(`[TableOrganize][Sync] 检测到新增 ${targetMessages.length - existingProgress.totalMessages} 条消息，从第 ${startIndex + 1} 条开始处理`, 'info');
           return { startIndex, completed: false, resumed: false };
         }
+        // 消息数量减少（如聊天记录被回滚/删除），断点续传记录已不可信，重置为从头开始
+        addLog(`[TableOrganize][Sync] 消息数量减少 (${existingProgress.totalMessages} -> ${targetMessages.length})，断点续传记录失效，重置为从头开始处理`, 'warn');
+        return { startIndex: 0, completed: false, resumed: false };
+      }
+
+      if (existingProgress) {
+        addLog(`[TableOrganize][Sync] 存在进度记录（已处理 ${existingProgress.processedCount} 条）但未启用断点续传或计数为 0，从头开始处理`, 'debug');
+      } else {
+        addLog(`[TableOrganize][Sync] 无断点续传记录，从头开始处理`, 'debug');
       }
 
       return { startIndex: 0, completed: false, resumed: false };

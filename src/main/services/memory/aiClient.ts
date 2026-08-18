@@ -9,6 +9,8 @@
 
 import { getStorageService } from '../storageService';
 import { addLog, AIProcessingResult } from './logger';
+import { callAIAPIWithFetch } from '../ai/aiHttpClient';
+import type { AIAPIConfig, AIAPIParams } from '../ai/aiHttpClient';
 
 /**
  * AI 引擎记录的最小结构（仅声明本模块实际访问的字段）。
@@ -58,8 +60,19 @@ export function buildOrganizeConfig(
 
 /**
  * 获取 AI 引擎配置参数
+ *
+ * 始终返回完整参数集：优先读取激活引擎的配置，缺失参数用默认值填充。
+ * 默认值：temperature=0.7, max_tokens=4096, top_p=0.9, frequency_penalty=0, presence_penalty=0
  */
-export function getEngineAIParams(): { temperature: number; max_tokens?: number; top_p: number; frequency_penalty: number; presence_penalty: number } | null {
+export function getEngineAIParams(): { temperature: number; max_tokens: number; top_p: number; frequency_penalty: number; presence_penalty: number } {
+  const defaults = {
+    temperature: 0.7,
+    max_tokens: 4096,
+    top_p: 0.9,
+    frequency_penalty: 0,
+    presence_penalty: 0
+  };
+
   try {
     const storageService = getStorageService();
     const settings = storageService.getSettings();
@@ -67,24 +80,20 @@ export function getEngineAIParams(): { temperature: number; max_tokens?: number;
     if (engines.length > 0) {
       const activeEngine = engines.find((e: AIEngineRecord) => e.id === settings?.activeEngineId) as AIEngineRecord | undefined || (engines[0] as AIEngineRecord | undefined);
 
-      if (activeEngine?.temperature !== undefined &&
-          activeEngine?.max_tokens !== undefined &&
-          activeEngine?.top_p !== undefined &&
-          activeEngine?.frequency_penalty !== undefined &&
-          activeEngine?.presence_penalty !== undefined) {
+      if (activeEngine) {
         return {
-          temperature: activeEngine.temperature,
-          max_tokens: undefined,
-          top_p: activeEngine.top_p,
-          frequency_penalty: activeEngine.frequency_penalty,
-          presence_penalty: activeEngine.presence_penalty
+          temperature: activeEngine.temperature ?? defaults.temperature,
+          max_tokens: activeEngine.max_tokens ?? defaults.max_tokens,
+          top_p: activeEngine.top_p ?? defaults.top_p,
+          frequency_penalty: activeEngine.frequency_penalty ?? defaults.frequency_penalty,
+          presence_penalty: activeEngine.presence_penalty ?? defaults.presence_penalty
         };
       }
     }
   } catch (error) {
     console.error('[chatLogService] getEngineAIParams error:', error);
   }
-  return null;
+  return { ...defaults };
 }
 
 /**
@@ -115,95 +124,29 @@ export async function callAIAPI(
 
   try {
     const isChatCompletion = apiUrl.includes('/chat/completions');
+    const apiMode = isChatCompletion ? 'chat_completion' : 'text_completion';
     addLog(`API 模式: ${isChatCompletion ? '聊天补全' : '文本补全'}`, 'debug');
 
-    let requestBody: Record<string, unknown>;
-    if (isChatCompletion) {
-      requestBody = {
-        model: modelName,
-        messages: [
-          {
-            role: "system",
-            content: "你是一个专业的信息提取和表格整理助手，能够根据聊天记录和表格模板结构，准确提取关键信息并生成表格操作指令。"
-          },
-          {
-            role: "user",
-            content: prompt
-          }
-        ],
-        temperature: aiParams.temperature,
-        max_tokens: aiParams.max_tokens,
-        top_p: aiParams.top_p,
-        frequency_penalty: aiParams.frequency_penalty,
-        presence_penalty: aiParams.presence_penalty
-      };
-    } else {
-      requestBody = {
-        model: modelName,
-        prompt: prompt,
-        temperature: aiParams.temperature,
-        max_tokens: aiParams.max_tokens,
-        top_p: aiParams.top_p,
-        frequency_penalty: aiParams.frequency_penalty,
-        presence_penalty: aiParams.presence_penalty
-      };
-    }
+    const config: AIAPIConfig = {
+      apiKey,
+      apiUrl,
+      modelName,
+      apiKeyTransmission: 'header',
+      apiMode
+    };
+
+    const params: AIAPIParams = {
+      temperature: aiParams.temperature,
+      max_tokens: aiParams.max_tokens,
+      top_p: aiParams.top_p,
+      frequency_penalty: aiParams.frequency_penalty,
+      presence_penalty: aiParams.presence_penalty,
+      systemPrompt: '你是一个专业的信息提取和表格整理助手，能够根据聊天记录和表格模板结构，准确提取关键信息并生成表格操作指令。'
+    };
 
     addLog('发送 AI API 请求...', 'info');
-    const trimmedApiKey = apiKey?.trim() || '';
-    let authHeader: Record<string, string> = {};
-    if (trimmedApiKey) {
-      if (trimmedApiKey.startsWith('Bearer ')) {
-        authHeader['Authorization'] = trimmedApiKey;
-        addLog('API密钥已包含Bearer前缀，直接使用', 'debug');
-      } else {
-        authHeader['Authorization'] = `Bearer ${trimmedApiKey}`;
-        addLog('API密钥不包含Bearer前缀，自动添加', 'debug');
-      }
-    }
-
-    const timeoutSignal = AbortSignal.timeout(300000);
-
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...authHeader
-      },
-      body: JSON.stringify(requestBody),
-      signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      addLog(`API 调用失败: ${response.status} ${response.statusText}`, 'error');
-      addLog(`错误详情: ${errorText}`, 'error');
-      throw new Error(`API 调用失败: ${response.status} ${response.statusText} - ${errorText}`);
-    }
-
-    addLog('等待 AI API 响应...', 'info');
-    const data = await response.json();
+    const aiResponse = await callAIAPIWithFetch(prompt, config, params);
     addLog('收到 AI API 完整响应', 'debug');
-    addLog('===== AI 完整响应对象 =====', 'debug');
-    addLog(JSON.stringify(data, null, 2), 'debug');
-
-    if (!data.choices || data.choices.length === 0) {
-      throw new Error('API 响应格式错误: 没有返回 choices');
-    }
-
-    // 提取响应内容
-    let aiResponse: string;
-    if (isChatCompletion) {
-      aiResponse = data.choices[0].message?.content?.trim() || '';
-    } else {
-      aiResponse = data.choices[0].text?.trim() || '';
-    }
-
-    // 验证响应内容
-    if (!aiResponse) {
-      throw new Error('AI 响应内容为空');
-    }
-
     addLog('===== AI 回参文本 =====', 'debug');
     addLog(aiResponse, 'debug');
     addLog(`AI API 响应长度: ${aiResponse.length} 字符`, 'debug');

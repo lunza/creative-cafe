@@ -1,4 +1,5 @@
 import { getStorageService } from '../storageService';
+import { createLogger } from '../logger';
 import type { ModelConfig } from '../../../shared/types/writing.types';
 import type { FallbackProvider } from '../agent/failoverPolicy';
 
@@ -60,6 +61,8 @@ export interface GetAIConfigOptions {
  *   统一处理
  */
 export class AIConfigProvider {
+  private logger = createLogger('ai-config-provider');
+
   /**
    * 获取当前激活的 AI 引擎对象（只读视图）。
    * 与原 getActiveEngine 行为一致：找不到时返回 null（不抛错）。
@@ -190,9 +193,10 @@ export class AIConfigProvider {
 
   /**
    * 构建表格整理 AI 调用所需的端点信息。
-   * 与原 buildApiEndpoint 行为完全一致：
-   * - apiUrl 根据 api_mode 自动追加 /v1/completions 或 /v1/chat/completions
-   * - apiMode 默认 'chat_completion'
+   * - apiMode 根据引擎 api_mode 解析（默认 'chat_completion'），
+   *   目前仅使用 chat_completion，text_completion 分支保留备用
+   * - apiUrl 若未包含 /v1/chat/completions 或 /v1/completions 后缀，
+   *   则按 apiMode 自动追加对应后缀；已包含则直接使用（避免重复拼接）
    * - apiUrl 默认 'http://127.0.0.1:5000'
    *
    * 注意：getApiKey/getModelName 在缺失配置时会抛错，
@@ -215,12 +219,19 @@ export class AIConfigProvider {
     const modelName = this.getModelName();
 
     let apiUrl = activeEngine?.api_url || 'http://127.0.0.1:5000';
+    const apiMode = activeEngine?.api_mode || 'chat_completion';
+    // 目前仅使用 chat_completion；text_completion 分支保留备用
+    const suffix = apiMode === 'text_completion' ? '/v1/completions' : '/v1/chat/completions';
 
-    if (!apiUrl.endsWith('/v1/chat/completions')) {
-      apiUrl += '/v1/chat/completions';
+    if (apiUrl.endsWith('/v1/chat/completions') || apiUrl.endsWith('/v1/completions')) {
+      // api_url 已包含 API 路径后缀，直接使用，避免重复拼接
+      this.logger.info(`[buildApiEndpoint] api_url 已包含 API 路径后缀，直接使用: ${apiUrl}`);
+    } else {
+      apiUrl += suffix;
+      this.logger.info(`[buildApiEndpoint] api_url 未包含 API 路径后缀，按 apiMode=${apiMode} 追加 "${suffix}": ${apiUrl}`);
     }
 
-    return { apiUrl, apiMode: 'chat_completion', apiKey, apiKeyTransmission, modelName };
+    return { apiUrl, apiMode, apiKey, apiKeyTransmission, modelName };
   }
 }
 

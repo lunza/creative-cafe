@@ -55,7 +55,7 @@ export type ThreeViewSlot = 'front' | 'side' | 'back' | 'front-nude' | 'side-nud
 
 /**
  * 三视图允许的 assetId 白名单。
- * 含裸体变体：front-nude / side-nude / back-nude（生成时自动过滤 clothing 分类特征）。
+ * 含裸体变体：front-nude / side-nude / back-nude（生成时自动过滤上装/下装/内衣分类特征，配饰保留）。
  */
 const THREE_VIEW_ALLOWED_SLOTS: readonly ThreeViewSlot[] = [
   'front', 'side', 'back',

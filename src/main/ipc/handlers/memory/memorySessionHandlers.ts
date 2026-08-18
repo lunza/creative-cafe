@@ -233,7 +233,11 @@ export function registerMemorySessionHandlers(): void {
 
       // 进度回调函数，通过事件发送到渲染进程
       const onProgress = (current: number, total: number, message: string, percent?: number) => {
-        event.sender.send('memory:processChatProgress', { current, total, message, percent });
+        if (event.sender && !event.sender.isDestroyed()) {
+          event.sender.send('memory:processChatProgress', { current, total, message, percent });
+        } else {
+          console.warn('[memorySessionHandlers] processChatProgressive: 渲染进程已销毁，跳过进度事件发送:', { chatId, current, total, message });
+        }
       };
 
       const result = await chatLogService.processChatProgressive(chatId, templateId, config, onProgress, { continueFromLast, minInterval });
@@ -257,7 +261,11 @@ export function registerMemorySessionHandlers(): void {
 
       // 进度回调函数，通过事件发送到渲染进程
       const onProgress = (current: number, total: number, message: string, percent?: number) => {
-        event.sender.send('memory:processChatProgress', { current, total, message, percent });
+        if (event.sender && !event.sender.isDestroyed()) {
+          event.sender.send('memory:processChatProgress', { current, total, message, percent });
+        } else {
+          console.warn('[memorySessionHandlers] processChatFull: 渲染进程已销毁，跳过进度事件发送:', { chatId, current, total, message });
+        }
       };
 
       const result = await chatLogService.processChatFull(chatId, templateId, config, onProgress);

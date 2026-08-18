@@ -1017,6 +1017,337 @@
   border: 1px solid var(--config-panel-card-border);
 }
 
+/* ===== 图片生成设置面板（Spec: fix-conversation-image-generation-bugs / Bug 1） ===== */
+.image-gen-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.image-gen-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--config-panel-card-bg);
+  border: 1px solid var(--config-panel-card-border);
+  transition: background-color 0.2s ease;
+  user-select: none;
+  position: relative;
+}
+
+.image-gen-panel-header:hover {
+  background-color: var(--config-panel-card-hover-bg, rgba(255, 255, 255, 0.04));
+}
+
+.image-gen-collapse-icon {
+  font-size: 12px;
+  color: #8b5cf6;
+  width: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.image-gen-icon {
+  font-size: 16px;
+  color: #f59e0b;
+}
+
+.image-gen-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--config-panel-sub-title-color);
+  margin: 0;
+}
+
+.image-gen-tooltip-icon {
+  font-size: 12px;
+  color: var(--config-panel-tooltip-color, #94a3b8);
+  cursor: help;
+  transition: color 0.2s ease;
+}
+
+.image-gen-tooltip-icon:hover {
+  color: #8b5cf6;
+}
+
+.image-gen-panel-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 5000px;
+  opacity: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  transition: max-height 0.3s ease, opacity 0.2s ease;
+  padding: 12px;
+}
+
+.image-gen-panel-content.collapsed {
+  max-height: 0;
+  opacity: 0;
+  padding: 0 12px;
+  overflow: hidden;
+}
+
+.image-gen-panel-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.image-gen-config-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.image-gen-config-label {
+  font-size: 13px;
+  color: var(--config-panel-text-color, #e2e8f0);
+}
+
+.image-gen-config-hint {
+  font-size: 12px;
+  color: var(--config-panel-sub-text-color, #94a3b8);
+  margin-top: 4px;
+}
+
+/* 互动标签权重提升滑块（Spec: enhance-conversation-interaction-prompt-recognition） */
+.image-gen-interaction-weight-row {
+  margin-top: 4px;
+}
+
+.image-gen-interaction-weight-control {
+  display: flex;
+  align-items: center;
+}
+
+.image-gen-interaction-weight-value {
+  font-size: 13px;
+  color: var(--config-panel-text-color, #e2e8f0);
+  min-width: 28px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* AI 标签优化试验性功能警示（Spec: add-ai-trait-optimization-for-image-gen） */
+.image-gen-ai-optimize-row {
+  align-items: center;
+}
+
+.image-gen-experimental-warning {
+  margin-top: -8px;
+  margin-bottom: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--color-warning, #f59e0b);
+  background: var(--color-warning-light, rgba(245, 158, 11, 0.1));
+  border-radius: 4px;
+  border-left: 2px solid var(--color-warning, #f59e0b);
+  line-height: 1.5;
+}
+
+/* 角色特征分类列表（Spec: fix-conversation-image-generation-bugs / Bug 3） */
+.image-gen-trait-section {
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--config-panel-card-border, rgba(255, 255, 255, 0.05));
+}
+
+.image-gen-trait-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--config-panel-sub-title-color);
+  margin-bottom: 8px;
+}
+
+.image-gen-trait-empty {
+  font-size: 12px;
+  color: var(--config-panel-sub-text-color, #94a3b8);
+  padding: 8px 0;
+  line-height: 1.5;
+}
+
+/* 【Spec: enhance-conversation-interaction-prompt-recognition】
+   按 AssetGenerateModal「携带角色特征」面板设计重构：
+   Collapse 折叠面板 + antd Tag + Tooltip + Popover 权重编辑器 + TagAutocomplete 内联添加 */
+
+.image-gen-trait-collapse {
+  margin-top: 4px;
+}
+
+.image-gen-trait-collapse .ant-collapse-header {
+  padding: 6px 8px !important;
+  align-items: center !important;
+}
+
+.image-gen-trait-collapse .ant-collapse-content-box {
+  padding: 6px 8px !important;
+}
+
+.image-gen-trait-category-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.image-gen-trait-category-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--config-panel-text-color, #e2e8f0);
+}
+
+.image-gen-trait-count {
+  font-size: 10px;
+  color: var(--config-panel-sub-text-color, #94a3b8);
+  margin-left: auto;
+  margin-right: 16px;
+}
+
+.image-gen-trait-tags {
+  width: 100%;
+}
+
+.image-gen-trait-help-tag {
+  margin-left: 8px;
+  font-size: 10px;
+  cursor: help;
+}
+
+/* Tag 包裹器（Tag + Popover 权重徽标） */
+.image-gen-trait-tag-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+
+/* 行内编辑态（Input + ✓/✗ 按钮） */
+.image-gen-trait-edit-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 行内新增态（TagAutocomplete + ✓/✗ 按钮） */
+.image-gen-trait-add-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 新增标签入口（虚线 Tag） */
+.image-gen-trait-add-tag {
+  margin: 0 !important;
+  cursor: pointer !important;
+  border-style: dashed !important;
+  background: transparent !important;
+  color: var(--text-tertiary, #6b7280) !important;
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.image-gen-trait-add-tag:hover {
+  color: var(--color-primary, #6366f1) !important;
+  border-color: var(--color-primary, #6366f1) !important;
+}
+
+/* 权重徽标（Popover 触发器） */
+.image-gen-trait-weight-badge {
+  display: inline-block;
+  padding: 0 3px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  user-select: none;
+}
+
+.image-gen-trait-weight-badge.default {
+  color: var(--text-tertiary, #6b7280);
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+  opacity: 0.7;
+}
+
+.image-gen-trait-weight-badge.default:hover {
+  opacity: 1;
+  border-color: var(--color-primary, #6366f1);
+}
+
+.image-gen-trait-weight-badge.boost {
+  background: rgba(250, 140, 22, 0.15);
+  color: #fa8c16;
+  border: 1px solid rgba(250, 140, 22, 0.3);
+}
+
+.image-gen-trait-weight-badge.boost:hover {
+  background: rgba(250, 140, 22, 0.3);
+}
+
+.image-gen-trait-weight-badge.reduce {
+  background: rgba(22, 119, 255, 0.15);
+  color: #1677ff;
+  border: 1px solid rgba(22, 119, 255, 0.3);
+}
+
+.image-gen-trait-weight-badge.reduce:hover {
+  background: rgba(22, 119, 255, 0.3);
+}
+
+/* Popover 权重编辑器内容 */
+.image-gen-weight-popover {
+  padding: 4px 0;
+}
+
+.image-gen-weight-slider-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.image-gen-weight-presets {
+  display: flex;
+  gap: 4px;
+}
+
+/* 临时编辑中徽标 */
+.image-gen-session-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--color-warning-light, rgba(245, 158, 11, 0.15));
+  color: var(--color-warning, #f59e0b);
+  font-size: 10px;
+  font-weight: 500;
+  border: 1px solid var(--color-warning, rgba(245, 158, 11, 0.3));
+}
+
+/* 重置按钮 */
+.image-gen-reset-btn {
+  margin-left: 8px;
+  font-size: 11px;
+  height: 22px;
+  padding: 0 8px;
+  color: var(--text-tertiary, #6b7280);
+  border-color: var(--border-base, rgba(255, 255, 255, 0.1));
+}
+
+.image-gen-reset-btn:hover {
+  color: var(--color-error, #ef4444);
+  border-color: var(--color-error, #ef4444);
+}
+
 @media (max-width: 768px) {
   .config-panel {
     width: 100%;

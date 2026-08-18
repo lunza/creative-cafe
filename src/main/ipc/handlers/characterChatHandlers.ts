@@ -1,35 +1,37 @@
 import { ipcMain } from 'electron';
+import fs from 'fs/promises';
+import path from 'path';
 import { chatStorageService, ChatMessage, TestChatData } from '../../services/ChatStorageService';
 import { chatVectorizationService } from '../../services/ChatVectorizationService';
 import { chatVersionService } from '../../services/ChatVersionService';
 import { tableSnapshotService } from '../../services/TableSnapshotService';
 import { versionLinkerService } from '../../services/VersionLinkerService';
+import { getUserDataPath } from '../../utils/appPath';
+import type { CharacterTraitItem } from '../../../shared/types/characterTrait.types';
 
 function getCharacterTestChat(creativeId: string, characterCardId: string): TestChatData | null {
   return chatStorageService.getTestChat(creativeId, characterCardId);
 }
 
 async function saveCharacterTestChat(
-  creativeId: string, 
-  characterCardId: string, 
-  characterCardName: string, 
-  messages: ChatMessage[]
+  creativeId: string,
+  characterCardId: string,
+  characterCardName: string,
+  messages: ChatMessage[],
+  // 【Spec: enhance-conversation-image-auditability / Task 7.2】
+  // sessionTraits 为对话级字段（不在 messages 内），由渲染进程 characterChatStore
+  // 从 currentTestChat.sessionTraits 读取后透传。undefined 表示重置（不写入或清空字段）。
+  sessionTraits?: CharacterTraitItem[]
 ): Promise<TestChatData> {
   const existingChat = await chatStorageService.getTestChat(creativeId, characterCardId);
-  
+
   if (existingChat) {
     existingChat.messages = messages;
     existingChat.updatedAt = Date.now();
-    const saved = await chatStorageService.saveTestChat(existingChat);
-    
-    await chatVersionService.createVersion(characterCardName, messages, {
-      creativeId,
-      characterCardId,
-      characterCardName,
-      savedAt: Date.now(),
-    });
-    
-    return saved;
+    // 透传 sessionTraits：undefined 时显式置为 undefined（JSON.stringify 会省略该字段，
+    // 实现重置语义）；数组时直接赋值（渲染进程已深拷贝，主进程无需再次拷贝）
+    existingChat.sessionTraits = sessionTraits;
+    await chatStorageService.saveTestChat(existingChat);
   } else {
     const newChat: TestChatData = {
       id: `test-chat-${Date.now()}`,
@@ -38,19 +40,66 @@ async function saveCharacterTestChat(
       characterCardName,
       messages,
       createdAt: Date.now(),
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
+      // 仅当传入有效数组时写入 sessionTraits（undefined 时省略字段，保持新对话默认无临时特征）
+      ...(Array.isArray(sessionTraits) ? { sessionTraits } : {})
     };
-    const saved = await chatStorageService.saveTestChat(newChat);
-    
-    await chatVersionService.createVersion(characterCardName, messages, {
-      creativeId,
-      characterCardId,
-      characterCardName,
-      savedAt: Date.now(),
-    });
-    
-    return saved;
+    await chatStorageService.saveTestChat(newChat);
   }
+
+  // 创建聊天版本（UI 版本列表依赖此文件）
+  const chatVersionFilePath = await chatVersionService.createVersion(characterCardName, messages, {
+    creativeId,
+    characterCardId,
+    characterCardName,
+    savedAt: Date.now(),
+  });
+
+  // 【Spec: enhance-conversation-image-auditability / Task 1】
+  // 创建联动版本：复用 createVersion 已生成的聊天版本文件，仅创建表格快照并写入版本索引。
+  // 表格数据文件路径为 {userDataPath}/data/memories/chatlog/{safeChatId}.json
+  try {
+    const safeChatId = characterCardName.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
+    const tableFilePath = path.join(getUserDataPath(), 'data', 'memories', 'chatlog', `${safeChatId}.json`);
+
+    let tableData: any;
+    try {
+      const tableContent = await fs.readFile(tableFilePath, 'utf8');
+      const parsed = JSON.parse(tableContent);
+      tableData = {
+        sheets: parsed.sheets || [],
+        headers: parsed.headers || {},
+        data: parsed.data || {},
+      };
+    } catch {
+      // 表格文件不存在（新对话尚未创建表格），跳过表格快照数据
+      tableData = undefined;
+    }
+
+    await versionLinkerService.createLinkedVersion(characterCardName, {
+      messages,
+      tableData,
+      triggerType: 'auto',
+      source: 'system',
+      description: 'Auto-saved linked version',
+      existingChatVersionFilePath: chatVersionFilePath,
+    });
+  } catch (error) {
+    console.error('[saveCharacterTestChat] Failed to create linked version:', error);
+  }
+
+  // 返回最新保存的对话（与 saveTestChat 返回值一致）
+  const saved = await chatStorageService.getTestChat(creativeId, characterCardId);
+  return saved ?? {
+    id: `test-chat-${Date.now()}`,
+    creativeId,
+    characterCardId,
+    characterCardName,
+    messages,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    sessionTraits,
+  };
 }
 
 async function deleteCharacterTestChat(creativeId: string, characterCardId: string): Promise<boolean> {
@@ -67,13 +116,16 @@ export function registerCharacterChatHandlers(): void {
   });
   
   ipcMain.handle('characterChat:saveTestChat', async (
-    _event, 
-    creativeId: string, 
-    characterCardId: string, 
-    characterCardName: string, 
-    messages: ChatMessage[]
+    _event,
+    creativeId: string,
+    characterCardId: string,
+    characterCardName: string,
+    messages: ChatMessage[],
+    // 【Spec: enhance-conversation-image-auditability / Task 7.2】
+    // 第 5 个参数：sessionTraits（可选），undefined 表示重置
+    sessionTraits?: CharacterTraitItem[]
   ) => {
-    return await saveCharacterTestChat(creativeId, characterCardId, characterCardName, messages);
+    return await saveCharacterTestChat(creativeId, characterCardId, characterCardName, messages, sessionTraits);
   });
   
   ipcMain.handle('characterChat:deleteTestChat', async (_event, creativeId: string, characterCardId: string) => {

@@ -226,3 +226,92 @@ export function getCharacterTemplates(): PromptTemplate[] {
 export function getWorldbookTemplates(): PromptTemplate[] {
   return ALL_TEMPLATES.filter(template => template.category === 'worldbook');
 }
+
+// ==========================================
+// 角色卡编辑智能助手提示词模板
+// （Spec: add-ai-assistant-for-character-card-editor / Task 8）
+// ==========================================
+
+/**
+ * 智能助手系统提示词：定义助手角色、建议生成规则与输出格式。
+ * 要求 AI 严格基于用户已填写的角色卡内容给出针对性建议，避免通用化回复。
+ */
+export const ASSISTANT_SYSTEM_PROMPT = `你是一位专业的角色卡（Character Card）设计顾问，正在协助用户完善角色卡编辑。
+你的目标是基于用户当前已填写的角色卡内容，提供针对性强、可操作的结构化编辑建议。
+
+## 角色卡字段说明
+- name：角色名称
+- description：角色详细描述（外貌、背景、特征等）
+- personality：角色性格特征
+- scenario：角色所处场景与世界观
+- first_mes：初始消息（首轮对话开场白）
+- mes_example：对话样例（多轮对话示例）
+- system_prompt：系统提示词（指导AI如何扮演角色的核心指令）
+- post_history_instructions：历史记录后指令
+- creator_notes：创建者笔记
+- alternate_greetings：替代问候语
+- tags：角色标签
+
+## 建议生成规则
+1. 严格基于用户提供的角色卡内容进行分析，引用其中的具体设定（如"根据您设定的'善良正直'性格…"）
+2. 严禁输出脱离角色设定的通用化建议（如"建议增加背景故事"这类空话）
+3. 每条建议必须包含可直接复制粘贴的具体内容（内容块），而不是仅给方向
+4. 建议的措辞、风格必须与角色卡已有内容保持一致
+5. 如果用户提问与角色卡已有内容矛盾，明确指出矛盾点并给出协调方案
+
+## 输出格式（严格遵守）
+每条建议之间用 【建议】 分隔，格式如下：
+
+【建议】
+类型：<description|dialogue|system_prompt|personality|scenario|first_message>
+标题：<一句话概括建议目的>
+说明：<1-3句详细说明，解释为什么这样修改>
+内容：<可直接复制粘贴的具体编辑内容，可以是修改后的段落、新增的对话样例、补充的系统提示词等>
+操作：<建议用户将此内容粘贴到哪个字段、如何应用>
+
+类型字段必须使用以下枚举之一：
+- description（角色描述优化）
+- dialogue（对话样例内容）
+- system_prompt（系统提示词补充）
+- personality（角色性格一致性）
+- scenario（场景设定）
+- first_message（初始消息优化）
+
+对于"内容"部分：如果是多行内容，使用一行文本直接给出；如果是对话样例，使用 用户：/角色名： 格式分行展示。内容部分不得包含解析标记。`;
+
+/**
+ * 构建角色卡上下文文本块。
+ * 遍历角色卡所有字段，将已填内容格式化输出，供助手分析。
+ */
+export function buildAssistantCharacterContext(formValues: Record<string, any>): string {
+  const FIELDS: Array<{ key: string; label: string }> = [
+    { key: 'name', label: '角色名称' },
+    { key: 'nickname', label: '昵称' },
+    { key: 'description', label: '描述' },
+    { key: 'personality', label: '个性' },
+    { key: 'scenario', label: '场景' },
+    { key: 'first_mes', label: '初始消息' },
+    { key: 'mes_example', label: '对话样例' },
+    { key: 'system_prompt', label: '系统提示' },
+    { key: 'post_history_instructions', label: '历史记录后指令' },
+    { key: 'creator_notes', label: '创建者笔记' },
+    { key: 'alternate_greetings', label: '替代问候' },
+    { key: 'tags', label: '标签' },
+    { key: 'source', label: '来源' },
+    { key: 'creator', label: '创建者' },
+    { key: 'character_version', label: '版本' },
+  ];
+
+  const parts: string[] = [];
+  for (const { key, label } of FIELDS) {
+    const value = formValues?.[key];
+    const displayValue = Array.isArray(value) ? value.join('\n') : (value || '');
+    if (!displayValue) continue;
+    parts.push(`【${label}】\n${displayValue}`);
+  }
+
+  if (parts.length === 0) {
+    return '（角色卡目前没有填写任何内容）';
+  }
+  return parts.join('\n\n');
+}

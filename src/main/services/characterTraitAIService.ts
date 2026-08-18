@@ -281,6 +281,38 @@ export interface GenerateTraitPromptsResult {
 }
 
 /**
+ * AI 标签优化入参（Spec: add-ai-trait-optimization-for-image-gen）
+ */
+export interface OptimizeTraitsParams {
+  /** 当前已启用的角色特征标签列表 */
+  traits: Array<{ text: string; weight?: number; categoryId?: string }>;
+  /** 当前对话上下文（用户与角色的完整对话文本） */
+  conversationContext: string;
+}
+
+/**
+ * AI 标签优化返回结果（Spec: add-ai-trait-optimization-for-image-gen）
+ */
+export interface OptimizeTraitsResult {
+  success: boolean;
+  /** AI 建议删除的标签列表（含原因） */
+  tagsToRemove?: Array<{ text: string; reason?: string }>;
+  /**
+   * AI 删除标签后评估补充的标签列表（Spec: add-ai-tag-supplement-after-removal）。
+   *
+   * 与 tagsToRemove 对称：AI 在删除矛盾标签的同时，基于对话上下文评估需要补充的标签
+   * （如删除 pants 后下身暴露，需补充 nude_lower_body / no_pants 等暴露特征标签）。
+   *
+   * - text: 被补充的标签文本
+   * - reason: AI 给出的补充原因（可选）
+   * - weight: 标签权重（可选，与 OptimizeTraitsParams.traits 项保持一致）
+   * - categoryId: 分类 ID（可选，用于将补充标签归入对应系统分类）
+   */
+  tagsToAdd?: Array<{ text: string; reason?: string; weight?: number; categoryId?: string }>;
+  error?: string;
+}
+
+/**
  * 专用系统提示词（SubTask 12.2）。
  *
  * 设计要点：
@@ -291,7 +323,7 @@ export interface GenerateTraitPromptsResult {
  *  - 与用户消息分开放置：system 中只放指令，description/personality/scenario 由调用方拼入 user 消息
  *
  * 【重点标记 - AI 自动归类增强】原提示词输出扁平 `tag` 列表，本次升级为「分类:tag」格式：
- *  - 每条 tag 前缀系统分类标签（basic / head / body / clothing / background / pose / expression）
+ *  - 每条 tag 前缀系统分类标签（basic / head / body / top / bottom / accessories / underwear / background / pose / expression）
  *  - LLM 据语义自行判断每条特征所属分类，由主进程 parseTraitsFromContent 解析剥离前缀
  *  - 兼容性：LLM 偶发不输出前缀时，parseTraitsFromContent 兜底归入 uncategorized
  *
@@ -308,10 +340,14 @@ export const CHARACTER_TRAIT_SYSTEM_PROMPT = `你是一个角色视觉特征提�
 - basic：基本特征（种族/物种如 lucario, pokemon, furry, anthro, feral, human, dog girl, cat boy, elf；性别如 female, male, 1girl, 1boy；内容分级如 sfw, nsfw；以及其他描述角色基本属性的基底特征，作为整个角色的基底）
 - head：头部特征（发色、发型、瞳色、动物耳朵、帽子、面部装饰等头部相关）
 - body：身体特征（体型、肤色、毛色、尾巴、翅膀、身高等身体相关，不含物种与性别）
-- clothing：衣物配饰（服装、配饰、眼镜、缎带、首饰等）
+- top：上装（上衣、衬衫、外套、连衣裙、校服等上身衣物；dress/school uniform 等连体衣物归入上装）
+- bottom：下装（裤子、裙子、短裤等下身衣物）
+- accessories：配饰（眼镜、缎带、首饰、帽子、围巾等装饰物）
+- underwear：内衣（胸罩、内裤、内衣套装等贴身衣物）
 - background：背景环境（场景元素、背景物件）
 - pose：人物姿势（身体姿态、动作）
 - expression：人物表情（面部表情、情绪状态）
+- interaction：互动元素（用户与角色之间的身体接触、肢体动作等交互场景，含两种模式：A) POV 脱离身体风格如 disembodied_hand / hand_on_breast / disembodied_tongue / licking；B) 双角色互动风格如 hugging_another / holding_hands / hand_on_another's_head / grabbing_another's_breast / sitting_on_another。用于引导 SD 生成包含交互性质的图片）
 
 分类建议（参考，按特征语义归入最合适的分类）：
 - 物种/种族（如 dog girl, cat boy, human, elf, lucario, pokemon, furry, anthro, feral）→ basic
@@ -320,10 +356,40 @@ export const CHARACTER_TRAIT_SYSTEM_PROMPT = `你是一个角色视觉特征提�
 - 毛色（如 white fur, black fur）→ body
 - 发色（如 black hair, blonde hair）→ head
 - 瞳色（如 blue eyes, red eyes）→ head
-- 服饰（如 black shirt, school uniform, dress）→ clothing
-- 配饰（如 glasses, ribbon, hat）→ clothing
+- 上装（如 black shirt, school uniform, dress, coat）→ top
+- 下装（如 jeans, skirt, shorts, pants）→ bottom
+- 配饰（如 glasses, ribbon, hat, necklace）→ accessories
+- 内衣（如 bra, underwear, panties）→ underwear
 - 动物耳朵（如 animal ears, dog ears）→ head
 - 尾巴/翅膀（如 tail, wings）→ body
+- 用户与角色的动作互动（触摸身体 → disembodied_hand + hand_on_breast/hand_on_butt/hand_on_hip/hand_on_leg；舔 → disembodied_tongue + licking/face_lick/breast_lick/foot_lick；亲吻 → kissing；拥抱 → hugging_another/hug；牵手 → holding_hands；手放在他人身上 → hand_on_another's_head/shoulder/face/cheek/chin/back/arm/chest/thigh/waist；抓握 → grabbing_another's_breast/ass/arm/hair；坐/抱 → sitting_on_another/carrying_another）→ interaction
+
+【互动元素识别要求（重要）】
+当对话上下文描述了用户与角色的动作互动（如"用手触摸她的身体"、"舔她的手"、"亲吻她"、"拥抱她"等）时，必须提取对应的 Danbooru 互动标签，使用 interaction 分类前缀输出。互动标签分两种模式：
+
+■ 模式 A — POV/脱离身体风格（用户不完整出现在画面中，仅出现交互的身体部位）：
+- 身体接触类（手触摸角色）：
+  · disembodied_hand（脱离身体的手 — 表示画面中出现一只不属于任何完整角色的手）
+  · 配合具体部位：hand_on_breast（手放在胸部）/ hand_on_butt（手放在臀部）/ hand_on_hip（手放在腰间）/ hand_on_leg（手放在腿上）/ hand_on_own_face 等
+- 舔舐类（舌头接触角色）：
+  · disembodied_tongue（脱离身体的舌头）
+  · 配合具体部位：licking（舔）/ face_lick（舔脸）/ breast_lick（舔胸）/ foot_lick（舔脚）等
+- 其他部位：disembodied_penis / disembodied_foot / disembodied_mouth 等脱离身体的部位
+- 其他行为类：vaginal_fingering / breast_sucking / nipple_play / anal_penetration 等性相关行为
+
+■ 模式 B — 双角色互动风格（用户作为"another"完整出现在画面中，与角色互动）：
+- 拥抱/牵手：hugging_another（拥抱他人）/ hug / holding_hands（牵手）
+- 手放在他人身上：hand_on_another's_head（手放在他人头上）/ hand_on_another's_shoulder（肩）/ hand_on_another's_face（脸）/ hand_on_another's_cheek（脸颊）/ hand_on_another's_chin（下巴）/ hand_on_another's_back（背）/ hand_on_another's_arm（手臂）/ hand_on_another's_chest（胸）/ hand_on_another's_thigh（腿）/ hand_on_another's_waist（腰）
+- 抓握他人：grabbing_another's_breast（抓胸）/ grabbing_another's_ass（抓臀）/ grabbing_another's_arm（抓手臂）/ grabbing_another's_hair（抓头发）/ grabbing_another's_wrist（抓手腕）
+- 持握他人：holding_another's_wrist（握手腕）/ holding_another's_hair（握头发）/ holding_another's_arm（握手臂）/ hand_in_another's_hair（手插入他人头发）
+- 其他互动：sitting_on_another（坐在他人身上）/ carrying_another（抱着他人）/ facing_another（面向他人）/ smiling_at_another（对他人微笑）/ kissing（亲吻）
+
+关键原则：
+1. 互动元素独立于角色的完整形象 — 即使用户设定了完整形象，也必须添加 disembodied_* 标签（脱离身体的部位+动作），而非试图生成用户的完整角色
+2. 互动标签必须成对出现：disembodied_hand 配合 hand_on_*，disembodied_tongue 配合 *_lick/licking_*
+3. 仅当对话明确描述互动动作时才输出互动标签；角色独自站立/坐着的描述不输出互动标签
+4. 互动标签使用 interaction 分类前缀，如 interaction:disembodied_hand|脱离身体的手, interaction:hand_on_breast|手放在胸部, interaction:hugging_another|拥抱他人
+5. 根据对话语境选择模式：例如（"我用手触摸…"）倾向模式 A（disembodied_*）;用手指插入阴道（vaginal_fingering）倾向模式A；描述两个角色互动倾向模式 B（*_another）
 
 要求：
 1. 首先输出一行「分类:tag|中文翻译」列表，逗号分隔，每个 tag 前缀一个分类标签，格式为 \`分类:tag|中文翻译\`（如 \`basic:dog girl|犬耳少女, basic:female|女性, head:white hair|白发\`）。其中 \`|\` 后是该 tag 的简短中文翻译（2-8 个字，如「白发」「蓝眼睛」「黑色衬衫」），每条 tag 必须带翻译。不要编号、不要自然语言句子、不要解释
@@ -336,9 +402,9 @@ export const CHARACTER_TRAIT_SYSTEM_PROMPT = `你是一个角色视觉特征提�
    - 仅在用户描述明确强调某特征强度时才输出权重（如「非常蓝的眼睛」→ 1.3，「淡淡的微笑」→ 0.7），常规特征不需要输出权重段
    - 1.0 时省略权重段以保持输出简洁（不要输出 \`|1.0\`）
 5. 输出示例：
-basic:dog girl|犬耳少女, basic:female|女性, head:white hair|白发, head:blue eyes|蓝眼睛|1.3, body:white fur|白色毛发, clothing:black shirt|黑色衬衫, head:animal ears|动物耳朵
+basic:dog girl|犬耳少女, basic:female|女性, head:white hair|白发, head:blue eyes|蓝眼睛|1.3, body:white fur|白色毛发, top:black shirt|黑色衬衫, accessories:glasses|眼镜, head:animal ears|动物耳朵
 ---DESCRIPTION---
-一位犬耳少女，拥有洁白的毛发和蓝色的眼睛。身穿黑色衬衫，头上有一对毛茸茸的犬耳。体型娇小，整体风格偏可爱。`;
+一位犬耳少女，拥有洁白的毛发和蓝色的眼睛。身穿黑色衬衫，戴着眼镜，头上有一对毛茸茸的犬耳。体型娇小，整体风格偏可爱。`;
 
 /**
  * 图片识别专用系统提示词（Spec: add-model-capability-detection-and-image-recognition / Task 6）。
@@ -352,6 +418,9 @@ basic:dog girl|犬耳少女, basic:female|女性, head:white hair|白发, head:b
  * 【重点标记 - AI 自动归类增强】与 CHARACTER_TRAIT_SYSTEM_PROMPT 同步升级为「category:tag」格式，
  * 便于多模态识别结果同样携带分类信息进入 store
  *
+ * 【重点标记 - 衣物分类拆分】原 `clothing` 分类已拆分为 `top`/`bottom`/`accessories`/`underwear`，
+ * 本常量同步更新分类列表与 guidance 示例。
+ *
  * 【重点标记 - AI 不生成自定义分类 tag 的 bug 修复】Spec: fix-asset-trait-and-scene-defects / Task 5
  *  - 与 CHARACTER_TRAIT_SYSTEM_PROMPT 同步改为动态构建：
  *    `recognizeImageTraits` 调用 `buildDynamicImageTraitSystemPrompt(globalCategories)`
@@ -361,10 +430,14 @@ export const IMAGE_TRAIT_SYSTEM_PROMPT = `You are a visual character analyst. An
 - basic: species/race (e.g. lucario, pokemon, furry, anthro, feral, human, dog girl, cat boy, elf), gender (e.g. female, male, 1girl, 1boy), content rating (e.g. sfw, nsfw), and other foundational character attributes
 - head: hair color, hair style, eye color, animal ears, hat, facial decorations
 - body: body type, skin tone, fur color, tail, wings, height (excluding species and gender)
-- clothing: clothes, accessories, glasses, ribbon, jewelry
+- top: upper-body clothes (e.g. shirt, coat, dress, school uniform; one-piece garments like dress/school uniform go to top)
+- bottom: lower-body clothes (e.g. jeans, skirt, shorts, pants)
+- accessories: decorations (e.g. glasses, ribbon, hat, necklace, jewelry)
+- underwear: undergarments (e.g. bra, underwear, panties)
 - background: scene elements, background objects
 - pose: body posture, action
 - expression: facial expression, emotion
+- interaction: interaction elements between user and character (e.g. disembodied_hand, hand_on_breast, hugging_another, holding_hands; typically NOT extracted from a single character card image, only triggered by conversation context describing physical interactions)
 
 Category guidance:
 - Species/race (e.g. dog girl, cat boy, human, elf, lucario, pokemon, furry, anthro, feral) → basic
@@ -373,13 +446,16 @@ Category guidance:
 - Fur color (e.g. white fur, black fur) → body
 - Hair color (e.g. black hair, blonde hair) → head
 - Eye color (e.g. blue eyes, red eyes) → head
-- Clothing (e.g. black shirt, school uniform, dress) → clothing
-- Accessories (e.g. glasses, ribbon, hat) → clothing
+- Upper-body clothes (e.g. black shirt, school uniform, dress, coat) → top
+- Lower-body clothes (e.g. jeans, skirt, shorts, pants) → bottom
+- Accessories (e.g. glasses, ribbon, hat, necklace) → accessories
+- Underwear (e.g. bra, underwear, panties) → underwear
 - Animal ears (e.g. animal ears, dog ears) → head
 - Tail/wings (e.g. tail, wings) → body
+- Interaction between user and character (disembodied_hand + hand_on_*, disembodied_tongue + *_lick, hugging_another, holding_hands, hand_on_another's_*, grabbing_another's_*) → interaction (typically NOT applicable to single character image analysis)
 
 Output format requirements:
-1. First, output ONE line of "category:tag" pairs separated by commas, no numbering, no explanations. Example: basic:cat girl, basic:female, head:white hair, head:red eyes, clothing:school uniform, head:cat ears
+1. First, output ONE line of "category:tag" pairs separated by commas, no numbering, no explanations. Example: basic:cat girl, basic:female, head:white hair, head:red eyes, top:school uniform, head:cat ears
 2. Then output a line "---DESCRIPTION---" as a separator.
 3. Finally, output a Chinese character appearance description (2-4 sentences) describing the overall visual appearance, including species, gender, body type, hair color/style, eye color, clothing, accessories, etc.
 4. Optional weight segment (Spec: add-sdxl-prompt-weight-support): each tag MAY append a third "|"-separated weight segment after the translation, in the format "category:tag|chinese_translation|weight":
@@ -390,7 +466,7 @@ Output format requirements:
    - When the weight is 1.0, omit the weight segment to keep the output concise (do NOT output "|1.0")
 
 Output example:
-basic:cat girl, basic:female, head:white hair, head:red eyes|1.3, clothing:school uniform, head:cat ears
+basic:cat girl, basic:female, head:white hair, head:red eyes|1.3, top:school uniform, head:cat ears
 ---DESCRIPTION---
 一位猫耳少女，拥有白色长发和红色的眼睛。身穿学校制服，头上有一对白色的猫耳。体型纤细，整体风格偏清纯。`;
 
@@ -404,6 +480,19 @@ basic:cat girl, basic:female, head:white hair, head:red eyes|1.3, clothing:schoo
  *  - 非流式调用：特征 tag 输出短，无需流式
  */
 class CharacterTraitAIService {
+  /**
+   * 服装状态 RAG 检索关键词（Spec: add-costume-state-prompt-directives）。
+   * 用于在 generateTraitPrompts 中额外检索 RAG 标签库，获取服装状态相关标签作为参考。
+   * 关键词与 buildCostumeStateGuidance 中的标签示例保持一致。
+   */
+  private static readonly COSTUME_STATE_RAG_KEYWORDS: string = [
+    'open_clothes', 'open_jacket', 'open_shirt', 'unbuttoned', 'unzipped', 'zipper_open',
+    'panties_aside', 'shorts_aside', 'bra_lift', 'shirt_lift', 'skirt_lift',
+    'shorts_around_one_leg', 'clothes_pull',
+    'one_breast_out', 'both_breasts_out', 'off_shoulder', 'bare_shoulders',
+    'cleavage', 'underboob', 'sideboob', 'navel', 'midriff',
+  ].join(' ');
+
   /**
    * 生成角色视觉特征 tag 列表。
    *
@@ -1523,6 +1612,51 @@ class CharacterTraitAIService {
   }
 
   /**
+   * 构建服装状态识别指令块（Spec: add-costume-state-prompt-directives）。
+   *
+   * 与 interactionGuidance（互动元素识别）平行，引导 AI 根据对话上下文中的服装变化描述，
+   * 生成 3 类 Danbooru 风格标签：开合状态 / 位置变化 / 身体部位暴露。
+   *
+   * 设计要点：
+   *  - 条件触发：仅当对话上下文描述服装状态变化时才输出对应标签
+   *  - 输出格式：使用 interaction 分类前缀（与互动标签一致，不新建分类）
+   *  - 扩展接口：本方法为独立方法，后续可平行新增 buildPoseStateGuidance() 等方法
+   *
+   * @returns 服装状态识别指令块字符串
+   */
+  private buildCostumeStateGuidance(): string {
+    return `【服装状态识别要求（重要）】
+当对话上下文描述了角色服装的状态变化（如敞开衣物、拉到一边、掀起等）时，必须提取对应的 Danbooru 服装状态标签，使用 interaction 分类前缀输出。服装状态标签分三类：
+
+■ 类型 A — 服装开合状态（衣物未移除但处于敞开/解开状态）：
+- open_clothes（衣物敞开 — 通用开合状态）
+- open_jacket（夹克敞开）/ open_shirt（衬衫敞开）/ open_coat（外套敞开）
+- unbuttoned_shirt（未扣扣子的衬衫）/ unzipped（拉链拉开）/ zipper_open（拉链拉开）
+- 命名规范：open_+ 服装名 / unbuttoned_+ 服装名 / unzipped
+
+■ 类型 B — 服装位置变化（衣物未移除但被拉偏/掀起/移位）：
+- panties_aside（内裤拉到一边）/ shorts_aside（短裤拉到一边）
+- bra_lift（胸罩掀起）/ shirt_lift（衬衫掀起）/ skirt_lift（裙子掀起）
+- shorts_around_one_leg（短裤只穿单腿）/ panties_around_one_ankle（内裤褪到一脚踝）
+- clothes_pull（拉扯衣物）/ bottomless_spanked（裤子褪下）
+- 命名规范：服装名_aside / 服装名_lift / 服装名_around_one_leg
+
+■ 类型 C — 身体部位暴露（因开合或位移导致的暴露，需与 A/B 类配合使用）：
+- one_breast_out（单侧乳房外露）/ both_breasts_out（双侧乳房外露）
+- off_shoulder（露肩）/ bare_shoulders（裸露双肩）
+- cleavage（乳沟）/ underboob（下乳）/ sideboob（侧乳）
+- navel（肚脐）/ midriff（腰腹）— 因 shirt_lift/skirt_lift 导致的腰腹暴露
+- 命名规范：身体部位_out / 身体部位暴露的 Danbooru 标准名
+
+关键原则：
+1. 服装状态标签描述的是「衣物仍在身上但状态改变」，区别于衣物完全移除（移除用 characterTraitStore 的 top/bottom/underwear 分类标签的删除来处理）
+2. 开合/位移标签通常需要配合暴露标签使用：如 open_shirt → 配合 cleavage 或 one_breast_out；panties_aside → 配合 pussy；shirt_lift → 配合 navel 或 midriff
+3. 仅当对话明确描述服装状态变化时才输出对应标签；角色穿着完整的描述不输出服装状态标签
+4. 服装状态标签使用 interaction 分类前缀，如 interaction:open_clothes|衣物敞开, interaction:panties_aside|内裤拉到一边, interaction:one_breast_out|单侧乳房外露
+5. 综合分析上下文中已有的服装类型（上衣/下装/内衣/配饰），确保服装状态标签与服装类型准确对应（如对话提到"夹克"则用 open_jacket 而非 open_shirt）`;
+  }
+
+  /**
    * 动态构建特征生成系统提示词（Spec: fix-asset-trait-and-scene-defects / Task 5）。
    *
    * 【重点标记 - AI 不生成自定义分类 tag 的 bug 修复】
@@ -1541,15 +1675,25 @@ class CharacterTraitAIService {
    */
   private buildDynamicTraitSystemPrompt(globalCategories: TraitCategory[]): string {
     // 系统分类的详细描述（保留原 CHARACTER_TRAIT_SYSTEM_PROMPT 的细节）
+    // 【重点标记 - 衣物分类拆分】原 `clothing` 已拆分为 top/bottom/accessories/underwear 四个细分类
     const systemCategoryDescriptions: Record<string, string> = {
       basic:
         '基本特征（种族/物种如 lucario, pokemon, furry, anthro, feral, human, dog girl, cat boy, elf；性别如 female, male, 1girl, 1boy；内容分级如 sfw, nsfw；以及其他描述角色基本属性的基底特征，作为整个角色的基底）',
       head: '头部特征（发色、发型、瞳色、动物耳朵、帽子、面部装饰等头部相关）',
       body: '身体特征（体型、肤色、毛色、尾巴、翅膀、身高等身体相关，不含物种与性别）',
-      clothing: '衣物配饰（服装、配饰、眼镜、缎带、首饰等）',
+      top: '上装（上衣、衬衫、外套、连衣裙、校服等上身衣物；dress/school uniform 等连体衣物归入上装）',
+      bottom: '下装（裤子、裙子、短裤等下身衣物）',
+      accessories: '配饰（眼镜、缎带、首饰、帽子、围巾等装饰物）',
+      underwear: '内衣（胸罩、内裤、内衣套装等贴身衣物）',
       background: '背景环境（场景元素、背景物件）',
       pose: '人物姿势（身体姿态、动作）',
       expression: '人物表情（面部表情、情绪状态）',
+      // 【Spec: enhance-conversation-interaction-prompt-recognition】
+      // 互动元素分类：承载用户与角色之间的动作互动标签，含两种 Danbooru 模式：
+      // A) POV 脱离身体风格（disembodied_hand / hand_on_breast / disembodied_tongue / licking）
+      // B) 双角色互动风格（hugging_another / holding_hands / hand_on_another's_* / grabbing_another's_*）
+      interaction:
+        '互动元素（用户与角色之间的身体接触、肢体动作等交互场景，含两种模式：A) POV 脱离身体风格如 disembodied_hand / hand_on_breast / disembodied_tongue / licking；B) 双角色互动风格如 hugging_another / holding_hands / hand_on_another\'s_head / grabbing_another\'s_breast / sitting_on_another。用于引导 SD 生成包含交互性质的图片）',
     };
 
     // 合并系统分类 + 自定义分类
@@ -1573,13 +1717,55 @@ class CharacterTraitAIService {
       '- 毛色（如 white fur, black fur）→ body',
       '- 发色（如 black hair, blonde hair）→ head',
       '- 瞳色（如 blue eyes, red eyes）→ head',
-      '- 服饰（如 black shirt, school uniform, dress）→ clothing',
-      '- 配饰（如 glasses, ribbon, hat）→ clothing',
+      '- 上装（如 black shirt, school uniform, dress, coat）→ top',
+      '- 下装（如 jeans, skirt, shorts, pants）→ bottom',
+      '- 配饰（如 glasses, ribbon, hat, necklace）→ accessories',
+      '- 内衣（如 bra, underwear, panties）→ underwear',
       '- 动物耳朵（如 animal ears, dog ears）→ head',
       '- 尾巴/翅膀（如 tail, wings）→ body',
+      // 【Spec: enhance-conversation-interaction-prompt-recognition】互动元素 guidance
+      '- 用户与角色的动作互动（触摸身体 → disembodied_hand + hand_on_breast/hand_on_butt/hand_on_hip/hand_on_leg；舔 → disembodied_tongue + licking/face_lick/breast_lick/foot_lick；亲吻 → kissing；拥抱 → hugging_another/hug；牵手 → holding_hands；手放在他人身上 → hand_on_another\'s_head/shoulder/face/cheek/chin/back/arm/chest/thigh/waist；抓握 → grabbing_another\'s_breast/ass/arm/hair；坐/抱 → sitting_on_another/carrying_another）→ interaction',
     ];
     const customGuidance = globalCategories.map((c) => `- ${c.name} → ${c.id}`);
     const categoryGuidance = [...systemGuidance, ...customGuidance].join('\n');
+
+    // 【Spec: enhance-conversation-interaction-prompt-recognition】
+    // 互动元素识别指令块：当对话上下文描述用户与角色的动作互动时，引导 AI 输出 Danbooru 风格互动标签。
+    // 含两种模式：A) POV 脱离身体风格（disembodied_* + hand_on_* / *_lick）
+    //             B) 双角色互动风格（*_another 系列，如 hugging_another / hand_on_another's_*）
+    // 关键原则：互动元素独立于角色完整形象，允许不生成用户完整角色，仅添加 disembodied_* 标签。
+    // 条件触发：仅当对话描述互动动作时输出，角色卡描述场景自然不触发（无互动描述则不输出）。
+    const interactionGuidance = `【互动元素识别要求（重要）】
+当对话上下文描述了用户与角色的动作互动（如"用手触摸她的身体"、"舔她的手"、"亲吻她"、"拥抱她"等）时，必须提取对应的 Danbooru 互动标签，使用 interaction 分类前缀输出。互动标签分两种模式：
+
+■ 模式 A — POV/脱离身体风格（用户不完整出现在画面中，仅出现交互的身体部位）：
+- 身体接触类（手触摸角色）：
+  · disembodied_hand（脱离身体的手 — 表示画面中出现一只不属于任何完整角色的手）
+  · 配合具体部位：hand_on_breast（手放在胸部）/ hand_on_butt（手放在臀部）/ hand_on_hip（手放在腰间）/ hand_on_leg（手放在腿上）/ hand_on_own_face 等
+- 舔舐类（舌头接触角色）：
+  · disembodied_tongue（脱离身体的舌头）
+  · 配合具体部位：licking（舔）/ face_lick（舔脸）/ breast_lick（舔胸）/ foot_lick（舔脚）等
+- 其他：disembodied_penis / disembodied_foot / disembodied_mouth 等脱离身体的部位
+
+■ 模式 B — 双角色互动风格（用户作为"another"完整出现在画面中，与角色互动）：
+- 拥抱/牵手：hugging_another（拥抱他人）/ hug / holding_hands（牵手）
+- 手放在他人身上：hand_on_another's_head（手放在他人头上）/ hand_on_another's_shoulder（肩）/ hand_on_another's_face（脸）/ hand_on_another's_cheek（脸颊）/ hand_on_another's_chin（下巴）/ hand_on_another's_back（背）/ hand_on_another's_arm（手臂）/ hand_on_another's_chest（胸）/ hand_on_another's_thigh（腿）/ hand_on_another's_waist（腰）
+- 抓握他人：grabbing_another's_breast（抓胸）/ grabbing_another's_ass（抓臀）/ grabbing_another's_arm（抓手臂）/ grabbing_another's_hair（抓头发）/ grabbing_another's_wrist（抓手腕）
+- 持握他人：holding_another's_wrist（握手腕）/ holding_another's_hair（握头发）/ holding_another's_arm（握手臂）/ hand_in_another's_hair（手插入他人头发）
+- 其他互动：sitting_on_another（坐在他人身上）/ carrying_another（抱着他人）/ facing_another（面向他人）/ smiling_at_another（对他人微笑）/ kissing（亲吻）
+
+关键原则：
+1. 互动元素独立于角色的完整形象 — 即使用户设定了完整形象，也必须添加 disembodied_* 标签（脱离身体的部位+动作），而非试图生成用户的完整角色
+2. 互动标签必须成对出现：disembodied_hand 配合 hand_on_*，disembodied_tongue 配合 *_lick/licking_*
+3. 仅当对话明确描述互动动作时才输出互动标签；角色独自站立/坐着的描述不输出互动标签
+4. 互动标签使用 interaction 分类前缀，如 interaction:disembodied_hand|脱离身体的手, interaction:hand_on_breast|手放在胸部, interaction:hugging_another|拥抱他人
+5. 根据对话语境选择模式：第一人称描述（"我用手触摸…"）倾向模式 A（disembodied_*）；第三人称或描述两个角色互动倾向模式 B（*_another）`;
+
+    // 【Spec: add-costume-state-prompt-directives】
+    // 服装状态识别指令块：与 interactionGuidance 平行，引导 AI 根据对话上下文中的服装变化
+    // 生成 3 类标签（开合状态 / 位置变化 / 身体部位暴露）。
+    // 扩展接口：后续可平行新增 buildPoseStateGuidance() 等方法，拼接到此处。
+    const costumeStateGuidance = this.buildCostumeStateGuidance();
 
     return `你是一个角色视觉特征提取助手。请从给定的角色描述中提取角色的视觉外观特征，并为每个特征分配一个分类标签，输出为逗号分隔的「分类:tag|中文翻译」列表，用于 Stable Diffusion 图像生成，并同时输出一段中文角色外观描述。
 
@@ -1588,6 +1774,10 @@ ${categoryLines}
 
 分类建议（参考，按特征语义归入最合适的分类）：
 ${categoryGuidance}
+
+${interactionGuidance}
+
+${costumeStateGuidance}
 
 要求：
 1. 首先输出一行「分类:tag|中文翻译」列表，逗号分隔，每个 tag 前缀一个分类标签，格式为 \`分类:tag|中文翻译\`（如 \`basic:dog girl|犬耳少女, basic:female|女性, head:white hair|白发\`）。其中 \`|\` 后是该 tag 的简短中文翻译（2-8 个字，如「白发」「蓝眼睛」「黑色衬衫」），每条 tag 必须带翻译。不要编号、不要自然语言句子、不要解释
@@ -1600,9 +1790,9 @@ ${categoryGuidance}
    - 仅在用户描述明确强调某特征强度时才输出权重（如「非常蓝的眼睛」→ 1.3，「淡淡的微笑」→ 0.7），常规特征不需要输出权重段
    - 1.0 时省略权重段以保持输出简洁（不要输出 \`|1.0\`）
 5. 输出示例：
-basic:dog girl|犬耳少女, basic:female|女性, head:white hair|白发, head:blue eyes|蓝眼睛|1.3, body:white fur|白色毛发, clothing:black shirt|黑色衬衫, head:animal ears|动物耳朵
+basic:dog girl|犬耳少女, basic:female|女性, head:white hair|白发, head:blue eyes|蓝眼睛|1.3, body:white fur|白色毛发, top:black shirt|黑色衬衫, accessories:glasses|眼镜, head:animal ears|动物耳朵
 ---DESCRIPTION---
-一位犬耳少女，拥有洁白的毛发和蓝色的眼睛。身穿黑色衬衫，头上有一对毛茸茸的犬耳。体型娇小，整体风格偏可爱。`;
+一位犬耳少女，拥有洁白的毛发和蓝色的眼睛。身穿黑色衬衫，戴着眼镜，头上有一对毛茸茸的犬耳。体型娇小，整体风格偏可爱。`;
   }
 
   /**
@@ -1623,15 +1813,25 @@ basic:dog girl|犬耳少女, basic:female|女性, head:white hair|白发, head:b
    */
   private buildDynamicImageTraitSystemPrompt(globalCategories: TraitCategory[]): string {
     // 系统分类的详细描述（保留原 IMAGE_TRAIT_SYSTEM_PROMPT 的细节）
+    // 【重点标记 - 衣物分类拆分】原 `clothing` 已拆分为 top/bottom/accessories/underwear 四个细分类
     const systemCategoryDescriptions: Record<string, string> = {
       basic:
         'species/race (e.g. lucario, pokemon, furry, anthro, feral, human, dog girl, cat boy, elf), gender (e.g. female, male, 1girl, 1boy), content rating (e.g. sfw, nsfw), and other foundational character attributes',
       head: 'hair color, hair style, eye color, animal ears, hat, facial decorations',
       body: 'body type, skin tone, fur color, tail, wings, height (excluding species and gender)',
-      clothing: 'clothes, accessories, glasses, ribbon, jewelry',
+      top: 'upper-body clothes (e.g. shirt, coat, dress, school uniform; one-piece garments like dress/school uniform go to top)',
+      bottom: 'lower-body clothes (e.g. jeans, skirt, shorts, pants)',
+      accessories: 'decorations (e.g. glasses, ribbon, hat, necklace, jewelry)',
+      underwear: 'undergarments (e.g. bra, underwear, panties)',
       background: 'scene elements, background objects',
       pose: 'body posture, action',
       expression: 'facial expression, emotion',
+      // 【Spec: enhance-conversation-interaction-prompt-recognition】
+      // 互动元素分类：图片识别场景通常只分析单一角色卡，互动标签（disembodied_* / *_another）
+      // 依赖对话上下文，一般不从静态角色卡图片提取。此处补充英文描述以保持 prompt 一致性
+      // （SYSTEM_TRAIT_CATEGORIES 已包含 interaction，缺失描述会回退为中文名「互动元素」破坏英文 prompt）。
+      interaction:
+        "interaction elements between user and character (e.g. disembodied_hand, hand_on_breast, hugging_another, holding_hands; typically NOT extracted from a single character card image, only triggered by conversation context describing physical interactions)",
     };
 
     // 合并系统分类 + 自定义分类
@@ -1655,10 +1855,14 @@ basic:dog girl|犬耳少女, basic:female|女性, head:white hair|白发, head:b
       '- Fur color (e.g. white fur, black fur) → body',
       '- Hair color (e.g. black hair, blonde hair) → head',
       '- Eye color (e.g. blue eyes, red eyes) → head',
-      '- Clothing (e.g. black shirt, school uniform, dress) → clothing',
-      '- Accessories (e.g. glasses, ribbon, hat) → clothing',
+      '- Upper-body clothes (e.g. black shirt, school uniform, dress, coat) → top',
+      '- Lower-body clothes (e.g. jeans, skirt, shorts, pants) → bottom',
+      '- Accessories (e.g. glasses, ribbon, hat, necklace) → accessories',
+      '- Underwear (e.g. bra, underwear, panties) → underwear',
       '- Animal ears (e.g. animal ears, dog ears) → head',
       '- Tail/wings (e.g. tail, wings) → body',
+      // 【Spec: enhance-conversation-interaction-prompt-recognition】互动元素 guidance（图片识别场景一般不触发）
+      "- Interaction between user and character (disembodied_hand + hand_on_*, disembodied_tongue + *_lick, hugging_another, holding_hands, hand_on_another's_*, grabbing_another's_*) → interaction (typically NOT applicable to single character image analysis)",
     ];
     const customGuidance = globalCategories.map((c) => `- ${c.name} → ${c.id}`);
     const categoryGuidance = [...systemGuidance, ...customGuidance].join('\n');
@@ -1670,7 +1874,7 @@ Category guidance:
 ${categoryGuidance}
 
 Output format requirements:
-1. First, output ONE line of "category:tag|chinese_translation" pairs separated by commas, no numbering, no explanations. The Chinese translation after "|" should be a short translation of the tag (2-8 Chinese characters, e.g. "白发", "蓝眼睛", "黑色衬衫"). Every tag MUST come with a translation. Example: basic:cat girl|猫耳少女, basic:female|女性, head:white hair|白发, head:red eyes|红眼睛, clothing:school uniform|学校制服, head:cat ears|猫耳
+1. First, output ONE line of "category:tag|chinese_translation" pairs separated by commas, no numbering, no explanations. The Chinese translation after "|" should be a short translation of the tag (2-8 Chinese characters, e.g. "白发", "蓝眼睛", "黑色衬衫"). Every tag MUST come with a translation. Example: basic:cat girl|猫耳少女, basic:female|女性, head:white hair|白发, head:red eyes|红眼睛, top:school uniform|学校制服, head:cat ears|猫耳
 2. Then output a line "---DESCRIPTION---" as a separator.
 3. Finally, output a Chinese character appearance description (2-4 sentences) describing the overall visual appearance, including species, gender, body type, hair color/style, eye color, clothing, accessories, etc.
 4. Optional weight segment (Spec: add-sdxl-prompt-weight-support): each tag MAY append a third "|"-separated weight segment after the translation, in the format "category:tag|chinese_translation|weight":
@@ -1681,7 +1885,7 @@ Output format requirements:
    - When the weight is 1.0, omit the weight segment to keep the output concise (do NOT output "|1.0")
 
 Output example:
-basic:cat girl|猫耳少女, basic:female|女性, head:white hair|白发, head:red eyes|红眼睛|1.3, clothing:school uniform|学校制服, head:cat ears|猫耳
+basic:cat girl|猫耳少女, basic:female|女性, head:white hair|白发, head:red eyes|红眼睛|1.3, top:school uniform|学校制服, head:cat ears|猫耳
 ---DESCRIPTION---
 一位猫耳少女，拥有白色长发和红色的眼睛。身穿学校制服，头上有一对白色的猫耳。体型纤细，整体风格偏清纯。`;
   }
@@ -1931,12 +2135,24 @@ basic:cat girl|猫耳少女, basic:female|女性, head:white hair|白发, head:r
         ? `${dynamicSystemPrompt}\n\n${ragSection}`
         : dynamicSystemPrompt;
 
+      // 【Spec: add-costume-state-prompt-directives】
+      // 服装状态 RAG 检索：用服装状态关键词额外检索 RAG 标签库，
+      // 将检索到的服装状态相关标签注入 system prompt 作为参考。
+      // RAG 未启用/检索失败时静默跳过，不影响主流程。
+      const costumeRagDebugInfo = await this.buildRagReferenceWithDebug(
+        CharacterTraitAIService.COSTUME_STATE_RAG_KEYWORDS
+      );
+      const costumeRagSection = costumeRagDebugInfo.prompt;
+      const systemPromptWithAllRag = costumeRagSection
+        ? `${systemPromptWithRag}\n\n## 服装状态标签参考\n${costumeRagSection}`
+        : systemPromptWithRag;
+
       // 7. 构建 user message
       const userMessage = this.buildTraitPromptUserMessage(prompt, baseTraits);
 
       // 8. 构建 messages + 注入引擎级 system prompt
       const messages: Array<{ role: 'system' | 'user'; content: string }> = [
-        { role: 'system', content: systemPromptWithRag },
+        { role: 'system', content: systemPromptWithAllRag },
         { role: 'user', content: userMessage },
       ];
       const enrichedMessages = this.enrichSystemPrompt(messages, engineSystemPrompt);
@@ -2024,6 +2240,309 @@ basic:cat girl|猫耳少女, basic:female|女性, head:white hair|白发, head:r
   }
 
   /**
+   * AI 标签优化：根据对话上下文分析角色特征标签的矛盾关系，返回应删除的标签列表 + 删除后应补充的标签列表。
+   *
+   * Spec: add-ai-trait-optimization-for-image-gen
+   * Spec: add-ai-tag-supplement-after-removal（Task 2：prompt 重构为 TWO PARTS + 解析器升级）
+   *
+   * 流程：
+   *  1. 读取 AI 引擎配置（与 generateTraitPrompts 一致）
+   *  2. 校验 baseUrl / apiKey / modelName / temperature / max_tokens
+   *  3. 构建 system prompt（TWO PARTS：PART 1 - REMOVAL 矛盾识别 + PART 2 - SUPPLEMENT 缺失补充）
+   *  4. 构建 user message（对话上下文 + 当前标签列表 + 两部分任务描述）
+   *  5. 非流式 POST /v1/chat/completions
+   *  6. 解析 JSON 响应 `{ "remove": [{ "text", "reason" }], "add": [{ "text", "reason", "weight"?, "categoryId"? }] }`
+   *  7. 返回 tagsToRemove + tagsToAdd 两个数组
+   *
+   * @param params 入参，详见 OptimizeTraitsParams
+   * @returns 详见 OptimizeTraitsResult
+   */
+  async optimizeTraitsForContext(
+    params: OptimizeTraitsParams
+  ): Promise<OptimizeTraitsResult> {
+    const { traits, conversationContext } = params;
+
+    try {
+      // 1. 入参校验
+      if (!conversationContext || !conversationContext.trim()) {
+        return { success: false, error: '对话上下文为空' };
+      }
+      if (!traits || traits.length === 0) {
+        return { success: true, tagsToRemove: [] };
+      }
+
+      // 2. 读取 AI 引擎配置（与 generateTraitPrompts 一致）
+      const aiConfig = aiConfigProvider.getAIConfig({ defaultTransmission: 'header' });
+      const baseUrl = aiConfig.baseUrl;
+      const apiKey = aiConfig.apiKey;
+      const apiKeyTransmission = aiConfig.apiKeyTransmission;
+      const engineSystemPrompt = aiConfig.systemPrompt || '';
+      const modelName = aiConfig.modelName;
+
+      // 3. 配置兜底校验
+      if (!baseUrl || !apiKey || !modelName) {
+        return {
+          success: false,
+          error: 'AI 引擎未配置，请先在设置中配置 API',
+        };
+      }
+
+      // 4. 读取引擎运行时参数
+      const runtimeConfig = this.getEngineRuntimeConfig();
+      if (!runtimeConfig) {
+        return {
+          success: false,
+          error: 'AI 引擎未配置 temperature 或 max_tokens 参数，请在设置中配置 AI 引擎',
+        };
+      }
+      const { temperature, maxTokens } = runtimeConfig;
+
+      // 5. 构建 system prompt
+      // 【Spec: add-ai-tag-supplement-after-removal / Task 2】prompt 重构为 TWO PARTS：
+      //  PART 1 - REMOVAL：识别与对话上下文矛盾的标签（保留原矛盾模式列表 + Interaction withdrawal）
+      //  PART 2 - SUPPLEMENT：删除后评估缺失的关键描述符并补充（如服装移除后的暴露特征）
+      const systemPrompt = `You are an expert at analyzing character trait tags for image generation.
+
+Your task has TWO PARTS:
+
+PART 1 - REMOVAL: Identify tags that CONTRADICT the conversation context and should be removed.
+
+Given a list of image generation tags (including character traits AND dynamically generated context tags like interaction tags) and a conversation context, identify which tags CONTRADICT the current conversation context and should be removed before generating an image.
+
+The tag list may include:
+- Character trait tags: fixed attributes like "pants", "sitting", "hat", "blonde_hair"
+- Context/interaction tags: dynamically generated based on conversation, e.g. "disembodied_hand" (a third-party hand in scene), "hand_on_vulva", "holding_hands", "hugging_another", "hand_on_another"
+
+Common contradiction patterns:
+- Clothing removal: If the conversation says the character "took off pants" or "removed skirt" (脱下/脱掉), the corresponding clothing tag should be removed.
+- Pose change: If the conversation says the character "stood up", "sat down", or "lay down" (站起来/坐下/躺下), the old pose tag (e.g., "sitting", "standing") should be removed if it contradicts the new pose.
+- Location change: If the conversation says the character "left the room" or "went outside" (离开/出去), location-specific tags may need removal.
+- State change: If the conversation describes a state change (e.g., "closed eyes", "fell asleep" 闭眼/睡着), contradictory state tags should be removed.
+- Clothing opening/closing change: If the conversation says the character "buttoned up", "zipped up", "closed" clothing (扣上/拉上拉链/合上/穿好), remove opening state tags like "open_clothes", "open_jacket", "open_shirt", "unbuttoned_shirt", "unzipped", "zipper_open".
+- Clothing position reset: If the conversation says the character "adjusted", "fixed", "put back" clothing (整理/穿好/复位/拉回), remove displacement state tags like "panties_aside", "shorts_aside", "bra_lift", "shirt_lift", "skirt_lift", "shorts_around_one_leg".
+- Interaction withdrawal (IMPORTANT): If the conversation describes the character WITHDRAWING or PULLING BACK physical contact — e.g., "抽回手", "缩回手", "withdraw hand", "pulled back", "let go", "released", "推开", "shoved away" — you MUST remove interaction tags that imply ongoing physical contact:
+  * "disembodied_hand" / "hand_on_vulva" / "hand_on_breast" / "hand_on_penis" → remove if a hand was withdrawn
+  * "holding_hands" → remove if hands were released
+  * "hugging_another" / "hugging" → remove if the characters separated
+  * "hand_on_another" / "hand_on_head" → remove if the hand was pulled back
+  Any tag starting with "disembodied_" or containing "_another" or "hand_on_" implies physical contact that may have ended.
+
+PART 2 - SUPPLEMENT: After identifying removals, evaluate the current visual state and identify any CRITICAL descriptors that are now MISSING and should be added.
+
+Common supplement patterns:
+- Exposure after clothing removal: If "pants" is removed and the character's lower body is now exposed, add "pussy" if not already present. If "bra" is removed and breasts are now exposed, add "breasts". If "covered_pussy" is removed, add "pussy".
+- Pose transition: If "sitting" is removed because the character stood up, add "standing" if not already present.
+- State transition: If "closed_eyes" is removed because the character opened eyes, add "open_eyes" if applicable.
+- Opening → exposure: If "open_shirt" or "open_jacket" is present and the character's chest is visible, add "cleavage" or "one_breast_out" (judge single vs. both based on context). If "open_clothes" is present, add the appropriate exposure tag based on what's visible.
+- Displacement → exposure: If "panties_aside" is present and not already covered, add "pussy". If "bra_lift" is present, add "breasts" or "one_breast_out".
+- Displacement → body part: If "shirt_lift" or "skirt_lift" is present, add "navel" or "midriff" (exposed midriff area). If "shorts_around_one_leg" is present, add "one_leg_out" if applicable.
+- Only add tags that are NECESSARY to maintain description accuracy. Do not add tags that are already present.
+- Use standard Danbooru/e621 tag names (e.g., "pussy", "breasts", "standing", "nude").
+
+IMPORTANT RULES:
+1. Only suggest removing tags that DIRECTLY CONTRADICT the conversation context.
+2. Do NOT remove tags that are still applicable or ambiguous.
+3. Do NOT remove tags if the conversation doesn't explicitly describe a change.
+4. If no tags need removal, return an empty array.
+5. Be CONSERVATIVE — when in doubt, do not remove.
+6. Pay special attention to interaction tags (disembodied_*, hand_on_*, *_another, holding_*) — these are easily outdated when the conversation moves past the interaction.
+7. For the "add" list: only suggest tags that are NOT already in the tag list, and do NOT suggest adding tags that you also suggested removing.
+
+Return your analysis as JSON in this exact format:
+\`\`\`json
+{
+  "remove": [
+    { "text": "pants", "reason": "对话中角色脱下了裤子" },
+    { "text": "open_shirt", "reason": "对话中角色扣上了衬衫扣子，不再敞开" }
+  ],
+  "add": [
+    { "text": "pussy", "reason": "裤子移除后下身暴露，需要补充暴露特征标签" },
+    { "text": "cleavage", "reason": "open_jacket 存在但缺少胸部暴露特征标签" }
+  ]
+}
+\`\`\`
+
+If no tags need removal or supplement, return: \`{ "remove": [], "add": [] }\`
+
+Return ONLY the JSON, no other text.`;
+
+      // 6. 构建 user message
+      // 【Spec: add-ai-tag-supplement-after-removal / Task 2】任务描述更新为两部分：
+      //  (1) 找出矛盾应删除的标签（含互动标签 withdrawal 识别）
+      //  (2) 评估删除后是否有关键特征缺失需要补充（如服装移除后的暴露特征标签）
+      const traitsList = traits.map(t => `- ${t.text}`).join('\n');
+      const userMessage = `## 当前图片生成标签列表（含角色特征 + 上下文互动标签）
+${traitsList}
+
+## 对话上下文
+${conversationContext}
+
+## 任务
+分析以上对话上下文，完成两部分任务：(1) 找出与当前场景矛盾、应删除的标签（特别注意互动标签 disembodied_* / hand_on_* / *_another 是否因角色抽回手/推开/分离而不再适用）(2) 评估删除后是否有关键特征缺失需要补充（如服装移除后的暴露特征标签）。返回 JSON 格式结果。`;
+
+      // 7. 构建 messages + 注入引擎级 system prompt
+      const messages: Array<{ role: 'system' | 'user'; content: string }> = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage },
+      ];
+      const enrichedMessages = this.enrichSystemPrompt(messages, engineSystemPrompt);
+
+      // 8. 构建请求 + 调用 LLM
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const requestBody: Record<string, any> = {
+        model: modelName,
+        messages: enrichedMessages,
+        temperature,
+        max_tokens: maxTokens,
+        stream: false,
+      };
+      if (apiKeyTransmission === 'header') {
+        headers['Authorization'] = apiKey.trim().startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
+      } else {
+        requestBody.api_key = apiKey;
+      }
+
+      console.log('[TraitOptimizeAI] Calling LLM for trait optimization:', {
+        baseUrl,
+        modelName,
+        traitCount: traits.length,
+        contextLength: conversationContext.length,
+      });
+
+      const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        console.error('[TraitOptimizeAI] LLM request failed:', response.status, response.statusText, errorText);
+        return {
+          success: false,
+          error: `AI 调用失败：HTTP ${response.status} ${response.statusText}`,
+        };
+      }
+
+      const data = await response.json();
+      const content: string | undefined = data?.choices?.[0]?.message?.content;
+
+      if (!content || typeof content !== 'string' || !content.trim()) {
+        return { success: false, error: 'AI 返回内容为空' };
+      }
+
+      // 9. 解析 JSON 响应
+      // 【Spec: add-ai-tag-supplement-after-removal / Task 2】解析器同时返回 tagsToRemove + tagsToAdd
+      const { tagsToRemove, tagsToAdd } = this.parseOptimizeResponse(content);
+
+      console.log('[TraitOptimizeAI] Optimization result:', {
+        suggestedRemoval: tagsToRemove.length,
+        removedTags: tagsToRemove.map(t => t.text),
+        suggestedSupplement: tagsToAdd.length,
+        addedTags: tagsToAdd.map(t => t.text),
+      });
+
+      return {
+        success: true,
+        tagsToRemove,
+        tagsToAdd,
+      };
+    } catch (error) {
+      console.error('[TraitOptimizeAI] optimizeTraitsForContext failed:', error);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      if (errorMsg.toLowerCase().includes('abort') || errorMsg.toLowerCase().includes('timeout')) {
+        return { success: false, error: 'AI 调用失败：请求超时，请稍后重试' };
+      }
+      return { success: false, error: `AI 调用失败：${errorMsg}` };
+    }
+  }
+
+  /**
+   * 解析 AI 标签优化的 JSON 响应。
+   * 支持 ```json ... ``` 代码块包裹和裸 JSON 两种格式。
+   *
+   * 【Spec: add-ai-tag-supplement-after-removal / Task 2】解析器升级：
+   *  - 同时解析 `remove` 与 `add` 两个字段，返回 `{ tagsToRemove, tagsToAdd }`
+   *  - `add` 项额外支持 `weight` / `categoryId`（与 OptimizeTraitsResult.tagsToAdd 字段对齐）
+   *  - 防御性过滤：若 AI 违反 IMPORTANT RULES 第 7 条（建议补充同时建议删除的标签），
+   *    在解析层兜底剔除 tagsToAdd 中与 tagsToRemove 同名（大小写不敏感）的项
+   *  - 兼容旧格式 `{ remove: [...] }`（无 add 字段时 tagsToAdd 为空数组）
+   *  - 兼容裸数组 `[{ text, reason }]`（视为仅 remove 列表，tagsToAdd 为空）
+   */
+  private parseOptimizeResponse(content: string): {
+    tagsToRemove: Array<{ text: string; reason?: string }>;
+    tagsToAdd: Array<{ text: string; reason?: string; weight?: number; categoryId?: string }>;
+  } {
+    const empty: { tagsToRemove: Array<{ text: string; reason?: string }>; tagsToAdd: Array<{ text: string; reason?: string; weight?: number; categoryId?: string }> } = {
+      tagsToRemove: [],
+      tagsToAdd: [],
+    };
+    try {
+      // 尝试提取 ```json ... ``` 代码块
+      const jsonMatch = content.match(/```json\s*([\s\S]*?)```/);
+      const jsonStr = jsonMatch ? jsonMatch[1].trim() : content.trim();
+
+      const parsed = JSON.parse(jsonStr);
+
+      // 解析 remove 列表项（统一处理对象数组 → 标准化 { text, reason }）
+      const normalizeRemoveItem = (item: any): { text: string; reason?: string } | null => {
+        if (!item || typeof item.text !== 'string' || !item.text.trim()) return null;
+        return {
+          text: item.text.trim(),
+          reason: typeof item.reason === 'string' ? item.reason.trim() : undefined,
+        };
+      };
+
+      // 解析 add 列表项（含 weight / categoryId，与 OptimizeTraitsResult.tagsToAdd 对齐）
+      const normalizeAddItem = (item: any): { text: string; reason?: string; weight?: number; categoryId?: string } | null => {
+        const text = String(item?.text || '').trim();
+        if (!text) return null;
+        return {
+          text,
+          reason: item.reason ? String(item.reason).trim() : undefined,
+          weight: typeof item.weight === 'number' ? item.weight : undefined,
+          categoryId: typeof item.categoryId === 'string' ? item.categoryId : undefined,
+        };
+      };
+
+      // 情况 A：标准结构 { remove: [...], add: [...] }
+      if (parsed && (Array.isArray(parsed.remove) || Array.isArray(parsed.add))) {
+        const removeList: any[] = Array.isArray(parsed.remove) ? parsed.remove : [];
+        const addList: any[] = Array.isArray(parsed.add) ? parsed.add : [];
+
+        const tagsToRemove: Array<{ text: string; reason?: string }> = removeList
+          .map(normalizeRemoveItem)
+          .filter((t: { text: string; reason?: string } | null): t is { text: string; reason?: string } => t !== null);
+
+        let tagsToAdd: Array<{ text: string; reason?: string; weight?: number; categoryId?: string }> = addList
+          .map(normalizeAddItem)
+          .filter((t: { text: string; reason?: string; weight?: number; categoryId?: string } | null): t is { text: string; reason?: string; weight?: number; categoryId?: string } => t !== null);
+
+        // 防御性过滤：剔除 tagsToAdd 中与 tagsToRemove 同名（大小写不敏感）的项，
+        // 兜底执行 IMPORTANT RULES 第 7 条「do NOT suggest adding tags that you also suggested removing」
+        const removeTextsLower = new Set(tagsToRemove.map(t => t.text.toLowerCase()));
+        tagsToAdd = tagsToAdd.filter(t => !removeTextsLower.has(t.text.toLowerCase()));
+
+        return { tagsToRemove, tagsToAdd };
+      }
+
+      // 情况 B：兼容裸数组格式 [{ text, reason }]（视为仅 remove 列表，tagsToAdd 为空）
+      if (Array.isArray(parsed)) {
+        const tagsToRemove: Array<{ text: string; reason?: string }> = parsed
+          .map(normalizeRemoveItem)
+          .filter((t: { text: string; reason?: string } | null): t is { text: string; reason?: string } => t !== null);
+        return { tagsToRemove, tagsToAdd: [] };
+      }
+
+      console.warn('[TraitOptimizeAI] Unexpected JSON structure:', parsed);
+      return empty;
+    } catch (e) {
+      console.warn('[TraitOptimizeAI] Failed to parse JSON response:', e, 'Content:', content.substring(0, 200));
+      return empty;
+    }
+  }
+
+  /**
    * 构建提示词生成的 user message。
    *
    * 结构：
@@ -2039,6 +2558,289 @@ basic:cat girl|猫耳少女, basic:female|女性, head:white hair|白发, head:r
     }
     parts.push('请根据提示词生成分类特征 tag 列表：');
     return parts.join('\n\n');
+  }
+
+  // ==================== 自定义情绪 AI 提示词生成（Spec: enhance-custom-emotion-system）====================
+
+  /**
+   * 根据情绪关键词生成 SD 提示词（4 维度 + NL 描述）。
+   *
+   * 复用 generateCharacterTraits 的 AI 引擎配置 + LLM 调用模式 + applyTagAudit 审计链。
+   * 区别：
+   *  - 系统提示词不同（要求 4 段分隔符格式：---FACE--- / ---ACTION--- / ---SYMBOL--- / ---BACKGROUND--- / ---NL---）
+   *  - 输入仅情绪关键词（无 description / personality / scenario / image）
+   *  - 输出为扁平 positive 字符串 + nlPrompt，而非 CategorizedTrait[]
+   */
+  async generateEmotionPrompts(
+    emotionLabel: string,
+    existingKeys?: string[]
+  ): Promise<{
+    success: boolean;
+    positive?: string;
+    negative?: string;
+    nlPrompt?: string;
+    emotionKey?: string;
+    auditDetails?: any[];
+    error?: string;
+  }> {
+    try {
+      if (!emotionLabel || !emotionLabel.trim()) {
+        return { success: false, error: '情绪关键词不能为空' };
+      }
+
+      // 1. 读取 AI 引擎配置
+      const aiConfig = aiConfigProvider.getAIConfig({ defaultTransmission: 'header' });
+      const baseUrl = aiConfig.baseUrl;
+      const apiKey = aiConfig.apiKey;
+      const apiKeyTransmission = aiConfig.apiKeyTransmission;
+      const engineSystemPrompt = aiConfig.systemPrompt || '';
+      const modelName = aiConfig.modelName;
+
+      if (!baseUrl || !apiKey || !modelName) {
+        return { success: false, error: 'AI 引擎未配置，请先在设置中配置 API' };
+      }
+
+      // 2. 读取引擎运行时参数
+      const runtimeConfig = this.getEngineRuntimeConfig();
+      if (!runtimeConfig) {
+        return { success: false, error: 'AI 引擎未配置 temperature 或 max_tokens 参数，请在设置中配置 AI 引擎' };
+      }
+      const { temperature, maxTokens } = runtimeConfig;
+
+      // 3. 构建系统提示词
+      const systemPrompt = `You are an expert SD (Stable Diffusion) prompt engineer specializing in anime character expressions.
+
+Given an emotion keyword (may be Chinese), generate an English emotion key and Danbooru-style tags for an expression image covering 4 dimensions. Output EXACTLY in this format with section separators:
+
+---KEY---
+a_single_english_key
+
+---FACE---
+tag1, tag2, tag3, ...
+
+---ACTION---
+tag1, tag2, ...
+
+---SYMBOL---
+tag1, tag2, ...
+
+---BACKGROUND---
+tag1, tag2, ...
+
+---NL---
+A single natural language sentence describing the expression.
+
+Rules:
+- KEY: a single English snake_case key representing the emotion (lowercase letters/digits/underscores only, MUST start with a letter, e.g., "热恋" → "passionate_love", "得意" → "smug", "害羞" → "shy"). Keep it concise (1-3 words).
+- All tags MUST use Danbooru standard underscore format (e.g., "open_mouth" not "open mouth", "heart-shaped_eyes" not "heart shaped eyes")
+- FACE: facial expression tags (e.g., smile, blush, open_mouth, closed_eyes, tears)
+- ACTION: body action tags (e.g., looking_at_viewer, leaning_forward, raised_arms) - can be empty if not applicable
+- SYMBOL: symbol/motif tags (e.g., heart, sparkle, star_(symbol), exclamation_point) - can be empty if not applicable
+- BACKGROUND: simple background tags (e.g., simple_background, white_background, gradient_background) - at least 1 tag
+- NL: one natural language sentence describing the expression (e.g., "an expression of passionate love with blushing cheeks and heart-shaped eyes")
+- Keep NSFW semantics if the emotion implies it (e.g., "in heat" → use tags like blush, sweat, heart, saliva, tongue_out)
+- Each dimension should have 3-8 tags
+- Do not add any text outside the section format`;
+
+      const userContent = `Emotion keyword: ${emotionLabel.trim()}\n\nPlease generate the English KEY and SD tags for this emotion following the format above.${existingKeys && existingKeys.length > 0 ? `\n\nIMPORTANT: The following keys are already taken. Generate a DIFFERENT key that does not conflict: ${existingKeys.join(', ')}` : ''}`;
+
+      const messages: Array<{ role: 'system' | 'user'; content: string }> = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userContent },
+      ];
+
+      const enrichedMessages = this.enrichSystemPrompt(messages, engineSystemPrompt);
+
+      // 4. 构建 LLM 请求
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      const requestBody: Record<string, any> = {
+        model: modelName,
+        messages: enrichedMessages,
+        temperature,
+        max_tokens: maxTokens,
+        stream: false,
+      };
+      if (apiKey) {
+        if (apiKeyTransmission === 'header') {
+          const authValue = apiKey.trim().startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
+          headers['Authorization'] = authValue;
+        } else {
+          requestBody.api_key = apiKey;
+        }
+      }
+
+      console.log('[CharacterTraitAI] generateEmotionPrompts: calling LLM for emotion:', emotionLabel);
+
+      // 5. 非流式调用 LLM
+      const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        console.error('[CharacterTraitAI] generateEmotionPrompts LLM failed:', response.status, response.statusText, errorText);
+        return { success: false, error: `AI 调用失败: ${response.status} ${response.statusText}` };
+      }
+
+      const data = await response.json();
+      const content = data?.choices?.[0]?.message?.content;
+
+      if (!content || !content.trim()) {
+        return { success: false, error: 'AI 返回内容为空' };
+      }
+
+      // 6. 解析 4 维度 + NL
+      const parsed = this.parseEmotionPromptResponse(content);
+      if (!parsed) {
+        return { success: false, error: 'AI 返回内容无法解析为 4 维度提示词' };
+      }
+
+      // 7. 标签审计（复用 applyTagAudit 的标签验证逻辑）
+      const allTags = [...parsed.face, ...parsed.action, ...parsed.symbol, ...parsed.background];
+      let auditDetails: any[] = [];
+
+      if (allTags.length > 0) {
+        try {
+          const tagValidation = await tagRagService.validateTagsAgainstLibrary(allTags);
+          auditDetails = allTags.map((tag, i) => {
+            const validation = tagValidation[i];
+            return {
+              tag,
+              isValid: validation?.isValid ?? false,
+              replacedBy: validation?.replacedBy,
+              source: validation?.source || 'failed',
+            };
+          });
+        } catch (auditError) {
+          console.warn('[CharacterTraitAI] generateEmotionPrompts: tag audit failed, skipping:', auditError);
+          auditDetails = allTags.map(tag => ({ tag, isValid: true, source: 'skipped' }));
+        }
+      }
+
+      // 8. 合并 4 维度为 positive 字符串
+      const positive = allTags.filter(Boolean).join(', ');
+
+      // 9. 处理英文键：校验格式，兜底生成
+      const KEY_PATTERN = /^[a-z][a-z0-9_]*$/;
+      let emotionKey = parsed.key || '';
+      if (!KEY_PATTERN.test(emotionKey)) {
+        // 兜底：使用 custom_ + 中文标签 UTF-8 字节短 hash
+        const labelBytes = Buffer.from(emotionLabel.trim(), 'utf-8');
+        const hashNum = labelBytes.reduce((h: number, b: number) => ((h << 5) - h + b) | 0, 0);
+        emotionKey = `custom_${Math.abs(hashNum).toString(16).substring(0, 6)}`;
+        console.warn('[CharacterTraitAI] generateEmotionPrompts: AI key invalid, using fallback:', emotionKey);
+      }
+
+      console.log('[CharacterTraitAI] generateEmotionPrompts: success, key:', emotionKey, 'tags:', allTags.length, 'nl:', parsed.nl?.substring(0, 50));
+
+      return {
+        success: true,
+        positive,
+        nlPrompt: parsed.nl || `${emotionLabel.trim()} expression`,
+        emotionKey,
+        auditDetails,
+      };
+    } catch (error) {
+      console.error('[CharacterTraitAI] generateEmotionPrompts failed:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
+  /**
+   * 解析 LLM 返回的情绪提示词内容为 KEY + 4 维度 + NL。
+   *
+   * 格式：
+   * ---KEY---
+   * a_single_english_key
+   * ---FACE---
+   * tag1, tag2, ...
+   * ---ACTION---
+   * tag1, ...
+   * ---SYMBOL---
+   * tag1, ...
+   * ---BACKGROUND---
+   * tag1, ...
+   * ---NL---
+   * natural language sentence
+   */
+  private parseEmotionPromptResponse(content: string): {
+    key: string;
+    face: string[];
+    action: string[];
+    symbol: string[];
+    background: string[];
+    nl: string;
+  } | null {
+    try {
+      const sections = ['---KEY---', '---FACE---', '---ACTION---', '---SYMBOL---', '---BACKGROUND---', '---NL---'];
+      const result = {
+        key: '',
+        face: [] as string[],
+        action: [] as string[],
+        symbol: [] as string[],
+        background: [] as string[],
+        nl: '',
+      };
+
+      let remaining = content;
+
+      for (let i = 0; i < sections.length; i++) {
+        const section = sections[i];
+        const nextSection = sections[i + 1];
+
+        const startIdx = remaining.indexOf(section);
+        if (startIdx === -1) {
+          // 段落缺失，容错：跳过
+          console.warn(`[CharacterTraitAI] parseEmotionPromptResponse: section ${section} not found`);
+          continue;
+        }
+
+        const contentStart = startIdx + section.length;
+        const contentEnd = nextSection
+          ? remaining.indexOf(nextSection, contentStart)
+          : remaining.length;
+        const sectionContent = (contentEnd === -1 ? remaining.substring(contentStart) : remaining.substring(contentStart, contentEnd)).trim();
+
+        if (section === '---NL---') {
+          result.nl = sectionContent;
+        } else if (section === '---KEY---') {
+          // KEY 段：取第一行，转下划线小写格式
+          result.key = sectionContent
+            .split('\n')[0]
+            .trim()
+            .replace(/\s+/g, '_')
+            .toLowerCase();
+        } else {
+          const tags = sectionContent
+            .split(/[,\n]/)
+            .map(t => t.trim().replace(/\s+/g, '_'))
+            .filter(Boolean);
+          const key = section.replace(/---/g, '').toLowerCase() as keyof typeof result;
+          (result[key] as string[]) = tags;
+        }
+
+        if (contentEnd !== -1) {
+          remaining = remaining.substring(contentEnd);
+        }
+      }
+
+      // 兜底：如果所有维度都为空，返回 null
+      if (!result.key && result.face.length === 0 && result.action.length === 0 && result.symbol.length === 0 && result.background.length === 0 && !result.nl) {
+        return null;
+      }
+
+      return result;
+    } catch (e) {
+      console.error('[CharacterTraitAI] parseEmotionPromptResponse failed:', e);
+      return null;
+    }
   }
 }
 

@@ -9,6 +9,15 @@
  *                                      在 AI 素材生成弹窗中提供「提示词生成」入口，
  *                                      生成结果携带 categoryId / translation / originalText，
  *                                      可直接追加到 editedTraits，复用 L0-L5 完整审计链
+ *   - ai:optimizeTraitsForContext      根据对话上下文分析角色特征标签的矛盾关系，返回应删除的标签列表
+ *                                      （Spec: add-ai-trait-optimization-for-image-gen）
+ *                                      入参 { traits, conversationContext }，返回 { success, tagsToRemove?, error? }
+ *
+ * 事件通道（主进程 → 渲染进程单向推送）：
+ *   - ai:traitPromptProgress           图片生成阶段进度事件（Spec: enhance-conversation-image-bubble / Task 3）
+ *                                      在 ai:generateTraitPrompts handler 内推送，payload 为 { phase }
+ *                                      phase 取值：'tag-generating'（调用 service 前）/ 'tag-auditing'（service 返回后）
+ *                                      渲染进程通过 preload.ai.onTraitPromptProgress 订阅，用于切换占位文案
  *
  * 注册模式参照 registerCharacterTraitHandlers() / registerAssetHandlers()：
  * 导出 registerCharacterTraitAIHandlers() 函数，由 ipc/index.ts 调用。
@@ -31,6 +40,8 @@ import { characterTraitAIService } from '../../services/characterTraitAIService'
 import type {
   GenerateCharacterTraitsParams,
   GenerateTraitPromptsParams,
+  OptimizeTraitsParams,
+  OptimizeTraitsResult,
   RecognizeImageTraitsParams
 } from '../../services/characterTraitAIService';
 
@@ -137,11 +148,105 @@ export function registerCharacterTraitAIHandlers() {
    */
   ipcMain.handle(
     'ai:generateTraitPrompts',
-    async (_event, args: GenerateTraitPromptsParams) => {
+    async (event, args: GenerateTraitPromptsParams) => {
+      // Spec: enhance-conversation-image-bubble / Task 3 — IPC 进度事件
+      //
+      // service.generateTraitPrompts 内部串行执行「LLM 生成 tag」+「applyTagAudit（L0-L5 审核）」，
+      // handler 无法在两阶段之间精确插入事件。故采用方案 (b) 最小改动：
+      //   - 调用 service 前推送 { phase: 'tag-generating' }（渲染进程显示「标签生成中…」）
+      //   - service 返回后、return 前推送 { phase: 'tag-auditing' }（渲染进程显示「标签审核中…」，
+      //     在拿到结果到发起 sd.generateTxt2Img 之间展示此状态）
+      //
+      // phase 取值与 preload.ts / electron.d.ts 的 onTraitPromptProgress 类型契约一致：
+      //   'tag-generating' | 'tag-auditing' | 'image-generating'
+      // （spec.md 场景文字中的 'auditing' 为简写，canonical 名称为 'tag-auditing'，
+      //   否则渲染进程 phase === 'tag-auditing' 判断永不命中）
+      //
+      // 推送事件与 return 独立：发送失败（如渲染进程已销毁）不影响返回值与错误处理。
+      const sendProgress = (phase: 'tag-generating' | 'tag-auditing' | 'image-generating') => {
+        try {
+          if (!event.sender.isDestroyed()) {
+            event.sender.send('ai:traitPromptProgress', { phase });
+          }
+        } catch (sendError) {
+          // 渲染进程可能已销毁，忽略进度事件发送失败（不影响主流程）
+          console.warn('[CharacterTraitAIHandler] traitPromptProgress send failed:', sendError);
+        }
+      };
+
       try {
-        return await characterTraitAIService.generateTraitPrompts(args);
+        sendProgress('tag-generating');
+        const result = await characterTraitAIService.generateTraitPrompts(args);
+        sendProgress('tag-auditing');
+        return result;
       } catch (error) {
         console.error('[CharacterTraitAIHandler] generateTraitPrompts failed:', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        };
+      }
+    }
+  );
+
+  /**
+   * AI 自定义情绪提示词生成（Spec: enhance-custom-emotion-system）。
+   *
+   * 通道用途：
+   *   - 接收用户输入的情绪关键词（如"热恋"）
+   *   - 由主进程 LLM 生成 4 维度 SD tag（FACE / ACTION / SYMBOL / BACKGROUND）+ NL 描述
+   *   - 执行标签审计链验证
+   *   - 返回 { positive, nlPrompt, auditDetails }
+   */
+  ipcMain.handle(
+    'ai:generateEmotionPrompts',
+    async (_event, args: { emotionLabel: string; existingKeys?: string[] }) => {
+      try {
+        return await characterTraitAIService.generateEmotionPrompts(args.emotionLabel, args.existingKeys);
+      } catch (error) {
+        console.error('[CharacterTraitAIHandler] generateEmotionPrompts failed:', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        };
+      }
+    }
+  );
+
+  /**
+   * AI 标签优化：根据对话上下文分析角色特征标签的矛盾关系，返回应删除的标签列表。
+   *
+   * Spec: add-ai-trait-optimization-for-image-gen
+   *
+   * 通道用途：
+   *   - 接收当前已启用的角色特征标签列表 + 对话上下文
+   *   - 由主进程 LLM 分析标签与对话上下文的矛盾（如角色卡标签为「长发」但对话上下文描述为「短发」）
+   *   - 返回应删除的标签列表（含原因），前端据此提示用户确认删除
+   *
+   * 入参：
+   *   - traits：当前已启用的角色特征标签列表（{ text, weight?, categoryId? }）
+   *   - conversationContext：当前对话上下文（用户与角色的完整对话文本）
+   *
+   * 返回：
+   *   - success=true：tagsToRemove 为建议删除的标签列表（含 reason；可能为空数组，表示无矛盾）
+   *   - success=false：error 为友好错误信息（非堆栈）
+   *
+   * 错误场景（service 内部已兜底为 `{ success: false, error }`，handler 再 try/catch
+   * 提供 IPC 序列化兜底，保证渲染进程永不收到 reject）：
+   *   - 空输入：conversationContext 为空或纯空白 → 「对话上下文为空」（不调用 LLM）
+   *   - 空标签：traits 为空数组 → 直接返回 success=true, tagsToRemove=[]（不调用 LLM）
+   *   - AI 引擎未配置：baseUrl / apiKey / modelName 任一缺失
+   *   - 引擎参数缺失：temperature / max_tokens 未配置
+   *   - 调用失败：网络 / 超时 / HTTP 错误
+   *   - 解析失败：LLM 返回空内容 / 无法解析为 JSON
+   */
+  ipcMain.handle(
+    'ai:optimizeTraitsForContext',
+    async (_event, args: OptimizeTraitsParams): Promise<OptimizeTraitsResult> => {
+      try {
+        return await characterTraitAIService.optimizeTraitsForContext(args);
+      } catch (error) {
+        console.error('[CharacterTraitAIHandler] optimizeTraitsForContext failed:', error);
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error',

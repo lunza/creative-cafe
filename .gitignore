@@ -67,3 +67,23 @@ sillytavern-source/
 
 # Test script runtime outputs (PNG/log artifacts)
 scripts/test-output/
+
+# AI self-improving skill local memory (not for version control)
+.learnings/
+
+# Local SQLite database files (runtime data, not source)
+database/
+
+# Temporary debug / diagnostic output files
+.tmp-*
+.tmp-card-data/
+*-errors*.txt
+all-tsc-errors.txt
+current-errors.txt
+remaining-errors.txt
+tsc-*.txt
+tsc_*.txt
+ts*-errors.txt
+errors-group*.txt
+eslint-results.json
+creative_errors*.txt

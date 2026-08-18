@@ -63,11 +63,19 @@ export * from './game.types';
 // + SYSTEM_TRAIT_CATEGORIES / UNCATEGORIZED_CATEGORY_ID / UNCATEGORIZED_CATEGORY / genTraitId
 export * from './characterTrait.types';
 
+// 禁词表提示词注入类型（Spec: add-forbidden-words-prompt / Task 2）
+// ForbiddenWordsConfig / ForbiddenWordCategory / DEFAULT_FORBIDDEN_WORDS_CONFIG
+export * from './forbiddenWords';
+
 // 标签自动推荐类型（Spec: implement-local-tag-autocomplete / Task 1）
 // TagInfo / TagMatchType / TagSearchResult / TagSortBy /
 // TagSearchRequest / TagSearchResponse / TagLoadStatus / TagReloadResult
 // 注：TagSearchResult 与 webSearch 的 SearchResult 无同名冲突，可直接 export *
 export * from './tag.types';
+
+// 角色卡编辑智能助手类型（Spec: add-ai-assistant-for-character-card-editor / Task 1）
+// SuggestionType / Suggestion / AssistantMessage / AssistantState
+export * from './assistant.types';
 
 // === 冲突消解 ===
 // 显式 re-export 优先于 export *，解决 vector.types 与 writing.types 之间的同名冲突。

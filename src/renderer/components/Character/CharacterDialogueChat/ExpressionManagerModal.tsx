@@ -7,6 +7,8 @@ import {
   CloseOutlined,
   ThunderboltOutlined,
   RobotOutlined,
+  EditOutlined,
+  ExperimentOutlined,
 } from '@ant-design/icons';
 import { EMOTION_PRESETS } from './PromptBuilder';
 import ImageCropperModal from './ImageCropperModal';
@@ -63,6 +65,7 @@ const ExpressionManagerModal: React.FC<ExpressionManagerModalProps> = ({
     deleteExpression,
     addCustomEmotion,
     removeCustomEmotion,
+    updateCustomEmotion,
   } = useExpressionStore();
   // TODO(perf): 整体订阅，待拆分为 selector（7 字段，>5 暂缓）
 
@@ -81,9 +84,18 @@ const ExpressionManagerModal: React.FC<ExpressionManagerModalProps> = ({
 
   // ====== 添加自定义情绪表单状态 ======
   const [addCustomOpen, setAddCustomOpen] = useState<boolean>(false);
-  const [newCustomKey, setNewCustomKey] = useState<string>('');
   const [newCustomLabel, setNewCustomLabel] = useState<string>('');
-  const [addCustomLoading, setAddCustomLoading] = useState<boolean>(false);
+  // 一键生成流程 loading（AI 生成 + 保存合并为一个动作）
+  const [autoGenerating, setAutoGenerating] = useState<boolean>(false);
+
+  // ====== 编辑自定义情绪状态（Spec: enhance-custom-emotion-system） ======
+  const [editCustomOpen, setEditCustomOpen] = useState<boolean>(false);
+  const [editCustomKey, setEditCustomKey] = useState<string>('');
+  const [editCustomLabel, setEditCustomLabel] = useState<string>('');
+  const [editCustomPositive, setEditCustomPositive] = useState<string>('');
+  const [editCustomNlPrompt, setEditCustomNlPrompt] = useState<string>('');
+  const [editCustomLoading, setEditCustomLoading] = useState<boolean>(false);
+  const [editGeneratingPrompts, setEditGeneratingPrompts] = useState<boolean>(false);
 
   // ====== AI 生成表情弹窗状态（Spec: add-ai-expression-generation / Task 5） ======
   const [generateModalOpen, setGenerateModalOpen] = useState<boolean>(false);
@@ -114,7 +126,6 @@ const ExpressionManagerModal: React.FC<ExpressionManagerModalProps> = ({
     if (!open) {
       resetCropperState();
       setAddCustomOpen(false);
-      setNewCustomKey('');
       setNewCustomLabel('');
     }
   }, [open, resetCropperState]);
@@ -244,65 +255,168 @@ const ExpressionManagerModal: React.FC<ExpressionManagerModalProps> = ({
     [characterCardId, removeCustomEmotion],
   );
 
-  // ====== 添加自定义情绪 ======
+  // ====== 添加自定义情绪（简化流程：用户仅输入中文词，AI 自动生成全部字段） ======
 
   const handleAddCustomOpen = useCallback(() => {
-    setNewCustomKey('');
     setNewCustomLabel('');
     setAddCustomOpen(true);
   }, []);
 
   const handleAddCustomCancel = useCallback(() => {
     setAddCustomOpen(false);
-    setNewCustomKey('');
     setNewCustomLabel('');
   }, []);
 
   /**
-   * 提交添加自定义情绪：
-   * - 校验 key 格式（^[a-z][a-z0-9_]*$）
-   * - 校验与预置/已有自定义 keys 不冲突
-   * - 调用 addCustomEmotion，主进程负责 manifest.customEmotions 持久化
+   * 一键添加自定义情绪：
+   * 用户仅需输入中文情绪词，系统自动调用 AI 生成英文键 + SD 提示词 + NL 描述并保存。
+   * - 校验中文标签非空
+   * - 调用 ai.generateEmotionPrompts → 获取 emotionKey + positive + nlPrompt
+   * - 校验 emotionKey 格式 + 去重（冲突时追加后缀）
+   * - 组装 prompts 并调用 addCustomEmotion 保存
+   * - 失败时保持弹窗打开，用户可重试
    */
   const handleAddCustomSubmit = useCallback(async () => {
-    const key = newCustomKey.trim();
     const label = newCustomLabel.trim();
 
-    if (!KEY_PATTERN.test(key)) {
-      message.warning(
-        '英文键需匹配 ^[a-z][a-z0-9_]*$（小写字母开头，仅含小写字母/数字/下划线）',
-      );
-      return;
-    }
     if (!label) {
-      message.warning('请填写中文标签');
-      return;
-    }
-    if (EMOTION_PRESETS.some((e) => e.key === key)) {
-      message.warning(`键 "${key}" 与预置情绪重复`);
-      return;
-    }
-    if (manifest?.customEmotions?.some((e) => e.key === key)) {
-      message.warning(`键 "${key}" 已存在`);
+      message.warning('请输入情绪关键词');
       return;
     }
     if (!characterCardId) return;
 
-    setAddCustomLoading(true);
+    setAutoGenerating(true);
     try {
-      const result = await addCustomEmotion(characterCardId, key, label);
+      // 1. 收集已存在的情绪键（预置 + 自定义），传给 AI 避免冲突
+      const existingKeys = [
+        ...EMOTION_PRESETS.map((e) => e.key),
+        ...(manifest?.customEmotions?.map((e) => e.key) ?? []),
+      ];
+
+      // 2. 调用 AI 生成英文键 + SD 提示词 + NL 描述（告知 AI 已占用键）
+      const aiResult = await window.electronAPI.ai.generateEmotionPrompts({
+        emotionLabel: label,
+        existingKeys,
+      });
+
+      if (!aiResult?.success || !aiResult.positive || !aiResult.emotionKey) {
+        message.error(aiResult?.error || 'AI 生成失败，请重试');
+        return;
+      }
+
+      // 3. 校验 emotionKey 格式 + 去重（AI 已知避让，此处为二次防御）
+      let finalKey = aiResult.emotionKey;
+      if (!KEY_PATTERN.test(finalKey)) {
+        message.error('AI 生成的英文键格式不合规，请重试');
+        return;
+      }
+      // 二次防御：若仍冲突，追加短数字后缀（极低概率）
+      if (EMOTION_PRESETS.some((e) => e.key === finalKey) ||
+          manifest?.customEmotions?.some((e) => e.key === finalKey)) {
+        let suffix = 2;
+        const baseKey = finalKey;
+        while (
+          EMOTION_PRESETS.some((e) => e.key === `${baseKey}${suffix}`) ||
+          manifest?.customEmotions?.some((e) => e.key === `${baseKey}${suffix}`)
+        ) {
+          suffix++;
+        }
+        finalKey = `${baseKey}${suffix}`;
+        console.warn('[ExpressionManagerModal] AI key still conflicts after avoidance, using fallback:', finalKey);
+      }
+
+      // 3. 组装 prompts 并保存
+      const prompts = {
+        positive: aiResult.positive,
+        nlPrompt: aiResult.nlPrompt || `${label} expression`,
+      };
+
+      const result = await addCustomEmotion(characterCardId, finalKey, label, prompts);
       if (result.success) {
-        message.success('自定义情绪已添加');
+        message.success(`自定义情绪已添加（${finalKey}）`);
         setAddCustomOpen(false);
-        setNewCustomKey('');
         setNewCustomLabel('');
       } else {
         message.error(result.error || '添加自定义情绪失败');
       }
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '添加自定义情绪异常');
     } finally {
-      setAddCustomLoading(false);
+      setAutoGenerating(false);
     }
-  }, [newCustomKey, newCustomLabel, manifest, characterCardId, addCustomEmotion]);
+  }, [newCustomLabel, characterCardId, manifest, addCustomEmotion]);
+
+  // ====== 编辑自定义情绪（Spec: enhance-custom-emotion-system） ======
+
+  const handleEditCustomOpen = useCallback((emotion: CustomEmotion) => {
+    setEditCustomKey(emotion.key);
+    setEditCustomLabel(emotion.label);
+    setEditCustomPositive(emotion.prompts?.positive || '');
+    setEditCustomNlPrompt(emotion.prompts?.nlPrompt || '');
+    setEditCustomOpen(true);
+  }, []);
+
+  const handleEditCustomCancel = useCallback(() => {
+    setEditCustomOpen(false);
+    setEditCustomKey('');
+    setEditCustomLabel('');
+    setEditCustomPositive('');
+    setEditCustomNlPrompt('');
+  }, []);
+
+  const handleEditCustomSubmit = useCallback(async () => {
+    if (!characterCardId || !editCustomKey) return;
+
+    const label = editCustomLabel.trim();
+    if (!label) {
+      message.warning('请填写中文标签');
+      return;
+    }
+
+    setEditCustomLoading(true);
+    try {
+      const prompts = editCustomPositive
+        ? { positive: editCustomPositive, nlPrompt: editCustomNlPrompt || `${label} expression` }
+        : undefined;
+
+      const result = await updateCustomEmotion(characterCardId, editCustomKey, label, prompts);
+      if (result.success) {
+        message.success('自定义情绪已更新');
+        setEditCustomOpen(false);
+      } else {
+        message.error(result.error || '更新自定义情绪失败');
+      }
+    } finally {
+      setEditCustomLoading(false);
+    }
+  }, [characterCardId, editCustomKey, editCustomLabel, editCustomPositive, editCustomNlPrompt, updateCustomEmotion]);
+
+  /**
+   * 编辑弹窗中重新生成提示词。
+   */
+  const handleEditGeneratePrompts = useCallback(async () => {
+    if (!editCustomLabel.trim()) {
+      message.warning('请先输入中文标签');
+      return;
+    }
+    setEditGeneratingPrompts(true);
+    try {
+      const result = await window.electronAPI.ai.generateEmotionPrompts({
+        emotionLabel: editCustomLabel.trim(),
+      });
+      if (result?.success && result.positive) {
+        setEditCustomPositive(result.positive);
+        setEditCustomNlPrompt(result.nlPrompt || '');
+        message.success('提示词生成成功');
+      } else {
+        message.error(result?.error || '提示词生成失败');
+      }
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '提示词生成异常');
+    } finally {
+      setEditGeneratingPrompts(false);
+    }
+  }, [editCustomLabel]);
 
   // ====== AI 生成流程（Spec: add-ai-expression-generation / Task 5） ======
 
@@ -556,15 +670,30 @@ const ExpressionManagerModal: React.FC<ExpressionManagerModalProps> = ({
                   </Tooltip>
                 )}
                 {isCustom && (
-                  <Tooltip title="移除类别">
-                    <Button
-                      size="small"
-                      type="text"
-                      danger
-                      icon={<CloseOutlined />}
-                      onClick={() => handleRemoveCustomEmotion(emotionKey)}
-                    />
-                  </Tooltip>
+                  <>
+                    <Tooltip title="编辑">
+                      <Button
+                        size="small"
+                        type="text"
+                        icon={<EditOutlined />}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const emotion = customEmotions.find(em => em.key === emotionKey);
+                          if (emotion) handleEditCustomOpen(emotion);
+                        }}
+                        style={{ color: 'var(--primary-color, #6366f1)' }}
+                      />
+                    </Tooltip>
+                    <Tooltip title="移除类别">
+                      <Button
+                        size="small"
+                        type="text"
+                        danger
+                        icon={<CloseOutlined />}
+                        onClick={() => handleRemoveCustomEmotion(emotionKey)}
+                      />
+                    </Tooltip>
+                  </>
                 )}
               </>
             )}
@@ -576,10 +705,12 @@ const ExpressionManagerModal: React.FC<ExpressionManagerModalProps> = ({
       imageCache,
       avatarPath,
       characterName,
+      customEmotions,
       handleUploadClick,
       handleDeleteImage,
       handleRemoveCustomEmotion,
       handleSingleGenerate,
+      handleEditCustomOpen,
     ],
   );
 
@@ -804,53 +935,115 @@ const ExpressionManagerModal: React.FC<ExpressionManagerModalProps> = ({
         }}
       />
 
-      {/* 添加自定义情绪弹窗 */}
+      {/* 添加自定义情绪弹窗（简化流程：用户仅输入中文词，AI 自动生成全部字段） */}
       <Modal
         title="添加自定义情绪"
         open={addCustomOpen}
-        onCancel={handleAddCustomCancel}
+        onCancel={autoGenerating ? undefined : handleAddCustomCancel}
         onOk={handleAddCustomSubmit}
-        confirmLoading={addCustomLoading}
+        confirmLoading={autoGenerating}
         okText="添加"
         cancelText="取消"
-        width={460}
+        width={480}
+        maskClosable={!autoGenerating}
+        keyboard={!autoGenerating}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '8px 0' }}>
           <div>
-            <label
-              style={{
-                display: 'block',
-                marginBottom: 6,
-                fontSize: 12,
-                color: 'var(--text-secondary, #94a3b8)',
-              }}
-            >
-              英文键（仅小写字母/数字/下划线，字母开头）
-            </label>
-            <Input
-              value={newCustomKey}
-              onChange={(e) => setNewCustomKey(e.target.value)}
-              placeholder="如 shyness"
-              autoFocus
-            />
-          </div>
-          <div>
-            <label
-              style={{
-                display: 'block',
-                marginBottom: 6,
-                fontSize: 12,
-                color: 'var(--text-secondary, #94a3b8)',
-              }}
-            >
-              中文标签
+            <label style={{ display: 'block', marginBottom: 6, fontSize: 12, color: 'var(--text-secondary, #94a3b8)' }}>
+              情绪关键词（中文）
             </label>
             <Input
               value={newCustomLabel}
               onChange={(e) => setNewCustomLabel(e.target.value)}
-              placeholder="如 害羞"
+              placeholder="如 热恋、得意、害羞"
+              autoFocus
+              disabled={autoGenerating}
+              onPressEnter={handleAddCustomSubmit}
             />
           </div>
+
+          {autoGenerating && (
+            <div style={{ textAlign: 'center', padding: '20px 0' }}>
+              <Spin tip="AI 正在生成情绪提示词..." />
+            </div>
+          )}
+
+          {!autoGenerating && (
+            <div style={{ padding: '8px 12px', background: 'var(--chat-bubble-assistant-bg, rgba(30, 30, 46, 0.6))', borderRadius: 4, fontSize: 12, color: 'var(--text-secondary, #94a3b8)' }}>
+              点击"添加"后，系统将自动调用 AI 生成英文键名、SD 提示词和自然语言描述，无需手动输入。
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      {/* 编辑自定义情绪弹窗（Spec: enhance-custom-emotion-system） */}
+      <Modal
+        title={`编辑自定义情绪 - ${editCustomLabel || editCustomKey}`}
+        open={editCustomOpen}
+        onCancel={handleEditCustomCancel}
+        onOk={handleEditCustomSubmit}
+        confirmLoading={editCustomLoading}
+        okText="保存"
+        cancelText="取消"
+        width={560}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '8px 0' }}>
+          <div>
+            <label style={{ display: 'block', marginBottom: 6, fontSize: 12, color: 'var(--text-secondary, #94a3b8)' }}>
+              英文键（不可修改）
+            </label>
+            <Input value={editCustomKey} disabled />
+          </div>
+          <div>
+            <label style={{ display: 'block', marginBottom: 6, fontSize: 12, color: 'var(--text-secondary, #94a3b8)' }}>
+              中文标签
+            </label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Input
+                value={editCustomLabel}
+                onChange={(e) => setEditCustomLabel(e.target.value)}
+                style={{ flex: 1 }}
+              />
+              <Button
+                icon={<ExperimentOutlined />}
+                onClick={handleEditGeneratePrompts}
+                loading={editGeneratingPrompts}
+                disabled={!editCustomLabel.trim()}
+              >
+                重新生成提示词
+              </Button>
+            </div>
+          </div>
+
+          {editGeneratingPrompts && (
+            <div style={{ textAlign: 'center', padding: '20px 0' }}>
+              <Spin tip="正在生成提示词..." />
+            </div>
+          )}
+
+          <div>
+            <label style={{ display: 'block', marginBottom: 4, fontSize: 12, color: 'var(--text-secondary, #94a3b8)' }}>
+              SD 提示词（可编辑）
+            </label>
+            <Input.TextArea
+              value={editCustomPositive}
+              onChange={(e) => setEditCustomPositive(e.target.value)}
+              rows={3}
+              placeholder="点击「重新生成提示词」自动生成，或手动输入"
+              style={{ fontSize: 12 }}
+            />
+          </div>
+          {editCustomNlPrompt && (
+            <div>
+              <label style={{ display: 'block', marginBottom: 4, fontSize: 12, color: 'var(--text-secondary, #94a3b8)' }}>
+                NL 自然语言描述
+              </label>
+              <div style={{ padding: '6px 8px', background: 'var(--chat-bubble-assistant-bg, rgba(30, 30, 46, 0.6))', borderRadius: 4, fontSize: 12, color: 'var(--text-secondary, #94a3b8)' }}>
+                {editCustomNlPrompt}
+              </div>
+            </div>
+          )}
         </div>
       </Modal>
     </>

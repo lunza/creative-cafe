@@ -36,7 +36,7 @@ interface SizePreset {
 }
 
 /** 预设尺寸列表，每项含尺寸 + 适用场景说明 */
-const SIZE_PRESETS: SizePreset[] = [
+export const SIZE_PRESETS: SizePreset[] = [
   { label: '头像/表情', width: 512, height: 512, scene: '适合头像和表情图片' },
   { label: '全身立绘', width: 512, height: 768, scene: '适合全身立绘场景' },
   { label: '竖版高清', width: 768, height: 1024, scene: '适合高清立绘/半身像' },

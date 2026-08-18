@@ -291,6 +291,30 @@ export const AppSetting = {
       concurrency: 3,              // 远程 API 并发请求数
       retryMaxAttempts: 3,         // 单批失败重试次数
       retryDelayMs: 1000,
+    },
+    // Spec: add-forbidden-words-prompt / Task 2
+    // 禁词提示词注入配置（在系统 prompt 中注入 Forbidden Word List 指令，让 AI 主动避开禁词）
+    // enabled=false 默认关闭，避免对用户现有对话产生意外影响；
+    // categories 默认预置两个示例类别（Religious Terminology + Extreme Emotion Labels），
+    // 用户可在设置面板按需修改或删除。
+    //
+    // 持久化策略：作为 AppSetting 嵌套字段随整体 setting.save / setting.load IPC
+    // 自动持久化到 electron-store（settings.json），与 tagAutocomplete 一致。
+    forbiddenWords: {
+      enabled: false,
+      categories: [
+        {
+          name: 'Religious Terminology',
+          description: 'Do not use words related to religion, rituals, or divinity.',
+          words: ['sacrifice (献祭)', 'offering (祭品)', 'victim (祭品)', 'sacred (神圣)', 'holy (神圣)'],
+        },
+        {
+          name: 'Extreme Emotion Labels',
+          description: 'Do not use direct adjectives or nouns to label extreme psychological states.',
+          words: ['crazy (疯狂)', 'insane (疯狂)', 'fear (恐惧)', 'terror (恐惧)', 'despair (绝望)', 'hopelessness (绝望)'],
+          note: 'Instead of labeling these emotions, describe the physical manifestations and behavioral reactions to convey the intensity (Show, Don\'t Tell).',
+        },
+      ],
     }
   }
 };

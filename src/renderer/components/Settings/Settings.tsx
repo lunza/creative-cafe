@@ -13,6 +13,8 @@ import WebSearchSettings, { WebSearchSettingsRef } from './WebSearchSettings';
 import TagAutocompleteSettings, { TagAutocompleteSettingsRef } from './TagAutocompleteSettings';
 // Spec: rag-tag-library-for-ai-trait-generation / Task 10
 import TagRagSettings, { TagRagSettingsRef } from './TagRagSettings';
+// Spec: add-banned-words-filter / Task 5
+import BlockedWordsSettings, { BlockedWordsSettingsRef } from './BlockedWordsSettings';
 import './Settings.css';
 
 const Settings: React.FC = () => {
@@ -33,6 +35,8 @@ const Settings: React.FC = () => {
   const tagAutocompleteConfigRef = React.useRef<TagAutocompleteSettingsRef>(null);
   // Spec: rag-tag-library-for-ai-trait-generation / Task 10
   const tagRagConfigRef = React.useRef<TagRagSettingsRef>(null);
+  // Spec: add-banned-words-filter / Task 5
+  const blockedWordsConfigRef = React.useRef<BlockedWordsSettingsRef>(null);
 
   const activeEngine = useMemo<AIEngineSetting | null>(() => {
     const engines = setting?.aiEngines ?? [];
@@ -124,6 +128,8 @@ const Settings: React.FC = () => {
         const tagAutocompleteConfig = tagAutocompleteConfigRef.current?.getFormValues();
         // Spec: rag-tag-library-for-ai-trait-generation / Task 10
         const tagRagConfig = tagRagConfigRef.current?.getFormValues();
+        // Spec: add-forbidden-words-prompt / Task 4
+        const blockedWordsConfig = blockedWordsConfigRef.current?.getFormValues();
 
         const updatedSetting = {
           ...setting,
@@ -136,6 +142,7 @@ const Settings: React.FC = () => {
           ...(webSearchConfig ? { webSearch: webSearchConfig } : {}),
           ...(tagAutocompleteConfig ? { tagAutocomplete: tagAutocompleteConfig } : {}),
           ...(tagRagConfig ? { tagRag: tagRagConfig } : {}),
+          ...(blockedWordsConfig ? { forbiddenWords: blockedWordsConfig } : {}),
         };
 
         addLog(`更新后的设置: ${JSON.stringify(updatedSetting)}`, 'info');
@@ -260,6 +267,12 @@ const Settings: React.FC = () => {
                   <WebSearchSettings ref={webSearchConfigRef} />
                 </>
               ),
+            },
+            {
+              key: 'content-filter',
+              label: '内容约束',
+              forceRender: true,
+              children: <BlockedWordsSettings ref={blockedWordsConfigRef} />,
             },
           ]}
         />

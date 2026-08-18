@@ -15,6 +15,18 @@ export interface ExpressionEntry {
 }
 
 /**
+ * 自定义情绪的 AI 生成 SD 提示词（Spec: enhance-custom-emotion-system）
+ */
+export interface CustomEmotionPrompts {
+  /** SDXL tag 风格正面提示词（4 维度合并，逗号分隔） */
+  positive: string;
+  /** 负面提示词（可选） */
+  negative?: string;
+  /** NL 自然语言描述（用于 qwen-image / flux2 等 NL 驱动模型） */
+  nlPrompt: string;
+}
+
+/**
  * 自定义情绪定义
  */
 export interface CustomEmotion {
@@ -22,6 +34,8 @@ export interface CustomEmotion {
   key: string;
   /** 中文标签 */
   label: string;
+  /** AI 生成的 SD 提示词（可选，为空时表情生成回退到兜底逻辑） */
+  prompts?: CustomEmotionPrompts;
 }
 
 /**
@@ -175,8 +189,8 @@ class ExpressionService {
       };
 
       if (isCustom) {
-        const exists = manifest.customEmotions.some(e => e.key === emotionKey);
-        if (!exists) {
+        const existing = manifest.customEmotions.find(e => e.key === emotionKey);
+        if (!existing) {
           manifest.customEmotions.push({ key: emotionKey, label: label || emotionKey });
         }
       }
@@ -251,7 +265,8 @@ class ExpressionService {
   async addCustomEmotion(
     characterCardId: string,
     key: string,
-    label: string
+    label: string,
+    prompts?: CustomEmotionPrompts
   ): Promise<{ success: boolean; error?: string }> {
     try {
       if (!characterCardId) {
@@ -272,14 +287,65 @@ class ExpressionService {
         return { success: false, error: '该自定义情绪已存在' };
       }
 
-      manifest.customEmotions.push({ key, label: label.trim() });
+      const emotion: CustomEmotion = { key, label: label.trim() };
+      if (prompts) {
+        emotion.prompts = prompts;
+      }
+      manifest.customEmotions.push(emotion);
       const manifestPath = path.join(charDir, 'manifest.json');
       await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
-      console.log('[ExpressionService] addCustomEmotion: added', key, label);
+      console.log('[ExpressionService] addCustomEmotion: added', key, label, prompts ? 'with prompts' : 'no prompts');
 
       return { success: true };
     } catch (error) {
       console.error('[ExpressionService] addCustomEmotion failed:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
+  /**
+   * 更新自定义情绪类别（更新 label 和/或 prompts 字段，不影响已有表情图片）。
+   * Spec: enhance-custom-emotion-system
+   */
+  async updateCustomEmotion(
+    characterCardId: string,
+    key: string,
+    label?: string,
+    prompts?: CustomEmotionPrompts
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      if (!characterCardId) {
+        return { success: false, error: 'characterCardId 不能为空' };
+      }
+      if (!key) {
+        return { success: false, error: 'key 不能为空' };
+      }
+
+      const charDir = await this.getCharacterExpressionDir(characterCardId);
+      const manifest = await this.listExpressions(characterCardId);
+
+      const emotion = manifest.customEmotions.find(e => e.key === key);
+      if (!emotion) {
+        return { success: false, error: '自定义情绪不存在' };
+      }
+
+      if (label && label.trim()) {
+        emotion.label = label.trim();
+      }
+      if (prompts) {
+        emotion.prompts = prompts;
+      }
+
+      const manifestPath = path.join(charDir, 'manifest.json');
+      await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+      console.log('[ExpressionService] updateCustomEmotion: updated', key);
+
+      return { success: true };
+    } catch (error) {
+      console.error('[ExpressionService] updateCustomEmotion failed:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',

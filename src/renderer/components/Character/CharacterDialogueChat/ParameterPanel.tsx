@@ -221,6 +221,20 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
     const isModified = localValues[config.key] !== undefined;
     const isInteger = config.step >= 1;
 
+    /**
+     * 吸附滑块值到最小值。
+     *
+     * 修复 antd Slider 在 min=0 且 step 较小时，拖到最左端无法精确到达 0 的问题。
+     * 当 value 为第一个 tick（min + step）附近时，吸附回 min（0），
+     * 使滑块能拉到最小值（如 min_p 可拉到 0）。
+     *
+     * 使用容差比较（浮点精度容差 1e-9）而非严格相等，避免浮点误差导致吸附失效。
+     */
+    const normalizeSliderValue = (value: number): number => {
+      if (config.min === 0 && value < config.min + config.step * 1.5) return config.min;
+      return value;
+    };
+
     return (
       <div key={config.key} className="parameter-item">
         <div className="parameter-header">
@@ -243,8 +257,18 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
           max={config.max}
           step={config.step}
           value={currentValue}
-          onChange={(value) => handleSliderChange(config.key, value)}
-          onAfterChange={(value) => handleSliderAfterChange(config.key, value as number)}
+          onChange={(value) => handleSliderChange(config.key, normalizeSliderValue(value as number))}
+          onAfterChange={(value) => {
+            const normalized = normalizeSliderValue(value as number);
+            if (normalized !== value) {
+              // 吸附生效：跳过 handleSliderAfterChange 的"等于默认值删除字段"逻辑，
+              // 直接写入吸附值，确保 UI 不会因删除字段而回弹到引擎默认值
+              handleSliderChange(config.key, normalized);
+              onParameterChange({ [config.key]: normalized });
+            } else {
+              handleSliderAfterChange(config.key, normalized);
+            }
+          }}
           className="parameter-slider"
         />
       </div>

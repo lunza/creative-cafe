@@ -1143,7 +1143,7 @@ case '编写':
   - **【临时编辑支持】** `AssetGenerateModal` 的「携带角色特征」面板支持用户临时编辑/新增/删除（不持久化）：
     - 维护本地工作副本 `editedTraits: CharacterTraitItem[] | null`（弹窗打开时从 store `characterTraits` 深拷贝，关闭时置 null）
     - `effectiveTraits = editedTraits ?? characterTraits` 驱动 `enabledTraitTexts` 派生与 UI 展示
-    - **【Spec: optimize-expression-preset-prompts / Task 7】** `enabledTraitTexts` 在表情模式（`single-expression` / `batch-expression`）下额外过滤 `categoryId === 'expression'` 的特征，避免与 `{emotion}` 占位符注入的 `EMOTION_PROMPT_MAP` 表情 tag 重复/冲突。过滤在 `useMemo` 派生层执行（与 `isNudeSlot` 过滤 `clothing` 分类同模式），确保 `buildSdOptions` / `buildEmotionPrompt` / single-expression 提示词构建器所有下游消费者一致地不携带 expression 分类 tag。`illustration` / `general` / `three-view` 模式不受影响（`isExpressionMode` 为 false 时不过滤）。⚠️ **【2026-08-07 去重修复】** `enabledTraitTexts` 追加 `.filter()` 对 text 做大小写不敏感去重（保留首次出现），从源头防止重复 tag 进入 SD prompt（与 `applyTraitsAndLora` 后端兜底去重构成双层防御，详见 docs/FIX_RECORDS.md §7.23 §9）。
+    - **【Spec: optimize-expression-preset-prompts / Task 7】** `enabledTraitTexts` 在表情模式（`single-expression` / `batch-expression`）下额外过滤 `categoryId === 'expression'` 的特征，避免与 `{emotion}` 占位符注入的 `EMOTION_PROMPT_MAP` 表情 tag 重复/冲突。过滤在 `useMemo` 派生层执行（与 `isNudeSlot` 过滤 `top`/`bottom`/`underwear` 衣物分类同模式），确保 `buildSdOptions` / `buildEmotionPrompt` / single-expression 提示词构建器所有下游消费者一致地不携带 expression 分类 tag。`illustration` / `general` / `three-view` 模式不受影响（`isExpressionMode` 为 false 时不过滤）。⚠️ **【2026-08-07 去重修复】** `enabledTraitTexts` 追加 `.filter()` 对 text 做大小写不敏感去重（保留首次出现），从源头防止重复 tag 进入 SD prompt（与 `applyTraitsAndLora` 后端兜底去重构成双层防御，详见 docs/FIX_RECORDS.md §7.23 §9）。
     - 初始化用 `traitStoreCardId === characterCardId` 判断就绪（支持 0 特色角色卡也能初始化为 `[]`）
     - 用户可临时修改 trait 的 `text`（如 `sitting → standing`）、切换 `enabled`、临时删除任意标签、在分类下新增临时标签（`genTraitId()` 生成 id，不写入磁盘）
     - UI 按 `SYSTEM_TRAIT_CATEGORIES + customCategories + UNCATEGORIZED_CATEGORY` 分组折叠展示（所有分类默认展开含空分类），每个 Tag 可点击切换 enabled、点编辑图标进入行内 Input 编辑、点 × 临时删除，分类底部「+ 新增临时标签」可追加临时特征
@@ -1191,19 +1191,29 @@ case '编写':
 
 ### AI 生成特征自动归类（Spec: add-trait-category-grouping 增强）
 
-原 Spec「AI 集成适配」一节规定 AI 特征生成（Task 13）仍返回扁平 `string[]`、新特征统一落入「未分类」，由用户手动归类（"AI 自动归类为未来增强项，本期不做"）。2026-08-05 实施该「未来增强项」：让 LLM 直接输出 `分类:tag` 形式，解析后携带 `categoryId` 透传到 store，使 AI 生成的特征直接进入对应系统分类（basic / head / body / clothing / background / pose / expression），无需用户手动归类。
+原 Spec「AI 集成适配」一节规定 AI 特征生成（Task 13）仍返回扁平 `string[]`、新特征统一落入「未分类」，由用户手动归类（"AI 自动归类为未来增强项，本期不做"）。2026-08-05 实施该「未来增强项」：让 LLM 直接输出 `分类:tag` 形式，解析后携带 `categoryId` 透传到 store，使 AI 生成的特征直接进入对应系统分类（basic / head / body / top / bottom / accessories / underwear / background / pose / expression），无需用户手动归类。
 
-**系统分类体系（7 个，`SYSTEM_TRAIT_CATEGORIES` 常量定义，order 0..6）：**
+**系统分类体系（11 个，`SYSTEM_TRAIT_CATEGORIES` 常量定义，order 0..10）：**
 - `basic` 基本特征（order 0）— 物种/种族（lucario, pokemon, furry, anthro, feral, human, dog girl, cat boy, elf）、性别（female, male, 1girl, 1boy）、内容分级（sfw, nsfw）等角色基底属性，作为整个角色的基底特征置于最前
 - `head` 头部特征（order 1）— 发色/发型/瞳色/动物耳朵/帽子等
 - `body` 身体特征（order 2）— 体型/肤色/毛色/尾巴/翅膀等（不含物种与性别，已移至 basic）
-- `clothing` 衣物配饰（order 3）
-- `background` 背景环境（order 4）
-- `pose` 人物姿势（order 5）
-- `expression` 人物表情（order 6）
+- `top` 上装（order 3）— 上衣/衬衫/外套/连衣裙/校服等上身衣物（dress/school uniform 等连体衣物归入上装）
+- `bottom` 下装（order 4）— 裤子/裙子/短裤等下身衣物
+- `accessories` 配饰（order 5）— 眼镜/缎带/首饰/帽子/围巾等装饰物
+- `underwear` 内衣（order 6）— 胸罩/内裤/内衣套装等贴身衣物
+- `background` 背景环境（order 7）
+- `pose` 人物姿势（order 8）
+- `expression` 人物表情（order 9）
+- `interaction` 互动元素（order 10）— 用户与角色之间的身体接触/肢体动作等交互场景标签，含两种 Danbooru 模式：A) POV 脱离身体风格（`disembodied_hand` + `hand_on_breast` / `disembodied_tongue` + `licking` 等）；B) 双角色互动风格（`hugging_another` / `holding_hands` / `hand_on_another's_*` / `grabbing_another's_*` 等）。与 `pose`（角色自身姿势）语义分离。仅在对话上下文描述互动动作时由 AI 输出，角色卡描述场景不触发。详见 docs/FIX_RECORDS.md §7.35 + CODE_WIKI.md §40
 - `uncategorized` 未分类（order 999，迁移兜底，不在 `SYSTEM_TRAIT_CATEGORIES` 数组内）
 
 > `basic` 为 2026-08-05 新增系统分类，置于最前作为角色基底特征容器。物种/性别等基底属性原先归入 `body`，现归入 `basic`；`body` 收缩为体型/肤色/毛色等纯身体特征。详见 docs/FIX_RECORDS.md §4.4。
+>
+> **【衣物分类拆分（2026-08-09）】** 原 `clothing` 衣物配饰分类已拆分为 `top`/`bottom`/`accessories`/`underwear` 四个细分类，提升 AI 归类精度与裸体三视图过滤准确性（裸体版仅过滤 `top`/`bottom`/`underwear`，保留 `accessories`）。旧数据中 `categoryId='clothing'` 的特征由 `characterTraitService.loadTraitData` 一次性迁移至 `uncategorized`（由用户手动重新归类）。详见 docs/FIX_RECORDS.md §7.29。
+>
+> **【互动元素分类新增（2026-08-09，Spec: enhance-conversation-interaction-prompt-recognition）】** 新增 `interaction` 系统分类（order 10），专门承载对话上下文中用户与角色动作互动的 Danbooru 标签。与 `pose` 语义分离：`pose` 是角色自身的姿态（如 `sitting` / `standing`），`interaction` 是与另一个实体的交互（如 `disembodied_hand` / `hugging_another`）。互动标签分两种模式：模式 A（POV/脱离身体风格，第一人称描述触发）输出 `disembodied_*` + 配合部位标签；模式 B（双角色互动风格，第三人称或两角色互动描述触发）输出 `*_another` 系列标签。关键原则：互动元素独立于角色完整形象，允许不生成用户完整角色，仅添加 `disembodied_*` 标签引导 SD 生成交互性质图片。详见 docs/FIX_RECORDS.md §7.35 + CODE_WIKI.md §40。
+>
+> **【服装状态指令增强（2026-08-09，Spec: add-costume-state-prompt-directives）】** `interaction` 分类现在也承载服装状态标签（衣物仍在身上但状态改变）。`buildDynamicTraitSystemPrompt` 新增 `buildCostumeStateGuidance()` 指令块，与 `interactionGuidance` 平行，引导 AI 根据对话上下文中的服装变化描述生成 3 类 Danbooru 标签：A) 服装开合状态（`open_clothes` / `open_jacket` / `unbuttoned_shirt` 等）；B) 服装位置变化（`panties_aside` / `shirt_lift` / `skirt_lift` 等）；C) 身体部位暴露（`one_breast_out` / `cleavage` / `navel` 等）。关键原则：服装状态标签描述的是「衣物仍在身上但状态改变」，区别于衣物完全移除（移除用 top/bottom/underwear 分类的删除处理）；开合/位移标签通常需配合暴露标签使用。同时 `generateTraitPrompts` 新增服装状态 RAG 检索（`COSTUME_STATE_RAG_KEYWORDS` 常量），`optimizeTraitsForContext` 的 system prompt 新增服装状态开合/复位的 remove 模式与开合→暴露/位移→暴露的 add 模式。详见下方「服装状态提示词指令增强」章节。
 
 **类型契约变更：**
 - 新增共享类型 `CategorizedTrait`（`src/shared/types/characterTrait.types.ts`）：`{ text: string; categoryId: string }`，是 `CharacterTraitItem` 的「无 id / 无 enabled」轻量子集，由 AI 服务产出、store 接收后补全 id 与 enabled。**【Spec: add-sdxl-prompt-weight-support / Task 1 后续扩展】** 现已追加 `translation?` / `originalText?` / `weight?` 三个可选字段，与 `CharacterTraitItem` 同名同语义（`weight` 默认 `undefined` 等价 1.0，详见 docs/FIX_RECORDS.md §7.24）
@@ -1212,15 +1222,15 @@ case '编写':
 - `characterTraitStore.setTraits` 签名由 `(traits: string[])` 升级为 `(traits: CategorizedTrait[])`，MERGE 策略升级（见下）
 
 **LLM Prompt 升级（`characterTraitAIService.ts`）：**
-- `CHARACTER_TRAIT_SYSTEM_PROMPT`：原输出 `white fur, dog girl, ...`，现输出 `basic:dog girl, basic:female, head:white hair, ...`，prompt 内嵌 7 个系统分类的语义说明与归类建议（如「物种/种族 → basic」「性别 → basic」「内容分级 → basic」「发色 → head」「瞳色 → head」「服饰/配饰 → clothing」「动物耳朵 → head」「尾巴/翅膀 → body」）
+- `CHARACTER_TRAIT_SYSTEM_PROMPT`：原输出 `white fur, dog girl, ...`，现输出 `basic:dog girl, basic:female, head:white hair, ...`，prompt 内嵌 11 个系统分类的语义说明与归类建议（如「物种/种族 → basic」「性别 → basic」「内容分级 → basic」「发色 → head」「瞳色 → head」「上衣/外套/连衣裙 → top」「裤子/裙子 → bottom」「眼镜/首饰/帽子 → accessories」「胸罩/内裤 → underwear」「动物耳朵 → head」「尾巴/翅膀 → body」「用户与角色动作互动 → interaction」）。**【Spec: enhance-conversation-interaction-prompt-recognition】** 现追加 `interaction` 分类的互动元素识别指令块，含模式 A（POV/脱离身体风格 `disembodied_*`）与模式 B（双角色互动风格 `*_another`）的详细标签清单与触发原则，详见 §40
 - `IMAGE_TRAIT_SYSTEM_PROMPT`：同步升级为 `category:tag` 英文格式，便于多模态识别结果同样携带分类
 - 多模态 `includeImage=true` 分支的内联 system 补充语也同步改为「categorized tags」
-- 【重点标记 - AI 不生成自定义分类 tag 的 bug 修复（2026-08-06，Spec: fix-asset-trait-and-scene-defects / Task 5）】上述两个常量现为**基线参考**（`export` 导出，文档化 prompt 结构），生产调用已改为动态构建：`generateCharacterTraits` / `recognizeImageTraits` 在构建 messages 前调用 `categoryDictionaryService.loadDictionary()` 读取全局字典自定义分类，再通过 `buildDynamicTraitSystemPrompt(globalCategories)` / `buildDynamicImageTraitSystemPrompt(globalCategories)` 将系统分类 + 自定义分类合并注入提示词。原硬编码 prompt 仅含 7 个系统分类，LLM 不知道用户创建的自定义分类（如「纹身」「武器装备」），导致不会为这些分类生成 `tattoo:dragon tattoo` 等带前缀的 tag。详见 docs/FIX_RECORDS.md §5.2
+- 【重点标记 - AI 不生成自定义分类 tag 的 bug 修复（2026-08-06，Spec: fix-asset-trait-and-scene-defects / Task 5）】上述两个常量现为**基线参考**（`export` 导出，文档化 prompt 结构），生产调用已改为动态构建：`generateCharacterTraits` / `recognizeImageTraits` 在构建 messages 前调用 `categoryDictionaryService.loadDictionary()` 读取全局字典自定义分类，再通过 `buildDynamicTraitSystemPrompt(globalCategories)` / `buildDynamicImageTraitSystemPrompt(globalCategories)` 将系统分类 + 自定义分类合并注入提示词。原硬编码 prompt 仅含系统分类，LLM 不知道用户创建的自定义分类（如「纹身」「武器装备」），导致不会为这些分类生成 `tattoo:dragon tattoo` 等带前缀的 tag。详见 docs/FIX_RECORDS.md §5.2
 
 **解析逻辑升级（`parseTraitsFromContent`）：**
 - 返回类型由 `string[]` 改为 `CategorizedTrait[]`
 - 解析「category:tag」前缀：仅在 prefix 为已知分类 id 时剥离，否则视为无分类（兜底 `uncategorized`）
-- 【重点标记 - 自定义分类 id 合法化（2026-08-06，Spec: fix-asset-trait-and-scene-defects / Task 5.4）】`validCategoryIds` 原仅含 7 个系统分类 id（`basic` / `head` / `body` / `clothing` / `background` / `pose` / `expression`），现同步从 `categoryDictionaryService.loadDictionary()` 加载全局字典自定义分类 id，使 `tattoo` / `weapon` 等自定义分类前缀成为合法前缀，确保 LLM 返回的 `tattoo:dragon tattoo` 能被正确解析为 `{ text: 'dragon tattoo', categoryId: 'tattoo' }`（而非兜底为 uncategorized）
+- 【重点标记 - 自定义分类 id 合法化（2026-08-06，Spec: fix-asset-trait-and-scene-defects / Task 5.4）】`validCategoryIds` 原仅含系统分类 id（`basic` / `head` / `body` / `top` / `bottom` / `accessories` / `underwear` / `background` / `pose` / `expression`），现同步从 `categoryDictionaryService.loadDictionary()` 加载全局字典自定义分类 id，使 `tattoo` / `weapon` 等自定义分类前缀成为合法前缀，确保 LLM 返回的 `tattoo:dragon tattoo` 能被正确解析为 `{ text: 'dragon tattoo', categoryId: 'tattoo' }`（而非兜底为 uncategorized）
 - 鲁棒性保证：LLM 未输出前缀 / 输出未知前缀 / SD tag 内权重冒号（如 `(white hair:1.3)`）均不被误剥离，整条作为 text、categoryId 兜底为 uncategorized（行为等价于原 Spec）
 - 去重键保持为 `text`（大小写敏感）。【Bug 修复 - tag 数量不符】曾短暂改为 `${categoryId}::${text}` 组合键，但导致 LLM 将同一 tag 归入不同分类时（如 `basic:white fur` + `body:white fur`）产生重复项，下游 SD 提示词出现重复 tag。已回退为仅 `text` 去重，保留首次出现的 `categoryId`，与 SD tag 语义一致（详见 docs/FIX_RECORDS.md §4.5）
 
@@ -1464,6 +1474,7 @@ activeDynamicScenePromptId: string | null;       // 默认 null
 | 通道名 | 入参 | 返回值 | 说明 |
 | --- | --- | --- | --- |
 | `ai:generateTraitPrompts` | `{ prompt: string; baseTraits?: string }` | `Promise<{ success: boolean; traits?: CategorizedTrait[]; error?: string; ragDebug?: ... }>` | 自由文本提示词 → 分类特征 tag 列表；`traits` 携带 `categoryId` / `translation` / `originalText`，可直接追加到 `editedTraits`；`ragDebug` = L0-L5 审计报告（结构与 `generateCharacterTraits.ragDebug` 完全兼容，前端复用 `RagQualityReport` 组件只读展示） |
+| `ai:optimizeTraitsForContext` | `{ traits: Array<{ text, weight?, categoryId? }>, conversationContext: string }` | `Promise<{ success: boolean; tagsToRemove?: Array<{ text, reason? }>; tagsToAdd?: Array<{ text, reason?, weight?, categoryId? }>; error?: string }>` | 图片生成前 AI 优化：TWO PARTS 链式推理 — (1) 分析标签列表与对话上下文的矛盾返回建议删除的标签 (2) 评估删除后缺失的关键描述符返回建议补充的标签（如服装移除后的暴露特征）。JSON 格式 `{ "remove": [{ "text", "reason" }], "add": [{ "text", "reason", "weight"?, "categoryId"? }] }`。试验性功能，需 `AIParameterConfig.ai_optimize_traits` 开启；调用方需做存在性过滤 + 过度删除防护（>80% 拒绝）+ 失败降级。⚠️ **执行时机**：必须在 `generateTraitPrompts` 生成上下文标签并合并为 `mergedTraits` 之后调用，传入完整标签列表（角色特征 + 动态生成的互动标签），否则 AI 无法看到并删除矛盾的互动标签（如对话中角色「抽回手」时应移除 `disembodied_hand`，详见 §7.38）。`tagsToAdd` 为 Spec: add-ai-tag-supplement-after-removal 新增字段，调用方需做去重 + 冲突检查（不补充刚删除的标签）+ 过度补充防护（>50% 拒绝），详见 §7.39（服务层）+ §7.40（渲染层消费） |
 
 **与现有 AI 通道的关系：**
 - `ai:generateCharacterTraits`：基于角色卡 `description` / `personality` / `scenario` 提取「固有」特征，可附带角色卡图片（多模态）
@@ -4734,5 +4745,1065 @@ hooks.ts messagesToSave (含 emotion)
 
 **根本建议**：store 层的 `safeMessages` 应考虑用展开运算符 `{...msg}` 替代手动逐字段提取，或建立字段同步检查机制，避免每次新增字段都遗漏。
 
+---
+
+## §34 ConfigPanel 新增「图片生成设置」配置区（Spec: add-conversation-image-generation，2026-08-09）
+
+### 概述
+
+在角色对话配置面板（ConfigPanel）中新增「图片生成设置」配置区，允许用户在对话中开启图片生成功能并选择输出尺寸。该配置区位于 ParameterPanel 与「记忆与上下文增强」之间，视觉风格与现有配置区保持一致。
+
+### 改动内容
+
+#### 1. SizeSelector.tsx — 导出 SIZE_PRESETS
+
+`SIZE_PRESETS` 常量原本为模块私有（`const`），改为 `export const` 以供 ConfigPanel 复用。该常量包含 6 个预设尺寸（头像/表情 512×512、全身立绘 512×768、竖版高清 768×1024、方图高清 1024×1024、竖版超清 1024×1536、横版高清 1536×1024）。
+
+#### 2. ConfigPanel.tsx — 新增 props + 配置区
+
+**Props 接口新增字段**（均为可选）：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `imageGenEnabled` | `boolean` | 是否开启图片生成 |
+| `imageGenWidth` | `number` | 图片宽度 |
+| `imageGenHeight` | `number` | 图片高度 |
+| `onImageGenToggle` | `(enabled: boolean) => void` | 开关回调 |
+| `onImageGenSizeChange` | `(width: number, height: number) => void` | 尺寸变更回调 |
+
+**antd 导入扩展**：`{ Button }` → `{ Button, Switch, Select }`
+
+**新增导入**：`import { SIZE_PRESETS } from './SizeSelector'`
+
+**JSX 结构**：在 ParameterPanel 后的 divider 与「记忆与上下文增强」区之间插入新配置区，包含：
+- Switch 开关（是否开启图片生成，默认关闭）
+- Select 下拉（图片大小，复用 SIZE_PRESETS，关闭时 disabled）
+- 说明文字「在对话中一键生成场景图片」
+
+### 改动文件
+
+| 文件 | 改动 |
+|------|------|
+| `SizeSelector.tsx` | `const SIZE_PRESETS` → `export const SIZE_PRESETS` |
+| `ConfigPanel.tsx` | antd 导入扩展 + SIZE_PRESETS 导入 + Props 接口新增 5 个字段 + 解构 + 新增「图片生成设置」JSX 配置区 |
+
+### 验证
+
+- TypeScript 诊断零错误（ConfigPanel.tsx + SizeSelector.tsx）
+- 未修改 CharacterDialogueChat.tsx（将由后续任务单独处理）
+
+### 注意事项
+
+- `CharacterDialogueChat.tsx` 尚未传入新的 imageGen 相关 props，当前全部为可选字段，不影响现有编译。后续需在该文件中接入实际状态与回调。
 
 
+## §35 ChatMessageBubble 新增「生成图片」按钮与图片消息渲染（Spec: add-conversation-image-generation / Task 3+4，2026-08-09）
+
+### 概述
+
+在 `ChatMessageBubble.tsx` 中为 assistant 消息新增「生成图片」操作按钮（PictureOutlined 图标），并支持当 `message.isImageMessage` 为 true 且 `message.generatedImage` 有值时渲染图片内容替代文本内容。图片消息不显示编辑、继续对话、重新生成等文本操作按钮，仅保留复制和「生成图片」按钮。
+
+### 改动内容
+
+#### 1. ChatMessageBubble.tsx — 新增 props
+
+Props 接口新增 3 个可选字段：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `imageGenEnabled` | `boolean` | 图片生成功能是否开启 |
+| `isGeneratingImage` | `boolean` | 是否正在生成图片（默认 false） |
+| `onGenerateImage` | `(messageId: string) => void` | 点击生成图片按钮回调 |
+
+#### 2. ChatMessageBubble.tsx — 导入扩展
+
+`@ant-design/icons` 导入列表末尾新增 `PictureOutlined`。
+
+#### 3. ChatMessageBubble.tsx — 图片消息标记与按钮显隐控制
+
+- 新增 `const isImageMsg = !!message.isImageMessage;` 变量
+- `showFullActions` 末尾追加 `&& !isImageMsg` 条件：图片消息不显示编辑、继续对话按钮
+- 「重新生成」按钮（ReloadOutlined）包裹 `{!isImageMsg && (...)}` 条件：图片消息不显示重新生成按钮
+
+#### 4. ChatMessageBubble.tsx — 「生成图片」按钮
+
+在「重新生成」按钮之后、「继续对话」按钮之前新增「生成图片」按钮（PictureOutlined），不受 `showFullActions` / `showRegenerateOnly` 限制，对所有 assistant 消息可见：
+
+- Tooltip：`imageGenEnabled === false` 时提示「图片生成功能未开启」，否则提示「生成图片」
+- 禁用条件：`imageGenEnabled === false || isGeneratingImage || isStreaming || isGenerating || message.status === 'error'`
+- `isGeneratingImage` 为 true 时显示 `LoadingOutlined` 替代 `PictureOutlined`
+
+#### 5. ChatMessageBubble.tsx — 图片消息渲染
+
+在气泡内容的三元表达式中新增中间分支：当 `message.isImageMessage && message.generatedImage` 为真时，渲染 `<div className="chat-msg-image-container">` 包裹的 `<img>` 和标签，替代 `MessageRenderer` 文本内容。结构为 `isEditing ? (编辑框) : (图片消息 ? (图片容器) : (文本内容))`。
+
+#### 6. ChatMessageBubble.css — 图片消息样式
+
+在 `@media (max-width: 480px)` 之前新增 3 个 CSS 类：
+
+| CSS 类 | 用途 |
+|--------|------|
+| `.chat-msg-image-container` | 图片容器（flex 列布局，居中对齐，gap 8px） |
+| `.chat-msg-generated-image` | 生成图片（max-width 100%，max-height 400px，圆角 8px，object-fit contain） |
+| `.chat-msg-image-label` | 图片标签（11px，斜体，灰色） |
+
+### 改动文件
+
+| 文件 | 改动 |
+|------|------|
+| `ChatMessageBubble.tsx` | 导入 PictureOutlined + Props 新增 3 字段 + 解构 + isImageMsg 变量 + showFullActions 追加 !isImageMsg + 重新生成按钮包裹 !isImageMsg + 新增生成图片按钮 + 图片消息渲染分支 |
+| `ChatMessageBubble.css` | 新增 3 个 CSS 类（.chat-msg-image-container / .chat-msg-generated-image / .chat-msg-image-label） |
+
+### 验证
+
+- TypeScript 诊断零错误（ChatMessageBubble.tsx + ChatMessageBubble.css）
+- 「生成图片」按钮位于「重新生成」之后、「继续对话」之前
+- 图片消息不显示编辑/继续对话/重新生成按钮
+- 所有新增 props 均为可选，不影响现有调用方编译
+
+### 注意事项
+
+- `CharacterDialogueChat.tsx` 尚未传入 `imageGenEnabled` / `isGeneratingImage` / `onGenerateImage` props，当前全部为可选字段。后续 Task 7 需在该文件中接入实际状态与回调。
+
+## §36 文档读取 IPC 通道（docs:read）（2026-08-09）
+
+### 概述
+
+新增 `docs:read` IPC 通道，供渲染进程读取项目根目录 `docs/` 下的技术文档文件内容。用于在应用内展示本地文档，无需渲染进程直接访问文件系统。
+
+### 架构分层
+
+```
+Renderer (React)
+  window.electronAPI.docs.read(fileName)
+       │ ipcRenderer.invoke('docs:read', fileName)
+       ▼
+Preload Bridge (contextBridge)
+  docs: { read }
+       │
+       ▼
+Main Process (IPC Handler)
+  docsHandlers() → ipcMain.handle('docs:read')
+       │ fs.readFile(docsDir/fileName, 'utf-8')
+       ▼
+Filesystem
+  开发环境: getProjectRoot()/docs/
+  生产环境: process.resourcesPath/docs/
+```
+
+### 后端 IPC 通道
+
+| IPC 通道 | 入参 | 返回 | 说明 |
+|---|---|---|---|
+| `docs:read` | `fileName: string` | `string \| { success: false, error: string }` | 读取 docs/ 目录下的文档文件；成功返回文件内容字符串，失败返回错误对象 |
+
+### 安全设计
+
+- **路径穿越防护**：校验 `fileName`，拒绝包含 `..` 或以 `/`、`\` 开头的输入，防止越权读取 docs 目录以外的文件
+- **路径解析兜底**：`app.isPackaged` 读取异常时降级到 `getProjectRoot()/docs`
+
+### 涉及文件清单
+
+- `src/main/ipc/handlers/docsHandlers.ts` — 新增文件，注册 `docs:read` handler
+- `src/main/ipc/index.ts` — 导入并调用 `docsHandlers()`
+- `src/main/preload.ts` — 新增 `docs` 命名空间（`docs.read`）
+
+### 验证
+
+- `tsc --noEmit` 零新增错误（`docsHandlers.ts` 无错误；`index.ts:1` 与 `preload.ts:46` 为既有错误，与本次改动无关）
+
+
+
+## §37 CharacterDialogueChat 接入对话图片生成全流程（Spec: add-conversation-image-generation / Task 7，2026-08-09）
+
+### 概述
+
+在 `CharacterDialogueChat.hooks.ts` 和 `CharacterDialogueChat.tsx` 中实现完整的对话内图片生成流程。用户点击消息气泡上的「生成图片」按钮后，系统构建对话上下文 prompt，合并角色特征 tag 与 AI 生成的上下文 tag，调用 SD WebUI txt2img 生成图片，并将结果作为图片消息插入到对话流中。
+
+### 改动内容
+
+#### 1. CharacterDialogueChat.hooks.ts — 新增 `addImageMessage` 方法
+
+在 `editMessage` 函数之后新增 `addImageMessage` useCallback，用于在指定消息之后插入一条图片消息：
+
+- 通过 `messagesRef.current` 获取最新消息列表，定位插入位置
+- 构造 `ChatMessage` 对象（`role: 'assistant'`、`isImageMessage: true`、`generatedImage: imageDataUrl`）
+- 更新 `messagesRef.current`、dispatch `UPDATE_MESSAGES`、调用 `saveChatToStore` 持久化
+- 不触发 AI 响应
+
+在 return 语句中暴露 `addImageMessage`。
+
+#### 2. CharacterDialogueChat.tsx — 导入扩展
+
+新增 3 个导入：
+- `buildAssetPromptTemplate` from `./PromptBuilder`
+- `useCharacterTraitStore` from `../../../stores/characterTraitStore`
+- `useCharacterLoraStore` from `../../../stores/characterLoraStore`
+
+`CharacterDialogueChat.types` 导入追加 `ChatMessage` 类型。
+
+#### 3. CharacterDialogueChat.tsx — Store 订阅与状态
+
+- 从 hook 解构 `addImageMessage`
+- 订阅 `useCharacterTraitStore`（`traits` / `currentCharacterCardId` / `loadTraits`）
+- 订阅 `useCharacterLoraStore`（`loras` / `loadLoras`）
+- 新增 `isGeneratingImage` useState
+- 新增 `imageGenEnabled` 计算（`characterConfig?.customParameters?.image_gen_enabled === true`）
+
+#### 4. CharacterDialogueChat.tsx — `handleGenerateImage` 回调
+
+完整的图片生成流程（11 步）：
+1. 构建对话上下文 prompt（过滤 `status === 'sent'` 的消息）
+2. 确保角色特征和 LoRA 已加载（按 `characterCardId` 匹配）
+3. 从 store 获取已启用的角色特征 tag（`useCharacterTraitStore.getState().traits`）
+4. 调用 `window.electronAPI.ai.generateTraitPrompts` 生成上下文 tag
+5. 合并上下文 tag 与角色特征 tag（去重）
+6. 加载 SD 配置（`window.electronAPI.setting.load`）
+7. 检测 SD WebUI 状态（`window.electronAPI.sd.checkStatus`）
+8. 构建提示词模板（`buildAssetPromptTemplate('general', null)`）
+9. 从配置读取图片尺寸（默认 1024×1024）
+10. 构建 SD options（复用 AssetGenerateModal 的 `buildSdOptions` 字段结构）
+11. 调用 `window.electronAPI.sd.generateTxt2Img` 生成图片，成功后调用 `addImageMessage` 插入
+
+#### 5. CharacterDialogueChat.tsx — 配置处理器
+
+- `handleImageGenToggle`：切换 `image_gen_enabled` 自定义参数
+- `handleImageGenSizeChange`：修改 `image_gen_width` / `image_gen_height` 自定义参数
+
+#### 6. CharacterDialogueChat.tsx — Props 传递
+
+- `renderMessageBubble` 中向 `ChatMessageBubble` 传递 `imageGenEnabled` / `isGeneratingImage` / `onGenerateImage`
+- 向 `ConfigPanel` 传递 `imageGenEnabled` / `imageGenWidth` / `imageGenHeight` / `onImageGenToggle` / `onImageGenSizeChange`
+
+#### 7. CharacterDialogueChat.tsx — aiSequenceNumber 修正
+
+图片消息（`isImageMessage: true`）虽然 `role === 'assistant'`，但不应计入 AI 回复序号。修改 `renderMessageBubble` 中的过滤条件，排除图片消息：
+
+```
+m.role === 'assistant' && !m.isImageMessage
+```
+
+### 改动文件
+
+| 文件 | 改动 |
+|------|------|
+| `CharacterDialogueChat.hooks.ts` | 新增 `addImageMessage` useCallback + return 语句暴露 |
+| `CharacterDialogueChat.tsx` | 导入扩展 + 解构 addImageMessage + Store 订阅 + isGeneratingImage state + imageGenEnabled 计算 + handleGenerateImage 回调 + handleImageGenToggle/handleImageGenSizeChange + ChatMessageBubble props + ConfigPanel props + aiSequenceNumber 修正 |
+
+### 验证
+
+- TypeScript 诊断零错误（`CharacterDialogueChat.tsx` + `CharacterDialogueChat.hooks.ts`）
+- `addImageMessage` 不触发 AI 响应，仅插入图片消息并持久化
+- 图片消息不计入 AI 回复序号
+- SD 生成流程复用 AssetGenerateModal 的字段结构与 PromptBuilder 模板
+
+### 数据流
+
+```
+用户点击「生成图片」
+  → handleGenerateImage(messageId)
+    → 构建对话上下文 prompt
+    → 加载角色特征 + LoRA
+    → AI 生成上下文 tag（generateTraitPrompts IPC）
+    → 合并 tag（去重）
+    → 加载 SD 配置 + 检测状态
+    → buildAssetPromptTemplate('general')
+    → sd.generateTxt2Img IPC
+    → addImageMessage(messageId, dataUrl)
+      → messagesRef.current 更新
+      → dispatch UPDATE_MESSAGES
+      → saveChatToStore 持久化
+```
+
+---
+
+## §34 帮助文档查看器 HelpViewer（2026-08-09）
+
+### 概述
+
+新增 Markdown 用户手册查看器组件 `HelpViewer`，以全屏 Modal 形式展示 `docs/user-manual.md`，提供左侧目录导航、滚动联动高亮、Fuse.js 全文搜索（含匹配片段高亮）三大能力，并完整适配亮色/暗色主题与移动端响应式布局。
+
+### 新增文件
+
+| 文件 | 职责 |
+|------|------|
+| `src/renderer/components/Help/HelpViewer.tsx` | 帮助查看器组件（Modal + TOC + 搜索 + Markdown 渲染） |
+| `src/renderer/components/Help/HelpViewer.css` | 组件样式（全屏 Modal、侧栏、Markdown 排版、暗色覆盖、响应式） |
+
+### 类型声明补全
+
+`src/main/preload.ts` 早已暴露 `docs.read`（`docs:read` IPC 通道，主进程 `docsHandlers.ts` 实现），但渲染进程类型声明 `src/renderer/types/electron.d.ts` 的 `ElectronAPI` 接口缺失 `docs` 命名空间。本次补全：
+
+```ts
+docs: {
+  read: (fileName: string) => Promise<string | { success: false; error: string }>;
+};
+```
+
+返回值契约：成功返回文档内容字符串，失败返回 `{ success: false, error }`（与 `docsHandlers.ts` 实现一致）。
+
+### 实现要点
+
+- **数据加载与缓存**：`open` 变为 `true` 时调用 `window.electronAPI.docs.read('user-manual.md')`，结果存入 `useRef` 缓存（`contentCache`），后续打开直接复用，避免重复 IPC。加载中展示 antd `Spin`，失败展示 `Alert`。
+- **目录构建**：`extractToc()` 正则匹配 `^#\s+(.+)$` 提取所有 H1 标题，`slugify()` 生成合法 HTML id（保留中文 `\u4e00-\u9fa5`、字母、数字、连字符）。
+- **Markdown 渲染**：`ReactMarkdown` + `remarkGfm` + `remarkEmoji`。通过 `components={{ h1 }}` 自定义渲染注入 slugified `id` 与 `ref`（存入 `sectionRefs`），供目录跳转与滚动追踪使用。`extractText()` 递归从 ReactNode 提取纯文本用于生成 id。
+- **搜索**：`Fuse.js` 按 H1 章节切分内容建立索引（`threshold: 0.3`、`ignoreLocation: true`、`minMatchCharLength: 2`）。结果展示章节名 + 匹配片段，`highlightSnippet()` 利用 `split(regex)` 捕获组奇偶下标判定匹配段并包裹 `<mark>`（避免带 `g` 标志正则 `.test()` 的 `lastIndex` 状态污染问题）。
+- **滚动联动高亮**：`scroll` 事件（`passive: true`）监听内容容器，遍历 `sectionRefs` 通过 `getBoundingClientRect()` 计算当前可视章节并高亮目录项。点击目录项调用 `scrollToSection()` 平滑滚动。
+- **主题**：CSS 统一使用项目 CSS 变量（`--bg-layout` / `--bg-container` / `--text-heading` / `--text-primary` / `--text-secondary` / `--border-base` / `--bg-hover` / `--color-brand-primary` / `--color-brand-secondary`），暗色通过 `.dark` 选择器覆盖代码块与高亮色。注意：项目实际变量名为 `--color-brand-primary`（非任务描述中的 `--color-brand`）。
+- **响应式**：`@media (max-width: 1024px)` 侧栏 240px；`768px` 侧栏改为 absolute overlay（`transform` 滑入），显示圆形目录切换按钮；`480px` 进一步紧凑。移动端输入搜索词或点击目录项后自动收起侧栏。
+
+### antd v6 适配
+
+antd v6 中 `Modal` 的 `destroyOnClose` 已废弃（`@deprecated Please use destroyOnHidden instead`），组件使用 `destroyOnHidden={false}` 保留挂载状态以配合内容缓存。
+
+### 验证
+
+- `npx tsc --noEmit` 检查：`HelpViewer.tsx` 与 `electron.d.ts`（`docs` 新增）零错误，未引入新错误；项目其余 TS 错误均为历史遗留（MemoryChat / WorldBook / Vector 等模块），与本次改动无关。
+- 严格模式（`strict` + `noUnusedLocals` + `noUnusedParameters`）下编译通过：react-markdown `Components` 类型推断 h1 渲染器参数，`node` 通过 `void node` 标记为有意不使用以避免未使用告警。
+
+
+## §38 ConfigPanel「图片生成设置」新增角色特征分类列表（Spec: fix-conversation-image-generation-bugs / Bug 3，2026-08-09）
+
+### 概述
+
+在 ConfigPanel 的「图片生成设置」折叠面板内新增「角色特征分类」列表，允许用户在生成图片前按分类启用/禁用角色特征。解决角色基础特征（如「戴帽子」）与对话场景（如「摘下帽子」）冲突时，用户无法选择性关闭某类特征的问题。
+
+### 问题背景
+
+从对话上下文生成图片时，系统会将角色特征注入 SD 提示词。但角色的基础特征（如上装类「戴着帽子」、配饰类「戴着眼镜」）可能与当前对话场景（「摘下了帽子」）矛盾，导致生成的图片与剧情不符。用户需要在生成图片前选择性禁用某些特征分类（如上装/下装/内衣、背景等）。
+
+### 改动内容
+
+#### 1. ConfigPanel.tsx — 导入扩展
+
+- antd 导入新增 `Checkbox`：`{ Button, Switch, Select, Tooltip }` → `{ Button, Switch, Select, Tooltip, Checkbox }`
+- 新增 `useCharacterTraitStore`（来自 `../../../stores/characterTraitStore`）
+- 新增 `SYSTEM_TRAIT_CATEGORIES` / `UNCATEGORIZED_CATEGORY`（来自 `@shared/types`）
+- 新增类型导入 `CharacterTraitItem` / `TraitCategory`（来自 `@shared/types`）
+
+#### 2. ConfigPanel.tsx — Store 订阅与分类逻辑
+
+在 `imageGenCollapsed` state 后新增：
+
+- **Store 订阅**：`characterTraits` / `traitStoreCardId` / `loadTraits` / `toggleTraitEnabled` / `saveTraits` / `globalCategories`（均通过 selector 精确订阅）
+- **useEffect 加载特征**：当 `characterCardId` 与 store 中 `currentCharacterCardId` 不一致时调用 `loadTraits(characterCardId)`
+- **traitCategories**（`React.useMemo<TraitCategory[]>`）：拼接 `SYSTEM_TRAIT_CATEGORIES` + `globalCategories` + `UNCATEGORIZED_CATEGORY` 构建完整分类列表
+- **traitsByCategory**（`React.useMemo`）：按 `categoryId` 将 `characterTraits` 分组为 `Record<string, CharacterTraitItem[]>`
+- **handleCategoryToggle**（`React.useCallback`）：将指定分类下所有特征切换到目标 `enabled` 状态（仅对状态不一致的特征调用 `toggleTraitEnabled`），随后调用 `saveTraits(characterCardId)` 持久化
+- **isCategoryAllEnabled**（`React.useCallback`）：检查分类下所有特征是否全部启用（空分类返回 `false`）
+
+#### 3. ConfigPanel.tsx — JSX UI
+
+在 `image-gen-panel-inner` div 内、hint 文字之后新增「角色特征分类」区块：
+
+- 无特征时显示空状态提示文案
+- 有特征时按 `traitCategories` 顺序渲染，跳过空分类（`catTraits.length === 0` 时 `return null`）
+- 每个分类卡片包含：Checkbox（全选/全不选）+ 分类名 + 启用计数（`enabled/total`）+ 特征标签列表
+- 启用特征标签为紫色高亮，禁用特征标签为灰色删除线样式
+
+#### 4. ConfigPanel.css — 新增样式
+
+在 `.image-gen-config-hint` 与 `@media` 查询之间新增 10 个 CSS 类：
+
+| 类名 | 用途 |
+|------|------|
+| `.image-gen-trait-section` | 特征区块容器（顶部边框分隔） |
+| `.image-gen-trait-section-title` | 区块标题 |
+| `.image-gen-trait-empty` | 空状态文案 |
+| `.image-gen-trait-categories` | 分类列表容器（flex column） |
+| `.image-gen-trait-category` | 单个分类卡片 |
+| `.image-gen-trait-category-header` | 分类头部（Checkbox + 计数） |
+| `.image-gen-trait-category-name` | 分类名称 |
+| `.image-gen-trait-count` | 启用计数 |
+| `.image-gen-trait-tags` | 标签列表（flex wrap，左侧缩进 24px 对齐 Checkbox） |
+| `.image-gen-trait-tag.enabled` / `.disabled` | 启用/禁用标签样式 |
+
+### 改动文件
+
+| 文件 | 改动 |
+|------|------|
+| `ConfigPanel.tsx` | antd 导入 +Checkbox + Store/类型导入 + Store 订阅 + useMemo/useCallback 逻辑 + 特征分类 JSX |
+| `ConfigPanel.css` | 新增 10 个 `image-gen-trait-*` CSS 类 |
+
+### 验证
+
+- `npx tsc --noEmit` 检查：ConfigPanel.tsx 无新增错误（唯一报错为预存的 `expressionDisplay` prop 不匹配 `ParameterPanelProps`，与本次改动无关）
+- VS Code 诊断：ConfigPanel.tsx 0 错误
+
+### 注意事项
+
+- **`noUnusedLocals` 适配**：项目 `tsconfig.json` 开启 `noUnusedLocals: true`，`TraitCategory` 类型导入需显式使用。通过 `React.useMemo<TraitCategory[]>` 为 `traitCategories` 添加显式泛型标注，使 `TraitCategory` 被实际引用，避免 TS6133 未使用导入错误。
+- `handleCategoryToggle` 调用 `saveTraits(characterCardId)` 为 fire-and-forget（返回 Promise 但未 await），与项目中其他特征保存调用模式一致。
+- 分类列表顺序：系统分类（basic → head → body → top → bottom → accessories → underwear → background → pose → expression）→ 自定义分类（`globalCategories`）→ 未分类（`UNCATEGORIZED_CATEGORY`，order=999）。
+
+## §39 对话图片生成可审计性架构（Spec: enhance-conversation-image-auditability，2026-08-09）
+
+### 概述
+
+为对话中生成的图片提供端到端可审计能力：提示词落盘日志、图片下方标签展示、角色特征临时编辑（会话隔离）。覆盖三项用户能力：(1) 通过日志文件追溯每次生成使用的完整 prompt；(2) 在图片下方实时查看本次生成使用的标签和 prompt；(3) 在 ConfigPanel 即时编辑角色特征，仅影响当前对话不污染角色卡 manifest。
+
+### 类型层扩展
+
+| 类型 | 字段 | 用途 |
+|------|------|------|
+| `ImageHistoryItem` | `usedTags?: Array<{ text: string; weight?: number }>` | 该历史项生成时使用的标签快照（去重合并后） |
+| `ImageHistoryItem` | `usedPrompt?: string` | 最终发送给 SD WebUI 的完整 prompt（含 LoRA + traits 替换后） |
+| `ImageHistoryItem` | `usedNegativePrompt?: string` | 反向提示词快照 |
+| `ImageHistoryItem` | `usedLoras?: Array<{ name: string; weight: number }>` | LoRA 列表快照 |
+| `ImageHistoryItem` | `removedTags?: Array<{ text: string; reason?: string }>` | AI 标签优化时被移除的标签快照（含移除原因；仅试验性功能 `ai_optimize_traits` 开启且实际删除标签时填充，详见 §7.36 / Spec: add-ai-trait-optimization-for-image-gen） |
+| `ImageHistoryItem` | `aiOptimization?: { status: 'success' \| 'no-removal' \| 'failed'; removedCount: number; error?: string }` | AI 标签优化执行状态元数据（仅 `ai_optimize_traits` 开启时填充）。三态反馈：`success`=已删除标签 / `no-removal`=已分析但无需删除 / `failed`=调用失败。解决原设计仅 `removedTags.length>0` 时渲染分区导致「AI 运行但无产出」场景用户看不到反馈的问题（详见 §7.37） |
+| `AIParameterConfig` | `ai_optimize_traits?: boolean` | 是否允许 AI 在图片生成前优化（删除）与对话上下文矛盾的角色特征标签（试验性功能，默认 `false`，undefined / false 均视为关闭；详见 §7.36 / Spec: add-ai-trait-optimization-for-image-gen） |
+| `CharacterTestChat` | `sessionTraits?: CharacterTraitItem[]` | 当前对话的临时特征覆盖（会话级，不写角色卡 manifest） |
+| `SDGenerationOptions` | `sourceContext?: { source: 'conversation' \| 'asset-manager'; messageId?: string; characterCardId?: string; round?: number }` | 调用来源标识，用于日志区分对话生成 vs 素材管理生成 |
+
+`electron.d.ts` 同步：`generateTxt2Img` 返回值新增 `finalPrompt: string`；`saveTestChat` 签名新增第 5 参数 `sessionTraits?`。
+
+### 服务层：sdGenerationService
+
+**新增 `image-generation` logger**（复用 `createLogger` 模块）：
+- 落盘路径：开发环境 `logs/image-generation/image-generation_<timestamp>.log`，生产环境 `app.getAppPath()/logs/image-generation/`
+- 10MB 自动轮转，最多保留 5 个文件
+- `generateTxt2Img` 在 `applyTraitsAndLora` 之后、HTTP 请求之前调用 `logger.info(message, details, context)`：
+  - `message`：`生成图片请求 [${sourceContext?.source || 'unknown'}]`
+  - `details`：最终 prompt 字符串（多行可复制）
+  - `context`：JSON 对象（negativePrompt / traits / loras / steps / cfgScale / sampler / scheduler / width / height / model / sourceContext）
+- catch 分支调用 `logger.error` 记录失败原因 + sourceContext + 原始 prompt
+
+**`generateTxt2Img` 返回值新增 `finalPrompt: string`**：
+- `applyTraitsAndLora` 处理后的完整字符串（含 LoRA + traits 替换）
+- 主进程是 prompt 组装的唯一权威源，渲染进程通过 IPC 返回值读取
+- IPC handler `sd:generateTxt2Img` 透传 `finalPrompt`，`electron.d.ts` 同步类型签名
+
+### Store 层：characterChatStore 扩展
+
+`CharacterTestChat` 接口新增 `sessionTraits?: CharacterTraitItem[]` 字段（会话级临时特征覆盖）。新增 5 个 actions：
+
+| Action | 签名 | 行为 |
+|--------|------|------|
+| `setSessionTraits` | `(traits: CharacterTraitItem[]) => Promise<void>` | 深拷贝入参 → 更新 currentTestChat → saveTestChat 持久化 |
+| `resetSessionTraits` | `() => Promise<void>` | 置 currentTestChat.sessionTraits = undefined → saveTestChat 持久化 |
+| `updateSessionTrait` | `(traitId: string, updates: Partial<CharacterTraitItem>) => Promise<void>` | lazy 初始化（sessionTraits 不存在时从 characterTraitStore.traits 深拷贝）→ 找到 trait 合并 updates → 持久化 |
+| `addSessionTrait` | `(categoryId: string, text: string) => Promise<void>` | lazy 初始化 → genTraitId 生成新 trait（enabled=true, weight=1.0）→ 追加 → 持久化 |
+| `removeSessionTrait` | `(traitId: string) => Promise<void>` | sessionTraits 不存在时 no-op → 过滤移除 → 持久化 |
+
+**sessionTraits 与 characterTraitStore.traits 的核心区别**：
+- `characterTraitStore.traits` → 持久化到角色卡 manifest（`traits.json`），跨会话共享
+- `sessionTraits` → 仅随对话持久化（`chats/{characterCardName}.json`），会话隔离
+- `executeImageGeneration` 优先读 `sessionTraits`，未设置时回退到角色卡 traits
+
+**lazy initialization 策略**：`updateSessionTrait` / `addSessionTrait` 在 sessionTraits 未初始化时从 `characterTraitStore.traits` 深拷贝初始化。优势：用户首次编辑无需先点「全量复制」按钮；sessionTraits 的存在性自然成为「是否进入临时编辑模式」的标志（驱动 UI 徽标显示）。
+
+**⚠️ 前置条件：`currentTestChat` 必须非 null**（§7.41）：所有 sessionTraits action 均以 `if (!current) return` 守卫开头，`currentTestChat` 为 null 时静默 no-op。`currentTestChat` 的初始化由两条路径保证：
+1. `saveTestChat` action 在 IPC 返回后设置 `currentTestChat`（修复后 `!state.currentTestChat ||` 分支确保从 null 初始化）
+2. `loadChatHistory`（hooks）在所有分支显式调用 `setCurrentTestChat`：「有历史」分支设置已加载的 chat 对象，「空状态」分支设置占位对象（`messages: []`），「first_mes」分支依赖 `saveChatToStore` 返回后初始化
+
+详见 `src/renderer/stores/characterChatStore.ts` L59-101（接口）+ L319-531（实现）。
+
+### UI 层：ChatMessageBubble 标签展示面板
+
+在图片区域 `chat-msg-image-actions` 下方新增「查看本次生成标签」可折叠面板（仅 `imageAttachment.status === 'idle'` 且当前历史项有 `usedTags` 时渲染）：
+
+- **折叠头部**：`<button>` + `DownOutlined/RightOutlined` 图标 + 「查看本次生成标签」文案 + `<Tag>{tagsCount} tags</Tag>` 徽标 + AI 优化徽标（仅 `aiOptimization` 存在时渲染，三态：success 绿/no-removal 灰/failed 红，§7.37）
+- **展开后**：Tag 列表（每个 Tag 含文本 + 权重徽标 `:weight`）+ AI 优化分区（三态：success 展示被删除标签列表 / no-removal 提示无需删除 / failed 提示失败原因，§7.37）+ 二级折叠「查看完整 Prompt」
+- **二级展开**：`<pre>` 块显示 `usedPrompt` + `usedNegativePrompt` + LoRAs 列表
+- **历史导航自动折叠**：`useEffect` 依赖 `imageAttachment?.currentIndex` 重置 `tagsPanelExpanded` / `promptPanelExpanded`，避免上一版本的展开状态误导用户
+- **旧数据兼容**：当前历史项无 `usedTags`（旧 ImageHistoryItem）时显示「此历史版本无标签快照」灰色提示；无 `aiOptimization`（旧数据或未启用 AI 优化）时不渲染 AI 优化分区/徽标
+
+新增 CSS 类（`ChatMessageBubble.css`）：`.chat-msg-image-tags-panel` / `.chat-msg-image-tags-panel-header` / `.chat-msg-image-tags` / `.chat-msg-image-prompt`（等宽字体 + 横向滚动 + 暗色背景）/ `.chat-msg-image-tag-weight` / `.chat-msg-image-tags-empty` / `.chat-msg-image-tags-count`。样式遵循暗色主题 CSS 变量，视觉风格参考 `RagQualityReport.tsx` 的 Tag 渲染。
+
+### UI 层：ConfigPanel 特征分类区域升级（从只读升级为可编辑）
+
+`ConfigPanel.tsx` 从 `useCharacterChatStore` 订阅 `currentTestChat.sessionTraits` 与 5 个新 actions。派生 `effectiveTraits = sessionTraits ?? characterTraits`，特征分类区域渲染基于 `effectiveTraits`。
+
+| 交互 | 行为 | 调用 |
+|------|------|------|
+| Tag 点击 | 切换 enabled 状态 | `updateSessionTrait(trait.id, { enabled: !trait.enabled })` |
+| Tag 悬浮删除按钮 | 移除 trait | `removeSessionTrait(trait.id)` |
+| Tag 双击 | 进入 inline 编辑态（Input + 回车确认 / Esc 取消） | `updateSessionTrait(trait.id, { text: newValue, originalText: undefined })` |
+| 权重徽标点击 | 进入权重编辑态（InputNumber） | `updateSessionTrait(trait.id, { weight: newWeight })` |
+| 「+ 添加特征」按钮 | 弹出 prompt 输入特征文本 | `addSessionTrait(cat.id, text)` |
+| 分类级 Checkbox | 批量切换分类下所有特征 | 首次调用 lazy-init sessionTraits，后续 `setSessionTraits` 全量替换 |
+| 「临时编辑中」徽标 | 仅 sessionTraits 存在时显示（黄色 + EditOutlined + Tooltip） | — |
+| 「重置为角色卡特征」按钮 | 仅 sessionTraits 存在时显示，含 Modal.confirm 二次确认 | `resetSessionTraits()` |
+
+新增 CSS 类（`ConfigPanel.css`）：`.image-gen-trait-tag.editable` / `.image-gen-trait-tag-edit-btn` / `.image-gen-trait-tag-weight-badge` / `.image-gen-trait-tag-editing` / `.image-gen-add-trait-btn` / `.image-gen-session-badge` / `.image-gen-reset-btn`。样式遵循暗色主题 CSS 变量。
+
+### 数据流：executeImageGeneration 特征源切换
+
+`CharacterDialogueChat.tsx` 的 `executeImageGeneration` 中：
+1. 从 `useCharacterChatStore.getState().currentTestChat?.sessionTraits` 读取临时特征
+2. 派生 `currentTraits = sessionTraits ?? useCharacterTraitStore.getState().traits`
+3. `enabledTraitTexts` 与 `buildSdOptionsFromConfig` 的 `effectiveTraits` 参数传入 `currentTraits`
+4. 日志输出特征来源（`[executeImageGeneration] 特征来源: ${sessionTraits ? 'sessionTraits (临时编辑)' : 'characterTraitStore (角色卡)'}`）
+5. 生成成功时，`newHistoryItem` 快照 `usedTags: mergedTraits` / `usedPrompt: sdResult.finalPrompt` / `usedNegativePrompt` / `usedLoras`
+
+### 数据流：sourceContext 接线
+
+`executeImageGeneration` 构建 `sdOptions` 后赋值 `sourceContext = { source: 'conversation', messageId, characterCardId, round: (parentMsg.imageAttachment?.history?.length || 0) + 1 }`。素材管理弹窗（AssetGenerateModal / AssetManagerModal）调用 `sd.generateTxt2Img` 处传入 `sourceContext: { source: 'asset-manager' }`。日志通过 `sourceContext.source` 区分调用来源。
+
+### 涉及文件
+
+| 文件 | 改动 |
+|------|------|
+| `src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.types.ts` | `ImageHistoryItem` 新增 4 字段 |
+| `src/shared/types/sd.types.ts`（或 sdGenerationService 内联） | `SDGenerationOptions` 新增 `sourceContext` |
+| `src/renderer/types/electron.d.ts` | `generateTxt2Img` 返回值签名 + `saveTestChat` 签名 |
+| `src/main/services/sdGenerationService.ts` | `image-generation` logger + `finalPrompt` 返回值 |
+| `src/main/ipc/handlers/sdGenerationHandlers.ts` | 透传 `finalPrompt` |
+| `src/main/services/ChatStorageService.ts` | `TestChatData` 新增 `sessionTraits` 字段 |
+| `src/main/ipc/handlers/characterChatHandlers.ts` | `saveCharacterTestChat` 新增 `sessionTraits` 参数 |
+| `src/main/preload.ts` | `saveTestChat` 新增 `sessionTraits` 参数 |
+| `src/renderer/stores/characterChatStore.ts` | 5 个新 actions + lazy init + 双层浅拷贝 |
+| `src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.tsx` | `executeImageGeneration` 特征源切换 + 标签快照 |
+| `src/renderer/components/Character/CharacterDialogueChat/ChatMessageBubble.tsx` | 可折叠标签面板 |
+| `src/renderer/components/Character/CharacterDialogueChat/ChatMessageBubble.css` | 7 个新 CSS 类 |
+| `src/renderer/components/Character/CharacterDialogueChat/ConfigPanel.tsx` | 订阅 sessionTraits + Tag 可交互编辑 |
+| `src/renderer/components/Character/CharacterDialogueChat/ConfigPanel.css` | 7 个新 CSS 类 |
+| `src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.hooks.ts` | saveChatToStore 透传 sessionTraits |
+
+### 关联文档
+
+- `docs/FIX_RECORDS.md` §7.32（sourceContext 接线 / Task 3）/ §7.33（sessionTraits store / Task 7）/ §7.34（Task 1+2+4+5+6+8+9+10+11 综合记录）
+- 前置依赖：§7.30（旧图片消息迁移为 imageAttachment）/ §7.31（hooks 新增 updateImageAttachment / deleteImageAttachment / navigateImageHistory）
+
+### 设计约定
+
+- **主进程是 prompt 组装的唯一权威源**：`applyTraitsAndLora` 在主进程完成 LoRA + traits 替换，渲染进程通过 `finalPrompt` 返回值读取，不在渲染层重组装（避免双源真相）
+- **标签快照存历史项级别**（per-history-item）：同一消息可能有多张图片（重生成历史），每张图片独立快照，确保切换历史图片时显示对应版本的标签
+- **sessionTraits 是会话级覆盖**：仅随对话持久化，不写角色卡 manifest，与角色卡 traits 物理隔离
+- **lazy initialization**：sessionTraits 未初始化时从 characterTraitStore.traits 深拷贝，避免对话开始就消耗内存
+- **标签面板默认折叠 + 历史导航自动折叠**：避免占用垂直空间，避免上一版本展开状态误导用户
+
+## §40 对话互动元素识别架构（Spec: enhance-conversation-interaction-prompt-recognition，2026-08-09）
+
+### 背景与动机
+
+用户反馈：对话中描述动作互动（如"用手触摸她的身体"、"拥抱她"、"亲吻她"）时，生成的图片缺乏交互性质 — SD 仅生成角色独自站立/坐着的画面，未体现用户与角色的肢体接触。根因是原特征分类体系仅有 `pose`（角色自身姿势），无专门承载「用户与角色交互」的标签分类，AI 也不知道应输出 `disembodied_hand` / `hugging_another` 等 Danbooru 互动标签。
+
+### 核心变更：新增 `interaction` 系统分类
+
+**`src/shared/types/characterTrait.types.ts`** — `SYSTEM_TRAIT_CATEGORIES` 数组新增第 11 个系统分类：
+
+```
+{ id: 'interaction', name: '互动元素', isSystem: true, order: 10 }
+```
+
+与 `pose`（order 8）语义分离：
+- `pose` = 角色自身的姿态（如 `sitting` / `standing` / `lying`）
+- `interaction` = 与另一个实体的交互（如 `disembodied_hand` / `hugging_another` / `holding_hands`）
+
+### 互动标签两种 Danbooru 模式
+
+`buildDynamicTraitSystemPrompt` 注入的 `interactionGuidance` 指令块定义两种模式，AI 根据对话语境选择：
+
+**■ 模式 A — POV/脱离身体风格**（第一人称描述触发，如"我用手触摸…"）：
+- 用户不完整出现在画面中，仅出现交互的身体部位
+- 身体接触类：`disembodied_hand` + `hand_on_breast` / `hand_on_butt` / `hand_on_hip` / `hand_on_leg`
+- 舔舐类：`disembodied_tongue` + `licking` / `face_lick` / `breast_lick` / `foot_lick`
+- 其他：`disembodied_penis` / `disembodied_foot` / `disembodied_mouth`
+
+**■ 模式 B — 双角色互动风格**（第三人称或两角色互动描述触发）：
+- 用户作为 "another" 完整出现在画面中，与角色互动
+- 拥抱/牵手：`hugging_another` / `hug` / `holding_hands`
+- 手放在他人身上：`hand_on_another's_head` / `_shoulder` / `_face` / `_cheek` / `_chin` / `_back` / `_arm` / `_chest` / `_thigh` / `_waist`
+- 抓握他人：`grabbing_another's_breast` / `_ass` / `_arm` / `_hair` / `_wrist`
+- 持握他人：`holding_another's_wrist` / `_hair` / `_arm` / `hand_in_another's_hair`
+- 其他互动：`sitting_on_another` / `carrying_another` / `facing_another` / `smiling_at_another` / `kissing`
+
+### 关键设计原则
+
+1. **互动元素独立于角色完整形象** — 即使用户设定了完整形象，也必须添加 `disembodied_*` 标签（脱离身体的部位+动作），而非试图生成用户的完整角色。允许不生成用户完整角色，仅添加 disembodied_* 标签引导 SD 生成交互性质图片。
+2. **互动标签必须成对出现** — `disembodied_hand` 配合 `hand_on_*`，`disembodied_tongue` 配合 `*_lick` / `licking_*`。
+3. **条件触发** — 仅当对话明确描述互动动作时才输出互动标签；角色独自站立/坐着的描述不输出互动标签。角色卡描述场景（无互动描述）自然不触发。
+4. **分类前缀输出** — 互动标签使用 `interaction:` 前缀，如 `interaction:disembodied_hand|脱离身体的手` / `interaction:hugging_another|拥抱他人`。
+5. **模式选择依语境** — 第一人称描述倾向模式 A（`disembodied_*`）；第三人称或描述两个角色互动倾向模式 B（`*_another`）。
+
+### 互动标签权重提升机制
+
+互动标签在 SD prompt 中拼接位置靠后（角色特征标签之后），当角色特征标签较多时容易被图像模型忽略，导致生成的图片缺乏交互性质。通过对 `categoryId === 'interaction'` 的 trait 应用**分类级权重提升**来加强：
+
+- **配置项**：`customParameters.interaction_weight`（`AIParameterConfig` 新增字段）
+  - 默认 `1.2`（用户建议的 1.1-1.2 范围取上限）
+  - 范围 `1.0-2.0`，步进 `0.1`，`1.0` = 不提升（等价关闭）
+  - UI 入口：ConfigPanel「图片生成设置」面板内「互动标签权重」滑块（图片生成开启时可用）
+- **权重组合方式**：`最终 weight = (per-tag weight ?? 1.0) × interaction_weight`
+  - 分类级提升与标签级权重**相乘**，用户可同时调整两者
+  - 如 `disembodied_hand` 无 per-tag weight + interaction_weight=1.2 → 最终 1.2 → prompt 输出 `(disembodied_hand:1.2)`
+  - 如 `hugging_another` per-tag weight=1.5 + interaction_weight=1.2 → 最终 1.8 → prompt 输出 `(hugging_another:1.8)`
+- **应用位置**：`executeImageGeneration`（渲染进程）构建 `mergedTraits` 后、传给 `buildSdOptionsFromConfig` 前。`applyTraitsAndLora`（主进程）只看到最终的 `{ text, weight }`，不感知 categoryId，保持主进程 prompt 组装逻辑不变
+- **标签快照一致性**：`usedTags`（ImageHistoryItem）使用提升后的 `finalTraits`，与 `usedPrompt`（主进程 applyTraitsAndLora 处理后的最终 prompt）保持一致，用户在标签面板看到的权重值与实际 prompt 中的权重值对应
+
+### 涉及文件
+
+- `src/shared/types/characterTrait.types.ts` — `SYSTEM_TRAIT_CATEGORIES` 新增 `interaction` 分类（order 10）
+- `src/main/services/characterTraitAIService.ts` — 三处同步更新：
+  - `buildDynamicTraitSystemPrompt`：`systemCategoryDescriptions` 新增 `interaction` 描述；`systemGuidance` 新增互动元素归类建议；新增 `interactionGuidance` 指令块（含模式 A/B 标签清单 + 5 条关键原则）注入到 prompt
+  - `buildDynamicImageTraitSystemPrompt`：`systemCategoryDescriptions` 新增 `interaction` 英文描述（标注「图片识别场景一般不触发」）；`systemGuidance` 新增互动元素归类建议。补齐英文描述避免 `SYSTEM_TRAIT_CATEGORIES` 含 `interaction` 但描述缺失导致分类列表回退中文名「互动元素」破坏英文 prompt 一致性
+  - `CHARACTER_TRAIT_SYSTEM_PROMPT` / `IMAGE_TRAIT_SYSTEM_PROMPT` 基线常量：同步追加 `interaction` 分类描述与 guidance（基线参考，生产用动态构建版本）
+- `src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.types.ts` — `AIParameterConfig` 新增 `interaction_weight?: number` 字段（默认 1.2，范围 1.0-2.0）
+- `src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.tsx` — `executeImageGeneration` 中：
+  - `enabledTraitTexts` / `contextTraits` / `mergedTraits` 映射时保留 `categoryId`（用于识别 interaction 分类）
+  - 新增分类级权重提升：`finalTraits = mergedTraits.map(t => categoryId === 'interaction' ? weight × interaction_weight : weight)`
+  - `buildSdOptionsFromConfig` 与 `usedTags` 快照均使用 `finalTraits`（含提升后权重）
+  - 新增 `handleInteractionWeightChange` 回调（范围校验 1.0-2.0）
+- `src/renderer/components/Character/CharacterDialogueChat/ConfigPanel.tsx` — 新增「互动标签权重」滑块 UI（Slider 1.0-2.0 步进 0.1，默认 1.2，图片生成开启时可用）；**【UI 重构】**按 AssetGenerateModal「携带角色特征」面板设计重构特征分类区域：Collapse 折叠面板 + antd Tag（closable 删除 + onClick 切换 enabled）+ Tooltip（翻译/拆分溯源/权重）+ EditOutlined（文本编辑）+ Popover 权重编辑器（Slider + InputNumber + 预设按钮）+ TagAutocomplete 内联添加（替换 window.prompt，Electron 不支持）。保留分类级 Checkbox（indeterminate 三态）。所有分类均显示（含空分类），用户可向空分类（如 interaction）添加标签
+- `src/renderer/components/Character/CharacterDialogueChat/ConfigPanel.css` — 新增 `.image-gen-interaction-weight-row` / `-control` / `-value` 三个 CSS 类；替换旧 tag 样式为 Collapse/Tag/Popover/weight-badge 新样式（`.image-gen-trait-collapse` / `.image-gen-trait-tag-wrapper` / `.image-gen-trait-weight-badge.default/.boost/.reduce` / `.image-gen-weight-popover` 等 ~15 个 CSS 类）
+
+### 数据流
+
+```
+对话上下文描述互动动作
+  ↓
+generateTraitPrompts / generateCharacterTraits（characterTraitAIService）
+  ↓
+buildDynamicTraitSystemPrompt 注入 interactionGuidance 指令块
+  ↓
+LLM 识别互动语境 → 输出 interaction:disembodied_hand|脱离身体的手, interaction:hand_on_breast|手放在胸部
+  ↓
+parseTraitsFromContent 解析 → CategorizedTrait { categoryId: 'interaction', text: 'disembodied_hand', translation: '脱离身体的手' }
+  ↓
+characterTraitStore.setTraits（MERGE 策略）→ CharacterTraitItem { categoryId: 'interaction', enabled: true }
+  ↓
+ConfigPanel 自动渲染「互动元素」分类折叠区（SYSTEM_TRAIT_CATEGORIES 驱动）
+  ↓
+executeImageGeneration 构建 mergedTraits（保留 categoryId）
+  ↓
+分类级权重提升：interaction 分类的 trait weight × interaction_weight（默认 1.2）
+  → finalTraits: [{ text: 'disembodied_hand', weight: 1.2 }, { text: 'hand_on_breast', weight: 1.2 }]
+  ↓
+applyTraitsAndLora 拼接 finalTraits 到 SD prompt → (disembodied_hand:1.2), (hand_on_breast:1.2)
+  ↓
+SD 生成包含交互性质的图片（disembodied_hand + hand_on_breast → 画面出现一只手放在角色胸部）
+```
+
+### 设计约定
+
+- **`interaction` 与 `pose` 不可混用**：角色自身姿态归 `pose`，与另一实体的交互归 `interaction`。如 `sitting`（角色自己坐着）= pose，`sitting_on_another`（坐在他人身上）= interaction。
+- **互动标签优先成对**：模式 A 必须同时输出 `disembodied_*` 部位标签 + 配合的动作部位标签（如 `disembodied_hand` + `hand_on_breast`），单独输出 `disembodied_hand` 而无配合标签会导致 SD 不知手放在哪里。
+- **图片识别场景不触发**：`recognizeImageTraits` 分析的是静态角色卡 PNG（单一角色），无对话上下文，互动标签一般不输出。`buildDynamicImageTraitSystemPrompt` 的 `interaction` 英文描述已标注「typically NOT applicable to single character image analysis」。
+- **标签库覆盖验证**：`disembodied_hand`（count 71413）/ `hugging_another`（count 10622）/ `hand_on_another's_head`（count 47364）等互动标签均已存在于 `docs/danbooru_e621_merged_2026-03-01_pt20-ia-dd-ed-spc.csv` 标签库，RAG 检索与 L0-L5 审计链可正常命中。
+
+### 关联文档
+
+- `docs/FIX_RECORDS.md` §7.35 — 实施记录与重点问题日志
+- `CODE_WIKI.md` §「AI 生成特征自动归类」— 系统分类体系表（已更新为 11 个，含 `interaction`）
+- `docs/danbooru_e621_merged_2026-03-01_pt20-ia-dd-ed-spc.csv` — 互动标签数据源（disembodied_* / *_another 系列）
+
+## AI 标签优化服务方法 `optimizeTraitsForContext`（Spec: add-ai-trait-optimization-for-image-gen / Task 2 + Spec: add-ai-tag-supplement-after-removal / Task 2）
+
+> 2026-08-09 实施：在 `characterTraitAIService.ts` 中新增 `optimizeTraitsForContext` 方法，用于图片生成前由 AI 分析对话上下文与已启用角色特征标签的矛盾关系，返回应删除的标签列表 + 删除后应补充的标签列表。本节为 Task 2（AI 服务方法 + 接口），后续 Task（ConfigPanel 开关 / 标签快照面板「AI 已移除」分区渲染 / executeImageGeneration 接线 / IPC 通道）尚未实现。
+>
+> **2026-08-09 增量更新（Spec: add-ai-tag-supplement-after-removal / Task 2）**：system prompt 重构为 TWO PARTS（PART 1 - REMOVAL 矛盾识别 + PART 2 - SUPPLEMENT 缺失补充），响应解析器升级为同时返回 `tagsToRemove` + `tagsToAdd`，详见 `docs/FIX_RECORDS.md` §7.39。
+
+### 设计动机
+
+- 角色特征标签（如 `pants` / `sitting` / `hat`）在图片生成时携带以保证角色一致性，但对话过程中角色状态可能变化（脱衣 / 站起 / 离开等），此时仍携带旧标签会导致 SD 生成与对话矛盾的图片
+- 通过 AI 分析对话上下文与标签的矛盾关系，在图片生成前自动删除不再适用的标签
+- **补充能力**：删除矛盾标签后可能产生描述缺失（如移除 `pants` 后下身暴露但缺少 `pussy` 标签），AI 在同一次调用中评估并补充缺失的关键描述符
+- ⚠️ 标注为试验性功能：AI 可能误删/误补标签，建议谨慎使用（Task 1 已在 `AIParameterConfig.ai_optimize_traits` 开关默认关闭）
+
+### 新增接口（位于 `GenerateTraitPromptsResult` 之后）
+
+| 接口 | 字段 | 说明 |
+| --- | --- | --- |
+| `OptimizeTraitsParams` | `traits: Array<{ text, weight?, categoryId? }>` | 当前已启用的角色特征标签列表 |
+|  | `conversationContext: string` | 当前对话上下文（用户与角色的完整对话文本） |
+| `OptimizeTraitsResult` | `success: boolean` | 调用是否成功 |
+|  | `tagsToRemove?: Array<{ text, reason? }>` | AI 建议删除的标签列表（含原因） |
+|  | `tagsToAdd?: Array<{ text, reason?, weight?, categoryId? }>` | AI 删除后评估补充的标签列表（Spec: add-ai-tag-supplement-after-removal） |
+|  | `error?: string` | 失败时的友好错误信息 |
+
+### 服务表增量 — `characterTraitAIService.optimizeTraitsForContext`
+
+| 方法 / 类型 | 签名 | 说明 |
+| --- | --- | --- |
+| `optimizeTraitsForContext(params)` | async → `OptimizeTraitsResult` | 主入口；复用与 `generateTraitPrompts` 完全一致的调用模式；返回 `tagsToRemove` + `tagsToAdd` |
+| `parseOptimizeResponse(content)` | private → `{ tagsToRemove, tagsToAdd }` | 解析 LLM JSON 响应；支持 ```` ```json ```` 代码块与裸 JSON；接受 `{ remove: [...], add: [...] }` 标准结构与裸数组兼容格式；防御性剔除 `tagsToAdd` 中与 `tagsToRemove` 同名的项（兜底执行规则 7）；解析失败返回 `{ tagsToRemove: [], tagsToAdd: [] }` |
+
+### 调用流程（与 `generateTraitPrompts` 完全一致）
+
+1. 入参校验：空对话上下文 → 返回错误；空标签列表 → 返回空 `tagsToRemove` 短路
+2. 读取 AI 引擎配置：`aiConfigProvider.getAIConfig({ defaultTransmission: 'header' })` → baseUrl / apiKey / apiKeyTransmission / systemPrompt / modelName
+3. 配置兜底校验：baseUrl / apiKey / modelName 任一缺失 → 「AI 引擎未配置，请先在设置中配置 API」
+4. 读取运行时参数：`this.getEngineRuntimeConfig()` → temperature / maxTokens（缺失返回友好错误）
+5. 构建 system prompt（英文指令，TWO PARTS：PART 1 矛盾识别 + PART 2 缺失补充 + 7 条规则 + JSON 输出格式）
+6. 构建 user message（当前标签列表 + 对话上下文 + 两部分任务说明）
+7. 构建 messages + `enrichSystemPrompt` 注入引擎级 system prompt
+8. 非流式 POST `/v1/chat/completions`（apiKeyTransmission='header' 时 Authorization 头，否则 body.api_key）
+9. 解析 `data.choices[0].message.content` → `parseOptimizeResponse` 提取 `tagsToRemove` + `tagsToAdd`
+10. 返回 `{ success: true, tagsToRemove, tagsToAdd }`
+
+### System Prompt 设计要点
+
+- **TWO PARTS 结构**（Spec: add-ai-tag-supplement-after-removal / Task 2）：
+  - **PART 1 - REMOVAL**：识别与对话上下文矛盾的标签
+  - **PART 2 - SUPPLEMENT**：删除后评估缺失的关键描述符并补充
+- **PART 1 五类常见矛盾模式**：clothing removal（脱衣）/ pose change（姿势变化）/ location change（位置变化）/ state change（状态变化）/ interaction withdrawal（互动抽回，§7.38 新增）
+- **PART 2 四类常见补充模式**：exposure after clothing removal（服装移除后暴露特征）/ pose transition（姿势转换）/ state transition（状态转换）/ 仅补充必要标签（使用标准 Danbooru/e621 标签名）
+- **7 条规则**：
+  1. 仅删除直接矛盾的标签
+  2. 不删除仍适用或模糊的标签
+  3. 对话未明确描述变化时不删除
+  4. 无需删除时返回空数组
+  5. 有疑不删（conservative）
+  6. 特别关注互动标签（disembodied_* / hand_on_* / *_another / holding_*）是否因对话进展而过时
+  7. `add` 列表仅建议不在现有标签列表中的标签，且不补充同时建议删除的标签
+- **输出格式**：严格 JSON `{ "remove": [{ "text", "reason" }], "add": [{ "text", "reason", "weight"?, "categoryId"? }] }`，无操作时返回 `{ "remove": [], "add": [] }`，仅返回 JSON 不含其他文本
+
+### 错误兜底（与 `generateTraitPrompts` 一致）
+
+- 空对话上下文 → `{ success: false, error: '对话上下文为空' }`
+- 空标签列表 → `{ success: true, tagsToRemove: [] }`（短路，不调用 LLM；`tagsToAdd` 为可选字段默认 undefined）
+- AI 引擎未配置 → `{ success: false, error: 'AI 引擎未配置，请先在设置中配置 API' }`
+- 引擎参数缺失 → `{ success: false, error: 'AI 引擎未配置 temperature 或 max_tokens 参数...' }`
+- HTTP 错误 → `{ success: false, error: 'AI 调用失败：HTTP <status> <statusText>' }`
+- 空内容 → `{ success: false, error: 'AI 返回内容为空' }`
+- 超时 / abort → `{ success: false, error: 'AI 调用失败：请求超时，请稍后重试' }`
+- 其他异常 → `{ success: false, error: 'AI 调用失败：<message>' }`（永不抛异常）
+
+### 日志前缀
+
+- service 内部使用 `[TraitOptimizeAI]` 前缀（与 `[TraitPromptAI]` / `[CharacterTraitAI]` 风格一致）
+- 优化结果日志含 `suggestedRemoval` / `removedTags` / `suggestedSupplement` / `addedTags` 四个字段
+
+### 涉及文件
+
+- `src/main/services/characterTraitAIService.ts` — 新增 `optimizeTraitsForContext(params)` 方法 + `OptimizeTraitsParams` / `OptimizeTraitsResult` 接口 + `parseOptimizeResponse` 私有辅助方法；复用 `aiConfigProvider.getAIConfig` / `getEngineRuntimeConfig` / `enrichSystemPrompt` 基础设施
+
+### 后续待办（Spec 后续 Task）
+
+- Task 3+：IPC 通道注册（`ai:optimizeTraitsForContext`）、preload 暴露、electron.d.ts 类型声明
+- ~~ConfigPanel `ai_optimize_traits` 开关 UI（Task 1 已铺设类型）~~ ✅ 已由 Task 4 完成（见下节）
+- 标签快照面板「AI 已移除」分区渲染（Task 1 已铺设 `ImageHistoryItem.removedTags` 类型；§7.37 扩展为基于 `aiOptimization` 三态反馈：success/no-removal/failed，面板头部新增徽标，展开后分区三态渲染）
+- `executeImageGeneration` 接线：生成前调用优化 → 删除标签 → 记录到 `removedTags` 快照 + `aiOptimization` 执行状态元数据
+- ~~**Spec: add-ai-tag-supplement-after-removal 后续 Task**：渲染层 `executeImageGeneration` 消费 `tagsToAdd`（合并到 mergedTraits + 记录到快照）+ 标签快照面板「AI 已补充」分区渲染 + 过度补充防护~~ ✅ 已完成（Task 3 见 §7.40 / `docs/FIX_RECORDS.md`，Task 4 见下节「ChatMessageBubble「AI 已补充」分区」）
+
+## ConfigPanel「允许 AI 优化特征标签」开关 UI（Spec: add-ai-trait-optimization-for-image-gen / Task 4）
+
+> 2026-08-09 实施：在 ConfigPanel「图片生成设置」折叠面板中新增「允许 AI 优化特征标签」试验性功能开关 UI + 警示条。本节为 Task 4（UI 层），仅修改 ConfigPanel.tsx 与 ConfigPanel.css，不修改任何现有逻辑。后续 Task（IPC / 接线 / 快照面板分区 / executeImageGeneration）尚未实现，开关尚不端到端生效（onClick 回调由 `CharacterDialogueChat.tsx` 接线后才会写入 customParameters）。
+
+### 设计动机
+
+- Task 1 已在 `AIParameterConfig.ai_optimize_traits` 铺设类型字段，Task 2 已实现 `optimizeTraitsForContext` AI 服务方法，但用户无法在 UI 上配置该开关
+- 本 Task 补齐 UI 层：在「图片生成设置」面板内新增开关 + 试验性警示条，让用户可见可配置
+- 开关默认关闭，与 Task 1「undefined / false 均视为关闭」语义一致
+- 标注为试验性功能：AI 可能误删重要标签，警示条独立于 Tooltip 确保用户即使不悬停也能看到风险
+
+### 新增 Props — `ConfigPanelProps`
+
+位于 `onInteractionWeightChange` 之后，`engineCapabilities` 之前：
+
+| Prop | 类型 | 说明 |
+| --- | --- | --- |
+| `aiOptimizeTraits?` | `boolean` | 开关当前状态（对应 `AIParameterConfig.ai_optimize_traits`，undefined / false 均视为关闭） |
+| `onAiOptimizeTraitsToggle?` | `(enabled: boolean) => void` | 开关切换回调，由 `CharacterDialogueChat.tsx` 接线后写入 customParameters |
+
+同步在组件函数参数解构中新增 `aiOptimizeTraits` / `onAiOptimizeTraitsToggle`（位于 `onInteractionWeightChange` 之后），保证 props 透传到 JSX。
+
+### 新增 UI — JSX（位于「互动标签权重」滑块之后、「在对话中一键生成场景图片」hint 之前）
+
+```tsx
+<div className="image-gen-config-row image-gen-ai-optimize-row">
+  <span className="image-gen-config-label">
+    允许 AI 优化特征标签
+    <Tooltip title="开启后，图片生成前 AI 会根据对话上下文自动分析并删除矛盾的角色特征标签（如对话中角色脱下裤子时移除 pants 标签）。此为试验性功能，AI 可能会误删重要标签。">
+      <QuestionCircleOutlined className="image-gen-tooltip-icon" />
+    </Tooltip>
+  </span>
+  <Switch
+    size="small"
+    checked={aiOptimizeTraits ?? false}
+    onChange={onAiOptimizeTraitsToggle}
+    disabled={!imageGenEnabled}
+  />
+</div>
+<div className="image-gen-experimental-warning">
+  ⚠ 试验性功能：AI 可能会删除重要标签，建议谨慎使用
+</div>
+```
+
+关键设计：
+- `checked={aiOptimizeTraits ?? false}` — 默认关闭，与 Task 1 语义一致
+- `disabled={!imageGenEnabled}` — 与「图片大小」选择器联动，图片生成未开启时开关禁用
+- 复用已导入的 `Switch` / `Tooltip` / `QuestionCircleOutlined`，无新增 antd 依赖
+- 警示条独立于 Tooltip，确保不悬停也能看到试验性风险
+
+### 新增 CSS — `ConfigPanel.css`（位于 `.image-gen-interaction-weight-value` 之后）
+
+```css
+.image-gen-ai-optimize-row {
+  align-items: center;
+}
+
+.image-gen-experimental-warning {
+  margin-top: -8px;
+  margin-bottom: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--color-warning, #f59e0b);
+  background: var(--color-warning-light, rgba(245, 158, 11, 0.1));
+  border-radius: 4px;
+  border-left: 2px solid var(--color-warning, #f59e0b);
+  line-height: 1.5;
+}
+```
+
+样式遵循暗色主题 CSS 变量体系：`--color-warning` / `--color-warning-light` 与 `.image-gen-session-badge` 同色系（橙色警告主题）。`margin-top: -8px` 让警示条紧贴开关行。
+
+### 涉及文件
+
+- `src/renderer/components/Character/CharacterDialogueChat/ConfigPanel.tsx` — `ConfigPanelProps` 接口新增 2 个字段 + 组件参数解构新增 2 个变量 + JSX 新增开关行 + 警示条
+- `src/renderer/components/Character/CharacterDialogueChat/ConfigPanel.css` — 新增 2 个 CSS 类（`.image-gen-ai-optimize-row` / `.image-gen-experimental-warning`）
+
+### 后续待办（Spec 后续 Task）
+
+- `CharacterDialogueChat.tsx` 接线：读取 `customParameters.ai_optimize_traits` 传入 ConfigPanel + `onAiOptimizeTraitsToggle` 回调写入 customParameters（onCustomParameterChange 局部更新）
+- IPC 通道注册（`ai:optimizeTraitsForContext`）、preload 暴露、electron.d.ts 类型声明
+- 标签快照面板「AI 已移除」分区渲染（Task 1 已铺设 `ImageHistoryItem.removedTags` 类型；§7.37 扩展为基于 `aiOptimization` 三态反馈：success/no-removal/failed，面板头部新增徽标，展开后分区三态渲染）
+- `executeImageGeneration` 接线：生成前调用优化 → 删除标签 → 记录到 `removedTags` 快照 + `aiOptimization` 执行状态元数据
+
+## ChatMessageBubble「AI 已补充」分区 + 头部徽标扩展（Spec: add-ai-tag-supplement-after-removal / Task 4）
+
+> 2026-08-09 实施：在 `ChatMessageBubble.tsx` 标签快照面板的 AI 优化分区中新增与「AI 已移除」对称的「AI 已补充」分区（展示 `addedTags`），并扩展面板头部 AI 徽标的 success 文案以同时反映移除与补充数量。本节为 Task 4（UI 渲染层），Task 1 已在 `ImageHistoryItem.addedTags?: Array<{ text: string; reason?: string }>` 与 `aiOptimization.addedCount: number` 铺设类型契约。CSS 类样式由 Task 5 负责，本 Task 仅修改 TSX。
+
+### 设计动机
+
+- 原 success 分支条件为 `status === 'success' && removedTags.length > 0`，要求 removedTags 非空才渲染分区；但「AI 只补充不删除」场景下 removedTags 为空，分区被吞掉，用户看不到「AI 已补充」反馈
+- 头部徽标原 success 文案固定为 `AI 已移除 N`，无法反映「同时移除 + 补充」或「仅补充」场景，反馈不完整
+- 需要对称扩展：与「AI 已移除」分区并列新增「AI 已补充」分区，两者各自独立条件渲染（可能只有其一，也可能两者都有）
+
+### SubTask 4.1-4.3 / 4.5：success 分支重构 + 新增「AI 已补充」分区
+
+`success` 分支条件从「且 removedTags 非空」改为无条件进入，内部 removedTags / addedTags 各自独立条件渲染：
+
+```tsx
+{currentHistoryItem.aiOptimization.status === 'success' ? (
+  <>
+    {/* AI 已移除分区（保留原逻辑，改为独立条件渲染） */}
+    {currentHistoryItem.removedTags && currentHistoryItem.removedTags.length > 0 && (
+      <>
+        <span className="chat-msg-image-removed-tags-label">
+          AI 已移除（{currentHistoryItem.aiOptimization.removedCount} 个）：
+        </span>
+        <div className="chat-msg-image-removed-tags-list">
+          {currentHistoryItem.removedTags.map((t, i) => (
+            <Tooltip key={i} title={t.reason ? `AI 删除原因：${t.reason}` : 'AI 根据对话上下文判断此标签不再适用'}>
+              <Tag className="chat-msg-image-removed-tag">{t.text}</Tag>
+            </Tooltip>
+          ))}
+        </div>
+      </>
+    )}
+    {/* AI 已补充分区（新增） */}
+    {currentHistoryItem.addedTags && currentHistoryItem.addedTags.length > 0 && (
+      <>
+        <span className="chat-msg-image-added-tags-label">
+          AI 已补充（{currentHistoryItem.aiOptimization.addedCount} 个）：
+        </span>
+        <div className="chat-msg-image-added-tags-list">
+          {currentHistoryItem.addedTags.map((t, i) => (
+            <Tooltip key={i} title={t.reason ? `AI 补充原因：${t.reason}` : 'AI 根据对话上下文判断需要补充此标签'}>
+              <Tag className="chat-msg-image-added-tag">{t.text}</Tag>
+            </Tooltip>
+          ))}
+        </div>
+      </>
+    )}
+  </>
+) : currentHistoryItem.aiOptimization.status === 'no-removal' ? (
+  ...（保留现有 no-removal 逻辑）
+) : (
+  ...（保留现有 failed 逻辑）
+)}
+```
+
+关键设计点：
+- success 分支不再要求 `removedTags.length > 0`，确保「仅补充不删除」场景下 addedTags 分区能正常渲染
+- removedTags / addedTags 各自独立 `{...length > 0 && (...)}` 条件渲染，互不依赖（可能只有其一，也可能两者都有，也可能两者都空——此时 success 分支渲染空 Fragment，容器仍存在但不占内容）
+- addedTags 的 Tooltip 文案：有 `reason` 时显示「AI 补充原因：{reason}」，无 reason 时兜底显示「AI 根据对话上下文判断需要补充此标签」（与 removedTags 的 Tooltip 文案风格对称）
+- 标签数量取自 `aiOptimization.addedCount`（Task 1 已铺设），而非 `addedTags.length`，保证与服务端权威计数一致（与 removedTags 取 `removedCount` 的设计一致）
+- 新增 CSS 类名（绿色高亮，对称于 removedTags 的灰色删除线）：`chat-msg-image-added-tags-label` / `chat-msg-image-added-tags-list` / `chat-msg-image-added-tag`（样式由 Task 5 在 `ChatMessageBubble.css` 中实现）
+
+### SubTask 4.4：头部徽标 success 文案扩展
+
+面板头部 AI 徽标（`chat-msg-image-ai-badge`，折叠态也可见）的 success 文案由固定 `AI 已移除 N` 扩展为条件分支：
+
+```tsx
+{currentHistoryItem.aiOptimization.status === 'success'
+  ? currentHistoryItem.aiOptimization.addedCount > 0
+    ? `AI 已移除 ${currentHistoryItem.aiOptimization.removedCount} / 已补充 ${currentHistoryItem.aiOptimization.addedCount}`
+    : `AI 已移除 ${currentHistoryItem.aiOptimization.removedCount}`
+  : currentHistoryItem.aiOptimization.status === 'no-removal'
+    ? 'AI 已分析'
+    : 'AI 失败'}
+```
+
+文案规则：
+- `addedCount > 0` 时显示 `AI 已移除 N / 已补充 M`（斜杠分隔，同时反映两类操作）
+- `addedCount === 0` 时保留原 `AI 已移除 N`（向后兼容，不增加噪音）
+- no-removal / failed 文案不变
+
+### 涉及文件
+
+- `src/renderer/components/Character/CharacterDialogueChat/ChatMessageBubble.tsx`
+  - 头部徽标 JSX（约 L627-637）：success 文案条件分支扩展
+  - AI 优化分区 success 分支（约 L659-705）：重构为 removedTags / addedTags 独立条件渲染 + 新增 addedTags 渲染块
+  - 不修改 CSS 文件（Task 5 负责 `.chat-msg-image-added-tags-label` / `.chat-msg-image-added-tags-list` / `.chat-msg-image-added-tag` 样式）
+  - 不修改 ChatMessageBubble.tsx 的其他部分（no-removal / failed 分支、标签面板、Prompt 面板等保持不变）
+
+### 兼容性说明
+
+- 旧数据（无 `addedTags` 字段或 `aiOptimization.addedCount` 为 undefined）：`addedTags && addedTags.length > 0` 短路为 false，addedTags 分区不渲染；`addedCount > 0` 在 undefined 时为 falsy，头部徽标回退到 `AI 已移除 N` 文案。完全向后兼容。
+- 仅补充不删除场景（removedTags 为空、addedTags 非空）：success 分支进入，removedTags 块被条件吞掉，addedTags 块正常渲染，头部徽标显示 `AI 已移除 0 / 已补充 M`。
+
+### 后续待办（Spec 后续 Task）
+
+- ~~Task 5：CSS 样式实现（`ChatMessageBubble.css` 新增 `.chat-msg-image-added-tags-label` / `.chat-msg-image-added-tags-list` / `.chat-msg-image-added-tag`，绿色高亮对称于 removedTags 的灰色删除线）~~ ✅ 已完成，详见下一节
+- AI 服务层 / executeImageGeneration 接线：实际填充 `addedTags` 快照与 `aiOptimization.addedCount` 计数（Task 1 已铺设类型契约）
+
+## ChatMessageBubble「AI 已补充」分区 CSS 样式（Spec: add-ai-tag-supplement-after-removal / Task 5）
+
+> 2026-08-09 实施：在 `ChatMessageBubble.css` 中为 Task 4 新增的三个 CSS 类名（`chat-msg-image-added-tags-label` / `chat-msg-image-added-tags-list` / `chat-msg-image-added-tag`）添加绿色系样式，与现有 removedTags（灰色删除线）形成视觉对比。同时微调 AI 优化分区容器 `.chat-msg-image-ai-optimization` 的 flex 方向，确保 success 状态下「已移除」与「已补充」两组「标签 + 列表」纵向堆叠。
+
+### 新增样式（ChatMessageBubble.css 约第 736-759 行）
+
+```css
+/* ============ AI 标签补充分区（Spec: add-ai-tag-supplement-after-removal / Task 5） ============
+   与 removedTags（灰色删除线）形成视觉对比，使用绿色高亮表示新增标签。
+   样式遵循 ui-variables.css 既有 CSS 变量，兼容亮/暗双主题。 */
+.chat-msg-image-added-tags-label {
+  font-size: 11px;
+  color: var(--color-success, #52c41a);
+  font-weight: 500;
+  margin-right: 4px;
+}
+
+.chat-msg-image-added-tags-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.chat-msg-image-added-tag {
+  font-size: 11px !important;
+  color: var(--color-success, #52c41a) !important;
+  background: var(--color-success-light, rgba(82, 196, 26, 0.12)) !important;
+  border-color: var(--color-success, rgba(82, 196, 26, 0.4)) !important;
+  cursor: help;
+}
+```
+
+### 容器布局微调（ChatMessageBubble.css 约第 797-807 行）
+
+`.chat-msg-image-ai-optimization` 容器由 `flex-direction: row`（默认）改为 `flex-direction: column`，使 success 分支下 removedTags 与 addedTags 两组「label + list」纵向堆叠，避免两组标签横向挤在同一行造成排版混乱。`no-removal` / `failed` 单元素状态不受影响（单元素在 column 容器中仍正常左对齐）。
+
+### 设计要点
+
+- **颜色对比**：addedTags 使用 `--color-success`（绿色 `#52c41a`，亮/暗主题同值）作为文字与边框色，背景使用 `--color-success-light`（亮色 `#f6ffed` / 暗色 `#162312`），与 removedTags 的灰色 `--text-tertiary` + 删除线 + `opacity: 0.5` 形成明确视觉区分
+- **CSS 变量兼容**：所有颜色均使用 `ui-variables.css` 已定义的变量（`--color-success` / `--color-success-light`），并附带 rgba fallback，确保亮/暗双主题正确渲染
+- **`!important` 使用**：added-tag 的 `font-size` / `color` / `background` / `border-color` 加 `!important` 以覆盖 Ant Design `<Tag>` 默认样式，与现有 `.chat-msg-image-removed-tag` 的写法保持一致
+- **`cursor: help`**：与 removed-tag 一致，提示用户可悬停查看 AI 补充原因（Tooltip 由 Task 4 在 TSX 中实现）
+- **布局对称**：added-tags-list 的 `display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px` 与 removed-tags-list 完全一致，保证两组标签换行行为统一
+
+### 涉及文件
+
+- `src/renderer/components/Character/CharacterDialogueChat/ChatMessageBubble.css`
+  - 新增 added-tags 三类样式（约 L736-759）
+  - 微调 `.chat-msg-image-ai-optimization` 容器 flex 方向（约 L797-807）
+  - 不修改 ChatMessageBubble.tsx 或其他文件
+
+## 服装状态提示词指令增强（Spec: add-costume-state-prompt-directives，2026-08-09）
+
+### 概述
+
+为 `characterTraitAIService.ts` 增加服装状态识别能力，引导 AI 根据对话上下文中的服装变化描述（如敞开衣物、拉到一边、掀起等），生成 3 类 Danbooru 风格标签：开合状态 / 位置变化 / 身体部位暴露。该功能与互动元素识别（`interactionGuidance`）平行，复用 `interaction` 分类前缀输出，不新建分类。
+
+### 改动清单
+
+| 改动项 | 位置 | 说明 |
+|--------|------|------|
+| `buildCostumeStateGuidance()` | `characterTraitAIService.ts` 类内，`buildDynamicTraitSystemPrompt` 之前 | 新增私有方法，返回服装状态识别指令块字符串。与 `interactionGuidance` 平行，引导 AI 输出 3 类标签：A) 服装开合状态（`open_clothes` / `open_jacket` / `unbuttoned_shirt` 等）；B) 服装位置变化（`panties_aside` / `shirt_lift` / `skirt_lift` 等）；C) 身体部位暴露（`one_breast_out` / `cleavage` / `navel` 等）。关键原则：服装状态标签描述「衣物仍在身上但状态改变」，区别于衣物完全移除 |
+| `costumeStateGuidance` 拼接 | `buildDynamicTraitSystemPrompt` 内 | 在 `interactionGuidance` 变量定义后、`return` 语句前，调用 `this.buildCostumeStateGuidance()` 赋值给 `costumeStateGuidance`；在 return 模板字符串中 `${interactionGuidance}` 之后、`要求：` 之前插入 `${costumeStateGuidance}` |
+| `COSTUME_STATE_RAG_KEYWORDS` 常量 | `CharacterTraitAIService` 类顶部 | `private static readonly` 字符串常量，由 22 个服装状态标签关键词 `.join(' ')` 组成，用于 RAG 检索 |
+| 服装状态 RAG 检索 | `generateTraitPrompts` 内，现有 RAG 检索之后 | 用 `COSTUME_STATE_RAG_KEYWORDS` 调用 `buildRagReferenceWithDebug` 额外检索 RAG 标签库，将检索到的服装状态相关标签以 `## 服装状态标签参考` 标题注入 system prompt。RAG 未启用/检索失败时静默跳过。后续 `messages` 中的 system content 由 `systemPromptWithRag` 改为 `systemPromptWithAllRag` |
+| `optimizeTraitsForContext` system prompt 扩展 | `optimizeTraitsForContext` 内 | PART 1 REMOVAL 新增 2 条服装状态矛盾模式（开合复位 / 位置复位）；PART 2 SUPPLEMENT 新增 3 条服装状态补充模式（开合→暴露 / 位移→暴露 / 位移→身体部位）；JSON 返回示例扩展为包含服装状态 remove/add 示例 |
+
+### 设计要点
+
+1. **分类复用**：服装状态标签使用 `interaction` 分类前缀（如 `interaction:open_clothes|衣物敞开`），不新建分类，与互动标签共用 `interaction` 分类
+2. **条件触发**：仅当对话上下文明确描述服装状态变化时才输出对应标签；角色穿着完整的描述不触发
+3. **配合使用**：开合/位移标签通常需要配合暴露标签使用（如 `open_shirt` → `cleavage` / `one_breast_out`；`panties_aside` → `pussy`；`shirt_lift` → `navel` / `midriff`）
+4. **与衣物移除的区分**：服装状态标签描述「衣物仍在身上但状态改变」，衣物完全移除用 `top` / `bottom` / `underwear` 分类的删除来处理
+5. **扩展接口**：`buildCostumeStateGuidance()` 为独立方法，后续可平行新增 `buildPoseStateGuidance()` 等方法，拼接到 `buildDynamicTraitSystemPrompt` 的同一位置
+6. **RAG 检索调试信息**：`costumeRagStatus` 字段因 `GenerateTraitPromptsResult` 类型定义为严格内联对象（无 index signature）而跳过添加，避免引入类型错误
+
+### 验证
+
+- `npx tsc --noEmit` 检查 `characterTraitAIService.ts`（非测试文件）零新增类型错误
+- 测试文件 `characterTraitAIService.test.ts` 的预存错误（TS2307 模块路径 / TS2339 属性不存在）与本改动无关
+
+
+
+
+
+## §35 AI 使用场景清单（微调训练数据制备基础）（2026-08-10）
+
+**关联文档**：[docs/AI_USAGE_INVENTORY.md](docs/AI_USAGE_INVENTORY.md)
+
+**背景**：在使用 AI 模型进行图片提示词生成、文本解析提示词 tag 生成等图片相关场景时，发现模型输出的准确率未能满足项目需求。计划针对当前模型及特定使用场景进行定向微调，开发一个专门强化角色扮演、图片提示词生成、小说编写等场景的小体量优化模型。
+
+**产出**：完成全项目源码系统性扫描，识别并提取 35 个 AI 使用场景，按「五要素」（功能位置 / System Prompt 原文 / 输入参数 / 期望输出 / 调用频率与重要度）结构化登记。
+
+**场景分布**：
+- P0 图片提示词生成领域：7 个场景（角色特征提取 / 图片识别 / 提示词生成 / 标签优化 / AI 兜底同义词 / 表情图 SD/NL 提示词）
+- P1 角色扮演对话领域：8 个场景（对话主提示词 / 续写 / 用户回复 / 输入润色 / 表情约束 / 辅助模式 / 长度emoji语言 / 角色锚定）
+- P1 小说写作领域：8 个场景（大纲生成 / 大纲续写 / 章节内容 / 描写润色 / 剧情检查 / 文风学习 / 表格整理）
+- P1 世界书领域：5 个场景（维度分析 / 澄清问题 / 设定矛盾检测 / 条目生成 / SKILL.md 提示词）
+- P2 记忆与表格整理领域：3 个场景（批量整理 / 增量整理 / 调用入口）
+- P2 游戏叙事领域：2 个场景（游戏旁白 / 经营游戏定位）
+- P1 智能体领域：3 个场景（对话提示词 / LLM 抽象层 / 写作智能体）
+- P2 提示词工程辅助领域：2 个场景（框架润色 / 模板构建）
+
+**重点标记场景**：14 个场景被标记为微调难点加权对象，包括图片相关 P0 全部场景、fix-polish 系列 bug 修复场景、JSON 输出易错场景、多模态视觉场景、变体称呼识别难点场景。
+
+**建议总样本量**：约 8,000-12,000 条（含数据增强后），按 P0 ×3 / P1 ×2 / P2 ×1 权重采样。
+
+**关联 Spec**：.trae/specs/catalog-ai-usage-scenarios-for-finetuning/`n
+
+## §41 对话模式同步整理（Sync Mode）修复（2026-08-15）
+
+### 概述
+
+对记忆整理模块的同步整理（Sync Mode）进行了三项修复，覆盖 AI 调用层统一、断点续传边界条件、以及引擎参数配置读取。
+
+### 改动一：`callAIAPI` 委托给 `callAIAPIWithFetch`
+
+**文件**：`src/main/services/memory/aiClient.ts`
+
+- `callAIAPI` 函数内部将请求构造委托给 `aiHttpClient.callAIAPIWithFetch`，消除了内联的 fetch 逻辑，统一了 AI HTTP 调用路径
+- 使用 `aiHttpClient` 的统一超时、重试、鉴权、响应解析逻辑
+- 保持导出签名不变（对外兼容），保留原有的 `addLog` 日志记录方式
+
+### 改动二：断点续传边界条件修复
+
+**文件**：`src/main/services/memory/organizeOrchestrator.ts`
+
+`createProgressiveHandler` 中 `calculateStartIndex` 方法修复：
+
+- 当 `existingProgress.totalMessages > targetMessages.length` 时（聊天记录被回滚/删除导致消息数减少），断点续传记录已不可信，重置为从头开始处理（`return { startIndex: 0, completed: false, resumed: false }`）
+- 新增断点续传决策日志，覆盖所有分支（续传成功、消息数增加、消息数减少、无记录）
+
+### 改动三：`getEngineAIParams` 统一配置读取
+
+**文件**：`src/main/services/memory/aiClient.ts`
+
+- 始终返回完整参数集，不再因参数缺失返回 `null`
+- 缺失参数使用默认值：`temperature=0.7, max_tokens=4096, top_p=0.9, frequency_penalty=0, presence_penalty=0`
+- 修复原代码中 `max_tokens: undefined` 的 bug（引擎有该字段时仍被硬编码为 undefined）
+- 返回类型改为无 `null` 分支，所有调用端 `engineAIParams ?? undefined` 兼容运行
+
+### 验证
+
+- `tsc --noEmit` 项目级检查，两个修改文件均零新增错误（项目级错误均为其他文件的预存错误）
+- VS Code 诊断 `GetDiagnostics` 对两个修改文件返回空数组

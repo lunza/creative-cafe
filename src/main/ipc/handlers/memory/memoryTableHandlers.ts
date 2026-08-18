@@ -14,10 +14,13 @@
  * 注意：`memory:getTableData` 包含 IPC 序列化校验逻辑（原始行为），
  * 不能简单交给 wrapHandler 包装，需保留原结构。
  */
+import fs from 'fs';
+import path from 'path';
 import { ipcMain, IpcMainInvokeEvent } from 'electron';
 import { tableTemplateService } from '../../../services/memory/tableTemplateService';
 import { tableEditParser } from '../../../services/memory/tableEditParser';
 import { chatLogService } from '../../../services/memory/chatLogService';
+import { getUserDataPath } from '../../../utils/appPath';
 import { wrapHandler } from '../utils/wrapHandler';
 
 export function registerMemoryTableHandlers(): void {
@@ -167,4 +170,59 @@ export function registerMemoryTableHandlers(): void {
       console.log('表格数据保存成功');
     })
   );
+
+  // ========== 表格快照恢复 ==========
+
+  /**
+   * 从快照文件恢复表格数据
+   *
+   * 读取版本链中的表格快照文件，将其数据写回当前聊天表格文件。
+   * 成功时返回 { success: true, sheets, headers, data }，
+   * 失败时返回 { success: false, error: string }。
+   */
+  ipcMain.handle('memory:restoreTableFromSnapshot', async (
+    _event: IpcMainInvokeEvent,
+    chatId: string,
+    versionLinkId: string
+  ): Promise<{ success: boolean; sheets?: string[]; headers?: Record<string, string[]>; data?: Record<string, any[]>; error?: string }> => {
+    try {
+      const safeChatId = chatId.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
+      const userDataPath = getUserDataPath();
+
+      // 构建快照文件路径: {userDataPath}/data/memories/chats/{safeChatId}/versions/table/{versionLinkId}.json
+      const snapshotPath = path.join(userDataPath, 'data', 'memories', 'chats', safeChatId, 'versions', 'table', `${versionLinkId}.json`);
+
+      if (!fs.existsSync(snapshotPath)) {
+        return { success: false, error: '表格快照不存在' };
+      }
+
+      // 读取快照数据
+      const snapshotContent = fs.readFileSync(snapshotPath, 'utf8');
+      const snapshotData = JSON.parse(snapshotContent);
+
+      const sheets: string[] = snapshotData.sheets || [];
+      const headers: Record<string, string[]> = snapshotData.headers || {};
+      const data: Record<string, any[]> = snapshotData.data || {};
+
+      // 构建当前表格文件路径: {userDataPath}/data/memories/chatlog/{safeChatId}.json
+      const currentTablePath = path.join(userDataPath, 'data', 'memories', 'chatlog', `${safeChatId}.json`);
+
+      // 确保目录存在
+      const chatlogDir = path.dirname(currentTablePath);
+      if (!fs.existsSync(chatlogDir)) {
+        fs.mkdirSync(chatlogDir, { recursive: true });
+      }
+
+      // 写入当前表格文件，格式与现有表格文件一致
+      fs.writeFileSync(currentTablePath, JSON.stringify({ sheets, headers, data, sheetDescriptions: {} }, null, 2), 'utf8');
+
+      console.log('[IPC] 表格快照恢复成功:', { chatId, versionLinkId, sheets, dataCount: Object.keys(data).length });
+
+      return { success: true, sheets, headers, data };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('[IPC] 表格快照恢复失败:', errorMessage);
+      return { success: false, error: errorMessage };
+    }
+  });
 }

@@ -147,6 +147,8 @@ export function registerWritingTableHandlers(): void {
               totalChunks: totalChunks || 0,
               timestamp: Date.now()
             });
+          } else {
+            console.warn('[writingTableHandlers] organizeTable: 渲染进程已销毁，跳过进度事件发送:', { projectId, current, total, message });
           }
         },
         requirements,
@@ -184,6 +186,8 @@ export function registerWritingTableHandlers(): void {
               totalChunks: totalChunks || 0,
               timestamp: Date.now()
             });
+          } else {
+            console.warn('[writingTableHandlers] organizeSingleSheet: 渲染进程已销毁，跳过进度事件发送:', { projectId, sheetName, current, total, message });
           }
         },
         requirements

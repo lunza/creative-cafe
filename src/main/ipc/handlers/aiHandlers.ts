@@ -503,14 +503,36 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
           total_request_time_ms: totalTime
         });
         
-        // ===== 出参日志：完整记录原始 SSE 累积数据（不截断） =====
-        logger.info(`[${requestId}] 流式响应原始数据（完整，不截断）`, accumulatedData);
+        // ===== 出参日志：记录原始 SSE 累积数据 =====
+        // 【重点标记 - 日志过大修复】原代码将完整 accumulatedData（可达 200KB+）作为 details 传入，
+        // 导致日志文件快速达到 10MB 限制并轮转，后续日志写入新文件看似"不记录"。
+        // 修复：限制原始数据日志大小为 50KB，超出部分截断并记录总长度。
+        const MAX_RAW_LOG_SIZE = 50 * 1024; // 50KB
+        const MAX_CONTENT_LOG_SIZE = 20 * 1024; // 20KB
+        const truncateForLog = (str: string): string =>
+          str && str.length > MAX_CONTENT_LOG_SIZE
+            ? str.substring(0, MAX_CONTENT_LOG_SIZE) + `... [截断，总长度: ${str.length}]`
+            : str;
+        const rawDataToLog = accumulatedData.length > MAX_RAW_LOG_SIZE
+          ? accumulatedData.substring(0, MAX_RAW_LOG_SIZE) + `\n\n... [截断] 原始数据总长度: ${accumulatedData.length} 字节，仅记录前 50KB`
+          : accumulatedData;
+        logger.info(`[${requestId}] 流式响应原始数据（总长度: ${accumulatedData.length} 字节）`, rawDataToLog);
         
         // 解析最终数据 - 修复：改进 SSE 解析逻辑
         let data;
         try {
           // 处理 SSE 格式
-          if (accumulatedData.startsWith('data: ')) {
+          // 【Bug 修复 - GLM SSE 注释行导致解析失败】
+          // SSE 协议允许服务器发送注释行（以 ':' 开头），常用于 keep-alive 心跳：
+          //   : keep-alive\n\ndata: {"choices":[...]}\n\ndata: [DONE]
+          // GLM API 会发送 ': keep-alive' 注释行，导致 accumulatedData 不以 'data: ' 开头，
+          // 原 startsWith('data: ') 检测条件为 false，走了"普通 JSON 解析"分支，
+          // JSON.parse 遇到 ': keep-alive' 报错 Unexpected token ':'。
+          // 修复：检测条件改为包含 '\ndata: ' 或以 'data: '/':' 开头（SSE 注释行）。
+          const isSSEFormat = accumulatedData.startsWith('data: ')
+            || accumulatedData.startsWith(':')
+            || accumulatedData.includes('\ndata: ');
+          if (isSSEFormat) {
             const lines = accumulatedData.split('\n');
             // 收集所有非 [DONE] 的 data: 行
             const jsonLines = lines
@@ -536,13 +558,13 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
               const lastLine = jsonLines[jsonLines.length - 1];
               try {
                 data = JSON.parse(lastLine);
-                // ===== 出参日志：完整记录 AI 解析后的回复内容（不截断） =====
+                // ===== 出参日志：记录 AI 解析后的回复内容 =====
                 logger.info(`[${requestId}] SSE 解析成功 - AI完整回复内容`, undefined, {
                   requestId,
                   lineCount: jsonLines.length,
                   fullContentLength: fullContent.length,
-                  fullContent: fullContent,
-                  parsedData: data
+                  fullContent: truncateForLog(fullContent),
+                  parsedData: truncateForLog(JSON.stringify(data))
                 });
               } catch (parseError) {
                 logger.warn(`[${requestId}] SSE 最后一个 data: 行解析失败，尝试合并所有 data: 行`, undefined, {
@@ -577,8 +599,8 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
                     logger.info(`[${requestId}] SSE 解析成功（合并所有 data: 行）- AI完整回复内容`, undefined, {
                       requestId,
                       combinedLength: combinedContent.length,
-                      fullContent: combinedContent,
-                      parsedData: data
+                      fullContent: truncateForLog(combinedContent),
+                      parsedData: truncateForLog(JSON.stringify(data))
                     });
                   } else {
                     logger.warn(`[${requestId}] SSE 合并所有 data: 行后仍无有效内容`, undefined, { requestId });
@@ -611,11 +633,14 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
             }
           }
         } catch (e) {
-          // ===== 出参日志：解析失败时记录完整原始数据（不截断） =====
+          // ===== 出参日志：解析失败时记录原始数据（截断防膨胀） =====
           logger.error(`[${requestId}] 解析响应数据失败: ${e instanceof Error ? e.message : '未知错误'}`, e instanceof Error ? e.stack || e.message : undefined, {
             requestId,
             timestamp: completeTimeStr,
-            rawData: accumulatedData
+            rawDataLength: accumulatedData.length,
+            rawData: accumulatedData.length > MAX_RAW_LOG_SIZE
+              ? accumulatedData.substring(0, MAX_RAW_LOG_SIZE) + `... [截断，总长度: ${accumulatedData.length}]`
+              : accumulatedData
           });
           data = null;
         }
@@ -624,27 +649,58 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
         if (!data && accumulatedData.length > 0) {
           logger.debug(`[${requestId}] 数据解析失败，尝试从原始累积数据中恢复`, undefined, { requestId });
           try {
-            // 尝试直接解析原始数据中的内容部分
-            const contentMatch = accumulatedData.match(/"content"\s*:\s*"((?:[^"\\]|\\.)*)"/g);
-            if (contentMatch && contentMatch.length > 0) {
-              const lastContentMatch = contentMatch[contentMatch.length - 1];
-              const contentValue = lastContentMatch.match(/"content"\s*:\s*"((?:[^"\\]|\\.)*)"/)?.[1];
-              if (contentValue) {
-                const unescapedContent = contentValue.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-                data = {
-                  choices: [{
-                    message: { content: unescapedContent },
-                    finish_reason: 'stop'
-                  }]
-                };
-                // ===== 出参日志：恢复的内容完整记录（不截断） =====
-                logger.info(`[${requestId}] 从原始数据中恢复内容成功 - AI完整回复内容`, undefined, {
-                  requestId,
-                  restoredLength: unescapedContent.length,
-                  fullContent: unescapedContent,
-                  parsedData: data
-                });
+            // 【Bug 修复 - 恢复逻辑取最后一个 content 导致截断】
+            // SSE 流式数据中每个 chunk 的 delta.content 是增量内容（如 "芙"/"琳"/"！"），
+            // 原恢复逻辑取最后一个 contentMatch，只拿到最后一个增量片段（如 "这"），
+            // 导致 28624 字节原始数据只恢复出 4 个字符。
+            // 修复：先尝试提取所有 SSE data: 行中的 delta.content 并累加（正确处理流式增量）；
+            // 如果没有 delta.content，再回退到取最后一个 message.content（非流式格式）。
+            let recoveredContent = '';
+
+            // 策略 1：累加所有 delta.content（流式 SSE 格式）
+            const sseDataLines = accumulatedData
+              .split('\n')
+              .filter(line => line.trim().startsWith('data: '))
+              .map(line => line.trim().substring(6))
+              .filter(line => line && line !== '[DONE]');
+            for (const line of sseDataLines) {
+              try {
+                const parsed = JSON.parse(line);
+                if (parsed.choices?.[0]?.delta?.content) {
+                  recoveredContent += parsed.choices[0].delta.content;
+                }
+              } catch (e) { /* ignore individual line parse errors */ }
+            }
+
+            // 策略 2：如果策略 1 无结果，回退到正则匹配最后一个 content（非流式格式）
+            if (!recoveredContent) {
+              const contentMatch = accumulatedData.match(/"content"\s*:\s*"((?:[^"\\]|\\.)*)"/g);
+              if (contentMatch && contentMatch.length > 0) {
+                const lastContentMatch = contentMatch[contentMatch.length - 1];
+                const contentValue = lastContentMatch.match(/"content"\s*:\s*"((?:[^"\\]|\\.)*)"/)?.[1];
+                if (contentValue) {
+                  recoveredContent = contentValue;
+                }
               }
+            }
+
+            if (recoveredContent) {
+              const unescapedContent = recoveredContent.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+              data = {
+                choices: [{
+                  message: { content: unescapedContent },
+                  finish_reason: 'stop'
+                }]
+              };
+              // ===== 出参日志：恢复的内容完整记录（不截断） =====
+              logger.info(`[${requestId}] 从原始数据中恢复内容成功 - AI完整回复内容`, undefined, {
+                requestId,
+                restoredLength: unescapedContent.length,
+                recoveryStrategy: sseDataLines.length > 0 ? 'sse-delta-accumulate' : 'regex-last-content',
+                sseLineCount: sseDataLines.length,
+                fullContent: truncateForLog(unescapedContent),
+                parsedData: data
+              });
             }
           } catch (recoveryError) {
             logger.warn(`[${requestId}] 从原始数据恢复内容失败`, undefined, {

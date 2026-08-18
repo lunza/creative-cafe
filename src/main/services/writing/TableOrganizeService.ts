@@ -1,5 +1,4 @@
 import { Chapter, ModelConfig, ChapterStatus } from '../../../shared/types/writing.types';
-import type { IncomingMessage } from 'http';
 import { WritingProjectRepository } from './WritingProjectRepository';
 import {
   WritingTableRepository,
@@ -10,6 +9,7 @@ import {
 } from './WritingTableRepository';
 import { TableEditCommandExecutor } from './TableEditCommandExecutor';
 import { AIConfigProvider } from '../ai/AIConfigProvider';
+import { callAIAPIWithFetch, AIAPIConfig, AIAPIParams } from '../ai/aiHttpClient';
 import { tableTemplateService, TableTemplate, TableSheet } from '../memory/tableTemplateService';
 import { tableEditParser } from '../memory/tableEditParser';
 import { addLog } from '../memory/chatLogService';
@@ -125,6 +125,16 @@ export class TableOrganizeService {
       this.tableRepo.saveOrganizeProgress(projectId, progress);
 
       const apiEndpoint = this.aiConfig.buildApiEndpoint(modelConfig);
+
+      if (!apiEndpoint.apiKey) {
+        throw new Error('未配置 API Key，请在设置中配置');
+      }
+      if (!apiEndpoint.apiUrl) {
+        throw new Error('未配置 AI 服务地址，请在设置中配置');
+      }
+      if (!apiEndpoint.modelName) {
+        throw new Error('未配置模型名称，请在设置中配置');
+      }
 
       // 累计已处理的分片数，用于精确进度计算
       let processedChunks = 0;
@@ -362,6 +372,15 @@ export class TableOrganizeService {
       this.tableRepo.saveOrganizeProgress(projectId, progress);
 
       const apiEndpoint = this.aiConfig.buildApiEndpoint(modelConfig);
+      if (!apiEndpoint.apiKey) {
+        throw new Error('未配置 API Key，请在设置中配置');
+      }
+      if (!apiEndpoint.apiUrl) {
+        throw new Error('未配置 AI 服务地址，请在设置中配置');
+      }
+      if (!apiEndpoint.modelName) {
+        throw new Error('未配置模型名称，请在设置中配置');
+      }
       let processedChunks = 0;
 
       for (let i = 0; i < chaptersToProcess.length; i++) {
@@ -508,6 +527,16 @@ export class TableOrganizeService {
 
       // 使用与 organizeTable 一致的 AI 调用链路
       const apiEndpoint = this.aiConfig.buildApiEndpoint(modelConfig);
+
+      if (!apiEndpoint.apiKey) {
+        throw new Error('未配置 API Key，请在设置中配置');
+      }
+      if (!apiEndpoint.apiUrl) {
+        throw new Error('未配置 AI 服务地址，请在设置中配置');
+      }
+      if (!apiEndpoint.modelName) {
+        throw new Error('未配置模型名称，请在设置中配置');
+      }
 
       // 构建提示词（包含章节内容上下文、表格上下文、用户整理要求）
       const tableContext = this.buildTableContextForPrompt(projectId, template);
@@ -1381,92 +1410,51 @@ deleteRow(4, 1)
     modelConfig: ModelConfig,
     apiEndpoint: { apiUrl: string; apiMode: string; apiKey: string; apiKeyTransmission: string; modelName: string }
   ): Promise<string> {
-    const http = require('http');
-    const https = require('https');
+    addLog(`[WritingOrganize] AI请求 - 开始调用 AI API`, 'debug');
+    addLog(`[WritingOrganize] AI请求 - 模型: ${apiEndpoint.modelName}`, 'debug');
+    addLog(`[WritingOrganize] AI请求 - 地址: ${apiEndpoint.apiUrl}`, 'debug');
+    addLog(`[WritingOrganize] AI请求 - 提示词长度: ${prompt.length} 字符`, 'debug');
 
-    const parsedUrl = new URL(apiEndpoint.apiUrl);
-    const isHttps = parsedUrl.protocol === 'https:';
-    const transport = isHttps ? https : http;
-
-    if (!modelConfig.temperature && modelConfig.temperature !== 0) {
-      throw new Error('未提供 temperature 参数');
-    }
-    if (!modelConfig.maxTokens) {
-      throw new Error('未提供 maxTokens 参数');
-    }
-
-    const { apiKey, apiKeyTransmission, modelName } = apiEndpoint;
-
-    const payload: Record<string, unknown> = {
-      model: modelName,
-      temperature: modelConfig.temperature,
-      max_tokens: modelConfig.maxTokens,
+    const config: AIAPIConfig = {
+      apiKey: apiEndpoint.apiKey,
+      apiUrl: apiEndpoint.apiUrl,
+      modelName: apiEndpoint.modelName,
+      apiKeyTransmission: apiEndpoint.apiKeyTransmission,
+      apiMode: apiEndpoint.apiMode,
     };
 
-    Object.assign(payload, {
+    const params: AIAPIParams = {
+      temperature: modelConfig.temperature,
+      max_tokens: modelConfig.maxTokens,
+      systemPrompt: '你是一个小说数据整理助手，负责从章节内容中提取结构化信息到表格中。',
+    };
+
+    const payload: Record<string, unknown> = {
+      model: apiEndpoint.modelName,
+      temperature: modelConfig.temperature,
+      max_tokens: modelConfig.maxTokens,
       messages: [
         { role: 'system', content: '你是一个小说数据整理助手，负责从章节内容中提取结构化信息到表格中。' },
         { role: 'user', content: prompt }
       ]
-    });
-
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
     };
 
-    if (apiKeyTransmission === 'header') {
-      const authValue = apiKey.trim().startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
-      headers['Authorization'] = authValue;
-    } else {
-      payload.api_key = apiKey;
+    if (apiEndpoint.apiKeyTransmission === 'body') {
+      payload.api_key = apiEndpoint.apiKey;
     }
 
     addLog(`[WritingOrganize] AI请求 - 完整 Payload:`, 'debug');
     addLog(JSON.stringify(payload, null, 2), 'debug');
 
-    const requestBody = JSON.stringify(payload);
-    const contentLength = Buffer.byteLength(requestBody);
-
-    return new Promise((resolve, reject) => {
-      const options = {
-        hostname: parsedUrl.hostname,
-        port: parsedUrl.port,
-        path: parsedUrl.pathname,
-        method: 'POST',
-        headers: {
-          ...headers,
-          'Content-Length': contentLength,
-        },
-        timeout: 300000,
-      };
-
-      const req = transport.request(options, (res: IncomingMessage) => {
-        let data = '';
-        res.on('data', (chunk: Buffer) => { data += chunk; });
-        res.on('end', () => {
-          try {
-            const response = JSON.parse(data);
-            addLog(`[WritingOrganize] AI响应 - 完整原始数据:`, 'debug');
-            addLog(data, 'debug');
-            addLog(`[WritingOrganize] AI响应 - 完整解析后JSON:`, 'debug');
-            addLog(JSON.stringify(response, null, 2), 'debug');
-            resolve(response.choices?.[0]?.message?.content || '');
-          } catch (e) {
-            addLog(`[WritingOrganize] AI响应 - 解析失败，原始数据:`, 'error');
-            addLog(data, 'error');
-            reject(new Error(`AI响应解析失败: ${data}`));
-          }
-        });
-      });
-
-      req.on('error', reject);
-      req.on('timeout', () => {
-        req.destroy();
-        reject(new Error('AI请求超时'));
-      });
-
-      req.write(requestBody);
-      req.end();
-    });
+    try {
+      const response = await callAIAPIWithFetch(prompt, config, params);
+      addLog(`[WritingOrganize] AI响应 - 内容长度: ${response.length} 字符`, 'debug');
+      addLog(`[WritingOrganize] AI响应 - 内容: ${response}`, 'debug');
+      return response;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      addLog(`[WritingOrganize] AI调用失败: ${errorMsg}`, 'error');
+      throw error;
+    }
   }
 }

@@ -218,6 +218,8 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
   // ====== Store 订阅 ======
   const saveExpression = useExpressionStore(s => s.saveExpression);
   const loadExpressions = useExpressionStore(s => s.loadExpressions);
+  // 订阅 manifest 以获取自定义情绪及其 AI 生成提示词（Spec: enhance-custom-emotion-system）
+  const manifest = useExpressionStore(s => s.manifest);
 
   // 【重点标记 - 按角色独立存储 LoRA（2026-07-29 bug 修复）】
   // LoRA 配置不再从全局 setting.sdWebui.selectedLoras 读取，而是按角色卡独立存储，
@@ -392,6 +394,9 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
     // 找到预置情绪标签（若 targetEmotionKey 在预置列表中）
     const preset = EMOTION_PRESETS.find((e) => e.key === targetEmotionKey);
     const customLabel = targetEmotionLabel || preset?.label;
+    // 查找自定义情绪的 AI 生成提示词（Spec: enhance-custom-emotion-system）
+    const customEmotion = manifest?.customEmotions?.find((e) => e.key === targetEmotionKey);
+    const customPrompts = customEmotion?.prompts;
     // 【角色特征缓存 Bug 修复（2026-07-29）】传入实际角色特征（原为 undefined 遗留 TODO）
     const isNLModel = sdConfig.modelType !== 'sdxl';
     const { prompt, negativePrompt } = isNLModel
@@ -399,6 +404,7 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
           nlPromptTemplate: sdConfig.nlPromptTemplate,
           customNegativePrompt: sdConfig.customNegativePrompt,
           customLabel,
+          customNlPrompt: customPrompts?.nlPrompt,
           characterTraits: enabledTraitTexts,
           modelType: sdConfig.modelType,
         })
@@ -406,6 +412,9 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
           positivePromptTemplate: sdConfig.positivePromptTemplate,
           customNegativePrompt: sdConfig.customNegativePrompt,
           customLabel,
+          customPrompts: customPrompts
+            ? { positive: customPrompts.positive, negative: customPrompts.negative }
+            : undefined,
           characterTraits: enabledTraitTexts,
         });
     // 初始化可编辑提示词（用户可在此基础上修改后再生）
@@ -421,6 +430,7 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
     sdConfig.positivePromptTemplate,
     sdConfig.customNegativePrompt,
     enabledTraitTexts,
+    manifest,
   ]);
 
   // ====== 重置状态（关闭时） ======
@@ -462,12 +472,16 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
   const buildEmotionPrompt = useCallback(
     (emotionKey: string, label?: string) => {
       // 【角色特征缓存 Bug 修复（2026-07-29）】传入实际角色特征（原为 undefined 遗留 TODO）
+      // 查找自定义情绪的 AI 生成提示词（Spec: enhance-custom-emotion-system）
+      const customEmotion = manifest?.customEmotions?.find((e) => e.key === emotionKey);
+      const customPrompts = customEmotion?.prompts;
       const isNLModel = sdConfig.modelType !== 'sdxl';
       const { prompt, negativePrompt } = isNLModel
         ? buildNLExpressionPrompt(emotionKey, {
             nlPromptTemplate: sdConfig.nlPromptTemplate,
             customNegativePrompt: sdConfig.customNegativePrompt,
             customLabel: label,
+            customNlPrompt: customPrompts?.nlPrompt,
             characterTraits: enabledTraitTexts,
             modelType: sdConfig.modelType,
           })
@@ -475,6 +489,9 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
             positivePromptTemplate: sdConfig.positivePromptTemplate,
             customNegativePrompt: sdConfig.customNegativePrompt,
             customLabel: label,
+            customPrompts: customPrompts
+              ? { positive: customPrompts.positive, negative: customPrompts.negative }
+              : undefined,
             characterTraits: enabledTraitTexts,
           });
       return { key: emotionKey, prompt, negativePrompt };
@@ -485,6 +502,7 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
       sdConfig.positivePromptTemplate,
       sdConfig.customNegativePrompt,
       enabledTraitTexts,
+      manifest,
     ],
   );
 
@@ -592,10 +610,16 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
     setBatchSummary(null);
     setBatchStage('generating');
 
-    // 1. 为全部 31 个预置情绪构建提示词
-    const emotions = EMOTION_PRESETS.map(({ key, label }) =>
-      buildEmotionPrompt(key, label),
-    );
+    // 1. 为全部预置情绪 + 自定义情绪构建提示词（Spec: enhance-custom-emotion-system）
+    const customEmotions = manifest?.customEmotions ?? [];
+    const emotions = [
+      ...EMOTION_PRESETS.map(({ key, label }) =>
+        buildEmotionPrompt(key, label),
+      ),
+      ...customEmotions.map(({ key, label }) =>
+        buildEmotionPrompt(key, label),
+      ),
+    ];
 
     // 2. 注册进度监听
     try {
@@ -609,11 +633,15 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
             const dataUrl = data.imageBase64.startsWith(PNG_DATA_URI_PREFIX)
               ? data.imageBase64
               : PNG_DATA_URI_PREFIX + data.imageBase64;
+            // 判断是否为自定义情绪（Spec: enhance-custom-emotion-system）
+            const isCustom = !EMOTION_PRESETS.some((e) => e.key === data.emotionKey);
+            const customEmotion = customEmotions.find((e) => e.key === data.emotionKey);
             saveExpression(
               characterCardId,
               data.emotionKey,
               dataUrl,
-              false, // 预置情绪 isCustom=false
+              isCustom,
+              customEmotion?.label,
             ).catch((e) => {
               console.warn(
                 '[ExpressionGenerateModal] 批量生成中保存表情失败:',
@@ -680,6 +708,7 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
     saveExpression,
     loadExpressions,
     onGenerated,
+    manifest,
   ]);
 
   // ====== 批量生成：取消 ======
@@ -811,9 +840,10 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
 
   // ====== 渲染辅助 ======
 
-  /** 当前正在生成的情绪标签（从预置列表查找） */
+  /** 当前正在生成的情绪标签（从预置/自定义列表查找） */
   const currentEmotionLabel = batchProgress
     ? EMOTION_PRESETS.find((e) => e.key === batchProgress.emotionKey)?.label ||
+      manifest?.customEmotions?.find((e) => e.key === batchProgress.emotionKey)?.label ||
       batchProgress.emotionKey
     : '';
 
@@ -821,6 +851,7 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
   const singleEmotionLabel =
     targetEmotionLabel ||
     EMOTION_PRESETS.find((e) => e.key === targetEmotionKey)?.label ||
+    manifest?.customEmotions?.find((e) => e.key === targetEmotionKey)?.label ||
     targetEmotionKey ||
     '';
 
@@ -1088,11 +1119,12 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
   const renderBatchMode = () => {
     // 生成完成（或取消）后的汇总
     if (batchStage === 'complete' || batchStage === 'cancelled') {
+      const totalEmotions = EMOTION_PRESETS.length + (manifest?.customEmotions?.length ?? 0);
       const summary = batchSummary || {
-        total: EMOTION_PRESETS.length,
+        total: totalEmotions,
         success: stats.success,
         failed: stats.failed,
-        cancelled: batchStage === 'cancelled' ? EMOTION_PRESETS.length - stats.success - stats.failed : 0,
+        cancelled: batchStage === 'cancelled' ? totalEmotions - stats.success - stats.failed : 0,
       };
       return (
         <div

@@ -51,6 +51,9 @@ export interface ConsistencyReport {
 }
 
 class VersionLinkerService {
+  /** 联动版本历史上限，超出时删除最旧版本 */
+  private readonly MAX_LINKED_VERSIONS = 10;
+
   getCharacterDir(characterCardName: string): string {
     const sanitized = characterCardName.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
     return path.join(getUserDataPath(), 'data', 'memories', 'chats', sanitized);
@@ -146,33 +149,59 @@ class VersionLinkerService {
       triggerType?: 'auto' | 'manual' | 'aiOrganize';
       source?: 'user' | 'ai' | 'system';
       description?: string;
+      // 复用已存在的聊天版本文件（由 chatVersionService.createVersion 创建）。
+      // 提供后跳过聊天版本创建，仅创建表格快照并关联到该文件，保持版本ID一致。
+      existingChatVersionFilePath?: string;
     } = {}
   ): Promise<VersionLinkRecord> {
-    const versionLinkId = this.generateVersionLinkId();
     const characterDir = this.getCharacterDir(characterCardName);
     const chatDir = path.join(characterDir, 'versions', 'chat');
     const tableDir = path.join(characterDir, 'versions', 'table');
 
-    await fs.mkdir(chatDir, { recursive: true });
     await fs.mkdir(tableDir, { recursive: true });
 
-    const chatTimestamp = Date.now();
-    const chatFilePath = path.join(chatDir, `${versionLinkId}.json`);
-    const chatData = {
-      versionLinkId,
-      timestamp: chatTimestamp,
-      messages: options.messages || [],
-      metadata: options.metadata || {},
-    };
-    await fs.writeFile(chatFilePath, JSON.stringify(chatData, null, 2), 'utf8');
+    // 决定 versionLinkId / 聊天版本文件（复用或新建）
+    let versionLinkId: string;
+    let chatFilePath: string;
+    let chatTimestamp: number;
+    let messageCount: number;
 
-    await this.addChangeLog(characterCardName, {
-      versionLinkId,
-      action: 'create_chat_version',
-      source: options.source || 'user',
-      description: options.description || 'Created chat version',
-      affectedFiles: [chatFilePath],
-    });
+    if (options.existingChatVersionFilePath) {
+      versionLinkId = path.basename(options.existingChatVersionFilePath, '.json');
+      chatFilePath = options.existingChatVersionFilePath;
+      try {
+        const existingContent = await fs.readFile(chatFilePath, 'utf8');
+        const existingData = JSON.parse(existingContent);
+        chatTimestamp = existingData.version?.timestamp || existingData.timestamp || Date.now();
+        messageCount = existingData.messages?.length || 0;
+      } catch {
+        chatTimestamp = Date.now();
+        messageCount = options.messages?.length || 0;
+      }
+    } else {
+      versionLinkId = this.generateVersionLinkId();
+      chatTimestamp = Date.now();
+      chatFilePath = path.join(chatDir, `${versionLinkId}.json`);
+      messageCount = options.messages?.length || 0;
+
+      await fs.mkdir(chatDir, { recursive: true });
+
+      const chatData = {
+        versionLinkId,
+        timestamp: chatTimestamp,
+        messages: options.messages || [],
+        metadata: options.metadata || {},
+      };
+      await fs.writeFile(chatFilePath, JSON.stringify(chatData, null, 2), 'utf8');
+
+      await this.addChangeLog(characterCardName, {
+        versionLinkId,
+        action: 'create_chat_version',
+        source: options.source || 'user',
+        description: options.description || 'Created chat version',
+        affectedFiles: [chatFilePath],
+      });
+    }
 
     const tableTimestamp = Date.now();
     const tableFilePath = path.join(tableDir, `${versionLinkId}.json`);
@@ -219,7 +248,7 @@ class VersionLinkerService {
       chatVersion: {
         exists: true,
         filePath: chatFilePath,
-        messageCount: chatData.messages.length,
+        messageCount,
       },
       tableSnapshot: {
         exists: true,
@@ -233,6 +262,9 @@ class VersionLinkerService {
     index.versions.push(linkRecord);
     await this.saveVersionIndex(characterCardName, index);
 
+    // 版本上限控制：超出 MAX_LINKED_VERSIONS 时删除最旧版本
+    await this.enforceVersionLimit(characterCardName, index);
+
     await this.addChangeLog(characterCardName, {
       versionLinkId,
       action: 'create_linked_version',
@@ -242,6 +274,46 @@ class VersionLinkerService {
     });
 
     return linkRecord;
+  }
+
+  /**
+   * 版本上限控制：当联动版本数超过 MAX_LINKED_VERSIONS 时，
+   * 按 timestamp 升序删除最旧版本（聊天版本文件 + 表格快照文件 + 索引记录）。
+   */
+  private async enforceVersionLimit(characterCardName: string, index: VersionIndex): Promise<void> {
+    if (index.versions.length <= this.MAX_LINKED_VERSIONS) {
+      return;
+    }
+
+    const overflowCount = index.versions.length - this.MAX_LINKED_VERSIONS;
+    const sorted = [...index.versions].sort((a, b) => a.timestamp - b.timestamp);
+    const toRemove = sorted.slice(0, overflowCount);
+
+    for (const record of toRemove) {
+      // 删除聊天版本文件
+      try {
+        await fs.unlink(record.chatVersion.filePath);
+      } catch {
+        // 文件可能不存在，忽略
+      }
+      // 删除表格快照文件
+      try {
+        await fs.unlink(record.tableSnapshot.filePath);
+      } catch {
+        // 文件可能不存在，忽略
+      }
+      await this.addChangeLog(characterCardName, {
+        versionLinkId: record.versionLinkId,
+        action: 'delete_version',
+        source: 'system',
+        description: `Exceeded MAX_LINKED_VERSIONS (${this.MAX_LINKED_VERSIONS}), removed oldest linked version`,
+        affectedFiles: [record.chatVersion.filePath, record.tableSnapshot.filePath],
+      });
+    }
+
+    const removedIds = new Set(toRemove.map(r => r.versionLinkId));
+    index.versions = index.versions.filter(v => !removedIds.has(v.versionLinkId));
+    await this.saveVersionIndex(characterCardName, index);
   }
 
   async getLinkedVersion(

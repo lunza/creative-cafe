@@ -3,7 +3,7 @@
  *
  * Spec: redesign-dialogue-pipeline-architecture / PromptComposer
  *
- * 导出全部 13 个预置 PromptProvider 实现，并提供 registerAllProviders
+ * 导出全部 14 个预置 PromptProvider 实现，并提供 registerAllProviders
  * 便捷函数一次性注册所有预置 Provider。
  */
 
@@ -20,6 +20,7 @@ export { AssistModeProvider } from './AssistModeProvider';
 export { ExpressionProvider } from './ExpressionProvider';
 export { AsyncTableOrganizeProvider } from './AsyncTableOrganizeProvider';
 export { FormatInstructionProvider } from './FormatInstructionProvider';
+export { ForbiddenWordsPromptProvider } from './ForbiddenWordsPromptProvider';
 
 import type { PromptComposer } from '../PromptComposer';
 import { CharacterContextProvider } from './CharacterContextProvider';
@@ -35,9 +36,10 @@ import { AssistModeProvider } from './AssistModeProvider';
 import { ExpressionProvider } from './ExpressionProvider';
 import { AsyncTableOrganizeProvider } from './AsyncTableOrganizeProvider';
 import { FormatInstructionProvider } from './FormatInstructionProvider';
+import { ForbiddenWordsPromptProvider } from './ForbiddenWordsPromptProvider';
 
 /**
- * 一次性注册全部 13 个预置 PromptProvider 到 PromptComposer。
+ * 一次性注册全部 14 个预置 PromptProvider 到 PromptComposer。
  *
  * 注册顺序不影响最终输出顺序（由 section + priority 决定），
  * 但同 priority 的 Provider 按注册顺序稳定排列。
@@ -56,11 +58,12 @@ export function registerAllProviders(composer: PromptComposer): void {
   composer.registerProvider(new DialogueInstructionProvider());
   composer.registerProvider(new ContinuationInstructionProvider());
 
-  // suffix section (priority 400-450)
+  // suffix section (priority 400-460)
   composer.registerProvider(new LengthGuidanceProvider());
   composer.registerProvider(new LanguageProvider());
   composer.registerProvider(new AssistModeProvider());
   composer.registerProvider(new ExpressionProvider());
   composer.registerProvider(new AsyncTableOrganizeProvider());
   composer.registerProvider(new FormatInstructionProvider());
+  composer.registerProvider(new ForbiddenWordsPromptProvider());
 }

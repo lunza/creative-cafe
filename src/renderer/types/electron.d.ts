@@ -150,6 +150,26 @@ interface ElectronAPI {
     delete: (path: string) => Promise<any>;
     getDirectory: () => Promise<string>;
   };
+  // 用户人设素材管理 API
+  personaAsset: {
+    list: (personaId: string) => Promise<{
+      personaId: string;
+      version: 1;
+      assets: Record<string, {
+        id: string;
+        image: string;
+        createdAt: string;
+      }>;
+    }>;
+    save: (args: { personaId: string; imageId: string; imageBase64: string }) =>
+      Promise<{ success: boolean; error?: string; imagePath?: string }>;
+    delete: (args: { personaId: string; imageId: string }) =>
+      Promise<{ success: boolean; error?: string }>;
+    getImagePath: (args: { personaId: string; imageId: string }) =>
+      Promise<{ success: boolean; imagePath?: string; error?: string }>;
+    clearAll: (personaId: string) =>
+      Promise<{ success: boolean; error?: string }>;
+  };
   plugin: {
     getAvailable: (forceRefresh?: boolean) => Promise<any[]>;
     getInstalled: () => Promise<any[]>;
@@ -406,6 +426,57 @@ interface ElectronAPI {
       };
     }>;
     /**
+     * AI 自定义情绪提示词生成（Spec: enhance-custom-emotion-system）。
+     *
+     * @param args.emotionLabel 情绪关键词（如"热恋"）
+     * @returns { success, positive?, nlPrompt?, emotionKey?, auditDetails?, error? }
+     */
+    generateEmotionPrompts: (args: { emotionLabel: string; existingKeys?: string[] }) => Promise<{
+      success: boolean;
+      positive?: string;
+      negative?: string;
+      nlPrompt?: string;
+      emotionKey?: string;
+      auditDetails?: Array<{ tag: string; isValid: boolean; replacedBy?: string; source: string }>;
+      error?: string;
+    }>;
+    /**
+     * AI 标签优化：根据对话上下文分析角色特征标签的矛盾关系，返回应删除的标签列表。
+     * Spec: add-ai-trait-optimization-for-image-gen
+     *
+     * @param args.traits 当前已启用的角色特征标签列表
+     * @param args.conversationContext 当前对话上下文
+     * @returns { success, tagsToRemove?, error? }
+     */
+    optimizeTraitsForContext: (args: {
+      traits: Array<{ text: string; weight?: number; categoryId?: string }>;
+      conversationContext: string;
+    }) => Promise<{
+      success: boolean;
+      tagsToRemove?: Array<{ text: string; reason?: string }>;
+      /**
+       * AI 删除标签后评估补充的标签列表（Spec: add-ai-tag-supplement-after-removal）。
+       * 与主进程 OptimizeTraitsResult.tagsToAdd 保持一致，字段结构对齐。
+       */
+      tagsToAdd?: Array<{ text: string; reason?: string; weight?: number; categoryId?: string }>;
+      error?: string;
+    }>;
+    /**
+     * 图片生成阶段进度事件订阅（Spec: enhance-conversation-image-bubble / Task 3）。
+     *
+     * 主进程在 ai:generateTraitPrompts handler 内推送 { phase } 进度事件：
+     *   - 'tag-generating'：调用 service 前（LLM 生成 tag 阶段）
+     *   - 'tag-auditing'：service 返回后（L0-L5 审核已完成，渲染进程在拿到结果到发起
+     *     sd.generateTxt2Img 之间展示此状态）
+     *   - 'image-generating'：由渲染进程本地设置（调用 sd.generateTxt2Img 前），非主进程推送
+     *
+     * 订阅模式参照 sd.onGenerationProgress：on 注册不返回 unsubscribe，
+     * 需在组件卸载时调用 offTraitPromptProgress 一次性移除全部监听器。
+     */
+    onTraitPromptProgress: (callback: (data: { phase: 'tag-generating' | 'tag-auditing' | 'image-generating' }) => void) => void;
+    /** 取消 ai:traitPromptProgress 全部监听器（组件卸载时调用，避免内存泄漏） */
+    offTraitPromptProgress: () => void;
+    /**
      * 探测 AI 模型能力（Spec: add-model-capability-detection-and-image-recognition / Task 3）
      *
      * 并行探测 vision / thinking / tool-calling 等能力，供前端在连通性测试后展示徽章。
@@ -424,7 +495,17 @@ interface ElectronAPI {
   // 角色卡对话数据 API
   characterChat: {
     getTestChat: (creativeId: string, characterCardId: string) => Promise<any>;
-    saveTestChat: (creativeId: string, characterCardId: string, characterCardName: string, messages: any[]) => Promise<any>;
+    /**
+     * 保存角色卡测试对话。
+     *
+     * 【Spec: enhance-conversation-image-auditability / Task 7.2】
+     * 第 5 个参数 `sessionTraits`（可选）为对话级临时特征覆盖：
+     *   - 传入数组 → 写入 chat 文件并替换原值
+     *   - 传入 undefined → 重置（chat 文件中省略该字段，加载时回退到 undefined）
+     *   - 省略 → 等价于 undefined（重置语义）
+     * sessionTraits 不写入角色卡 traits.json manifest，仅随对话持久化。
+     */
+    saveTestChat: (creativeId: string, characterCardId: string, characterCardName: string, messages: any[], sessionTraits?: any[]) => Promise<any>;
     deleteTestChat: (creativeId: string, characterCardId: string) => Promise<boolean>;
     getAllTestChats: () => Promise<any[]>;
     clearCache: () => Promise<{ success: boolean }>;
@@ -673,8 +754,10 @@ interface ElectronAPI {
     }) => Promise<{ success: boolean; error?: string; imagePath?: string }>;
     /** 删除指定情绪的图像文件，并从 manifest.expressions 移除（保留 customEmotions） */
     deleteImage: (args: { characterCardId: string; emotionKey: string }) => Promise<{ success: boolean; error?: string }>;
-    /** 添加自定义情绪类别（key 需匹配 ^[a-z][a-z0-9_]*$） */
-    addCustomEmotion: (args: { characterCardId: string; key: string; label: string }) => Promise<{ success: boolean; error?: string }>;
+    /** 添加自定义情绪类别（key 需匹配 ^[a-z][a-z0-9_]*$，prompts 可选） */
+    addCustomEmotion: (args: { characterCardId: string; key: string; label: string; prompts?: { positive: string; negative?: string; nlPrompt: string } }) => Promise<{ success: boolean; error?: string }>;
+    /** 更新自定义情绪类别（label 和/或 prompts，不影响已有表情图片） */
+    updateCustomEmotion: (args: { characterCardId: string; key: string; label?: string; prompts?: { positive: string; negative?: string; nlPrompt: string } }) => Promise<{ success: boolean; error?: string }>;
     /** 移除自定义情绪类别：从 customEmotions + expressions 移除，并删除图像文件 */
     removeCustomEmotion: (args: { characterCardId: string; key: string }) => Promise<{ success: boolean; error?: string }>;
     /** 获取指定情绪的图像绝对路径，不存在时返回 null */
@@ -839,7 +922,7 @@ interface ElectronAPI {
       prompt: string;
       negativePrompt?: string;
       options?: any;
-    }) => Promise<{ success: boolean; imageBase64?: string; error?: string; warning?: string }>;
+    }) => Promise<{ success: boolean; imageBase64?: string; error?: string; warning?: string; finalPrompt?: string }>;
     /** 批量生成多个表情，通过 onGenerationProgress / onGenerationComplete 推送进度 */
     generateAllExpressions: (args: {
       characterCardPath: string;

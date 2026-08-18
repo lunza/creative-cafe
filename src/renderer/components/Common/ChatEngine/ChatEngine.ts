@@ -451,7 +451,13 @@ export class ChatEngine implements IChatEngine {
 
   private setupEventListeners(): void {
     let tempContent = '';
-    let lastProcessedLineCount = 0;
+    // ⚠️【重点标记 - Bug 修复 - SSE 跨 chunk 行丢失】
+    // 原用 lastProcessedLineCount 计数已处理的 data: 行数，但当一个 SSE data: 行
+    // 跨越多个网络 chunk 时，不完整的行也会被 filter 匹配并计入计数（虽然 JSON.parse
+    // 会失败）。当该行在后续 chunk 中补全后，slice(lastProcessedLineCount) 会跳过它，
+    // 导致该行携带的 content 永久丢失。
+    // 修复：改用字节偏移量 lastProcessedOffset，只处理到最后一个 \n 为止的完整行。
+    let lastProcessedOffset = 0;
     let lastAccumulatedData = '';
     // 【F1 修复 - 工具调用全链路注入】
     // 累积流式 tool_calls delta 分片。OpenAI 协议中 tool_calls 跨多个 chunk 到达：
@@ -466,30 +472,39 @@ export class ChatEngine implements IChatEngine {
 
       if (data.accumulatedData) {
         lastAccumulatedData = data.accumulatedData;
-        // 从完整累积数据中只解析新增的 SSE 行
-        const lines: string[] = String(data.accumulatedData).split('\n');
-        const dataLines = lines.filter((line: string) => line.trim().startsWith('data: ') && line.trim().substring(6).trim() !== '[DONE]');
+        const fullData = String(data.accumulatedData);
 
-        // 只处理新增的行
-        const newLines = dataLines.slice(lastProcessedLineCount);
-        lastProcessedLineCount = dataLines.length;
+        // ⚠️【重点标记 - Bug 修复 - SSE 跨 chunk 行丢失】
+        // 只处理到最后一个 \n 为止的完整行，不完整的尾部行留到下次 chunk 到达时处理。
+        // 这样跨 chunk 的 SSE data: 行在完整之前不会被计入 lastProcessedOffset，
+        // 避免了原行计数方案中"不完整行被计数→补全后被跳过"的内容丢失问题。
+        const lastNewlineIdx = fullData.lastIndexOf('\n');
+        if (lastNewlineIdx >= lastProcessedOffset) {
+          const newData = fullData.substring(lastProcessedOffset, lastNewlineIdx + 1);
+          lastProcessedOffset = lastNewlineIdx + 1;
 
-        let extractedFromBatch = '';
-        for (const line of newLines) {
-          const content = this.parseSSEChunk(line);
-          if (content) {
-            extractedFromBatch += content;
+          const lines = newData.split('\n').filter(l => l.trim().length > 0);
+          const dataLines = lines.filter((line: string) =>
+            line.trim().startsWith('data: ') && line.trim().substring(6).trim() !== '[DONE]'
+          );
+
+          let extractedFromBatch = '';
+          for (const line of dataLines) {
+            const content = this.parseSSEChunk(line);
+            if (content) {
+              extractedFromBatch += content;
+            }
+            // 【F1 修复】累积 tool_calls delta（与 content 解析并行，互不影响）
+            const toolCallsDelta = this.parseSSELineToolCalls(line);
+            if (toolCallsDelta) {
+              this.mergeToolCallDelta(accumulatedToolCalls, toolCallsDelta);
+            }
           }
-          // 【F1 修复】累积 tool_calls delta（与 content 解析并行，互不影响）
-          const toolCallsDelta = this.parseSSELineToolCalls(line);
-          if (toolCallsDelta) {
-            this.mergeToolCallDelta(accumulatedToolCalls, toolCallsDelta);
-          }
-        }
 
-        if (extractedFromBatch) {
-          tempContent += extractedFromBatch;
-          this.streamCallback?.(extractedFromBatch, false);
+          if (extractedFromBatch) {
+            tempContent += extractedFromBatch;
+            this.streamCallback?.(extractedFromBatch, false);
+          }
         }
       } else if (data.chunk) {
         // 兼容旧格式：直接处理 chunk
@@ -510,6 +525,32 @@ export class ChatEngine implements IChatEngine {
       if (this.isCancelled) return;
 
       let finalContent = tempContent;
+
+      // ⚠️【重点标记 - Bug 修复 - SSE 跨 chunk 行丢失】
+      // 流结束时可能有不以 \n 结尾的最后一行残留在 accumulatedData 中未被处理。
+      // 此处补齐处理 lastProcessedOffset 之后的剩余数据。
+      if (lastAccumulatedData) {
+        const fullData = String(lastAccumulatedData);
+        if (lastProcessedOffset < fullData.length) {
+          const remainingData = fullData.substring(lastProcessedOffset);
+          const lines = remainingData.split('\n').filter(l => l.trim().length > 0);
+          const dataLines = lines.filter((line: string) =>
+            line.trim().startsWith('data: ') && line.trim().substring(6).trim() !== '[DONE]'
+          );
+          let remainingContent = '';
+          for (const line of dataLines) {
+            const content = this.parseSSEChunk(line);
+            if (content) remainingContent += content;
+            const toolCallsDelta = this.parseSSELineToolCalls(line);
+            if (toolCallsDelta) {
+              this.mergeToolCallDelta(accumulatedToolCalls, toolCallsDelta);
+            }
+          }
+          if (remainingContent) {
+            finalContent += remainingContent;
+          }
+        }
+      }
 
       // 如果流式累积内容不足，尝试从累积的原始 SSE 数据中重新提取全部内容
       if ((!finalContent || finalContent.length < 100) && lastAccumulatedData) {

@@ -228,6 +228,11 @@ export function stripSystemTags(text: string): string {
   // 1. 剥离表情标签：<<<EXPRESSION>>>key<<<END_EXPRESSION>>> 及所有残缺变体
   //    主格式
   result = result.replace(/<<<EXPRESSION>>>\s*[a-z_][a-z0-9_]*\s*<<<END_EXPRESSION>>>/gi, '');
+  //    ⚠️【重点标记 - Bug 修复 - 反复修复】兜底：缩写/残缺结束标记
+  //    匹配 <<<EXPRESSION>>>key<<<任意含 EXPR 字样的标记>>>
+  //    覆盖 END_EXPR / END_EXP / _EXPRESSION 等所有 AI 自发缩写变体
+  //    详见 docs/FIX_RECORDS.md §7.26
+  result = result.replace(/<<<EXPRESSION>>>\s*[a-z_][a-z0-9_]*\s*<<<[^>]*EXPR[^>]*>>>/gi, '');
   //    残缺变体：任意 < > _ 组合 + EXPRESSION 字样 + key + 任意 < > _ 组合 + END EXPRESSION 字样
   result = result.replace(/[<>_]+EXPRESSION[<>_]+\s*[a-z_][a-z0-9_]*\s*[<>_]+(?:END[_]*EXPRESSION|EXPRESSION)[<>_]+/gi, '');
   //    残缺变体：仅有开始标记到末尾
@@ -240,6 +245,23 @@ export function stripSystemTags(text: string): string {
   // 2. 剥离建议选项标签：<<<SUGGESTED_OPTIONS>>>...<<<END_OPTIONS>>>
   result = result.replace(/<<<SUGGESTED_OPTIONS>>>[\s\S]*?<<<END_OPTIONS>>>/gi, '');
   result = result.replace(/<<<SUGGESTED_OPTIONS>>>[\s\S]*$/gi, '');
+
+  // ⚠️【重点标记 - Bug 修复 - SSE 跨 chunk 标签损坏防御】
+  // 根因已在 ChatEngine.handleStream 修复（行计数→字节偏移），此处为防御性兜底，
+  // 处理旧消息或极端边缘情况下标签名被截断的损坏变体
+  // （如 SUGGED_OPTIONS / EXESSION / END_EXESSION 等）。
+  // 兜底：匹配含 SUGGEST/OPTIONS 关键字的损坏 <<<...>>> 标记及其内容块
+  result = result.replace(/<<<[^>]*(?:SUGGEST|OPTIONS)[^>]*>>>[\s\S]*?<<<[^>]*END[^>]*OPTIONS[^>]*>>>/gi, '');
+  result = result.replace(/<<<[^>]*(?:SUGGEST|OPTIONS)[^>]*>>>[\s\S]*$/gi, '');
+  // 兜底：匹配含 EXPR 关键字的损坏 <<<...>>> 标记及情绪键
+  result = result.replace(/<<<[^>]*(?:EXPR)[^>]*>>>\s*[a-z_][a-z0-9_]*\s*<<<[^>]*END[^>]*EXPR[^>]*>>>/gi, '');
+  result = result.replace(/<<<[^>]*(?:EXPR)[^>]*>>>\s*[a-z_][a-z0-9_]*\s*$/gi, '');
+  // 兜底：孤立的结束标记
+  result = result.replace(/<<<[^>]*END[^>]*(?:OPTIONS|EXPR)[^>]*>>>/gi, '');
+  // 兜底：HTML 风格的系统标签碎片（rehypeRaw 解析 <<<TAG>>> 后可能残留）
+  result = result.replace(/<\/?[A-Z_]*(?:SUGGEST|OPTIONS|EXPRESSION|EXPR|END)[A-Z_]*>/gi, '');
+  // 清理残留的孤立尖括号碎片（如 <<>>、<<<>>> 等）
+  result = result.replace(/<{2,}>{2,}/g, '');
 
   // 3. 清理多余空行
   result = result.replace(/\n{3,}/g, '\n\n');

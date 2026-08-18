@@ -57,6 +57,8 @@ interface CustomEmotion {
   key: string;
   /** 中文标签 */
   label: string;
+  /** AI 生成的 SD 提示词（Spec: enhance-custom-emotion-system） */
+  prompts?: { positive: string; negative?: string; nlPrompt: string };
 }
 
 /** 表情包清单：每个角色卡一个 manifest.json */
@@ -119,11 +121,24 @@ interface ExpressionState {
   /**
    * 添加自定义情绪类别（仅写入 manifest.customEmotions）。
    * 成功后同步追加到本地 manifest.customEmotions（幂等）。
+   * prompts 为可选的 AI 生成 SD 提示词（Spec: enhance-custom-emotion-system）。
    */
   addCustomEmotion: (
     characterCardId: string,
     key: string,
-    label: string
+    label: string,
+    prompts?: { positive: string; negative?: string; nlPrompt: string }
+  ) => Promise<{ success: boolean; error?: string }>;
+
+  /**
+   * 更新自定义情绪类别（label 和/或 prompts，不影响已有表情图片）。
+   * Spec: enhance-custom-emotion-system
+   */
+  updateCustomEmotion: (
+    characterCardId: string,
+    key: string,
+    label?: string,
+    prompts?: { positive: string; negative?: string; nlPrompt: string }
   ) => Promise<{ success: boolean; error?: string }>;
 
   /**
@@ -412,7 +427,12 @@ export const useExpressionStore = create<ExpressionState>((set, get) => ({
     }
   },
 
-  addCustomEmotion: async (characterCardId: string, key: string, label: string) => {
+  addCustomEmotion: async (
+    characterCardId: string,
+    key: string,
+    label: string,
+    prompts?: { positive: string; negative?: string; nlPrompt: string }
+  ) => {
     try {
       if (!window.electronAPI?.expression) {
         return { success: false, error: 'electronAPI.expression 不可用' };
@@ -422,6 +442,7 @@ export const useExpressionStore = create<ExpressionState>((set, get) => ({
         characterCardId,
         key,
         label,
+        prompts,
       });
 
       if (result?.success) {
@@ -433,10 +454,14 @@ export const useExpressionStore = create<ExpressionState>((set, get) => ({
           const exists = prevManifest.customEmotions.some((e) => e.key === key);
           if (exists) return state;
 
+          const newEmotion: any = { key, label };
+          if (prompts) {
+            newEmotion.prompts = prompts;
+          }
           return {
             manifest: {
               ...prevManifest,
-              customEmotions: [...prevManifest.customEmotions, { key, label }],
+              customEmotions: [...prevManifest.customEmotions, newEmotion],
             },
           };
         });
@@ -448,6 +473,58 @@ export const useExpressionStore = create<ExpressionState>((set, get) => ({
       return {
         success: false,
         error: error instanceof Error ? error.message : '添加自定义情绪失败',
+      };
+    }
+  },
+
+  updateCustomEmotion: async (
+    characterCardId: string,
+    key: string,
+    label?: string,
+    prompts?: { positive: string; negative?: string; nlPrompt: string }
+  ) => {
+    try {
+      if (!window.electronAPI?.expression) {
+        return { success: false, error: 'electronAPI.expression 不可用' };
+      }
+
+      const result = await window.electronAPI.expression.updateCustomEmotion({
+        characterCardId,
+        key,
+        label,
+        prompts,
+      });
+
+      if (result?.success) {
+        set((state) => {
+          const prevManifest = state.manifest;
+          if (!prevManifest) return state;
+
+          return {
+            manifest: {
+              ...prevManifest,
+              customEmotions: prevManifest.customEmotions.map((e: any) => {
+                if (e.key !== key) return e;
+                const updated = { ...e };
+                if (label && label.trim()) {
+                  updated.label = label.trim();
+                }
+                if (prompts) {
+                  updated.prompts = prompts;
+                }
+                return updated;
+              }),
+            },
+          };
+        });
+      }
+
+      return { success: result?.success ?? false, error: result?.error };
+    } catch (error) {
+      console.error('[expressionStore] updateCustomEmotion failed:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '更新自定义情绪失败',
       };
     }
   },

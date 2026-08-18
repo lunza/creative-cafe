@@ -13,6 +13,127 @@ export interface ChatMessage {
   /** AI 回复情绪键名（Spec: add-character-expression-system），用于驱动表情图像渲染 */
   emotion?: string;
   versionInfo?: ChatMessageVersionInfo;
+  /**
+   * 图片附属内容，Spec: enhance-conversation-image-bubble。
+   * 作为父文本消息的嵌套字段，取代独立图片消息（isImageMessage/generatedImage）。
+   * 一条文本消息可附带一个图片气泡（含重新生成历史与查看导航）。
+   */
+  imageAttachment?: ImageAttachment;
+  /**
+   * 对话中生成的图片（base64 data URL 或 assetId），Spec: add-conversation-image-generation。
+   * @deprecated 已被 `imageAttachment` 取代，保留仅为支持旧数据迁移（Spec: enhance-conversation-image-bubble）。
+   */
+  generatedImage?: string;
+  /**
+   * 标记为图片消息（区分文本消息与图片消息），Spec: add-conversation-image-generation。
+   * @deprecated 已被 `imageAttachment` 取代，保留仅为支持旧数据迁移（Spec: enhance-conversation-image-bubble）。
+   */
+  isImageMessage?: boolean;
+}
+
+/**
+ * 图片生成历史记录项（Spec: enhance-conversation-image-bubble）
+ * 每次重新生成图片都会追加一项到 ImageAttachment.history
+ */
+export interface ImageHistoryItem {
+  /** 磁盘素材 ID（asset:save 时生成，如 conv_1234567890） */
+  assetId: string;
+  /** 该版本生成时间戳 */
+  createdAt: number;
+  /**
+   * 该历史项生成时使用的完整标签数组（含权重）。
+   * Spec: enhance-conversation-image-auditability / Task 1.1
+   * 用于图片下方标签展示面板渲染（ChatMessageBubble 折叠面板）。
+   * 旧数据可能缺失该字段，UI 应显示「此历史版本无标签快照」提示。
+   */
+  usedTags?: Array<{ text: string; weight?: number }>;
+  /**
+   * 该历史项生成时使用的最终 prompt 字符串。
+   * Spec: enhance-conversation-image-auditability / Task 1.1
+   * applyTraitsAndLora 处理后（含 LoRA + traits 替换）的完整字符串，
+   * 用于「查看完整 Prompt」二级折叠展示。
+   */
+  usedPrompt?: string;
+  /**
+   * 该历史项生成时使用的负面提示词。
+   * Spec: enhance-conversation-image-auditability / Task 1.1
+   * 用于「查看完整 Prompt」二级折叠展示的 Negative Prompt 区块。
+   */
+  usedNegativePrompt?: string;
+  /**
+   * 该历史项生成时启用的 LoRA 列表快照。
+   * Spec: enhance-conversation-image-auditability / Task 1.1
+   * 用于追溯本次生成调用的 LoRA 组合，便于复现。
+   */
+  usedLoras?: Array<{ name: string; weight: number }>;
+  /**
+   * AI 标签优化删除的标签列表（Spec: add-ai-trait-optimization-for-image-gen）。
+   *
+   * 仅当用户开启「允许 AI 优化特征标签」（ai_optimize_traits=true）且 AI 实际删除了标签时存在。
+   * 用于标签快照面板展示「AI 已移除」分区（灰色 + 删除线样式）。
+   *
+   * - text: 被删除的标签文本
+   * - reason: AI 给出的删除原因（可选，如「对话中角色脱下了裤子」）
+   */
+  removedTags?: Array<{ text: string; reason?: string }>;
+  /**
+   * AI 标签优化补充的标签列表（Spec: add-ai-tag-supplement-after-removal）。
+   *
+   * 仅当用户开启「允许 AI 优化特征标签」（ai_optimize_traits=true）且 AI 实际补充了标签时存在。
+   * 用于标签快照面板展示「AI 已补充」分区（绿色高亮样式）。
+   *
+   * - text: 被补充的标签文本
+   * - reason: AI 给出的补充原因（可选，如「裤子移除后下身暴露，需要补充暴露特征标签」）
+   */
+  addedTags?: Array<{ text: string; reason?: string }>;
+  /**
+   * AI 标签优化执行状态元数据（Spec: add-ai-trait-optimization-for-image-gen / 反馈可见性修复）。
+   *
+   * 仅当本次生成启用了 ai_optimize_traits=true 时存在，记录 AI 优化的执行结果，
+   * 用于标签快照面板展示「AI 优化」分区，无论是否删除标签都给出明确反馈。
+   *
+   * 解决问题：原设计仅 removedTags.length>0 时渲染分区，导致 AI 运行但未删除标签 / AI 调用失败
+   * 时用户看不到任何反馈，误以为「功能无效」。
+   *
+   * - status:
+   *   - 'success': AI 成功执行并删除了标签（removedTags 非空）
+   *   - 'no-removal': AI 成功执行但本次对话上下文无需移除标签（removedTags 为空）
+   *   - 'failed': AI 调用失败/超时/返回非法数据（error 字段记录原因）
+   * - removedCount: 实际删除的标签数（与 removedTags.length 一致，冗余存储便于 UI 直接读取）
+   * - addedCount: 实际补充的标签数（与 addedTags.length 一致，与 removedCount 对称，冗余存储便于 UI 直接读取）
+   *   Spec: add-ai-tag-supplement-after-removal
+   * - error: status='failed' 时的失败原因
+   */
+  aiOptimization?: {
+    status: 'success' | 'no-removal' | 'failed';
+    removedCount: number;
+    addedCount: number;  // 新增：补充标签数（与 removedCount 对称）Spec: add-ai-tag-supplement-after-removal
+    error?: string;
+  };
+}
+
+/**
+ * 图片附属内容（Spec: enhance-conversation-image-bubble）
+ * 作为父文本消息的嵌套字段，存储在 ChatMessage.imageAttachment
+ * 取代旧的独立图片消息（isImageMessage/generatedImage）
+ */
+export interface ImageAttachment {
+  /** 当前显示的图片 assetId（指向 history[currentIndex].assetId） */
+  currentAssetId: string;
+  /** 生成时的情绪快照（取自父消息 emotion 字段），用于左侧立绘表情图加载 */
+  emotion: string;
+  /** 首次创建时间戳 */
+  createdAt: number;
+  /** 重新生成历史（含当前版本），history[0] 为首次生成 */
+  history: ImageHistoryItem[];
+  /** 当前查看的历史索引（0-based），默认指向最后一项（最新生成） */
+  currentIndex: number;
+  /** 生成状态：generating=生成中 / idle=空闲可查看 / error=生成失败 */
+  status?: 'generating' | 'idle' | 'error';
+  /** 生成阶段（status='generating' 时有效）：tag-generating / tag-auditing / image-generating */
+  phase?: 'tag-generating' | 'tag-auditing' | 'image-generating' | 'error';
+  /** 生成失败时的错误信息（status='error' 时有效） */
+  errorMessage?: string;
 }
 
 export interface ChatMessageVersionInfo {
@@ -82,6 +203,18 @@ export interface ChatConfig {
 // ==================== 新增类型：人设与AI参数配置 ====================
 
 // 用户人设接口
+/**
+ * 用户人设视觉特征项（轻量化版本，参考 CharacterTraitItem 但简化）。
+ * - text：SD tag 文本（如 "black hair, blue eyes"）
+ * - translation：中文翻译（AI 生成时产出）
+ * - enabled：是否在图片生成时启用
+ */
+export interface PersonaTrait {
+  text: string;
+  translation?: string;
+  enabled: boolean;
+}
+
 export interface UserPersona {
   id: string;
   name: string;
@@ -93,6 +226,10 @@ export interface UserPersona {
   isGeneric?: boolean;
   // 标记是否为系统内置预设（不可删除）
   isSystem?: boolean;
+  /** AI 生成的视觉特征 tag 列表（用于图片生成时保证人设一致性） */
+  traits?: PersonaTrait[];
+  /** AI 生成的外观描述（中文自然语言） */
+  appearanceDescription?: string;
 }
 
 /**
@@ -215,6 +352,54 @@ export interface AIParameterConfig {
    * 可选值：'zh' | 'en' | 'ja'。
    */
   language?: 'zh' | 'en' | 'ja';
+  /**
+   * 对话中图片生成功能开关（Spec: add-conversation-image-generation）。
+   *
+   * 开启后，AI 对话气泡下方显示"生成图片"按钮，可基于对话上下文自动生成图片。
+   * 默认关闭（undefined 视为关闭）。
+   */
+  image_gen_enabled?: boolean;
+  /**
+   * 对话中图片生成的输出宽度（Spec: add-conversation-image-generation）。
+   * 默认 1024，范围 64-2048。
+   */
+  image_gen_width?: number;
+  /**
+   * 对话中图片生成的输出高度（Spec: add-conversation-image-generation）。
+   * 默认 1024，范围 64-2048。
+   */
+  image_gen_height?: number;
+  /**
+   * 互动元素标签权重提升（Spec: enhance-conversation-interaction-prompt-recognition）。
+   *
+   * 互动标签（disembodied_hand / hugging_another / hand_on_breast 等）在 SD prompt 中
+   * 拼接位置靠后，当角色特征标签较多时容易被图像模型忽略，导致生成的图片缺乏交互性质。
+   * 通过对 `categoryId === 'interaction'` 的 trait 应用分类级权重提升来加强。
+   *
+   * - 默认 1.2（用户建议的 1.1-1.2 范围取上限，确保互动标签足够突出）
+   * - 范围 1.0-2.0，步进 0.1
+   * - 1.0 = 不提升（等价于关闭功能，互动标签使用原始 per-tag weight）
+   * - 权重组合方式：最终 weight = (per-tag weight ?? 1.0) × interaction_weight
+   *   （分类级提升与标签级权重相乘，用户可同时调整两者）
+   *
+   * 应用位置：`executeImageGeneration` 构建 `mergedTraits` 后、传给 `buildSdOptionsFromConfig` 前，
+   * 在渲染进程完成权重计算。`applyTraitsAndLora`（主进程）只看到最终的 `{ text, weight }`，
+   * 不感知 categoryId，保持主进程 prompt 组装逻辑不变。
+   */
+  interaction_weight?: number;
+  /**
+   * 允许 AI 优化特征标签（试验性功能）（Spec: add-ai-trait-optimization-for-image-gen）。
+   *
+   * 开启后，图片生成前 AI 会分析已启用角色特征标签与当前对话上下文的矛盾关系，
+   * 自动删除不再适用的标签（如对话中角色「脱下了裤子」时移除 pants 标签，
+   * 「站了起来」时移除 sitting 标签）。
+   *
+   * - 默认关闭（undefined / false 均视为关闭）
+   * - ⚠️ 试验性功能：AI 可能会误删重要标签，建议谨慎使用
+   * - 仅影响角色特征标签（enabledTraitTexts），不影响 AI 生成的上下文标签
+   * - 被删除的标签及原因记录到 ImageHistoryItem.removedTags 供审计
+   */
+  ai_optimize_traits?: boolean;
 }
 
 // 知识库绑定信息

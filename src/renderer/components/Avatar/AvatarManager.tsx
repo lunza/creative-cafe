@@ -1,11 +1,13 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Card, Button, Space, message, Input, Upload, Avatar, Typography, Form, Modal, Popconfirm, Row, Col, Empty, Tag } from 'antd';
-import { PlusOutlined, UploadOutlined, UserOutlined, SaveOutlined, EditOutlined, DeleteOutlined, ArrowLeftOutlined, FolderOpenOutlined, CopyOutlined } from '@ant-design/icons';
+import { Card, Button, Space, message, Input, Upload, Avatar, Typography, Form, Modal, Popconfirm, Row, Col, Empty, Tag, Spin, Tooltip, Switch, Divider } from 'antd';
+import { PlusOutlined, UploadOutlined, UserOutlined, SaveOutlined, EditOutlined, DeleteOutlined, ArrowLeftOutlined, FolderOpenOutlined, CopyOutlined, ExperimentOutlined, PictureOutlined, ThunderboltOutlined, UserSwitchOutlined } from '@ant-design/icons';
 import { useDataStore } from '../../stores/dataStore';
 import { useLogStore } from '../../stores/logStore';
 import { useUIStore } from '../../stores/uiStore';
 import { StoragePathDisplay } from '../common/StoragePathDisplay';
 import type { UploadFile } from 'antd/es/upload/interface';
+import type { PersonaTrait } from '../Character/CharacterDialogueChat/CharacterDialogueChat.types';
+import PersonaImageGenerateModal from './PersonaImageGenerateModal';
 import './AvatarManager.css';
 
 const { Text, Title } = Typography;
@@ -55,6 +57,19 @@ const AvatarCard = React.memo<AvatarCardProps>(({ src }) => {
   );
 });
 
+interface UserAvatarProfile {
+  id: string;
+  name: string;
+  description: string;
+  avatarPath: string;
+  createdAt: number;
+  updatedAt: number;
+  isGeneric?: boolean;
+  isSystem?: boolean;
+  traits?: PersonaTrait[];
+  appearanceDescription?: string;
+}
+
 interface ProfileCardProps {
   profile: UserAvatarProfile;
   onEdit: (profile: UserAvatarProfile) => void;
@@ -63,10 +78,6 @@ interface ProfileCardProps {
 
 /**
  * 单个人设卡片（React.memo）。
- *
- * 拆分目的：父级 AvatarManager 因 saving / avatarDisplayUrl / profileForm 等
- * 与列表无关的状态变化时避免整列重渲染。卡片内部包含 AvatarCard（异步加载头像），
- * memo 化后只在 profile / onEdit / onDelete 引用变化时重渲染。
  */
 const ProfileCard = React.memo<ProfileCardProps>(({ profile, onEdit, onDelete }) => (
   <Card
@@ -127,10 +138,13 @@ const ProfileCard = React.memo<ProfileCardProps>(({ profile, onEdit, onDelete })
           }}>
             {profile.description || '暂无描述'}
           </div>
-          <div style={{ marginTop: 8 }}>
+          <div style={{ marginTop: 8, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
             <Tag>
               {new Date(profile.updatedAt).toLocaleDateString()}
             </Tag>
+            {profile.traits && profile.traits.length > 0 && (
+              <Tag color="blue">{profile.traits.length} 特征</Tag>
+            )}
           </div>
         </div>
       }
@@ -138,15 +152,11 @@ const ProfileCard = React.memo<ProfileCardProps>(({ profile, onEdit, onDelete })
   </Card>
 ));
 
-interface UserAvatarProfile {
+/** 生成的素材图片缩略图 */
+interface PersonaAssetImage {
   id: string;
-  name: string;
-  description: string;
-  avatarPath: string;
-  createdAt: number;
-  updatedAt: number;
-  isGeneric?: boolean;
-  isSystem?: boolean;
+  dataUrl: string;
+  createdAt: string;
 }
 
 const AvatarManager: React.FC = () => {
@@ -166,6 +176,18 @@ const AvatarManager: React.FC = () => {
     description: '',
     avatarPath: ''
   });
+
+  // 特征分析状态
+  const [traits, setTraits] = useState<PersonaTrait[]>([]);
+  const [appearanceDescription, setAppearanceDescription] = useState<string>('');
+  const [analyzingTraits, setAnalyzingTraits] = useState(false);
+
+  // 图片生成弹窗
+  const [imageGenOpen, setImageGenOpen] = useState(false);
+
+  // 生成的素材图片
+  const [assetImages, setAssetImages] = useState<PersonaAssetImage[]>([]);
+  const [loadingAssets, setLoadingAssets] = useState(false);
 
   useEffect(() => {
     const getAvatarDir = async () => {
@@ -224,7 +246,9 @@ const AvatarManager: React.FC = () => {
                 createdAt: content.createdAt || Date.now(),
                 updatedAt: content.updatedAt || Date.now(),
                 isGeneric: content.isGeneric || false,
-                isSystem: content.isSystem || false
+                isSystem: content.isSystem || false,
+                traits: content.traits || [],
+                appearanceDescription: content.appearanceDescription || '',
               });
             }
           } catch (error) {
@@ -241,6 +265,44 @@ const AvatarManager: React.FC = () => {
     }
   }, [addLog]);
 
+  // 加载人设素材图片
+  const loadAssetImages = useCallback(async (personaId: string) => {
+    if (!personaId) return;
+    setLoadingAssets(true);
+    try {
+      const manifest = await window.electronAPI.personaAsset.list(personaId);
+      const images: PersonaAssetImage[] = [];
+      const assetIds = Object.keys(manifest.assets);
+      for (const assetId of assetIds) {
+        try {
+          const pathResult = await window.electronAPI.personaAsset.getImagePath({
+            personaId,
+            imageId: assetId,
+          });
+          if (pathResult?.success && pathResult.imagePath) {
+            const base64Result = await window.electronAPI.file.readAsBase64(pathResult.imagePath);
+            if (base64Result?.success && base64Result.data) {
+              images.push({
+                id: assetId,
+                dataUrl: base64Result.data,
+                createdAt: manifest.assets[assetId].createdAt,
+              });
+            }
+          }
+        } catch (e) {
+          console.warn('[Avatar] 加载素材图片失败:', assetId, e);
+        }
+      }
+      images.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      setAssetImages(images);
+    } catch (e) {
+      console.error('[Avatar] 加载素材列表失败:', e);
+      setAssetImages([]);
+    } finally {
+      setLoadingAssets(false);
+    }
+  }, []);
+
   const handleCreateProfile = useCallback(() => {
     const newProfile: UserAvatarProfile = {
       id: `profile-${Date.now()}`,
@@ -254,6 +316,9 @@ const AvatarManager: React.FC = () => {
     setEditingProfile(newProfile);
     setProfileForm({ name: '', description: '', avatarPath: '' });
     setAvatarFileList([]);
+    setTraits([]);
+    setAppearanceDescription('');
+    setAssetImages([]);
     setViewMode('detail');
   }, []);
 
@@ -264,9 +329,10 @@ const AvatarManager: React.FC = () => {
       description: profile.description,
       avatarPath: profile.avatarPath
     });
+    setTraits(profile.traits || []);
+    setAppearanceDescription(profile.appearanceDescription || '');
     
     if (profile.avatarPath) {
-      // 将存储的正斜杠路径转换为 Windows 原始路径格式用于读取
       const originalPath = profile.avatarPath.replace(/\//g, '\\');
       addLog(`[Avatar] 编辑人设，尝试加载头像: ${originalPath}`, 'info');
       
@@ -291,9 +357,12 @@ const AvatarManager: React.FC = () => {
       setAvatarFileList([]);
       setAvatarDisplayUrl('');
     }
+
+    // 加载素材图片
+    loadAssetImages(profile.id);
     
     setViewMode('detail');
-  }, [addLog]);
+  }, [addLog, loadAssetImages]);
 
   const handleDeleteProfile = useCallback(async (profile: UserAvatarProfile) => {
     // 系统内置预设不可删除
@@ -309,6 +378,13 @@ const AvatarManager: React.FC = () => {
         } catch (fileError) {
           addLog(`[Avatar] 删除头像文件失败（可能已不存在）: ${fileError instanceof Error ? fileError.message : '未知错误'}`, 'warn');
         }
+      }
+
+      // 清除人设素材
+      try {
+        await window.electronAPI.personaAsset.clearAll(profile.id);
+      } catch {
+        // ignore
       }
       
       const filePath = `${avatarDir}/${profile.id}.json`;
@@ -346,7 +422,9 @@ const AvatarManager: React.FC = () => {
         description: profileForm.description,
         avatarPath: profileForm.avatarPath,
         createdAt: editingProfile.createdAt,
-        updatedAt: Date.now()
+        updatedAt: Date.now(),
+        traits: traits.length > 0 ? traits : undefined,
+        appearanceDescription: appearanceDescription || undefined,
       };
 
       await window.electronAPI.avatar.write(filePath, profileData);
@@ -363,7 +441,7 @@ const AvatarManager: React.FC = () => {
     } finally {
       setSaving(false);
     }
-  }, [profileForm, editingProfile, avatarDir, addLog, loadProfiles]);
+  }, [profileForm, editingProfile, avatarDir, addLog, loadProfiles, traits, appearanceDescription]);
 
   const handleSelectAvatar = useCallback(async () => {
     if (!avatarDir) {
@@ -387,7 +465,6 @@ const AvatarManager: React.FC = () => {
       addLog(`[Avatar] 选择文件: ${fileName}, 路径: ${selectedFilePath}`);
       addLog(`[Avatar] avatarDir: ${avatarDir}`, 'info');
 
-      // 使用 path.join 风格的路径拼接，确保 Windows 兼容性
       const targetPath = avatarDir.replace(/\\/g, '/') + '/avatar-' + editingProfile?.id + '-' + Date.now() + '.' + fileExt;
       addLog(`[Avatar] 目标路径: ${targetPath}`, 'info');
 
@@ -396,15 +473,12 @@ const AvatarManager: React.FC = () => {
       if (copyResult.success) {
         addLog('[Avatar] 文件复制成功', 'info');
         
-        // 存储文件路径用于保存（统一使用正斜杠）
         const normalizedPath = targetPath;
         setProfileForm(prev => ({ ...prev, avatarPath: normalizedPath }));
         
-        // 验证文件是否存在
         const existsResult = await window.electronAPI.file.exists(targetPath);
         addLog(`[Avatar] 文件存在性检查: ${existsResult}`, 'info');
         
-        // 使用相同路径读取 base64
         const readResult = await window.electronAPI.file.readAsBase64(targetPath);
         addLog(`[Avatar] 读取结果: success=${readResult.success}, hasData=${!!readResult.data}, error=${readResult.error || 'none'}`, 'info');
         if (readResult.success && readResult.data) {
@@ -433,10 +507,143 @@ const AvatarManager: React.FC = () => {
     }
   }, [avatarDir, editingProfile, addLog]);
 
+  // AI 特征分析（复用 ai:generateCharacterTraits IPC，纯文本模式）
+  const handleAnalyzeTraits = useCallback(async () => {
+    if (!editingProfile) return;
+    if (!profileForm.description.trim()) {
+      message.warning('请先输入用户设定描述');
+      return;
+    }
+
+    setAnalyzingTraits(true);
+    addLog('[Avatar] 开始 AI 特征分析');
+
+    try {
+      // 复用角色卡特征生成 IPC，纯文本模式（不传 includeImage）
+      // characterCardId 使用人设 ID 作为日志关联键
+      const result = await window.electronAPI.ai.generateCharacterTraits({
+        characterCardId: editingProfile.id,
+        description: profileForm.description,
+        includeImage: false,
+      });
+
+      if (result?.success && result.traits) {
+        // 将 CategorizedTrait 转为轻量 PersonaTrait
+        const personaTraits: PersonaTrait[] = result.traits.map((t: any) => ({
+          text: t.text,
+          translation: t.translation,
+          enabled: true,
+        }));
+        setTraits(personaTraits);
+        if (result.appearanceDescription) {
+          setAppearanceDescription(result.appearanceDescription);
+        }
+        addLog(`[Avatar] AI 特征分析完成，生成 ${personaTraits.length} 个特征`, 'info');
+        message.success(`分析完成，生成 ${personaTraits.length} 个视觉特征`);
+      } else {
+        addLog(`[Avatar] AI 特征分析失败: ${result?.error}`, 'error');
+        message.error(result?.error || '特征分析失败');
+      }
+    } catch (error) {
+      addLog(`[Avatar] AI 特征分析异常: ${error instanceof Error ? error.message : '未知错误'}`, 'error');
+      message.error(error instanceof Error ? error.message : '特征分析异常');
+    } finally {
+      setAnalyzingTraits(false);
+    }
+  }, [editingProfile, profileForm.description, addLog]);
+
+  // 切换特征启用状态
+  const handleToggleTrait = useCallback((index: number, enabled: boolean) => {
+    setTraits(prev => prev.map((t, i) => i === index ? { ...t, enabled } : t));
+  }, []);
+
+  // 删除特征
+  const handleRemoveTrait = useCallback((index: number) => {
+    setTraits(prev => prev.filter((_, i) => i !== index));
+  }, []);
+
+  // 删除素材图片
+  const handleDeleteAsset = useCallback(async (imageId: string) => {
+    if (!editingProfile) return;
+    try {
+      const result = await window.electronAPI.personaAsset.delete({
+        personaId: editingProfile.id,
+        imageId,
+      });
+      if (result?.success) {
+        setAssetImages(prev => prev.filter(img => img.id !== imageId));
+        message.success('删除成功');
+      } else {
+        message.error(result?.error || '删除失败');
+      }
+    } catch (e) {
+      message.error('删除失败');
+    }
+  }, [editingProfile]);
+
+  // 将素材图片设为头像
+  // 流程：获取素材磁盘路径 → 复制到人设目录（avatar- 前缀）→ 更新表单和预览
+  const handleSetAsAvatar = useCallback(async (imageId: string, dataUrl: string) => {
+    if (!editingProfile || !avatarDir) return;
+
+    try {
+      // 获取素材图片的磁盘路径
+      const pathResult = await window.electronAPI.personaAsset.getImagePath({
+        personaId: editingProfile.id,
+        imageId,
+      });
+      if (!pathResult?.success || !pathResult.imagePath) {
+        message.error('获取素材路径失败');
+        return;
+      }
+
+      // 复制到人设目录作为头像文件
+      const targetPath = avatarDir.replace(/\\/g, '/') + '/avatar-' + editingProfile.id + '-' + Date.now() + '.png';
+      const copyResult = await window.electronAPI.file.copyFile(pathResult.imagePath, targetPath);
+
+      if (copyResult?.success) {
+        // 删除旧头像文件（如果存在且不是当前选择的）
+        if (profileForm.avatarPath && profileForm.avatarPath !== targetPath) {
+          try {
+            await window.electronAPI.file.delete(profileForm.avatarPath);
+          } catch {
+            // 旧文件可能已不存在，忽略
+          }
+        }
+
+        setProfileForm(prev => ({ ...prev, avatarPath: targetPath }));
+        setAvatarDisplayUrl(dataUrl);
+        setAvatarFileList([{
+          uid: '-1',
+          name: 'avatar',
+          status: 'done',
+          url: dataUrl,
+        }]);
+        addLog('[Avatar] 素材图片已设为头像', 'info');
+        message.success('已设为头像');
+      } else {
+        message.error(copyResult?.error || '设为头像失败');
+      }
+    } catch (e) {
+      addLog(`[Avatar] 设为头像失败: ${e instanceof Error ? e.message : '未知错误'}`, 'error');
+      message.error('设为头像失败');
+    }
+  }, [editingProfile, avatarDir, profileForm.avatarPath, addLog]);
+
+  // 图片生成弹窗保存回调
+  const handleImageSaved = useCallback(() => {
+    if (editingProfile) {
+      loadAssetImages(editingProfile.id);
+    }
+  }, [editingProfile, loadAssetImages]);
+
   const handleBackToList = useCallback(() => {
     setViewMode('list');
     setEditingProfile(null);
     setAvatarFileList([]);
+    setTraits([]);
+    setAppearanceDescription('');
+    setAssetImages([]);
   }, []);
 
   if (viewMode === 'detail' && editingProfile) {
@@ -478,6 +685,51 @@ const AvatarManager: React.FC = () => {
               />
             </Form.Item>
 
+            {/* 视觉特征分析 */}
+            <Divider>视觉特征</Divider>
+            <Form.Item>
+              <Space direction="vertical" style={{ width: '100%' }}>
+                <Button
+                  icon={<ExperimentOutlined />}
+                  onClick={handleAnalyzeTraits}
+                  loading={analyzingTraits}
+                  disabled={!profileForm.description.trim()}
+                >
+                  AI 特征分析（从描述提取视觉特征）
+                </Button>
+
+                {appearanceDescription && (
+                  <div style={{
+                    padding: '8px 12px',
+                    background: 'var(--bg-container)',
+                    borderRadius: 6,
+                    fontSize: 13,
+                    color: 'var(--text-secondary)',
+                  }}>
+                    <strong>外观描述：</strong>{appearanceDescription}
+                  </div>
+                )}
+
+                {traits.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {traits.map((trait, i) => (
+                      <Tooltip key={i} title={trait.translation || ''}>
+                        <Tag
+                          color={trait.enabled ? 'blue' : 'default'}
+                          closable
+                          onClose={() => handleRemoveTrait(i)}
+                          style={{ cursor: 'pointer', opacity: trait.enabled ? 1 : 0.5 }}
+                          onClick={() => handleToggleTrait(i, !trait.enabled)}
+                        >
+                          {trait.text}
+                        </Tag>
+                      </Tooltip>
+                    ))}
+                  </div>
+                )}
+              </Space>
+            </Form.Item>
+
             <Form.Item label="头像">
               <div className="avatar-upload-section">
                 <Button 
@@ -506,6 +758,85 @@ const AvatarManager: React.FC = () => {
               </div>
             </Form.Item>
 
+            {/* AI 立绘生成 */}
+            <Divider>立绘生成</Divider>
+            <Form.Item>
+              <Button
+                type="primary"
+                ghost
+                icon={<PictureOutlined />}
+                onClick={() => setImageGenOpen(true)}
+                disabled={traits.length === 0}
+              >
+                生成立绘
+              </Button>
+              {traits.length === 0 && (
+                <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
+                  请先进行特征分析
+                </span>
+              )}
+            </Form.Item>
+
+            {/* 已生成素材图片 */}
+            {loadingAssets ? (
+              <div style={{ textAlign: 'center', padding: 20 }}>
+                <Spin tip="加载素材..." />
+              </div>
+            ) : assetImages.length > 0 ? (
+              <Form.Item label="已生成素材">
+                <Row gutter={[8, 8]}>
+                  {assetImages.map((img) => (
+                    <Col key={img.id} xs={12} sm={8} md={6}>
+                      <div style={{ position: 'relative' }}>
+                        <img
+                          src={img.dataUrl}
+                          alt="生成素材"
+                          style={{
+                            width: '100%',
+                            borderRadius: 8,
+                            border: '1px solid var(--border-base)',
+                          }}
+                        />
+                        <Tooltip title="设为头像">
+                          <Button
+                            size="small"
+                            type="primary"
+                            icon={<UserSwitchOutlined />}
+                            style={{
+                              position: 'absolute',
+                              top: 4,
+                              left: 4,
+                              opacity: 0.7,
+                            }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSetAsAvatar(img.id, img.dataUrl);
+                            }}
+                          />
+                        </Tooltip>
+                        <Popconfirm
+                          title="确定删除此图片？"
+                          onConfirm={() => handleDeleteAsset(img.id)}
+                        >
+                          <Button
+                            size="small"
+                            danger
+                            icon={<DeleteOutlined />}
+                            style={{
+                              position: 'absolute',
+                              top: 4,
+                              right: 4,
+                              opacity: 0.7,
+                            }}
+                          />
+                        </Popconfirm>
+                      </div>
+                    </Col>
+                  ))}
+                </Row>
+              </Form.Item>
+            ) : null}
+
             <Form.Item>
               <Space>
                 <Button
@@ -521,6 +852,16 @@ const AvatarManager: React.FC = () => {
             </Form.Item>
           </Form>
         </Card>
+
+        {/* 立绘生成弹窗 */}
+        <PersonaImageGenerateModal
+          open={imageGenOpen}
+          personaId={editingProfile.id}
+          personaName={profileForm.name || '未命名'}
+          traits={traits}
+          onClose={() => setImageGenOpen(false)}
+          onSaved={handleImageSaved}
+        />
       </div>
     );
   }

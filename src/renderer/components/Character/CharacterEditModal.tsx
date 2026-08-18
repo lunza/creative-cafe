@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Button, Space, Checkbox, Input, message, Tabs, Alert } from 'antd';
-import { PlusOutlined, StopOutlined, UserOutlined, MessageOutlined, SettingOutlined, SmileOutlined } from '@ant-design/icons';
+import { PlusOutlined, StopOutlined, UserOutlined, MessageOutlined, SettingOutlined, SmileOutlined, RobotOutlined } from '@ant-design/icons';
 import { FieldEditor } from './FieldEditor';
 import { WorldBookRelationPanel } from './WorldBookRelationPanel';
 import { useCharacterAIOperations } from './hooks/useCharacterAIOperations';
+import { useCharacterCardAssistant } from './hooks/useCharacterCardAssistant';
+import CharacterCardAssistant from './CharacterCardAssistant';
 import AssetManagerModal from './CharacterDialogueChat/AssetManagerModal';
 import type { AIEngine } from '../../types/setting';
 
@@ -144,6 +146,15 @@ const CharacterEditModal: React.FC<CharacterEditModalProps> = ({
     originalValues,
     addLog,
     getActiveEngineConfig,
+  });
+
+  // 智能助手 hook（Spec: add-ai-assistant-for-character-card-editor / Task 6）
+  // 传递当前表单全部字段作为角色卡上下文，关闭编辑弹窗（modalOpen=false）时自动销毁面板状态
+  const assistant = useCharacterCardAssistant({
+    characterData: formValues,
+    getActiveEngineConfig,
+    addLog,
+    modalOpen: open,
   });
 
   const {
@@ -469,7 +480,20 @@ const CharacterEditModal: React.FC<CharacterEditModalProps> = ({
   return (
     <>
       <Modal
-        title={`编辑角色卡: ${editingItem?.name}`}
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span>编辑角色卡: {editingItem?.name}</span>
+            <Button
+              size="small"
+              icon={<RobotOutlined />}
+              type={assistant.isOpen ? 'primary' : 'default'}
+              onClick={assistant.togglePanel}
+              title={assistant.isOpen ? '收起智能助手' : '展开智能助手'}
+            >
+              智能助手
+            </Button>
+          </div>
+        }
         open={open}
         onCancel={onCancel}
         onOk={handleEditModalOk}
@@ -537,6 +561,7 @@ const CharacterEditModal: React.FC<CharacterEditModalProps> = ({
         </div>
 
         <Tabs
+          onChange={() => assistant.closePanel()}
           items={[
             {
               key: 'core',
@@ -757,6 +782,8 @@ const CharacterEditModal: React.FC<CharacterEditModalProps> = ({
             },
           ]}
         />
+        {/* 智能助手悬浮面板（Spec: add-ai-assistant-for-character-card-editor / Task 6） */}
+        <CharacterCardAssistant open={assistant.isOpen} assistant={assistant} />
       </Modal>
 
       {/* AI润色要求模态框 */}

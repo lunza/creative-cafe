@@ -45,3 +45,26 @@ export async function sendCharacterAIRequest(
 
   return result.response?.content || '';
 }
+
+/**
+ * 智能助手专用 AI 请求方法（Spec: add-ai-assistant-for-character-card-editor / Task 7）
+ *
+ * 与 sendCharacterAIRequest 的区别：
+ * 1. 接受完整 messages 数组（支持多轮对话历史）
+ * 2. 不依赖 prompt.build IPC（提示词模板在前端定义）
+ * 3. 专供 useCharacterCardAssistant hook 调用
+ */
+export async function sendAssistantAIRequest(
+  engine: AIEngine,
+  messages: { role: 'system' | 'user' | 'assistant'; content: string }[]
+): Promise<string> {
+  const options = buildAIRequestOptions(engine, messages);
+
+  const result: AIResult = await defaultAIService.sendChatRequest(options);
+
+  if (result.status === 'error') {
+    throw new Error(result.error?.message || 'AI 请求失败');
+  }
+
+  return result.response?.content || '';
+}

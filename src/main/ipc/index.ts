@@ -23,6 +23,7 @@ import { registerCharacterTraitAIHandlers } from './handlers/characterTraitAIHan
 import { registerCategoryDictionaryHandlers } from './handlers/categoryDictionaryHandlers';
 import { registerLoraHandlers } from './handlers/loraHandlers';
 import { registerCharacterLoraHandlers } from './handlers/characterLoraHandlers';
+import { registerPersonaAssetHandlers } from './handlers/personaAssetHandlers';
 import './handlers/aiHandlers';
 import { registerAgentHandlers } from './handlers/agentHandlers';
 import { registerWebSearchHandlers } from './handlers/webSearchHandlers';
@@ -99,6 +100,10 @@ export function setupIpcHandlers() {
   // 角色卡 LoRA 管理 IPC（2026-07-29 bug 修复 - 按角色独立存储）
   // 【重点标记】暴露 character-lora:list / save 通道，按角色卡独立持久化 LoRA 配置
   registerCharacterLoraHandlers();
+
+  // 用户人设素材管理 IPC
+  // 暴露 persona-asset:list / save / delete / getImagePath / clearAll 通道
+  registerPersonaAssetHandlers();
 
   // Agent 智能体底座 IPC（Spec: implement-agent-foundation-and-fix-defects / Task 9）
   // 暴露 agent:run / agent:cancel / agent:token / agent:toolCall / agent:done

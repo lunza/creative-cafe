@@ -47,7 +47,7 @@ import { create } from 'zustand';
 export type AssetType = 'illustration' | 'general' | 'three-view';
 
 /** 三视图槽位：front（正视图）/ side（侧视图）/ back（背视图）
- * 含裸体变体：front-nude / side-nude / back-nude（生成时自动过滤 clothing 分类特征） */
+ * 含裸体变体：front-nude / side-nude / back-nude（生成时自动过滤上装/下装/内衣分类特征，配饰保留） */
 export type ThreeViewSlot = 'front' | 'side' | 'back' | 'front-nude' | 'side-nude' | 'back-nude';
 
 /** 素材条目：记录某个 assetId 对应的图片信息（manifest.assets[assetId]） */

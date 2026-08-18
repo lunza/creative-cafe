@@ -8,7 +8,7 @@ import { useLogStore } from '../../../stores/logStore';
 // 表情显示系统状态（Spec: add-character-expression-system / Task 9）
 // 使用 useExpressionStore.getState() 在非 React 上下文（requestAIResponse 回调内）命令式读取可用情绪键
 import { useExpressionStore } from '../../../stores/expressionStore';
-import { ChatMessage, CharacterInfo, UserPersona, EffectiveAIParams, deriveThinkTagMode } from './CharacterDialogueChat.types';
+import { ChatMessage, CharacterInfo, UserPersona, EffectiveAIParams, deriveThinkTagMode, ImageAttachment } from './CharacterDialogueChat.types';
 import { chatReducer, initialChatState } from './chatReducer';
 import { ChatEngineFactory } from '../../Common/ChatEngine/ChatEngine.factory';
 import { AIEngineConfig, AIResponse, getDefaultEngineCapabilities } from '../../Common/ChatEngine/ChatEngine.types';
@@ -99,6 +99,90 @@ export function shouldStrengthenLength(history: number[], threshold: number): bo
   if (!threshold || threshold <= 0) return false;
   const last3 = history.slice(-3);
   return last3.every(len => typeof len === 'number' && len > 0 && len < threshold);
+}
+
+// ==================== 旧图片消息迁移（Spec: enhance-conversation-image-bubble / Task 2） ====================
+
+/**
+ * 迁移旧的独立图片消息为新格式的 imageAttachment（Spec: enhance-conversation-image-bubble / Task 2）
+ *
+ * 旧格式：`isImageMessage=true` + `generatedImage=assetId` 的独立 ChatMessage
+ * 新格式：父文本消息的 `imageAttachment` 字段（嵌套附属）
+ *
+ * 迁移规则：
+ * - 遍历消息，对每个 `isImageMessage=true` 的消息，定位其**前一条**消息（原列表中紧邻的前一条）。
+ * - 若前一条是 `role='assistant'` 且 `!isImageMessage` 的文本消息：
+ *     - 若父消息**已有** `imageAttachment`（幂等场景）：直接移除该独立图片消息，不重复写入。
+ *     - 否则：将 `generatedImage`（assetId）转换为父消息的 `imageAttachment`：
+ *         - `currentAssetId = assetId`
+ *         - `emotion = 父消息 emotion || 'default'`
+ *         - `createdAt = 图片消息 timestamp`
+ *         - `history = [{ assetId, createdAt: 图片消息 timestamp }]`
+ *         - `currentIndex = 0`
+ *         - `status = 'idle'`
+ *       并从列表中移除该独立图片消息。
+ * - 若前一条不存在或不是 assistant 非图片消息（如 user/system/图片消息/列表首条）：
+ *   跳过迁移，保留该图片消息原样（不丢失数据）。调用方可记录警告日志。
+ *
+ * 实现要点：
+ * - 纯函数，不修改原数组（创建浅拷贝），不依赖 addLog / IPC。
+ * - 遍历时维护"上一条 assistant 非图片消息"在结果数组中的索引，用于定位父消息写入 imageAttachment。
+ * - 返回 `migrated` 布尔值表示是否发生了迁移（含幂等移除场景）。
+ *
+ * @param messages 原始消息列表
+ * @returns { messages: 迁移后的消息列表, migrated: 是否发生了迁移 }
+ */
+export function migrateLegacyImageMessages(messages: ChatMessage[]): { messages: ChatMessage[]; migrated: boolean } {
+  const result: ChatMessage[] = [];
+  let migrated = false;
+  // 上一条 assistant 非图片消息在 result 中的索引（用于定位 imageAttachment 写入目标）
+  let lastAssistantNonImageIdx = -1;
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+
+    if (msg.isImageMessage) {
+      // 定位原列表中紧邻的前一条消息
+      const prev = i > 0 ? messages[i - 1] : null;
+      const isPrevAssistantNonImage = !!prev && prev.role === 'assistant' && !prev.isImageMessage;
+
+      if (isPrevAssistantNonImage && lastAssistantNonImageIdx >= 0) {
+        // 前一条是 assistant 非图片消息 → 找到 result 中的父消息（必然是 lastAssistantNonImageIdx 指向的项）
+        const parent = result[lastAssistantNonImageIdx];
+        if (parent.imageAttachment) {
+          // 幂等场景：父消息已有 imageAttachment，直接移除该图片消息（不重复写入）
+          migrated = true;
+          continue;
+        }
+        // 正常迁移：将 generatedImage 转换为父消息的 imageAttachment
+        const assetId = msg.generatedImage || '';
+        parent.imageAttachment = {
+          currentAssetId: assetId,
+          emotion: parent.emotion || 'default',
+          createdAt: msg.timestamp,
+          history: [{ assetId, createdAt: msg.timestamp }],
+          currentIndex: 0,
+          status: 'idle',
+        };
+        migrated = true;
+        continue;
+      }
+
+      // 无前驱 assistant 非图片消息 → 跳过迁移，保留原样（不丢失数据）
+      result.push({ ...msg });
+      // 注意：保留的图片消息不计入 lastAssistantNonImageIdx（它不是 assistant 非图片消息）
+      continue;
+    }
+
+    // 非图片消息：浅拷贝后追加，并维护 lastAssistantNonImageIdx
+    const newMsg: ChatMessage = { ...msg };
+    result.push(newMsg);
+    if (newMsg.role === 'assistant') {
+      lastAssistantNonImageIdx = result.length - 1;
+    }
+  }
+
+  return { messages: result, migrated };
 }
 
 // ==================== 角色配置 Hook ====================
@@ -350,6 +434,11 @@ export function usePersonas() {
 export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
   const setting = useSettingStore(state => state.setting);
   const saveTestChat = useCharacterChatStore(s => s.saveTestChat);
+  // 【Bug 修复】loadChatHistory 在「有历史但无需迁移」或「无历史且无 first_mes」场景下
+  // 不会调用 saveChatToStore，导致 currentTestChat 永远为 null，sessionTraits 相关 action
+  // （setSessionTraits / updateSessionTrait / addSessionTrait）因 `if (!current) return` 静默 no-op。
+  // 引入 setCurrentTestChat 用于在这些场景下显式初始化 currentTestChat。
+  const setCurrentTestChat = useCharacterChatStore(s => s.setCurrentTestChat);
   const addLog = useLogStore(state => state.addLog);
 
   useEffect(() => {
@@ -505,9 +594,35 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         if (cancelled) return;
         console.log('[CharacterDialogueChat] savedChat:', savedChat);
         if (savedChat && savedChat.messages && savedChat.messages.length > 0) {
-          dispatch({ type: 'UPDATE_MESSAGES', messages: savedChat.messages });
-          messagesRef.current = savedChat.messages;
-          addLog(`[CharacterDialogueChat] Loaded ${savedChat.messages.length} messages from history`, 'info');
+          // 旧图片消息迁移（Spec: enhance-conversation-image-bubble / Task 2）
+          // 将 isImageMessage=true + generatedImage 的独立图片消息迁移为父文本消息的 imageAttachment
+          const loadedMessages = savedChat.messages as ChatMessage[];
+          const { messages: migratedMessages, migrated: didMigrate } = migrateLegacyImageMessages(loadedMessages);
+          const finalMessages = didMigrate ? migratedMessages : loadedMessages;
+          dispatch({ type: 'UPDATE_MESSAGES', messages: finalMessages });
+          messagesRef.current = finalMessages;
+          addLog(`[CharacterDialogueChat] Loaded ${finalMessages.length} messages from history`, 'info');
+          // 【Bug 修复】显式设置 currentTestChat，确保 sessionTraits 相关 action 可用。
+          // 原代码仅在 didMigrate=true 时调用 saveChatToStore（间接设置 currentTestChat），
+          // 而 saveChatToStore 在 currentTestChat 为 null 时也不会初始化它（已在 store 同步修复）。
+          // 此处直接 setCurrentTestChat(savedChat) 覆盖所有子场景（迁移 / 不迁移），
+          // 并做与 store.loadTestChat 一致的 sessionTraits 安全映射（浅拷贝每个 trait 避免共享引用）。
+          const loadedSessionTraits = (savedChat as any).sessionTraits;
+          if (Array.isArray(loadedSessionTraits)) {
+            (savedChat as any).sessionTraits = loadedSessionTraits.map((t: any) => ({ ...t }));
+          } else {
+            (savedChat as any).sessionTraits = undefined;
+          }
+          setCurrentTestChat(savedChat);
+          if (didMigrate) {
+            // 无前驱 assistant 文本的孤立图片消息会被保留原样（SubTask 2.2 兜底），记录警告
+            const orphanCount = migratedMessages.filter(m => m.isImageMessage).length;
+            if (orphanCount > 0) {
+              addLog(`[CharacterDialogueChat] ${orphanCount} legacy image message(s) have no preceding assistant text, kept as-is`, 'warn');
+            }
+            await saveChatToStore(migratedMessages);
+            addLog('[CharacterDialogueChat] migrated legacy image messages to imageAttachment format', 'info');
+          }
         } else if (characterInfo.first_mes && characterInfo.first_mes.trim()) {
           console.log('[CharacterDialogueChat] Setting first_mes as initial message');
           const firstMessage: ChatMessage = {
@@ -523,6 +638,20 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
           await saveChatToStore([firstMessage]);
           addLog(`[CharacterDialogueChat] First message loaded from character card (${characterInfo.first_mes.length} chars)`, 'info');
         } else {
+          // 【Bug 修复】无聊天历史且无 first_mes 时，显式初始化 currentTestChat 为空对话占位对象。
+          // 否则 currentTestChat 永远为 null，sessionTraits 相关 action（分类选择框 / 新增 tag）
+          // 因 `if (!current) return` 静默 no-op，用户反馈「右侧角色特征分类选择框不生效 + 新增 tag 按钮不生效」。
+          // 占位对象 messages 为空数组（与实际状态一致），后续用户编辑特征时 setSessionTraits 会调
+          // saveTestChat 将其持久化到后端；用户发送首条消息时 saveChatToStore 也会正常工作。
+          setCurrentTestChat({
+            id: `temp-${characterInfo.creativeId}-${characterInfo.characterCardId}`,
+            creativeId: characterInfo.creativeId,
+            characterCardId: characterInfo.characterCardId,
+            characterCardName: characterInfo.characterCardName,
+            messages: [],
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          } as any);
           addLog(`[CharacterDialogueChat] No chat history and no first_mes, showing empty state`, 'info');
         }
       } catch (error) {
@@ -1198,6 +1327,11 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
           { regex: /<<<SUGGESTED_OPTIONS>>>\s*([\s\S]*?)<<<END_OPTIONS>>>/i, name: 'text-marker' },
           // 容错：仅有开始标记 <<<SUGGESTED_OPTIONS>>> 到文本末尾（AI 遗漏结束标记或被截断）
           { regex: /<<<SUGGESTED_OPTIONS>>>\s*([\s\S]*?)$/i, name: 'text-marker-unclosed' },
+          // ⚠️【重点标记 - Bug 修复 - SSE 跨 chunk 标签损坏防御】
+          // 兜底：匹配含 OPTIONS 关键字的损坏 <<<...>>> 标记（如 <<<SUGGED_OPTIONS>>>）
+          // 根因已在 ChatEngine.handleStream 修复，此处为防御性兜底处理旧消息
+          { regex: /<<<[^>]*OPTIONS[^>]*>>>\s*([\s\S]*?)<<<[^>]*END[^>]*OPTIONS[^>]*>>>/i, name: 'text-marker-corrupted' },
+          { regex: /<<<[^>]*OPTIONS[^>]*>>>\s*([\s\S]*?)$/i, name: 'text-marker-corrupted-unclosed' },
           // 兼容旧格式：<!-- <suggestedOptions> ... </suggestedOptions> -->
           { regex: /<!--\s*<suggestedOptions>([\s\S]*?)<\/suggestedOptions>\s*-->/i, name: 'html-comment' },
           // 容错：仅有 <suggestedOptions> 开始标签到末尾
@@ -1250,11 +1384,13 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       // 【重点标记】修复：增加 emotionStripped 标志，供后续内容保护检查跳过此场景，
       // 否则剥离标记后 displayContent 变短会触发内容保护检查导致状态不更新、UI 卡死。
       // 模式参照 thinkTagsStripped / optionsStripped。
+      // 【重点标记 - 反复修复】增强诊断日志：返回 matchedPattern 用于定位正则匹配情况，
+      // 解决用户反复反馈"从第 3 条消息起表情渲染失效"时无法定位根因的问题。
       let emotionStripped = false;
       let parsedEmotion: string | null = null;
       // 表情系统永久开启，始终解析表情标记
       {
-        const { emotion, cleanedContent } = parseExpressionFromContent(finalContent);
+        const { emotion, cleanedContent, matchedPattern } = parseExpressionFromContent(finalContent);
         if (emotion) {
           parsedEmotion = emotion;
           const beforeStripLen = finalContent.length;
@@ -1262,9 +1398,18 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
           if (finalContent.length !== beforeStripLen) {
             emotionStripped = true;
           }
-          addLog(`[CharacterDialogueChat] 表情系统：解析到情绪键 "${emotion}"`, 'info');
+          addLog(`[CharacterDialogueChat] 表情系统：解析到情绪键 "${emotion}"（匹配模式: ${matchedPattern}）`, 'info');
         } else {
-          addLog(`[CharacterDialogueChat] 未匹配到情绪标记，回退默认表情。回复末尾 200 字: ${finalContent.substring(Math.max(0, finalContent.length - 200))}`, 'warn');
+          // 【重点标记 - 反复修复】详细诊断日志：输出末尾 300 字 + 是否含 EXPRESSION 字样
+          // 用于区分"AI 未生成标记"和"生成了标记但正则未匹配"两种场景
+          const tailContent = finalContent.substring(Math.max(0, finalContent.length - 300));
+          const hasExpressionKeyword = finalContent.includes('EXPRESSION') || finalContent.includes('expression');
+          addLog(
+            `[CharacterDialogueChat] 未匹配到情绪标记，回退默认表情。` +
+            `含 EXPRESSION 关键字: ${hasExpressionKeyword}，回复末尾 300 字: ${JSON.stringify(tailContent)}`,
+            'warn'
+          );
+          console.warn('[ExpressionParse] 未匹配到情绪标记。末尾 300 字:', JSON.stringify(tailContent));
         }
       }
 
@@ -1287,6 +1432,12 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
           { regex: /<!--\s*<tableEdit>([\s\S]*?)<\/tableEdit>\s*-->/gi, name: '标准格式(HTML注释+标签)' },
           { regex: /<tableEdit>([\s\S]*?)<\/tableEdit>/gi, name: '无注释格式(纯标签)' },
           { regex: /<!--\s*tableEdit\s*-->([\s\S]*?)<!--\s*\/tableEdit\s*-->/gi, name: '注释分隔格式' },
+          // 松散/变体格式：兼容AI可能产出的各种格式
+          { regex: /<\s*tableEdit\s*>([\s\S]*?)<\s*\/\s*tableEdit\s*>/gi, name: '松散标签格式(含空格)' },
+          { regex: /\[tableEdit\]\s*([\s\S]*?)\s*\[\/tableEdit\]/gi, name: '方括号标记格式' },
+          { regex: /【tableEdit】\s*([\s\S]*?)\s*【\/tableEdit】/gi, name: '中文方括号标记格式' },
+          { regex: /tableEdit\s*[:：]\s*([\s\S]*)$/gi, name: '纯文本前缀格式(tableEdit:)' },
+          { regex: /命令\s*[:：]\s*([\s\S]*)$/gi, name: '纯文本前缀格式(命令：)' },
         ];
 
         let match: RegExpExecArray | null = null;
@@ -1313,6 +1464,11 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
             .replace(/<!--\s*<tableEdit>[\s\S]*?<\/tableEdit>\s*-->/gi, '')
             .replace(/<tableEdit>[\s\S]*?<\/tableEdit>/gi, '')
             .replace(/<!--\s*tableEdit\s*-->[\s\S]*?<!--\s*\/tableEdit\s*-->/gi, '')
+            .replace(/<\s*tableEdit\s*>[\s\S]*?<\s*\/\s*tableEdit\s*>/gi, '')  // 松散标签格式
+            .replace(/\[tableEdit\][\s\S]*?\[\/tableEdit\]/gi, '')  // 方括号标记格式
+            .replace(/【tableEdit】[\s\S]*?【\/tableEdit】/gi, '')  // 中文方括号标记格式
+            .replace(/tableEdit\s*[:：][\s\S]*$/gi, '')  // 纯文本前缀格式(tableEdit:)
+            .replace(/命令\s*[:：][\s\S]*$/gi, '')  // 纯文本前缀格式(命令：)
             // 清理残留的空行和多余空格
             .replace(/\n{3,}/g, '\n\n')
             .replace(/\s+$/g, '')
@@ -1320,52 +1476,70 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
           
           addLog(`[CharacterDialogueChat] tableEdit标签已从显示内容移除，原始长度: ${beforeLength}, 显示长度: ${displayContent.length}, 移除长度: ${beforeLength - displayContent.length}`, 'info');
 
-          // 异步解析和执行（不阻塞UI更新）
-          (async () => {
-            try {
-              const chatId = characterInfo.characterCardName || characterInfo.characterCardId;
-              if (!chatId) {
-                addLog('[CharacterDialogueChat] 异步整理失败: chatId为空', 'error');
-                return;
-              }
+          // 检查命令内容是否为空
+          if (!rawCommandsText || !rawCommandsText.trim()) {
+            addLog('[CharacterDialogueChat] 匹配到tableEdit标签但命令内容为空，跳过异步整理', 'warn');
+            // 注意：此处不重置 hasAsyncCommands，标签已从 displayContent 移除，
+            // 需保持 isAsyncMode=true 跳过内容保护检查，避免 UI 卡死
+          } else {
+            // 异步解析和执行（不阻塞UI更新）
+            (async () => {
+              try {
+                const chatId = characterInfo.characterCardName || characterInfo.characterCardId;
+                if (!chatId) {
+                  addLog('[CharacterDialogueChat] 异步整理失败: chatId为空', 'error');
+                  return;
+                }
 
-              // 重新包装为标准格式供解析器处理
-              const wrappedContent = `<tableEdit><!--\n${rawCommandsText}\n--></tableEdit>`;
-              addLog(`[CharacterDialogueChat] 调用parseTableEdit, 包装后长度: ${wrappedContent.length}`, 'info');
-              const parseResult = await window.electronAPI.memory.parseTableEdit(wrappedContent);
-              addLog(`[CharacterDialogueChat] parseTableEdit结果: 成功=${parseResult.success}, 命令数=${parseResult.commands.length}, 错误数=${parseResult.errors.length}`, 'info');
+                // 重新包装为标准格式供解析器处理
+                const wrappedContent = `<tableEdit><!--\n${rawCommandsText}\n--></tableEdit>`;
+                addLog(`[CharacterDialogueChat] 调用parseTableEdit, 包装后长度: ${wrappedContent.length}`, 'info');
+                const parseResult = await window.electronAPI.memory.parseTableEdit(wrappedContent);
+                addLog(`[CharacterDialogueChat] parseTableEdit结果: 成功=${parseResult.success}, 命令数=${parseResult.commands.length}, 错误数=${parseResult.errors.length}`, 'info');
 
-              if (parseResult.errors.length > 0) {
-                addLog(`[CharacterDialogueChat] 解析错误详情: ${parseResult.errors.join('; ')}`, 'warn');
-              }
+                // 解析失败降级处理：记录日志，不阻塞 UI 更新
+                if (!parseResult.success) {
+                  addLog(`[CharacterDialogueChat] parseTableEdit 解析失败，降级处理: ${parseResult.errors.join('; ') || '未知错误'}`, 'warn');
+                  if (parseResult.commands.length === 0) {
+                    return; // 无有效命令，跳过执行
+                  }
+                }
 
-              if (parseResult.commands.length > 0) {
-                addLog(`[CharacterDialogueChat] 解析到 ${parseResult.commands.length} 个tableEdit命令，chatId=${chatId}，开始执行...`, 'info');
-                const execResult = await window.electronAPI.memory.executeTableEditCommands(chatId, parseResult.commands);
-                if (execResult.success) {
-                  addLog(`[CharacterDialogueChat] 异步整理完成: 成功执行 ${execResult.executed} 个命令`, 'info');
+                if (parseResult.errors.length > 0) {
+                  addLog(`[CharacterDialogueChat] 解析错误详情: ${parseResult.errors.join('; ')}`, 'warn');
+                }
 
-                  // 刷新表格数据，确保后续对话使用最新上下文
-                  try {
-                    const refreshedData = await window.electronAPI.memory.getTableData(chatId);
-                    if (refreshedData?.data) {
-                      memoryTableDataRef.current = refreshedData.data;
-                      addLog('[CharacterDialogueChat] 表格数据已刷新，后续对话将使用最新上下文', 'info');
+                if (parseResult.commands.length > 0) {
+                  addLog(`[CharacterDialogueChat] 解析到 ${parseResult.commands.length} 个tableEdit命令，chatId=${chatId}，开始执行...`, 'info');
+                  const execResult = await window.electronAPI.memory.executeTableEditCommands(chatId, parseResult.commands);
+                  if (execResult.success) {
+                    addLog(`[CharacterDialogueChat] 异步整理完成: 成功执行 ${execResult.executed} 个命令`, 'info');
+
+                    // 刷新表格数据，确保后续对话使用最新上下文
+                    try {
+                      let refreshedData = await window.electronAPI.memory.getTableData(chatId);
+                      if (refreshedData?.data) {
+                        memoryTableDataRef.current = refreshedData.data;
+                        addLog('[CharacterDialogueChat] 表格数据已刷新，后续对话将使用最新上下文', 'info');
+                      } else {
+                        addLog('[CharacterDialogueChat] 刷新表格数据失败: getTableData 返回空数据', 'warn');
+                      }
+                    } catch (refreshError) {
+                      const refreshErrMsg = refreshError instanceof Error ? refreshError.message : String(refreshError);
+                      addLog(`[CharacterDialogueChat] 刷新表格数据失败: ${refreshErrMsg}`, 'warn');
                     }
-                  } catch (refreshError) {
-                    addLog(`[CharacterDialogueChat] 刷新表格数据失败: ${refreshError}`, 'warn');
+                  } else {
+                    addLog(`[CharacterDialogueChat] 异步整理有错误: ${execResult.errors?.join('; ') || '未知错误'}`, 'warn');
                   }
                 } else {
-                  addLog(`[CharacterDialogueChat] 异步整理有错误: ${execResult.errors?.join('; ') || '未知错误'}`, 'warn');
+                  addLog('[CharacterDialogueChat] 未解析到有效的tableEdit命令（AI可能未生成整理指令）', 'info');
                 }
-              } else {
-                addLog('[CharacterDialogueChat] 未解析到有效的tableEdit命令（AI可能未生成整理指令）', 'info');
+              } catch (error) {
+                const errorMsg = error instanceof Error ? error.message : String(error);
+                addLog(`[CharacterDialogueChat] 异步整理异常: ${errorMsg}`, 'error');
               }
-            } catch (error) {
-              const errorMsg = error instanceof Error ? error.message : String(error);
-              addLog(`[CharacterDialogueChat] 异步整理异常: ${errorMsg}`, 'error');
-            }
-          })();
+            })();
+          }
         } else {
           addLog('[CharacterDialogueChat] 未检测到tableEdit标签（任何格式），跳过异步整理', 'warn');
         }
@@ -1494,6 +1668,17 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         msg.id === targetMessageId ? { ...msg, content: displayContent, status: 'sent' as const, suggestedOptions: suggestedOptions.length > 0 ? suggestedOptions : undefined, emotion: parsedEmotion || undefined } : msg
       );
 
+      // 【重点标记 - 反复修复】诊断日志：确认 emotion 字段在 dispatch 前的最终值
+      // 用于排查"表情渲染从第 3 条消息起失效"问题——确认是解析层还是渲染层的问题
+      const finalTargetMsg = finalMessages.find(m => m.id === targetMessageId);
+      console.log('[ExpressionDebug] STREAM_COMPLETE 即将 dispatch:', {
+        messageId: targetMessageId,
+        parsedEmotion,
+        finalEmotion: finalTargetMsg?.emotion,
+        hasContent: !!finalTargetMsg?.content,
+        contentLength: finalTargetMsg?.content?.length,
+      });
+
       // 保存聊天记录 - 注意：不在 dispatch 后立即调用异步函数，使用 setTimeout 延迟
       // 使用 clean 副本避免 IPC 序列化错误
       const messagesToSave = finalMessages.map(msg => ({
@@ -1508,6 +1693,12 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         suggestedOptions: msg.suggestedOptions,
         // 保存情绪键名，使刷新/重启后表情仍可还原（Spec: add-character-expression-system / Task 9.4）
         emotion: msg.emotion,
+        // 【Bug 4 修复】图片消息字段透传（Spec: fix-conversation-image-generation-bugs）
+        generatedImage: msg.generatedImage,
+        isImageMessage: msg.isImageMessage,
+        // 图片附属内容透传（Spec: enhance-conversation-image-bubble / Task 1）
+        // 取代独立图片消息，作为父文本消息的嵌套字段持久化
+        imageAttachment: msg.imageAttachment,
       }));
 
       // 使用 setTimeout 延迟保存，避免在状态更新过程中执行异步操作
@@ -1690,6 +1881,42 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         },
       ];
       addLog(`[CharacterDialogueChat] Continue dedup retry: injected continue_nudge_prompt as system message (${nudgePrompt.length} chars)`, 'info');
+    }
+
+    // 【重点标记 - 推理模型兼容性】注入标签输出提醒
+    // 问题：DeepSeek-V4-Pro / x-deepseek-reasoner 等推理模型在长系统提示词下，
+    //   生成思考内容 + 故事正文后倾向于直接停止（finish_reason=stop），
+    //   不输出 <<<EXPRESSION>>> 和 <<<SUGGESTED_OPTIONS>>> 标签。
+    // 修复：将标签提醒追加到最后一条 user 消息末尾（不能用 system 消息，
+    //   因为 ChatEngine.sanitizeChatHistory 会剔除所有 system 角色消息）。
+    // 测试验证：注入提醒后标签返回率从 0% 提升至 100%。
+    if (promptType === 'dialogue' && messagesToSendFinal.length > 0) {
+      const assistModeEnabled = characterConfig?.customParameters?.assist_mode === true;
+      const tagReminderParts: string[] = [
+        '\n\n【系统提醒】请在回复正文末尾严格按格式输出 <<<EXPRESSION>>>情绪键名<<<END_EXPRESSION>>> 标签。',
+      ];
+      if (assistModeEnabled) {
+        tagReminderParts.push('并在表情标签之前输出 <<<SUGGESTED_OPTIONS>>> 选项块（3个选项，含 <<<END_OPTIONS>>> 结束标记）。');
+      }
+      const tagReminder = tagReminderParts.join('');
+
+      // 找到最后一条 user 消息并追加提醒
+      let lastUserIdx = -1;
+      for (let i = messagesToSendFinal.length - 1; i >= 0; i--) {
+        if (messagesToSendFinal[i].role === 'user') {
+          lastUserIdx = i;
+          break;
+        }
+      }
+      if (lastUserIdx >= 0) {
+        const lastMsg = messagesToSendFinal[lastUserIdx];
+        messagesToSendFinal = [...messagesToSendFinal];
+        messagesToSendFinal[lastUserIdx] = {
+          ...lastMsg,
+          content: lastMsg.content + tagReminder,
+        };
+        addLog(`[CharacterDialogueChat] 已注入标签输出提醒到末尾 user 消息 (${tagReminder.length} chars, assistMode=${assistModeEnabled})`, 'info');
+      }
     }
 
     try {
@@ -2341,41 +2568,149 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     dispatch({ type: 'UPDATE_MESSAGES', messages: updatedMessages });
   }, [saveChatToStore, addLog]);
 
-  const rollbackToMessage = useCallback((messageId: string): string => {
+  /**
+   * 插入图片消息到对话流（Spec: add-conversation-image-generation）
+   * 在指定消息之后插入一条图片消息，不触发 AI 响应。
+   *
+   * @deprecated 已被 `updateImageAttachment` 取代（Spec: enhance-conversation-image-bubble / Task 10）。
+   * 新架构将图片作为父文本消息的 `imageAttachment` 嵌套字段，而非独立消息插入对话流。
+   * 保留函数体仅为向后兼容与旧数据兜底，新代码不应调用此函数。
+   */
+  const addImageMessage = useCallback(async (afterMessageId: string, imageBase64: string, characterCardId: string) => {
     const currentMessages = messagesRef.current;
-    const messageIndex = currentMessages.findIndex(msg => msg.id === messageId);
-    if (messageIndex === -1) {
-      addLog(`[CharacterDialogueChat] Rollback failed: message ${messageId} not found`, 'warn');
-      return '';
+    const insertIndex = currentMessages.findIndex(msg => msg.id === afterMessageId);
+    if (insertIndex === -1) {
+      addLog(`[CharacterDialogueChat] addImageMessage: message ${afterMessageId} not found`, 'warn');
+      return;
     }
 
-    const targetMessage = currentMessages[messageIndex];
-    if (targetMessage.role !== 'user') {
-      addLog(`[CharacterDialogueChat] Rollback failed: message ${messageId} is not a user message`, 'warn');
-      return '';
+    // 【Bug 4 修复】将 base64 图片保存到磁盘，消息中仅存储 assetId（Spec: fix-conversation-image-generation-bugs）
+    const assetId = `conv_${Date.now()}`;
+    let generatedImageRef: string = imageBase64; // fallback: 若保存失败则直接存 base64
+    try {
+      const saveResult = await window.electronAPI.asset.save({
+        characterCardId,
+        assetType: 'general',
+        assetId,
+        imageBase64,
+      });
+      if (saveResult?.success) {
+        generatedImageRef = assetId; // 存储 assetId 而非 base64 data URL
+      } else {
+        addLog(`[CharacterDialogueChat] addImageMessage: asset save failed, falling back to base64`, 'warn');
+      }
+    } catch (e) {
+      addLog(`[CharacterDialogueChat] addImageMessage: asset save error: ${e}`, 'warn');
     }
 
-    const rolledBackContent = targetMessage.content;
-    const updatedMessages = currentMessages.slice(0, messageIndex);
-    const removedCount = currentMessages.length - messageIndex;
-
-    // 若正在流式生成，先取消
-    if (state.isStreaming) {
-      cancelRequest();
-    }
-
-    // 同步更新 messagesRef（避免闭包陈旧）
+    const imageMessage: ChatMessage = {
+      id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+      role: 'assistant',
+      content: '[生成图片]',
+      timestamp: Date.now(),
+      status: 'sent',
+      speakerName: characterInfo.characterCardName,
+      isImageMessage: true,
+      generatedImage: generatedImageRef,
+    };
+    const updatedMessages = [
+      ...currentMessages.slice(0, insertIndex + 1),
+      imageMessage,
+      ...currentMessages.slice(insertIndex + 1),
+    ];
     messagesRef.current = updatedMessages;
-
     dispatch({ type: 'UPDATE_MESSAGES', messages: updatedMessages });
-    dispatch({ type: 'SET_LOADING', isLoading: false, isStreaming: false });
-    dispatch({ type: 'CLEAR_ERROR' });
-
     saveChatToStore(updatedMessages);
-    addLog(`[CharacterDialogueChat] Rolled back to message ${messageId}, removed ${removedCount} messages`, 'info');
+  }, [saveChatToStore, addLog, characterInfo.characterCardName]);
 
-    return rolledBackContent;
-  }, [state.isStreaming, cancelRequest, saveChatToStore, addLog]);
+  /**
+   * 通用工具：更新指定消息的 imageAttachment 字段（Spec: enhance-conversation-image-bubble / Task 10.1）
+   *
+   * 读取消息 → 应用 updater → dispatch UPDATE_MESSAGES → saveChatToStore。
+   * 供 Task 9（handleGenerateImage 阶段状态更新）以及 deleteImageAttachment /
+   * navigateImageHistory 等内部函数复用。
+   *
+   * @param messageId 父文本消息 ID
+   * @param updater 接收旧 imageAttachment（可能 undefined），返回新的 imageAttachment
+   *                （返回 undefined 表示清除该字段）
+   */
+  const updateImageAttachment = useCallback(async (
+    messageId: string,
+    updater: (prev: ImageAttachment | undefined) => ImageAttachment | undefined
+  ) => {
+    const currentMessages = messagesRef.current;
+    const msgIndex = currentMessages.findIndex(m => m.id === messageId);
+    if (msgIndex === -1) {
+      addLog(`[CharacterDialogueChat] updateImageAttachment: message ${messageId} not found`, 'warn');
+      return;
+    }
+    const msg = currentMessages[msgIndex];
+    const nextAttachment = updater(msg.imageAttachment);
+    const updatedMessages = currentMessages.map((m, i) =>
+      i === msgIndex ? { ...m, imageAttachment: nextAttachment } : m
+    );
+    messagesRef.current = updatedMessages;
+    dispatch({ type: 'UPDATE_MESSAGES', messages: updatedMessages });
+    saveChatToStore(updatedMessages);
+  }, [saveChatToStore, addLog]);
+
+  /**
+   * 删除图片附件（Spec: enhance-conversation-image-bubble / Task 10.3）
+   *
+   * 遍历 `imageAttachment.history` 逐个调用 `asset:delete` 删除磁盘 PNG 文件 + manifest 条目，
+   * 然后清空父消息的 `imageAttachment` 字段（设为 undefined）。
+   * 单个 asset 删除失败仅记录警告，不中断流程（尽力删除）。
+   *
+   * @param messageId 父文本消息 ID
+   */
+  const deleteImageAttachment = useCallback(async (messageId: string) => {
+    const currentMessages = messagesRef.current;
+    const msg = currentMessages.find(m => m.id === messageId);
+    if (!msg?.imageAttachment) {
+      addLog(`[CharacterDialogueChat] deleteImageAttachment: no imageAttachment on message ${messageId}`, 'warn');
+      return;
+    }
+    const attachment = msg.imageAttachment;
+    const characterCardId = characterInfo.characterCardId;
+    // 遍历 history 逐个删除磁盘文件 + manifest
+    for (const item of attachment.history) {
+      try {
+        await window.electronAPI.asset.delete({
+          characterCardId,
+          assetType: 'general',
+          assetId: item.assetId,
+        });
+      } catch (e) {
+        addLog(`[CharacterDialogueChat] deleteImageAttachment: failed to delete asset ${item.assetId}: ${e}`, 'warn');
+      }
+    }
+    // 清空 imageAttachment 字段
+    await updateImageAttachment(messageId, () => undefined);
+    addLog(`[CharacterDialogueChat] deleteImageAttachment: deleted ${attachment.history.length} image(s) for message ${messageId}`, 'info');
+  }, [updateImageAttachment, addLog, characterInfo.characterCardId]);
+
+  /**
+   * 历史图片导航（Spec: enhance-conversation-image-bubble / Task 10.4）
+   *
+   * 切换 `currentIndex` 与 `currentAssetId`，用于查看重新生成历史中的过往图片。
+   * 边界保护：越界时保持当前索引不变（不报错、不抛异常）。
+   *
+   * @param messageId 父文本消息 ID
+   * @param direction 'prev' 上一张 | 'next' 下一张
+   */
+  const navigateImageHistory = useCallback(async (messageId: string, direction: 'prev' | 'next') => {
+    await updateImageAttachment(messageId, (prev) => {
+      if (!prev) return prev;
+      const newIndex = direction === 'prev' ? prev.currentIndex - 1 : prev.currentIndex + 1;
+      // 边界保护：越界时保持不变
+      if (newIndex < 0 || newIndex >= prev.history.length) return prev;
+      return {
+        ...prev,
+        currentIndex: newIndex,
+        currentAssetId: prev.history[newIndex].assetId,
+      };
+    });
+  }, [updateImageAttachment]);
 
   const memoryTableEnabled = characterConfig?.memoryTableEnabled ?? false;
   const memoryTableAutoOrganize = characterConfig?.memoryTableAutoOrganize ?? false;
@@ -2424,6 +2759,72 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       addLog(`[CharacterDialogueChat] Failed to load memory table data: ${error}`, 'warn');
     }
   }, [memoryTableEnabled, characterInfo.characterCardId, addLog]);
+
+  const rollbackToMessage = useCallback(async (messageId: string): Promise<string> => {
+    const currentMessages = messagesRef.current;
+    const messageIndex = currentMessages.findIndex(msg => msg.id === messageId);
+    if (messageIndex === -1) {
+      addLog(`[CharacterDialogueChat] Rollback failed: message ${messageId} not found`, 'warn');
+      return '';
+    }
+
+    const targetMessage = currentMessages[messageIndex];
+    if (targetMessage.role !== 'user') {
+      addLog(`[CharacterDialogueChat] Rollback failed: message ${messageId} is not a user message`, 'warn');
+      return '';
+    }
+
+    const rolledBackContent = targetMessage.content;
+    const updatedMessages = currentMessages.slice(0, messageIndex);
+    const removedCount = currentMessages.length - messageIndex;
+
+    // 若正在流式生成，先取消
+    if (state.isStreaming) {
+      cancelRequest();
+    }
+
+    // 同步更新 messagesRef（避免闭包陈旧）
+    messagesRef.current = updatedMessages;
+
+    dispatch({ type: 'UPDATE_MESSAGES', messages: updatedMessages });
+    dispatch({ type: 'SET_LOADING', isLoading: false, isStreaming: false });
+    dispatch({ type: 'CLEAR_ERROR' });
+
+    saveChatToStore(updatedMessages);
+    addLog(`[CharacterDialogueChat] Rolled back to message ${messageId}, removed ${removedCount} messages`, 'info');
+
+    // ===== 表格跟随回退：查找对应版本并恢复表格快照 =====
+    try {
+      const chatId = characterInfo.characterCardName || characterInfo.characterCardId;
+      if (chatId && versionIndexRef.current?.versions) {
+        const targetTimestamp = targetMessage.timestamp;
+        const index = versionIndexRef.current;
+        // 从版本索引中查找时间匹配（±1000ms）的联动版本
+        const matchedRecord = index.versions.find((v: any) => {
+          return v.tableSnapshot?.exists && 
+            Math.abs(v.timestamp - targetTimestamp) <= 1000;
+        });
+        if (matchedRecord) {
+          addLog(`[CharacterDialogueChat] 卷回时找到匹配的联动版本: ${matchedRecord.versionLinkId}，准备恢复表格快照`, 'info');
+          const restoreResult = await window.electronAPI.memory.restoreTableFromSnapshot(chatId, matchedRecord.versionLinkId);
+          if (restoreResult.success) {
+            addLog(`[CharacterDialogueChat] 卷回时表格快照恢复成功: ${matchedRecord.versionLinkId}`, 'info');
+            // 刷新 memoryTableDataRef
+            await fetchMemoryTableData();
+          } else {
+            addLog(`[CharacterDialogueChat] 卷回时表格快照恢复失败: ${restoreResult.error}`, 'warn');
+          }
+        } else {
+          addLog(`[CharacterDialogueChat] 卷回时未找到匹配的联动版本，跳过表格回退`, 'debug');
+        }
+      }
+    } catch (tableError) {
+      addLog(`[CharacterDialogueChat] 卷回时表格回退异常: ${tableError}`, 'warn');
+      // 不阻塞卷回主流程
+    }
+
+    return rolledBackContent;
+  }, [state.isStreaming, cancelRequest, saveChatToStore, addLog, characterInfo, fetchMemoryTableData]);
 
   const handleMemoryTableToggle = useCallback((enabled: boolean) => {
     updateConfig({ memoryTableEnabled: enabled });
@@ -2600,6 +3001,25 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         return;
       }
 
+      // ===== 表格跟随回退：恢复对应版本的表格快照 =====
+      try {
+        const chatId = characterInfo.characterCardName || characterInfo.characterCardId;
+        if (chatId && versionData.versionLinkId) {
+          addLog(`[CharacterDialogueChat] 重新生成时恢复表格快照: versionLinkId=${versionData.versionLinkId}`, 'info');
+          const restoreResult = await window.electronAPI.memory.restoreTableFromSnapshot(chatId, versionData.versionLinkId);
+          if (restoreResult.success) {
+            addLog(`[CharacterDialogueChat] 重新生成时表格快照恢复成功`, 'info');
+            // 刷新内存中的表格数据
+            await fetchMemoryTableData();
+          } else {
+            addLog(`[CharacterDialogueChat] 重新生成时表格快照恢复失败: ${restoreResult.error}`, 'warn');
+          }
+        }
+      } catch (tableError) {
+        addLog(`[CharacterDialogueChat] 重新生成时表格回退异常: ${tableError}`, 'warn');
+        // 不阻塞重新生成主流程
+      }
+
       const newEmptyMessage: ChatMessage = {
         id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
         role: 'assistant',
@@ -2617,7 +3037,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       addLog(`[CharacterDialogueChat] Failed to restore from version: ${error}`, 'error');
       message.error('从版本恢复失败');
     }
-  }, [state.isStreaming, requestAIResponse, addLog, characterInfo.characterCardName]);
+  }, [state.isStreaming, requestAIResponse, addLog, characterInfo, fetchMemoryTableData]);
 
   const stateWithVersionInfo = useMemo(() => {
     const messagesWithVersion = state.messages.map((msg) => {
@@ -2762,6 +3182,14 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     retryMessageFromVersion,
     editMessage,
     rollbackToMessage,
+    addImageMessage,
+    // 图片附件管理（Spec: enhance-conversation-image-bubble / Task 10）
+    // - updateImageAttachment：通用工具，更新指定消息的 imageAttachment 字段（供 Task 9 阶段状态更新调用）
+    // - deleteImageAttachment：删除图片附件（磁盘文件 + manifest + 清空字段）
+    // - navigateImageHistory：历史图片导航（切换 currentIndex / currentAssetId）
+    updateImageAttachment,
+    deleteImageAttachment,
+    navigateImageHistory,
     clearChat,
     clearError,
     cancelRequest,

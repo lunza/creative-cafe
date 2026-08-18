@@ -373,11 +373,11 @@ export function buildExpressionPrompt(
  * 3. 兼容变体：<expression>key</expression>（纯标签）
  *
  * @param content AI 回复原始内容
- * @returns { emotion: 解析出的情绪键名（小写）或 null；cleanedContent: 剥离标记后的内容 }
+ * @returns { emotion: 解析出的情绪键名（小写）或 null；cleanedContent: 剥离标记后的内容；matchedPattern: 匹配到的正则名称（诊断用） }
  */
-export function parseExpressionFromContent(content: string): { emotion: string | null; cleanedContent: string } {
+export function parseExpressionFromContent(content: string): { emotion: string | null; cleanedContent: string; matchedPattern: string | null } {
   if (!content || typeof content !== 'string') {
-    return { emotion: null, cleanedContent: content || '' };
+    return { emotion: null, cleanedContent: content || '', matchedPattern: null };
   }
 
   const patterns: Array<{ regex: RegExp; name: string }> = [
@@ -385,15 +385,41 @@ export function parseExpressionFromContent(content: string): { emotion: string |
     { regex: /<<<EXPRESSION>>>\s*([a-z_][a-z0-9_]*)\s*<<<END_EXPRESSION>>>/i, name: 'text-marker' },
     // 容错：仅有开始标记 <<<EXPRESSION>>>key 到文本末尾
     { regex: /<<<EXPRESSION>>>\s*([a-z_][a-z0-9_]*)\s*$/i, name: 'text-marker-unclosed' },
+    // ⚠️【重点标记 - Bug 修复】容错：AI 输出缩写结束标记
+    // 实测 AI（尤其是 Claude/GLM 系列）会自发缩写结束标记为 <<<END_EXPR>>> / <<<END_EXP>>> 等
+    // 而非完整 <<<END_EXPRESSION>>>。这导致 emotion 解析失败 → 消息保存 emotion=undefined
+    // → 渲染回退默认头像（非用户期望的情绪表情）。详见 docs/FIX_RECORDS.md §7.26
+    // 策略：开始标记严格 <<<EXPRESSION>>>，结束标记匹配 <<<END_EXP + 任意大写字母 + >>>
+    // 覆盖 END_EXPRESSION / END_EXPR / END_EXP / END_EXPRESSIONS 等所有前缀变体
+    { regex: /<<<EXPRESSION>>>\s*([a-z_][a-z0-9_]*)\s*<<<END_EXP[A-Z]*>>>/i, name: 'text-marker-end-exp-abbreviated' },
     // ⚠️ 容错：AI 输出残缺标记（如 <<>>key<<<_EXPRESSION>>>）
     // 策略：忽略尖括号数量，匹配 EXPRESSION 字样前后的有效情绪键名
     { regex: /[<>_]+EXPRESSION[<>_]+\s*([a-z_][a-z0-9_]*)\s*[<>_]+(?:END[_]*EXPRESSION|EXPRESSION)[<>_]+/i, name: 'text-marker-malformed' },
+    // ⚠️【重点标记 - Bug 修复】容错：残缺+缩写结束标记组合（如 <<<EXPRESSION>>>key<<END_EXPR>>）
+    // 上述 text-marker-malformed 要求结束标记为完整 END_EXPRESSION 或 EXPRESSION，
+    // 无法覆盖 <<END_EXPR>> / <END_EXP> 等残缺+缩写组合。此模式独立处理：
+    // 开始标记严格 <<<EXPRESSION>>>，结束标记为任意 < > _ 包围的 END_EXP 前缀
+    { regex: /<<<EXPRESSION>>>\s*([a-z_][a-z0-9_]*)\s*[<>_]+END_EXP[A-Z]*[<>_]+/i, name: 'text-marker-malformed-end-exp' },
+    // ⚠️【重点标记 - Bug 修复 - 反复修复】终极 EXPR 兜底正则
+    // 用户反复反馈"从第 3 条消息起表情渲染失效"，根因排查发现：
+    // 1. AI 输出的结束标记格式不可预测（END_EXPR / _EXPRESSION / END_EXP 等）
+    // 2. 即使添加了上述容错正则，仍可能有未覆盖的变体
+    // 3. 此正则匹配 <<<EXPRESSION>>>key<<<任意含 EXPR 字样的标记>>>
+    // 覆盖所有结束标记中包含 EXPR 子串的情况（END_EXPRESSION / END_EXPR / _EXPRESSION 等）
+    // 详见 docs/FIX_RECORDS.md §7.26
+    { regex: /<<<EXPRESSION>>>\s*([a-z_][a-z0-9_]*)\s*<<<[^>]*EXPR[^>]*>>>/i, name: 'text-marker-expr-fallback' },
     // ⚠️ 容错：残缺开始标记 + key 到末尾（无结束标记）
     { regex: /[<>_]+EXPRESSION[<>_]+\s*([a-z_][a-z0-9_]*)\s*$/i, name: 'text-marker-malformed-unclosed' },
     // ⚠️ 终极兜底：文本末尾任意位置出现 EXPRESSION 字样，取其附近的情绪键名
     // 匹配 key 在 EXPRESSION 之前或之后的情况（key 必须是有效情绪词格式）
     { regex: /\b([a-z_][a-z0-9_]*)\s*[<>_]+(?:END[_]*EXPRESSION|EXPRESSION)[<>_]+\s*$/i, name: 'text-marker-fallback-before' },
     { regex: /EXPRESSION[<>_]+\s*([a-z_][a-z0-9_]*)\s*[<>_]*\s*$/i, name: 'text-marker-fallback-after' },
+    // ⚠️【重点标记 - SSE 跨 chunk 标签损坏防御】
+    // 兜底：匹配任何 <<<TAG>>>key<<<END_TAG>>> 格式的表情标记（标签名 ≥4 字符）
+    // 覆盖 EXPRESSION 被截断为 EXESSION 等损坏变体
+    // 根因已在 ChatEngine.handleStream 修复（行计数→字节偏移），此处为防御性兜底
+    { regex: /<<<[A-Z_]{4,}>>>\s*([a-z_][a-z0-9_]*)\s*<<<END_[A-Z_]{4,}>>>\s*$/i, name: 'text-marker-generic' },
+    { regex: /<<<[A-Z_]{4,}>>>\s*([a-z_][a-z0-9_]*)\s*$/i, name: 'text-marker-generic-unclosed' },
     // 兼容变体：纯标签 <expression>key</expression>
     { regex: /<expression>\s*([a-z_][a-z0-9_]*)\s*<\/expression>/i, name: 'plain-tag' },
     // 兼容变体：仅有 <expression>key 到末尾
@@ -408,11 +434,11 @@ export function parseExpressionFromContent(content: string): { emotion: string |
       let cleanedContent = content.replace(m[0], '').trim();
       // ⚠️ 清理残留的孤立尖括号/下划线标记（如 <<>> 等残缺开始标记碎片）
       cleanedContent = cleanedContent.replace(/[<>_]{2,}\s*$/, '').trim();
-      return { emotion, cleanedContent };
+      return { emotion, cleanedContent, matchedPattern: pattern.name };
     }
   }
 
-  return { emotion: null, cleanedContent: content };
+  return { emotion: null, cleanedContent: content, matchedPattern: null };
 }
 
 /**
@@ -1401,6 +1427,8 @@ deleteRow(表格索引, 行索引)
     });
     instructions += `\n`;
   } else {
+    // 无表格模板结构信息时的提示：避免出现空白段落，引导 AI 按通用规则提取
+    instructions += `\n\n【注意】当前无表格模板结构信息，AI 将根据通用规则提取信息。\n`;
     // 默认模板结构（备用）
     instructions += `\n\n【表格模板结构】\n`;
     instructions += `当前系统使用默认模板，包含以下表格（请严格按照此结构提取信息）：\n\n`;
@@ -1586,6 +1614,7 @@ export function buildExpressionGenerationPrompt(
     positivePromptTemplate?: string;
     customNegativePrompt?: string;
     customLabel?: string;
+    customPrompts?: { positive: string; negative?: string };
     characterTraits?: Array<{ text: string; weight?: number }>;
   },
 ): { prompt: string; negativePrompt: string } {
@@ -1593,14 +1622,19 @@ export function buildExpressionGenerationPrompt(
     positivePromptTemplate,
     customNegativePrompt,
     customLabel,
+    customPrompts,
     characterTraits,
   } = options || {};
 
-  // 情绪提示词解析：预置情绪 → MAP；自定义情绪 → customLabel 兜底
+  // 情绪提示词解析（Spec: enhance-custom-emotion-system）：
+  // 优先级：customPrompts.positive > EMOTION_PROMPT_MAP[key] > customLabel 兜底 > neutral
   let emotionPositive: string;
   let emotionNegative: string | undefined;
   const mapped = EMOTION_PROMPT_MAP[emotionKey];
-  if (mapped) {
+  if (customPrompts && customPrompts.positive) {
+    emotionPositive = customPrompts.positive;
+    emotionNegative = customPrompts.negative;
+  } else if (mapped) {
     emotionPositive = mapped.positive;
     emotionNegative = mapped.negative;
   } else if (customLabel && customLabel.trim()) {
@@ -1736,6 +1770,7 @@ export interface NLExpressionPromptOptions {
   nlPromptTemplate?: string;
   customNegativePrompt?: string;
   customLabel?: string;
+  customNlPrompt?: string;
   characterTraits?: Array<{ text: string; weight?: number }>;
   modelType?: 'sdxl' | 'qwen-image' | 'qwen-image-edit' | 'flux2';
 }
@@ -1767,7 +1802,10 @@ export function buildNLExpressionPrompt(
   options?: NLExpressionPromptOptions
 ): { prompt: string; negativePrompt: string } {
   const modelType = options?.modelType ?? 'qwen-image-edit';
-  const emotionNl = EMOTION_NL_PROMPT_MAP[emotionKey]
+  // 情绪 NL 提示词解析（Spec: enhance-custom-emotion-system）：
+  // 优先级：customNlPrompt > EMOTION_NL_PROMPT_MAP[key] > customLabel 兜底 > neutral
+  const emotionNl = (options?.customNlPrompt && options.customNlPrompt.trim())
+    || EMOTION_NL_PROMPT_MAP[emotionKey]
     || (options?.customLabel ? `${options.customLabel.toLowerCase()} expression` : 'a neutral expression');
 
   // 【Spec: add-sdxl-prompt-weight-support / Task 3】characterTraits 升级为

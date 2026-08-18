@@ -91,13 +91,39 @@ export function registerExpressionHandlers() {
         characterCardId: string;
         key: string;
         label: string;
+        prompts?: { positive: string; negative?: string; nlPrompt: string };
       }
     ) => {
       try {
-        const { characterCardId, key, label } = args;
-        return await expressionService.addCustomEmotion(characterCardId, key, label);
+        const { characterCardId, key, label, prompts } = args;
+        return await expressionService.addCustomEmotion(characterCardId, key, label, prompts);
       } catch (error) {
         console.error('[expression:addCustomEmotion] failed:', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        };
+      }
+    }
+  );
+
+  // Spec: enhance-custom-emotion-system — 更新自定义情绪（label + prompts）
+  ipcMain.handle(
+    'expression:updateCustomEmotion',
+    async (
+      _event,
+      args: {
+        characterCardId: string;
+        key: string;
+        label?: string;
+        prompts?: { positive: string; negative?: string; nlPrompt: string };
+      }
+    ) => {
+      try {
+        const { characterCardId, key, label, prompts } = args;
+        return await expressionService.updateCustomEmotion(characterCardId, key, label, prompts);
+      } catch (error) {
+        console.error('[expression:updateCustomEmotion] failed:', error);
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error',

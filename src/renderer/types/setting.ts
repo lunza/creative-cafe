@@ -2,6 +2,8 @@
  * AI 后端能力探测字段。
  * Spec: optimize-chat-ai-intelligence / Task 3.3 / Task 6.2
  */
+import type { ForbiddenWordsConfig } from '@shared/types/forbiddenWords';
+
 export interface AIEngineCapabilities {
   supportsStopArray?: boolean;
   supportsRepPen?: boolean;
@@ -538,6 +540,14 @@ export interface AppSetting {
    * 旧配置兼容：可选字段，缺失时 TagRagService 使用代码内默认值。
    */
   tagRag?: TagRagConfig;
+
+  /**
+   * 禁词提示词注入配置（Spec: add-forbidden-words-prompt / Task 2）。
+   *
+   * 持久化策略：与 tagAutocomplete 一致，随整体 setting.save / setting.load 自动持久化。
+   * 旧配置兼容：可选字段，缺失时 ForbiddenWordsPromptProvider 使用 DEFAULT_FORBIDDEN_WORDS_CONFIG。
+   */
+  forbiddenWords?: ForbiddenWordsConfig;
 }
 
 export type AIEngine = AIEngineSetting;

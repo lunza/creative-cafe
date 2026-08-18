@@ -195,6 +195,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
     delete: (path: string) => ipcRenderer.invoke('avatar:delete', path),
     getDirectory: () => ipcRenderer.invoke('avatar:getDirectory')
   },
+  // 用户人设素材管理 API
+  // 存储路径：{userData}/data/persona-assets/{personaId}/
+  personaAsset: {
+    list: (personaId: string) => ipcRenderer.invoke('persona-asset:list', { personaId }),
+    save: (args: { personaId: string; imageId: string; imageBase64: string }) =>
+      ipcRenderer.invoke('persona-asset:save', args),
+    delete: (args: { personaId: string; imageId: string }) =>
+      ipcRenderer.invoke('persona-asset:delete', args),
+    getImagePath: (args: { personaId: string; imageId: string }) =>
+      ipcRenderer.invoke('persona-asset:getImagePath', args),
+    clearAll: (personaId: string) =>
+      ipcRenderer.invoke('persona-asset:clearAll', { personaId }),
+  },
   plugin: {
     getAvailable: (forceRefresh?: boolean) => ipcRenderer.invoke('plugin:getAvailable', forceRefresh),
     getInstalled: () => ipcRenderer.invoke('plugin:getInstalled'),
@@ -280,6 +293,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     copyTemplate: (sourceTemplateId: string, newTemplateName: string) => ipcRenderer.invoke('memory:copyTemplate', sourceTemplateId, newTemplateName),// 表格数据管理
     getTableData: (chatId: string) => ipcRenderer.invoke('memory:getTableData', chatId),
     saveTableData: (chatId: string, sheetName: string, sheetData: any[]) => ipcRenderer.invoke('memory:saveTableData', chatId, sheetName, sheetData),
+    restoreTableFromSnapshot: (chatId: string, versionLinkId: string) => ipcRenderer.invoke('memory:restoreTableFromSnapshot', chatId, versionLinkId),
     autoInitializeSession: (chatId: string) => ipcRenderer.invoke('memory:autoInitializeSession', chatId),
 
     getCharacterChatRecords: () => ipcRenderer.invoke('memory:getCharacterChatRecords'),
@@ -330,6 +344,33 @@ contextBridge.exposeInMainWorld('electronAPI', {
       prompt: string;
       baseTraits?: string;
     }) => ipcRenderer.invoke('ai:generateTraitPrompts', args),
+    // AI 自定义情绪提示词生成（Spec: enhance-custom-emotion-system）
+    // 入参：{ emotionLabel: string }（情绪关键词，如"热恋"）
+    // 返回：{ success, positive?, nlPrompt?, auditDetails?, error? }
+    //   - positive 为 4 维度合并的 SDXL tag 字符串
+    //   - nlPrompt 为 NL 自然语言描述
+    //   - auditDetails 为标签审计结果
+    generateEmotionPrompts: (args: { emotionLabel: string; existingKeys?: string[] }) =>
+      ipcRenderer.invoke('ai:generateEmotionPrompts', args),
+    // AI 标签优化（Spec: add-ai-trait-optimization-for-image-gen）
+    // 入参：{ traits: Array<{ text, weight?, categoryId? }>, conversationContext }
+    // 返回：{ success, tagsToRemove?: Array<{ text, reason? }>, error? }
+    //   - tagsToRemove 为 AI 建议删除的标签列表（含原因），前端据此提示用户确认删除
+    // 错误场景：空对话上下文 / 空标签 / AI 引擎未配置 / 引擎参数缺失 / 调用失败 / 解析失败
+    optimizeTraitsForContext: (args: {
+      traits: Array<{ text: string; weight?: number; categoryId?: string }>;
+      conversationContext: string;
+    }) => ipcRenderer.invoke('ai:optimizeTraitsForContext', args),
+    // 图片生成阶段进度事件订阅（Spec: enhance-conversation-image-bubble / Task 3）
+    // 主进程在 ai:generateTraitPrompts handler 内推送 { phase } 进度事件，
+    // 渲染进程据此切换占位文案（「标签生成中…」/「标签审核中…」）。
+    // 订阅/取消模式参照 sd.onGenerationProgress / sd.removeProgressListeners
+    // （on 注册不返回 unsubscribe，off 一次性 removeAllListeners，适合组件挂载/卸载成对调用）
+    onTraitPromptProgress: (callback: (data: { phase: 'tag-generating' | 'tag-auditing' | 'image-generating' }) => void) =>
+      ipcRenderer.on('ai:traitPromptProgress', (_event, data) => callback(data)),
+    offTraitPromptProgress: () => {
+      ipcRenderer.removeAllListeners('ai:traitPromptProgress');
+    },
     // 探测 AI 模型能力（Spec: add-model-capability-detection-and-image-recognition / Task 3）
     // 并行探测 vision / thinking / tool-calling，返回 { success, capabilities?, error? }
     probeCapabilities: (args: { apiUrl: string; apiKey: string; apiKeyTransmission: string; modelName: string }) =>
@@ -362,7 +403,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 角色卡对话数据 API
   characterChat: {
     getTestChat: (creativeId: string, characterCardId: string) => ipcRenderer.invoke('characterChat:getTestChat', creativeId, characterCardId),
-    saveTestChat: (creativeId: string, characterCardId: string, characterCardName: string, messages: any[]) => ipcRenderer.invoke('characterChat:saveTestChat', creativeId, characterCardId, characterCardName, messages),
+    // 【Spec: enhance-conversation-image-auditability / Task 7.2】
+    // 第 5 个参数 sessionTraits（可选）：对话级临时特征覆盖，undefined 表示重置
+    saveTestChat: (creativeId: string, characterCardId: string, characterCardName: string, messages: any[], sessionTraits?: any[]) => ipcRenderer.invoke('characterChat:saveTestChat', creativeId, characterCardId, characterCardName, messages, sessionTraits),
     deleteTestChat: (creativeId: string, characterCardId: string) => ipcRenderer.invoke('characterChat:deleteTestChat', creativeId, characterCardId),
     getAllTestChats: () => ipcRenderer.invoke('characterChat:getAllTestChats'),
     clearCache: () => ipcRenderer.invoke('characterChat:clearCache')
@@ -825,8 +868,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }) => ipcRenderer.invoke('expression:saveImage', args),
     deleteImage: (args: { characterCardId: string; emotionKey: string }) =>
       ipcRenderer.invoke('expression:deleteImage', args),
-    addCustomEmotion: (args: { characterCardId: string; key: string; label: string }) =>
+    addCustomEmotion: (args: { characterCardId: string; key: string; label: string; prompts?: { positive: string; negative?: string; nlPrompt: string } }) =>
       ipcRenderer.invoke('expression:addCustomEmotion', args),
+    updateCustomEmotion: (args: { characterCardId: string; key: string; label?: string; prompts?: { positive: string; negative?: string; nlPrompt: string } }) =>
+      ipcRenderer.invoke('expression:updateCustomEmotion', args),
     removeCustomEmotion: (args: { characterCardId: string; key: string }) =>
       ipcRenderer.invoke('expression:removeCustomEmotion', args),
     getImagePath: (args: { characterCardId: string; emotionKey: string }) =>

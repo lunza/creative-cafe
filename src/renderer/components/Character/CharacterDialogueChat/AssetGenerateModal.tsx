@@ -66,6 +66,7 @@ import { TagAutocomplete } from '../../Common';
 // Spec: add-prompt-generation-in-asset-modal — 提示词生成结果审计质检报告
 // 与 AssetManagerModal 一致，复用 RagQualityReport 组件以只读模式展示 L0-L5 审计结果
 import RagQualityReport from './RagQualityReport';
+import { buildSdOptionsFromConfig } from './buildSdOptions';
 
 /**
  * AI 素材生成弹窗（Spec: add-asset-and-trait-management / Task 10）
@@ -142,7 +143,7 @@ export interface AssetGenerateModalProps {
   targetEmotionKey?: string;
   /** single-expression 模式：自定义情绪的中文标签（自定义情绪必填，预置情绪可不传） */
   targetEmotionLabel?: string;
-  /** three-view 模式：目标槽位（含裸体变体，nude 后缀时自动过滤 clothing 分类特征） */
+  /** three-view 模式：目标槽位（含裸体变体，nude 后缀时自动过滤上装/下装/内衣分类特征，配饰保留） */
   targetSlot?: 'front' | 'side' | 'back' | 'front-nude' | 'side-nude' | 'back-nude';
   onClose: () => void;
   /** 生成成功后的回调（供父组件刷新） */
@@ -274,43 +275,6 @@ const MODE_TITLE_MAP: Record<AssetGenerateModalProps['mode'], string> = {
   'three-view': '生成三视图',
 };
 
-/**
- * 从基础特征推断人物数量约束 tag（Spec: fix-asset-trait-and-scene-defects / Task 2）。
- *
- * 【重点标记 - 高分辨率约束】
- * 高分辨率（≥1024×1024）生成时 SD 模型倾向生成多个角色，需从基础特征推断性别
- * 并注入 `1girl` / `1boy` 约束人物数量为单个。
- *
- * 检测顺序（优先级从高到低）：
- *  1. 直接匹配 `1girl` / `1boy`（已是 SD 标准格式）
- *  2. 匹配 `female` / `male` → 转换为 `1girl` / `1boy`
- *  3. 匹配 `girl` / `boy` → 转换为 `1girl` / `1boy`
- *
- * 仅从 `categoryId='basic'` 的特征中查找，避免误匹配服装/场景中的关键词。
- * 返回 null 表示无法判断性别，调用方应不注入约束。
- *
- * @param traits 角色特征列表（含 enabled / categoryId 字段）
- * @returns `'1girl'` / `'1boy'` / `null`
- */
-function detectGenderTag(traits: CharacterTraitItem[]): '1girl' | '1boy' | null {
-  const basicTraits = traits.filter((t) => t.categoryId === 'basic' && t.enabled);
-  const texts = basicTraits.map((t) => t.text.toLowerCase());
-
-  // 优先级 1: 直接匹配
-  if (texts.includes('1girl')) return '1girl';
-  if (texts.includes('1boy')) return '1boy';
-
-  // 优先级 2: female/male
-  if (texts.includes('female')) return '1girl';
-  if (texts.includes('male')) return '1boy';
-
-  // 优先级 3: girl/boy
-  if (texts.includes('girl')) return '1girl';
-  if (texts.includes('boy')) return '1boy';
-
-  return null;
-}
-
 // ==================== 子组件：WeightEditorContent（权重编辑器 Popover 内容） ====================
 
 /**
@@ -415,6 +379,8 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
   // ====== Store 订阅 ======
   const saveExpression = useExpressionStore(s => s.saveExpression);
   const loadExpressions = useExpressionStore(s => s.loadExpressions);
+  // 订阅 manifest 以获取自定义情绪及其 AI 生成提示词（Spec: enhance-custom-emotion-system）
+  const manifest = useExpressionStore(s => s.manifest);
   const saveAsset = useAssetStore(s => s.saveAsset);
   // 【Spec: add-model-capability-detection-and-image-recognition / Task 7】
   // 从 settingStore 读取当前激活引擎的 capabilities.supportsVision，
@@ -529,9 +495,13 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
   // 下游 SD 生成仅拼接 enabled=true 项的 text。此处派生 enabled 特征文本数组供
   // buildSdOptions / buildExpressionGenerationPrompt / buildNLExpressionPrompt 共用。
   // 【临时编辑支持】改用 effectiveTraits 派生，使临时修改的 text / enabled 生效于本次生成。
-  // 【裸体三视图支持】当 targetSlot 为 *-nude 时，自动过滤 categoryId='clothing' 的特征，
-  //   确保裸体版不携带衣物 tag（species / body / head 等基础特征保留）。
+  // 【裸体三视图支持】当 targetSlot 为 *-nude 时，自动过滤上装/下装/内衣分类特征，
+  //   确保裸体版不携带衣物 tag（species / body / head 等基础特征保留；配饰如眼镜/首饰保留）。
+  // 【重点标记 - 衣物分类拆分】原 clothing 分类已拆分为 top/bottom/accessories/underwear，
+  //   裸体过滤仅覆盖 top/bottom/underwear（保留 accessories，配饰在裸体图中保留）。
   const isNudeSlot = mode === 'three-view' && !!targetSlot?.endsWith('-nude');
+  // 裸体三视图过滤的衣物分类集合（上装/下装/内衣）；配饰（眼镜/首饰等）保留
+  const NUDE_FILTER_CATEGORY_IDS = new Set(['top', 'bottom', 'underwear']);
   // 【Spec: optimize-expression-preset-prompts / Task 7】
   // 表情模式（single-expression / batch-expression）下过滤 expression 分类特征，
   // 避免与 {emotion} 占位符注入的 EMOTION_PROMPT_MAP 表情 tag 重复/冲突。
@@ -548,7 +518,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
         .filter(
           (t) =>
             t.enabled &&
-            (!isNudeSlot || t.categoryId !== 'clothing') &&
+            (!isNudeSlot || !NUDE_FILTER_CATEGORY_IDS.has(t.categoryId)) &&
             !(isExpressionMode && t.categoryId === 'expression'),
         )
         .map((t) => ({ text: t.text, weight: t.weight }))
@@ -806,12 +776,16 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
       }
       const preset = EMOTION_PRESETS.find((e) => e.key === targetEmotionKey);
       const customLabel = targetEmotionLabel || preset?.label;
+      // 查找自定义情绪的 AI 生成提示词（Spec: enhance-custom-emotion-system）
+      const customEmotion = manifest?.customEmotions?.find((e) => e.key === targetEmotionKey);
+      const customPrompts = customEmotion?.prompts;
       const isNLModel = sdConfig.modelType !== 'sdxl';
       const { prompt, negativePrompt: neg } = isNLModel
         ? buildNLExpressionPrompt(targetEmotionKey, {
             nlPromptTemplate: sdConfig.nlPromptTemplate,
             customNegativePrompt: sdConfig.customNegativePrompt,
             customLabel,
+            customNlPrompt: customPrompts?.nlPrompt,
             characterTraits: enabledTraitTexts,
             modelType: sdConfig.modelType,
           })
@@ -821,6 +795,9 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
               positivePromptTemplate: sdConfig.positivePromptTemplate,
               customNegativePrompt: sdConfig.customNegativePrompt,
               customLabel,
+              customPrompts: customPrompts
+                ? { positive: customPrompts.positive, negative: customPrompts.negative }
+                : undefined,
               characterTraits: enabledTraitTexts,
             },
           );
@@ -863,6 +840,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
     sdConfig.modelType,
     sdConfig.nlPromptTemplate,
     enabledTraitTexts,
+    manifest,
   ]);
 
   // ====== 重置状态（关闭时） ======
@@ -937,12 +915,16 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
   // ====== 构建单个情绪的 prompt + negativePrompt（批量模式使用） ======
   const buildEmotionPrompt = useCallback(
     (emotionKey: string, label?: string) => {
+      // 查找自定义情绪的 AI 生成提示词（Spec: enhance-custom-emotion-system）
+      const customEmotion = manifest?.customEmotions?.find((e) => e.key === emotionKey);
+      const customPrompts = customEmotion?.prompts;
       const isNLModel = sdConfig.modelType !== 'sdxl';
       const { prompt, negativePrompt: neg } = isNLModel
         ? buildNLExpressionPrompt(emotionKey, {
             nlPromptTemplate: sdConfig.nlPromptTemplate,
             customNegativePrompt: sdConfig.customNegativePrompt,
             customLabel: label,
+            customNlPrompt: customPrompts?.nlPrompt,
             characterTraits: enabledTraitTexts,
             modelType: sdConfig.modelType,
           })
@@ -950,11 +932,14 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
             positivePromptTemplate: sdConfig.positivePromptTemplate,
             customNegativePrompt: sdConfig.customNegativePrompt,
             customLabel: label,
+            customPrompts: customPrompts
+              ? { positive: customPrompts.positive, negative: customPrompts.negative }
+              : undefined,
             characterTraits: enabledTraitTexts,
           });
       return { key: emotionKey, prompt, negativePrompt: neg };
     },
-    [sdConfig.positivePromptTemplate, sdConfig.customNegativePrompt, sdConfig.modelType, sdConfig.nlPromptTemplate, enabledTraitTexts],
+    [sdConfig.positivePromptTemplate, sdConfig.customNegativePrompt, sdConfig.modelType, sdConfig.nlPromptTemplate, enabledTraitTexts, manifest],
   );
 
   // ====== 构建 SD 生成选项（传给 IPC 的 options 字段） ======
@@ -968,110 +953,15 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
 
 
   const buildSdOptions = useCallback(() => {
-    // ===== 高分辨率人物数量约束检测 =====
-    // 【重点标记 - 高分辨率约束】Spec: fix-asset-trait-and-scene-defects / Task 2
-    // 当分辨率 ≥ 1024×1024 时，SD 模型倾向生成多个角色，需从基础特征推断性别
-    // 并注入 `1girl` / `1boy` 约束人物数量为单个。
-    // - 使用 effectiveTraits（含用户临时编辑）确保与实际生成特征一致
-    // - 基础特征已包含目标 tag 时不重复注入（避免 duplicate）
-    // - 无法判断性别时仅记录警告日志，不注入（避免错误约束）
-    let characterGenderTag: string | undefined;
-    const pixelCount = selectedSize.width * selectedSize.height;
-    if (pixelCount >= 1024 * 1024) {
-      const genderTag = detectGenderTag(effectiveTraits);
-      if (genderTag) {
-        // 检查基础特征是否已包含该 tag（避免重复注入）
-        const basicTraitTexts = effectiveTraits
-          .filter((t) => t.categoryId === 'basic' && t.enabled)
-          .map((t) => t.text.toLowerCase());
-        if (!basicTraitTexts.includes(genderTag)) {
-          characterGenderTag = genderTag;
-        }
-      } else {
-        console.warn(
-          '[AssetGenerateModal] 无法从基础特征推断性别，跳过人物数量约束注入',
-        );
-      }
-    }
-
-    return {
-      endpoint: sdConfig.endpoint,
-      denoisingStrength: sdConfig.denoisingStrength,
-      steps: sdConfig.steps,
-      cfgScale: sdConfig.cfgScale,
-      sampler: sdConfig.sampler,
-      scheduler: sdConfig.scheduler,
-      clipSkip: sdConfig.clipSkip,
-      adetailerEnabled: sdConfig.adetailerEnabled,
-      model: sdConfig.model || undefined,
-      // 【重点标记 - 特征携带机制】注入启用的角色特征 tag 数组（v2：仅 enabled=true 项的 text）
-      characterTraits: enabledTraitTexts,
-      // 【重点标记 - 高分辨率约束】Spec: fix-asset-trait-and-scene-defects / Task 2
-      // 当分辨率 ≥ 1024×1024 时由上方 detectGenderTag 推断填充，
-      // 由 sdGenerationService.applyTraitsAndLora 注入到 prompt 开头（避免重复）。
-      characterGenderTag,
-      // 【2026-08-06 新增 - 视角镜头字段透传】
-      // - selectedCameraAngle 为空字符串时透传 undefined（applyTraitsAndLora 替换为空串并清理逗号）
-      // - 由 applyTraitsAndLora 替换 {camera} 占位符；空则替换为空串并清理逗号
-      // - 仅 illustration / general 模板含 {camera}；其它模式无副作用
-      dynamicCamera: selectedCameraAngle.trim() || undefined,
-      // ADetailer 高级参数（仅当 adetailerEnabled=true 时由 sdGenerationService 读取）
-      adModel: sdConfig.adModel,
-      adConfidence: sdConfig.adConfidence,
-      adDenoisingStrength: sdConfig.adDenoisingStrength,
-      adMaskBlur: sdConfig.adMaskBlur,
-      adDilateErode: sdConfig.adDilateErode,
-      adInpaintOnlyMasked: sdConfig.adInpaintOnlyMasked,
-      adInpaintOnlyMaskedPadding: sdConfig.adInpaintOnlyMaskedPadding,
-      adUseInpaintWidthHeight: sdConfig.adUseInpaintWidthHeight,
-      adInpaintWidth: sdConfig.adInpaintWidth,
-      adInpaintHeight: sdConfig.adInpaintHeight,
-      adUseSteps: sdConfig.adUseSteps,
-      adSteps: sdConfig.adSteps,
-      adUseCfgScale: sdConfig.adUseCfgScale,
-      adCfgScale: sdConfig.adCfgScale,
-      adUseSampler: sdConfig.adUseSampler,
-      adSampler: sdConfig.adSampler,
-      adScheduler: sdConfig.adScheduler,
-      adNegativePrompt: sdConfig.adNegativePrompt,
-      adUseNoiseMultiplier: sdConfig.adUseNoiseMultiplier,
-      adNoiseMultiplier: sdConfig.adNoiseMultiplier,
-      // 【重点标记 - Furry/拟人生物面部识别扩展（2026-08-07）】
-      // 仅 YOLO-World 系列模型生效，透传到 sdGenerationService 条件写入 ad_model_classes
-      adModelClasses: sdConfig.adModelClasses,
-      // NL 模型相关（Spec: integrate-nl-driven-sd-models）
-      modelType: sdConfig.modelType,
-      // 【2026-07-29 新增 - 用户自定义尺寸】使用弹窗内 SizeSelector 选择的尺寸，
-      // 替代全局 sdConfig.txt2imgWidth/Height。每次生成独立应用，不写入全局设置。
-      txt2imgWidth: selectedSize.width,
-      txt2imgHeight: selectedSize.height,
-      // img2img 路径尺寸覆盖：传入 width/height 后 calculateImg2ImgDimensions
-      // 将跳过宽高比推导，直接使用用户指定尺寸（two-step 模式按比例缩放中间步骤）
-      width: selectedSize.width,
-      height: selectedSize.height,
-      // 【重点标记 - 按角色独立存储 LoRA（2026-07-29 bug 修复）】
-      // 使用角色卡专属的 LoRA 列表，而非全局 setting.sdWebui.selectedLoras，
-      // 确保每个角色使用各自的 LoRA 模型，杜绝跨角色污染。
-      selectedLoras: characterLoras,
-      // 【Hires.fix 修复与放大】透传高分辨率修复参数
-      hrFixEnabled: sdConfig.hrFixEnabled,
-      hrUpscaler: sdConfig.hrUpscaler,
-      hrSteps: sdConfig.hrSteps,
-      hrScale: sdConfig.hrScale,
-      hrDenoisingStrength: sdConfig.hrDenoisingStrength,
-      hrPrompt: sdConfig.hrPrompt,
-      hrNegativePrompt: sdConfig.hrNegativePrompt,
-      hrCfg: sdConfig.hrCfg,
-      hrSamplerName: sdConfig.hrSamplerName,
-      hrScheduler: sdConfig.hrScheduler,
-      img2imgExtraNoise: sdConfig.img2imgExtraNoise,
-      initialNoiseMultiplier: sdConfig.initialNoiseMultiplier,
-      // 【img2img 高清模式】透传模式选择（direct / two-step）
-      img2imgHiresMode: sdConfig.img2imgHiresMode,
-    };
-
-
-  }, [sdConfig, enabledTraitTexts, effectiveTraits, characterLoras, selectedSize, selectedCameraAngle, mode]);
+    return buildSdOptionsFromConfig({
+      sdConfig,
+      enabledTraitTexts,
+      effectiveTraits,
+      characterLoras,
+      selectedSize,
+      selectedCameraAngle,
+    });
+  }, [sdConfig, enabledTraitTexts, effectiveTraits, characterLoras, selectedSize, selectedCameraAngle]);
 
   // ====== 保存生成的素材（非表情模式） ======
   // 【重点标记 - assetId 生成规则】
@@ -1142,10 +1032,16 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
     setBatchSummary(null);
     setBatchStage('generating');
 
-    // 1. 为全部 31 个预置情绪构建提示词
-    const emotions = EMOTION_PRESETS.map(({ key, label }) =>
-      buildEmotionPrompt(key, label),
-    );
+    // 1. 为全部预置情绪 + 自定义情绪构建提示词（Spec: enhance-custom-emotion-system）
+    const customEmotions = manifest?.customEmotions ?? [];
+    const emotions = [
+      ...EMOTION_PRESETS.map(({ key, label }) =>
+        buildEmotionPrompt(key, label),
+      ),
+      ...customEmotions.map(({ key, label }) =>
+        buildEmotionPrompt(key, label),
+      ),
+    ];
 
     // 2. 注册进度监听
     try {
@@ -1158,11 +1054,15 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
             const dataUrl = data.imageBase64.startsWith(PNG_DATA_URI_PREFIX)
               ? data.imageBase64
               : PNG_DATA_URI_PREFIX + data.imageBase64;
+            // 判断是否为自定义情绪（Spec: enhance-custom-emotion-system）
+            const isCustom = !EMOTION_PRESETS.some((e) => e.key === data.emotionKey);
+            const customEmotion = customEmotions.find((e) => e.key === data.emotionKey);
             saveExpression(
               characterCardId,
               data.emotionKey,
               dataUrl,
-              false, // 预置情绪 isCustom=false
+              isCustom,
+              customEmotion?.label,
             ).catch((e) => {
               console.warn(
                 '[AssetGenerateModal] 批量生成中保存表情失败:',
@@ -1231,6 +1131,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
     saveExpression,
     loadExpressions,
     onGenerated,
+    manifest,
   ]);
 
   // ====== 批量生成：取消 ======
@@ -1315,7 +1216,11 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
           endpoint: sdConfig.endpoint,
           prompt: promptToUse,
           negativePrompt: negativePromptToUse,
-          options: buildSdOptions(),
+          // 【Spec: enhance-conversation-image-auditability / Task 3】来源标识，落盘日志可据此区分素材管理图片
+          options: {
+            ...buildSdOptions(),
+            sourceContext: { source: 'asset-manager' as const },
+          },
         });
       }
 
@@ -1992,9 +1897,10 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
 
   // ====== 渲染辅助 ======
 
-  /** 当前正在生成的情绪标签（从预置列表查找） */
+  /** 当前正在生成的情绪标签（从预置/自定义列表查找） */
   const currentEmotionLabel = batchProgress
     ? EMOTION_PRESETS.find((e) => e.key === batchProgress.emotionKey)?.label ||
+      manifest?.customEmotions?.find((e) => e.key === batchProgress.emotionKey)?.label ||
       batchProgress.emotionKey
     : '';
 
@@ -2002,6 +1908,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
   const singleEmotionLabel =
     targetEmotionLabel ||
     EMOTION_PRESETS.find((e) => e.key === targetEmotionKey)?.label ||
+    manifest?.customEmotions?.find((e) => e.key === targetEmotionKey)?.label ||
     targetEmotionKey ||
     '';
 
@@ -3098,13 +3005,14 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
   const renderBatchMode = () => {
     // 生成完成（或取消）后的汇总
     if (batchStage === 'complete' || batchStage === 'cancelled') {
+      const totalEmotions = EMOTION_PRESETS.length + (manifest?.customEmotions?.length ?? 0);
       const summary = batchSummary || {
-        total: EMOTION_PRESETS.length,
+        total: totalEmotions,
         success: stats.success,
         failed: stats.failed,
         cancelled:
           batchStage === 'cancelled'
-            ? EMOTION_PRESETS.length - stats.success - stats.failed
+            ? totalEmotions - stats.success - stats.failed
             : 0,
       };
       return (

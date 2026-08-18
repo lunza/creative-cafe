@@ -285,9 +285,9 @@ const ExpressionTabContent: React.FC<ExpressionTabContentProps> = ({
 
   // ====== 添加自定义情绪表单状态 ======
   const [addCustomOpen, setAddCustomOpen] = useState<boolean>(false);
-  const [newCustomKey, setNewCustomKey] = useState<string>('');
   const [newCustomLabel, setNewCustomLabel] = useState<string>('');
-  const [addCustomLoading, setAddCustomLoading] = useState<boolean>(false);
+  // 一键生成流程 loading（AI 生成 + 保存合并为一个动作）
+  const [autoGenerating, setAutoGenerating] = useState<boolean>(false);
 
   // ====== 全尺寸预览状态（与 AssetGridTabContent / ThreeViewTabContent 一致：缩略图 hover 眼睛图标预览） ======
   // 支持上一张/下一张导航：previewIndex 跟踪当前预览位置，-1 = 关闭
@@ -438,62 +438,93 @@ const ExpressionTabContent: React.FC<ExpressionTabContentProps> = ({
   // ====== 添加自定义情绪 ======
 
   const handleAddCustomOpen = useCallback(() => {
-    setNewCustomKey('');
     setNewCustomLabel('');
     setAddCustomOpen(true);
   }, []);
 
   const handleAddCustomCancel = useCallback(() => {
     setAddCustomOpen(false);
-    setNewCustomKey('');
     setNewCustomLabel('');
   }, []);
 
   /**
-   * 提交添加自定义情绪：
-   * - 校验 key 格式（^[a-z][a-z0-9_]*$）
-   * - 校验与预置/已有自定义 keys 不冲突
-   * - 调用 addCustomEmotion，主进程负责 manifest.customEmotions 持久化
+   * 一键添加自定义情绪：
+   * 用户仅需输入中文情绪词，系统自动调用 AI 生成英文键 + SD 提示词 + NL 描述并保存。
+   * - 校验中文标签非空
+   * - 调用 ai.generateEmotionPrompts → 获取 emotionKey + positive + nlPrompt
+   * - 校验 emotionKey 格式 + 去重（冲突时追加后缀）
+   * - 组装 prompts 并调用 addCustomEmotion 保存
+   * - 失败时保持弹窗打开，用户可重试
    */
   const handleAddCustomSubmit = useCallback(async () => {
-    const key = newCustomKey.trim();
     const label = newCustomLabel.trim();
 
-    if (!KEY_PATTERN.test(key)) {
-      message.warning(
-        '英文键需匹配 ^[a-z][a-z0-9_]*$（小写字母开头，仅含小写字母/数字/下划线）',
-      );
-      return;
-    }
     if (!label) {
-      message.warning('请填写中文标签');
-      return;
-    }
-    if (EMOTION_PRESETS.some((e) => e.key === key)) {
-      message.warning(`键 "${key}" 与预置情绪重复`);
-      return;
-    }
-    if (manifest?.customEmotions?.some((e) => e.key === key)) {
-      message.warning(`键 "${key}" 已存在`);
+      message.warning('请输入情绪关键词');
       return;
     }
     if (!characterCardId) return;
 
-    setAddCustomLoading(true);
+    setAutoGenerating(true);
     try {
-      const result = await addCustomEmotion(characterCardId, key, label);
+      // 1. 收集已存在的情绪键（预置 + 自定义），传给 AI 避免冲突
+      const existingKeys = [
+        ...EMOTION_PRESETS.map((e) => e.key),
+        ...(manifest?.customEmotions?.map((e) => e.key) ?? []),
+      ];
+
+      // 2. 调用 AI 生成英文键 + SD 提示词 + NL 描述（告知 AI 已占用键）
+      const aiResult = await window.electronAPI.ai.generateEmotionPrompts({
+        emotionLabel: label,
+        existingKeys,
+      });
+
+      if (!aiResult?.success || !aiResult.positive || !aiResult.emotionKey) {
+        message.error(aiResult?.error || 'AI 生成失败，请重试');
+        return;
+      }
+
+      // 3. 校验 emotionKey 格式 + 去重（AI 已知避让，此处为二次防御）
+      let finalKey = aiResult.emotionKey;
+      if (!KEY_PATTERN.test(finalKey)) {
+        message.error('AI 生成的英文键格式不合规，请重试');
+        return;
+      }
+      // 二次防御：若仍冲突，追加短数字后缀（极低概率）
+      if (EMOTION_PRESETS.some((e) => e.key === finalKey) ||
+          manifest?.customEmotions?.some((e) => e.key === finalKey)) {
+        let suffix = 2;
+        const baseKey = finalKey;
+        while (
+          EMOTION_PRESETS.some((e) => e.key === `${baseKey}${suffix}`) ||
+          manifest?.customEmotions?.some((e) => e.key === `${baseKey}${suffix}`)
+        ) {
+          suffix++;
+        }
+        finalKey = `${baseKey}${suffix}`;
+        console.warn('[AssetManagerModal] AI key still conflicts after avoidance, using fallback:', finalKey);
+      }
+
+      // 3. 组装 prompts 并保存
+      const prompts = {
+        positive: aiResult.positive,
+        nlPrompt: aiResult.nlPrompt || `${label} expression`,
+      };
+
+      const result = await addCustomEmotion(characterCardId, finalKey, label, prompts);
       if (result.success) {
-        message.success('自定义情绪已添加');
+        message.success(`自定义情绪已添加（${finalKey}）`);
         setAddCustomOpen(false);
-        setNewCustomKey('');
         setNewCustomLabel('');
       } else {
         message.error(result.error || '添加自定义情绪失败');
       }
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '添加自定义情绪异常');
     } finally {
-      setAddCustomLoading(false);
+      setAutoGenerating(false);
     }
-  }, [newCustomKey, newCustomLabel, manifest, characterCardId, addCustomEmotion]);
+  }, [newCustomLabel, characterCardId, manifest, addCustomEmotion]);
 
   // ====== AI 生成入口（Task 11 接入 AssetGenerateModal） ======
 
@@ -990,16 +1021,18 @@ const ExpressionTabContent: React.FC<ExpressionTabContentProps> = ({
         onCancel={handleCropperCancel}
       />
 
-      {/* 添加自定义情绪弹窗 */}
+      {/* 添加自定义情绪弹窗（简化流程：用户仅输入中文词，AI 自动生成全部字段） */}
       <Modal
         title="添加自定义情绪"
         open={addCustomOpen}
-        onCancel={handleAddCustomCancel}
+        onCancel={autoGenerating ? undefined : handleAddCustomCancel}
         onOk={handleAddCustomSubmit}
-        confirmLoading={addCustomLoading}
+        confirmLoading={autoGenerating}
         okText="添加"
         cancelText="取消"
-        width={460}
+        width={480}
+        maskClosable={!autoGenerating}
+        keyboard={!autoGenerating}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '8px 0' }}>
           <div>
@@ -1011,32 +1044,29 @@ const ExpressionTabContent: React.FC<ExpressionTabContentProps> = ({
                 color: 'var(--text-secondary, #94a3b8)',
               }}
             >
-              英文键（仅小写字母/数字/下划线，字母开头）
-            </label>
-            <Input
-              value={newCustomKey}
-              onChange={(e) => setNewCustomKey(e.target.value)}
-              placeholder="如 shyness"
-              autoFocus
-            />
-          </div>
-          <div>
-            <label
-              style={{
-                display: 'block',
-                marginBottom: 6,
-                fontSize: 12,
-                color: 'var(--text-secondary, #94a3b8)',
-              }}
-            >
-              中文标签
+              情绪关键词（中文）
             </label>
             <Input
               value={newCustomLabel}
               onChange={(e) => setNewCustomLabel(e.target.value)}
-              placeholder="如 害羞"
+              placeholder="如 热恋、得意、害羞"
+              autoFocus
+              disabled={autoGenerating}
+              onPressEnter={handleAddCustomSubmit}
             />
           </div>
+
+          {autoGenerating && (
+            <div style={{ textAlign: 'center', padding: '20px 0' }}>
+              <Spin tip="AI 正在生成情绪提示词..." />
+            </div>
+          )}
+
+          {!autoGenerating && (
+            <div style={{ padding: '8px 12px', background: 'var(--chat-bubble-assistant-bg, rgba(30, 30, 46, 0.6))', borderRadius: 4, fontSize: 12, color: 'var(--text-secondary, #94a3b8)' }}>
+              点击"添加"后，系统将自动调用 AI 生成英文键名、SD 提示词和自然语言描述，无需手动输入。
+            </div>
+          )}
         </div>
       </Modal>
 
@@ -2245,7 +2275,7 @@ const ThreeViewTabContent: React.FC<ThreeViewTabContentProps> = ({
               )}
             </div>
           </div>
-          {/* 裸体版三视图（生成时自动过滤 clothing 分类特征） */}
+          {/* 裸体版三视图（生成时自动过滤上装/下装/内衣分类特征，配饰保留） */}
           <div>
             <div
               style={{
@@ -2266,7 +2296,7 @@ const ThreeViewTabContent: React.FC<ThreeViewTabContentProps> = ({
                   marginLeft: 8,
                 }}
               >
-                生成时自动过滤「衣物配饰」分类特征
+                生成时自动过滤上装/下装/内衣分类特征（配饰保留）
               </span>
             </div>
             <div

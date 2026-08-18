@@ -415,6 +415,206 @@
   opacity: 0.5;
 }
 
+.chat-msg-image-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 4px;
+}
+
+.chat-msg-generated-image {
+  max-width: 100%;
+  max-height: 400px;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.chat-msg-image-label {
+  font-size: 11px;
+  color: var(--chat-action-text, #6b7280);
+  font-style: italic;
+}
+
+/* ============ 图片附属区域（Spec: enhance-conversation-image-bubble / Task 4-8） ============
+   渲染在文本气泡内部、文本内容下方、同一 chat-msg-bubble 容器内
+   支持阶段状态占位 / 错误状态 / 图片显示 / 历史导航 / 删除 / 重新生成
+*/
+.chat-msg-image-attachment {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--chat-bubble-assistant-border, rgba(255, 255, 255, 0.08));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 阶段状态占位（SubTask 5.1, 5.3） */
+.chat-msg-image-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 120px;
+  padding: 20px;
+  border-radius: 10px;
+  background: var(--chat-edit-bg, rgba(0, 0, 0, 0.25));
+  border: 1px dashed var(--chat-bubble-assistant-border, rgba(255, 255, 255, 0.1));
+  color: var(--text-secondary, rgba(255, 255, 255, 0.65));
+  font-size: 13px;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.chat-msg-image-phase-text {
+  font-size: 13px;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.65));
+  letter-spacing: 0.5px;
+  animation: chat-msg-image-phase-fade 0.4s ease;
+}
+
+@keyframes chat-msg-image-phase-fade {
+  0% { opacity: 0; transform: translateY(4px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+/* 错误状态样式（SubTask 5.2） */
+.chat-msg-image-placeholder.chat-msg-image-error {
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: var(--error-color, #ef4444);
+}
+
+.chat-msg-image-retry-btn {
+  margin-top: 4px;
+  padding: 4px 14px;
+  font-size: 12px;
+  color: var(--primary-color, #6366f1);
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.chat-msg-image-retry-btn:hover {
+  background: rgba(99, 102, 241, 0.2);
+  border-color: rgba(99, 102, 241, 0.5);
+}
+
+/* 图片显示行：左导航 + 图片 + 右导航（SubTask 7.1） */
+.chat-msg-image-display-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 导航按钮（SubTask 7.1） */
+.chat-msg-image-nav {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--chat-bubble-assistant-border, rgba(255, 255, 255, 0.12));
+  background: var(--chat-edit-bg, rgba(0, 0, 0, 0.25));
+  color: var(--text-secondary, rgba(255, 255, 255, 0.65));
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 12px;
+  padding: 0;
+}
+
+.chat-msg-image-nav:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.15);
+  border-color: rgba(99, 102, 241, 0.4);
+  color: var(--primary-color, #818cf8);
+  transform: scale(1.08);
+}
+
+.chat-msg-image-nav:disabled {
+  cursor: not-allowed;
+  opacity: 0.3;
+}
+
+/* 图片本体容器 */
+.chat-msg-image-display {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--chat-edit-bg, rgba(0, 0, 0, 0.2));
+  transition: opacity 0.3s ease;
+}
+
+.chat-msg-image-display img {
+  max-width: 100%;
+  max-height: 400px;
+  border-radius: 8px;
+  object-fit: contain;
+  animation: chat-msg-image-fade-in 0.4s ease;
+}
+
+@keyframes chat-msg-image-fade-in {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+.chat-msg-image-loading-text {
+  padding: 20px;
+  color: var(--text-secondary, #94a3b8);
+  font-size: 13px;
+}
+
+/* 操作按钮行：计数 + 重生成 + 删除（SubTask 7.2, 8.1, 6.1） */
+.chat-msg-image-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 4px;
+}
+
+.chat-msg-image-counter {
+  font-size: 11px;
+  color: var(--text-tertiary, rgba(255, 255, 255, 0.45));
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.5px;
+  margin-right: auto;
+}
+
+.chat-msg-image-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid var(--chat-bubble-assistant-border, rgba(255, 255, 255, 0.1));
+  background: transparent;
+  color: var(--chat-action-text, #9ca3af);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 13px;
+}
+
+.chat-msg-image-action-btn:hover:not(:disabled) {
+  background: var(--chat-action-hover, rgba(255, 255, 255, 0.1));
+  color: var(--text-primary, #e2e8f0);
+  border-color: var(--chat-bubble-assistant-border-hover, rgba(255, 255, 255, 0.2));
+}
+
+.chat-msg-image-action-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
 /* 响应式：小屏幕适配 */
 @media (max-width: 480px) {
   .suggested-option-item {
@@ -436,4 +636,278 @@
   .suggested-option-text {
     font-size: 12px;
   }
+}
+
+/* ============ 图片下方标签展示面板（Spec: enhance-conversation-image-auditability / Task 6） ============
+   渲染在 chat-msg-image-actions 下方，展示当前历史项的 usedTags / usedPrompt / usedNegativePrompt / usedLoras 快照
+   样式遵循 ui-variables.css 既有 CSS 变量，兼容亮/暗双主题
+*/
+
+.chat-msg-image-tags-panel {
+  margin-top: 8px;
+  border-top: 1px dashed var(--border-base, rgba(255, 255, 255, 0.1));
+  padding-top: 8px;
+}
+
+.chat-msg-image-tags-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 4px 0;
+  color: var(--text-secondary, #94a3b8);
+  font-size: 12px;
+  width: 100%;
+  text-align: left;
+}
+
+.chat-msg-image-tags-panel-header:hover {
+  color: var(--text-primary, #e2e8f0);
+}
+
+.chat-msg-image-tags-panel-header .ant-tag {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 0 6px;
+  line-height: 18px;
+  background: var(--bg-elevated, rgba(255, 255, 255, 0.06));
+  border-color: var(--border-base, rgba(255, 255, 255, 0.1));
+  color: var(--text-tertiary, #6b7280);
+}
+
+.chat-msg-image-tags-panel-body {
+  margin-top: 6px;
+}
+
+.chat-msg-image-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.chat-msg-image-tag {
+  font-size: 11px;
+  padding: 1px 6px;
+  margin: 0;
+  background: var(--bg-elevated, rgba(255, 255, 255, 0.06));
+  border-color: var(--border-base, rgba(255, 255, 255, 0.1));
+  color: var(--text-secondary, #94a3b8);
+}
+
+.chat-msg-image-tag-weight {
+  color: var(--color-warning, #f59e0b);
+  font-weight: 600;
+  margin-left: 2px;
+}
+
+/* AI 已移除标签分区（Spec: add-ai-trait-optimization-for-image-gen） */
+.chat-msg-image-removed-tags {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.1);
+}
+
+.chat-msg-image-removed-tags-label {
+  font-size: 11px;
+  color: var(--text-tertiary, #94a3b8);
+  margin-right: 4px;
+}
+
+.chat-msg-image-removed-tags-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.chat-msg-image-removed-tag {
+  font-size: 11px !important;
+  color: var(--text-tertiary, #6b7280) !important;
+  background: transparent !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  text-decoration: line-through;
+  opacity: 0.5;
+  cursor: help;
+}
+
+/* ============ AI 标签补充分区（Spec: add-ai-tag-supplement-after-removal / Task 5） ============
+   与 removedTags（灰色删除线）形成视觉对比，使用绿色高亮表示新增标签。
+   样式遵循 ui-variables.css 既有 CSS 变量，兼容亮/暗双主题。 */
+.chat-msg-image-added-tags-label {
+  font-size: 11px;
+  color: var(--color-success, #52c41a);
+  font-weight: 500;
+  margin-right: 4px;
+}
+
+.chat-msg-image-added-tags-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.chat-msg-image-added-tag {
+  font-size: 11px !important;
+  color: var(--color-success, #52c41a) !important;
+  background: var(--color-success-light, rgba(82, 196, 26, 0.12)) !important;
+  border-color: var(--color-success, rgba(82, 196, 26, 0.4)) !important;
+  cursor: help;
+}
+
+/* ============ AI 标签优化反馈分区（Spec: add-ai-trait-optimization-for-image-gen / 反馈可见性修复） ============
+   解决：原设计仅 removedTags.length>0 时渲染分区，导致 AI 运行但未删除标签 / 调用失败时
+   用户看不到任何反馈。现基于 aiOptimization 元数据三态渲染，给出明确反馈。
+   样式遵循 ui-variables.css 既有 CSS 变量，兼容亮/暗双主题。 */
+
+/* 头部徽标（面板折叠时也可见，提示本次生成执行了 AI 优化） */
+.chat-msg-image-ai-badge {
+  margin-left: 4px !important;
+  font-size: 10px !important;
+  padding: 0 5px !important;
+  line-height: 16px !important;
+  border-radius: 8px !important;
+}
+
+.chat-msg-image-ai-badge-success {
+  background: var(--color-success-light, rgba(82, 196, 26, 0.12)) !important;
+  border-color: var(--color-success, #52c41a) !important;
+  color: var(--color-success, #52c41a) !important;
+}
+
+.chat-msg-image-ai-badge-no-removal {
+  background: var(--bg-elevated, rgba(255, 255, 255, 0.06)) !important;
+  border-color: var(--border-base, rgba(255, 255, 255, 0.15)) !important;
+  color: var(--text-tertiary, #94a3b8) !important;
+}
+
+.chat-msg-image-ai-badge-failed {
+  background: var(--color-error-light, rgba(245, 34, 45, 0.12)) !important;
+  border-color: var(--color-error, #f5222d) !important;
+  color: var(--color-error, #f5222d) !important;
+}
+
+/* 分区容器（展开后详情） */
+/* 【Spec: add-ai-tag-supplement-after-removal / Task 5】改用 flex-direction: column，
+   使 success 状态下 removedTags 与 addedTags 两组「标签 + 列表」纵向堆叠，
+   避免两组标签横向挤在同一行造成排版混乱；no-removal / failed 单元素状态不受影响。 */
+.chat-msg-image-ai-optimization {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.chat-msg-image-ai-optimization-success {
+  background: var(--color-success-light, rgba(82, 196, 26, 0.06));
+  border: 1px solid var(--color-success, rgba(82, 196, 26, 0.3));
+}
+
+.chat-msg-image-ai-optimization-no-removal {
+  background: var(--bg-elevated, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border-base, rgba(255, 255, 255, 0.08));
+}
+
+.chat-msg-image-ai-optimization-failed {
+  background: var(--color-error-light, rgba(245, 34, 45, 0.06));
+  border: 1px solid var(--color-error, rgba(245, 34, 45, 0.3));
+}
+
+/* no-removal 提示文案 */
+.chat-msg-image-ai-optimization-info {
+  color: var(--text-tertiary, #94a3b8);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chat-msg-image-ai-optimization-info .anticon {
+  color: var(--color-success, #52c41a);
+}
+
+/* failed 提示文案 */
+.chat-msg-image-ai-optimization-error {
+  color: var(--color-error, #f5222d);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: help;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.chat-msg-image-prompt-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 4px 0;
+  color: var(--text-tertiary, #6b7280);
+  font-size: 11px;
+}
+
+.chat-msg-image-prompt-toggle:hover {
+  color: var(--text-secondary, #94a3b8);
+}
+
+.chat-msg-image-prompt-block {
+  margin-top: 6px;
+}
+
+.chat-msg-image-prompt-label {
+  font-size: 11px;
+  color: var(--text-tertiary, #6b7280);
+  margin-bottom: 2px;
+  margin-top: 6px;
+}
+
+.chat-msg-image-prompt {
+  background: var(--bg-elevated, rgba(0, 0, 0, 0.3));
+  border: 1px solid var(--border-base, rgba(255, 255, 255, 0.08));
+  border-radius: 4px;
+  padding: 8px;
+  margin: 0;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 11px;
+  color: var(--text-secondary, #94a3b8);
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-x: auto;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.chat-msg-image-loras {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.chat-msg-image-loras .ant-tag {
+  font-size: 11px;
+  padding: 1px 6px;
+  margin: 0;
+  background: var(--bg-elevated, rgba(255, 255, 255, 0.06));
+  border-color: var(--border-base, rgba(255, 255, 255, 0.1));
+  color: var(--text-secondary, #94a3b8);
+}
+
+.chat-msg-image-tags-empty {
+  font-size: 11px;
+  color: var(--text-tertiary, #6b7280);
+  font-style: italic;
+  padding: 4px 0;
 }

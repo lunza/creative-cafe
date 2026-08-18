@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
 import { getUserDataPath } from '../utils/appPath';
+import type { CharacterTraitItem } from '../../shared/types/characterTrait.types';
 
 interface ChatMessage {
   id: string;
@@ -23,6 +24,16 @@ interface ChatData {
 interface TestChatData extends ChatData {
   characterCardId: string;
   characterCardName: string;
+  /**
+   * 当前对话的临时特征覆盖（Spec: enhance-conversation-image-auditability / Task 7）。
+   *
+   * - 仅随对话持久化到 chats/{characterCardName}.json，不写入角色卡 traits.json manifest
+   * - 存在时 executeImageGeneration 优先从此读取，而非 characterTraitStore.traits
+   * - 未设置（undefined）时回退到角色卡 traits
+   * - 由渲染进程 characterChatStore 的 setSessionTraits / resetSessionTraits /
+   *   updateSessionTrait / addSessionTrait / removeSessionTrait 维护
+   */
+  sessionTraits?: CharacterTraitItem[];
 }
 
 interface CacheEntry {
@@ -139,7 +150,7 @@ class ChatStorageService {
   async getTestChat(creativeId: string, characterCardId: string): Promise<TestChatData | null> {
     await this.initDirectories();
     await this.migrateOldTestDirectory();
-    
+
     const cacheKey = this.getCacheKey('chat', creativeId, characterCardId);
     const cached = this.getFromCache(cacheKey);
     if (cached) {
@@ -147,12 +158,12 @@ class ChatStorageService {
     }
 
     const shortId = this.generateShortId(creativeId);
-    
+
     try {
       // First try to find by scanning directory for matching file
       const files = await fs.readdir(this.baseDir);
       let filePath: string | null = null;
-      
+
       for (const file of files) {
         if (!file.endsWith('.json')) continue;
         const filePathFull = path.join(this.baseDir, file);
@@ -161,6 +172,12 @@ class ChatStorageService {
           const chatData = JSON.parse(data);
           if (chatData.creativeId === creativeId && chatData.characterCardId === characterCardId) {
             filePath = filePathFull;
+            // 【Spec: enhance-conversation-image-auditability / Task 7.8】
+            // 安全映射 sessionTraits：每个 trait 浅拷贝为新对象，避免跨 IPC 边界共享引用
+            // 导致后续编辑污染缓存或 characterTraitStore state。
+            if (Array.isArray(chatData.sessionTraits)) {
+              chatData.sessionTraits = chatData.sessionTraits.map((t: any) => ({ ...t }));
+            }
             const chatDataWithCache: TestChatData = chatData;
             this.setCache(cacheKey, chatDataWithCache);
             return chatDataWithCache;
@@ -169,7 +186,7 @@ class ChatStorageService {
           continue;
         }
       }
-      
+
       return null;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -236,19 +253,24 @@ class ChatStorageService {
   async getAllTestChats(): Promise<TestChatData[]> {
     await this.initDirectories();
     await this.migrateOldTestDirectory();
-    
+
     const chats: TestChatData[] = [];
 
     try {
       const files = await fs.readdir(this.baseDir);
-      
+
       for (const file of files) {
         if (!file.endsWith('.json')) continue;
-        
+
         try {
           const filePath = path.join(this.baseDir, file);
           const data = await fs.readFile(filePath, 'utf8');
           const chatData: TestChatData = JSON.parse(data);
+          // 【Spec: enhance-conversation-image-auditability / Task 7.8】
+          // 安全映射 sessionTraits（与 getTestChat 保持一致，避免共享引用）
+          if (Array.isArray(chatData.sessionTraits)) {
+            chatData.sessionTraits = chatData.sessionTraits.map((t: any) => ({ ...t }));
+          }
           chats.push(chatData);
         } catch (error) {
           console.warn('[ChatStorage] Failed to read chat file:', file, error);

@@ -185,7 +185,7 @@ export function registerSdGenerationHandlers() {
           negativePrompt: args.negativePrompt,
           options: args.options,
         });
-        return result; // { success, imageBase64?, error?, warning? }
+        return result; // { success, imageBase64?, error?, warning?, finalPrompt? }（Spec: enhance-conversation-image-auditability / Task 4.4 透传 finalPrompt）
       } catch (error) {
         console.error('[sd:generateTxt2Img] failed:', error);
         return {

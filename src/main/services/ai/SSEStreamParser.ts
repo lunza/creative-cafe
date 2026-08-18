@@ -64,17 +64,20 @@ export class SSEStreamParser {
   }
 
   /**
-   * 解析 SSE 单行数据，返回详细字段（content / tool_calls delta / finish_reason）。
+   * 解析 SSE 单行数据，返回详细字段（content / reasoning_content / tool_calls delta / finish_reason）。
    *
-   * 【F1 修复 - 工具调用全链路注入】
-   * parseSSELine 仅返回 content 字符串，无法承载 tool_calls delta 与 finish_reason。
-   * 本方法为详细版，供 parseStream 累积 tool_calls 与 finish_reason 使用。
+   * 【重点标记 - reasoning_content 兼容性修复】
+   * DeepSeek 等推理模型在流式响应中使用 `delta.reasoning_content` 字段输出推理/思考过程，
+   * `delta.content` 字段输出最终回复。部分模型在推理阶段 `content` 为 null，
+   * 实际内容（含 <<<EXPRESSION>>> / <<<SUGGESTED_OPTIONS>>> 等标签）可能出现在 reasoning_content 中。
+   * 此处同时提取两个字段，供上层 parseStream 决定回退策略。
    *
    * @param line 单行 SSE 数据
-   * @returns 包含 content / toolCallsDelta / finishReason 的对象；非 data 行或解析失败返回 null
+   * @returns 包含 content / reasoningContent / toolCallsDelta / finishReason 的对象；非 data 行或解析失败返回 null
    */
   private parseSSELineDetailed(line: string): {
     content: string | null;
+    reasoningContent: string | null;
     toolCallsDelta: any[] | null;
     finishReason: string | null;
   } | null {
@@ -90,9 +93,11 @@ export class SSEStreamParser {
       if (!choice) return null;
 
       const content = choice.delta?.content ?? choice.message?.content ?? null;
+      // 【重点标记】提取 reasoning_content（DeepSeek/QwQ 等推理模型专用字段）
+      const reasoningContent = choice.delta?.reasoning_content ?? choice.message?.reasoning_content ?? null;
       const toolCallsDelta = choice.delta?.tool_calls ?? null;
       const finishReason = choice.finish_reason ?? null;
-      return { content, toolCallsDelta, finishReason };
+      return { content, reasoningContent, toolCallsDelta, finishReason };
     } catch {
       return null;
     }
@@ -200,6 +205,7 @@ export class SSEStreamParser {
 
     const decoder = new TextDecoder('utf-8');
     let fullContent = '';
+    let fullReasoningContent = '';
     let buffer = '';
     // 【F1 修复】累积 tool_calls 分片与 finish_reason
     const toolCallsAccumulator: any[] = [];
@@ -271,6 +277,10 @@ export class SSEStreamParser {
               fullContent += detailed.content;
               onChunk(detailed.content);
             }
+            // 【重点标记 - reasoning_content 兼容性】累积推理内容，用于 content 为空时的回退
+            if (detailed.reasoningContent) {
+              fullReasoningContent += detailed.reasoningContent;
+            }
             if (detailed.toolCallsDelta) {
               this.mergeToolCallsDelta(toolCallsAccumulator, detailed.toolCallsDelta);
             }
@@ -295,6 +305,12 @@ export class SSEStreamParser {
       if (fallbackContent.length > fullContent.length) {
         fullContent = fallbackContent;
       }
+    }
+
+    // 【重点标记 - reasoning_content 兼容性】当 content 为空或过短时，使用 reasoning_content 作为回退
+    // 适用于直连 DeepSeek API 等使用独立 reasoning_content 字段的模型
+    if (fullContent.length < 100 && fullReasoningContent.length > 0) {
+      fullContent = fullReasoningContent;
     }
 
     return {
