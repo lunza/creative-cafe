@@ -101,6 +101,9 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
     handleMemoryTableAutoOrganizeToggle,
     handleMemoryTableOrganizeModeChange,
     handleMemoryTableTemplateAssociate,
+    // 手动触发表格整理（Spec: add-manual-table-organize-button / Task 2）
+    manualOrganizing,
+    handleManualOrganize,
     tokenManagementConfig,
     handleTokenManagementConfigChange,
     handleStopOrganizing,
@@ -1416,6 +1419,8 @@ const CharacterDialogueChat: React.FC<CharacterDialogueChatProps> = ({
         onMemoryTableAutoOrganizeToggle={handleMemoryTableAutoOrganizeToggle}
         onMemoryTableOrganizeModeChange={handleMemoryTableOrganizeModeChange}
         onMemoryTableTemplateAssociate={handleMemoryTableTemplateAssociate}
+        onMemoryTableManualOrganize={handleManualOrganize}
+        memoryTableManualOrganizing={manualOrganizing}
         onTokenManagementConfigChange={handleTokenManagementConfigChange}
         onSaveConfig={saveConfig}
         imageGenEnabled={imageGenEnabled}

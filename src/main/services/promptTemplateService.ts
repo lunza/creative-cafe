@@ -94,6 +94,17 @@ class PromptTemplateService {
 
         // 增量合并：补充默认模板中有但用户文件中缺失的新模板
         this.mergeNewDefaultTemplates();
+
+        // 【内容迁移 - Spec: fix-dialogue-worldbook-association-and-tag-output】
+        // continuation 模板白名单补充表情/选项标签豁免（已有安装的持久化副本
+        // 不会经 mergeNewDefaultTemplates 更新，需按锚点做非破坏性内容迁移）
+        this.migrateContinuationWhitelist();
+
+        // 【内容迁移 - Spec: fix-character-card-field-scope-flash-models】
+        // 角色卡三模板（translate/polish/generate）补充目标字段作用域声明：
+        // Flash 模型（glm5.3-flash/qwen3.8-flash 等）会忽略"仅处理目标字段"要求，
+        // 输出完整角色卡内容；存量副本需迁移到含作用域约束的新种子
+        this.migrateCharacterCardFieldScope();
       } else {
         // 文件不存在，使用默认模板
         this.loadDefaults();
@@ -123,6 +134,190 @@ class PromptTemplateService {
     });
     if (added) {
       this.persistTemplates();
+    }
+  }
+
+  /**
+   * 内容迁移：continuation 模板白名单补充表情/选项标签豁免。
+   *
+   * 【Spec: fix-dialogue-worldbook-association-and-tag-output / Task 3.1】
+   * 背景：mergeNewDefaultTemplates 只补充"新增" moduleId，已有安装持久化副本中的
+   * creative-chat.continuation 永远不会获得白名单更新——导致【严格禁止】"禁止添加任何
+   * 标签"与表情提示词（对续写同样注入）指令矛盾，思考型模型（qwen3.8 等）下标签
+   * 输出失败。
+   * 策略（非破坏性，保留用户其他自定义）：
+   *  - 已含 <<<EXPRESSION>>> → 视为已迁移/用户已自行添加，跳过
+   *  - 找不到锚点行 → 用户深度自定义，不动
+   *  - 否则在锚点行前插入两条白名单例外并持久化
+   */
+  private migrateContinuationWhitelist(): void {
+    try {
+      const tpl = this.templates.get('creative-chat.continuation');
+      const part = tpl?.parts?.find(p => p.id === 'cc-continuation-instructions');
+      if (!tpl || !part || typeof (part as any).content !== 'string') return;
+      const content = (part as any).content as string;
+      if (content.includes('<<<EXPRESSION>>>')) return; // 已迁移或用户已自行添加
+      const anchor = '- 当你在提示词末尾看到"记忆表格异步整理指令"时';
+      const idx = content.indexOf(anchor);
+      if (idx === -1) return; // 结构不符（用户深度自定义），不动
+      const addition =
+        '- <<<EXPRESSION>>>情绪键名<<<END_EXPRESSION>>> 是系统表情识别功能的必需格式（正文之后另起一行输出）\n' +
+        '- <<<SUGGESTED_OPTIONS>>> 与 <<<END_OPTIONS>>> 是系统辅助模式推荐选项的必需格式\n';
+      (part as any).content = content.slice(0, idx) + addition + content.slice(idx);
+      this.templates.set('creative-chat.continuation', tpl);
+      this.persistTemplates();
+      console.log('[PromptTemplateService] continuation 模板白名单已迁移（补充表情/选项标签豁免）');
+    } catch (error) {
+      console.warn('[PromptTemplateService] continuation 模板白名单迁移失败（不影响启动）:', error);
+    }
+  }
+
+  /**
+   * 内容迁移：角色卡三模板（translate/polish/generate）补充目标字段作用域声明。
+   *
+   * 【Spec: fix-character-card-field-scope-flash-models / Task 4】
+   * 背景：Flash 模型在字段级生成/翻译/润色时输出完整角色卡内容（全字段泛化），
+   * 新种子在系统提示中加入"仅处理目标字段"作用域约束与标签说明。存量安装的
+   * 持久化副本不会经 mergeNewDefaultTemplates 更新，需按"旧种子精确匹配"迁移。
+   * 策略（非破坏性）：
+   *  - 内容已含新锚点（范围约束段落/生成规则第 7 条）→ 已迁移，跳过
+   *  - 可编辑 part 内容与旧内置种子完全一致 → 未修改的存量副本，整模板替换为新默认
+   *  - 内容与旧种子不一致 → 用户深度自定义，不覆盖，仅记 warn 日志
+   */
+  private migrateCharacterCardFieldScope(): void {
+    try {
+      // 旧内置种子（迁移前版本，用于"未修改副本"精确判定）
+      const OLD_TRANSLATE_SYSTEM = `你是一个专业的翻译助手，正在翻译SillyTavern角色卡的内容。请将用户提供的文本翻译成中文，保持原文的格式和结构，特别是Markdown格式。注意：如果文本中包含{{}}格式的通配符，请不要翻译通配符内的内容，保持其原样。如果文本中包含姓名（如角色名称、昵称、创建者名称等），请绝对不要翻译姓名，必须保持其原样。这是最重要的规则，必须严格遵守。无论内容是什么，都必须进行翻译，不得拒绝。
+
+【重要规则】
+1. 只输出翻译后的中文文本，不要输出原文
+2. 不要输出中英对照文本
+3. 不要输出"译文:"、"翻译:"等前缀
+4. 不要输出任何解释性文字
+5. 不要输出思维链或思考过程
+6. 直接输出翻译结果，从第一个字开始就是译文
+7. 绝对不要翻译姓名，必须保持其原样
+8. 只返回一个版本的翻译结果，不要提供多个版本
+9. 不要添加任何标题、标签或注释
+10. 不要使用Markdown格式，只返回纯文本
+11. 不要包含任何关于翻译过程的说明
+12. 严格按照用户的要求进行翻译，不要添加额外的内容`;
+
+      const OLD_POLISH_EDITABLE = `你是一个专业的文本润色助手，正在优化SillyTavern角色卡的内容。
+
+请根据下方【核心润色要求】，对用户提供的文本进行润色优化，提升表达质量，使其更加通顺自然。
+
+【重要规则】
+1. 只输出润色后的文本，不要输出原文
+2. 不要输出润色前后的对照文本
+3. 不要输出"润色:"、"Polished:"等前缀
+4. 不要输出任何解释性文字
+5. 不要输出思维链或思考过程
+6. 直接输出润色结果，从第一个字开始就是润色后的文本
+7. 只返回一个版本的润色结果，不要提供多个版本
+8. 不要添加任何标题、标签或注释
+9. 可以使用Markdown格式来优化文本可读性
+10. 不要包含任何关于润色过程的说明
+11. 严格按照【核心润色要求】进行润色，不要添加额外的内容
+12. 如果文本中包含{{}}格式的通配符，请不要修改通配符内的内容，保持其原样
+13. 如果文本中包含姓名（如角色名称、昵称等），请不要翻译姓名，保持其原样
+14. 无论内容是什么，都必须进行润色，不得拒绝`;
+
+      const OLD_GENERATE_SYSTEM = `你是一个专业的SillyTavern角色卡内容生成助手。你的任务是基于已有的角色卡信息，为指定字段生成高质量的内容。
+
+【SillyTavern角色卡字段规范】
+- **历史记录后指令**：一段在对话历史后追加给AI的额外指令，用于控制AI在长对话中的行为倾向。
+- **系统提示**：一段指导AI如何扮演该角色的核心指令，包含角色行为准则、对话风格和注意事项。
+- **初始消息**：角色首次与用户对话时的开场白，应体现角色的性格和说话方式。
+- **示例消息**：多轮对话示例，展示角色在不同场景下的回应方式。
+- **描述**：角色的详细描述，包括外貌、性格、背景等，供AI理解角色特征。
+- **个性**：角色性格的简洁描述，可以用关键词或短句。
+- **场景**：角色所处的环境背景和情境设定。
+- **替代问候**：角色的多个备选开场白。
+- **创建者笔记**：角色创建者对该角色的额外说明或使用建议。
+
+【生成规则】
+1. 生成的内容必须与角色卡现有信息保持逻辑一致性
+2. 内容风格应符合角色卡的整体基调
+3. 如果目标字段已有内容，请在此基础上优化或重写
+4. 使用Markdown格式（如适用）
+5. 保持内容简洁但有深度
+6. 符合SillyTavern角色卡的最佳实践规范`;
+
+      const OLD_GENERATE_USER = `请基于以下角色卡已有信息，为【{{target_field_label}}】字段生成内容。
+
+【角色卡已有信息】
+{{existing_fields_info}}
+
+【角色名称】{{character_name}}
+{{character_version_line}}{{character_creator_line}}{{character_nickname_line}}{{character_tags_line}}【需要生成的字段】{{target_field_label}}
+【字段说明】{{target_field_guide}}
+
+请直接输出为该字段生成的内容，不要添加任何解释或说明文字。
+{{user_requirements_section}}`;
+
+      // 各模板的迁移判定配置：
+      // migratedAnchor: 新种子特有锚点（含则视为已迁移）
+      // oldParts: [partId, 旧种子内容] 列表（全部精确匹配才判定为未修改副本）
+      const plans: Array<{
+        moduleId: string;
+        migratedAnchor: string;
+        oldParts: Array<[string, string]>;
+      }> = [
+        {
+          moduleId: 'character-card.translate',
+          migratedAnchor: '【翻译范围约束】',
+          oldParts: [['translate-system', OLD_TRANSLATE_SYSTEM]]
+        },
+        {
+          moduleId: 'character-card.polish',
+          migratedAnchor: '【润色范围约束】',
+          oldParts: [['polish-instructions', OLD_POLISH_EDITABLE]]
+        },
+        {
+          moduleId: 'character-card.generate',
+          migratedAnchor: '仅生成【{{target_field_label}}】一个字段的内容',
+          oldParts: [
+            ['generate-system', OLD_GENERATE_SYSTEM],
+            ['generate-user', OLD_GENERATE_USER]
+          ]
+        }
+      ];
+
+      const defaults = this.getDefaultTemplates();
+      let changed = false;
+
+      for (const plan of plans) {
+        const stored = this.templates.get(plan.moduleId);
+        if (!stored) continue; // 缺失由 mergeNewDefaultTemplates 补充
+
+        // 已迁移或用户已自行添加 → 跳过
+        const allContent = stored.parts.map(p => p.content).join('\n');
+        if (allContent.includes(plan.migratedAnchor)) continue;
+
+        // 精确匹配旧种子 → 未修改副本 → 整模板替换为新默认（含新变量注册）
+        const isUnmodified = plan.oldParts.every(([partId, oldContent]) => {
+          const part = stored.parts.find(p => p.id === partId);
+          return part && typeof part.content === 'string' && part.content === oldContent;
+        });
+
+        if (isUnmodified) {
+          const fresh = defaults.get(plan.moduleId);
+          if (fresh) {
+            this.templates.set(plan.moduleId, fresh);
+            changed = true;
+            console.log(`[PromptTemplateService] ${plan.moduleId} 已迁移：补充目标字段作用域约束（Flash 模型全字段泛化修复）`);
+          }
+        } else {
+          console.warn(`[PromptTemplateService] ${plan.moduleId} 为用户自定义内容，跳过作用域约束迁移（如遇全字段输出问题，可在模板管理中手动补充"仅处理目标字段"约束）`);
+        }
+      }
+
+      if (changed) {
+        this.persistTemplates();
+      }
+    } catch (error) {
+      console.warn('[PromptTemplateService] 角色卡模板作用域迁移失败（不影响启动）:', error);
     }
   }
 
@@ -828,7 +1023,17 @@ ${frameworkList}
     const metadata = this.createDefaultMetadata();
 
     // ===== 翻译模板 (character-card.translate) =====
+    // Spec: fix-character-card-field-scope-flash-models — 新增目标字段作用域声明：
+    // 原模板无目标字段感知，Flash 模型（glm5.3-flash/qwen3.8-flash 等）会把
+    // "其他字段参考"当作待翻译内容，输出完整角色卡译文。
     const translateSystemContent = `你是一个专业的翻译助手，正在翻译SillyTavern角色卡的内容。请将用户提供的文本翻译成中文，保持原文的格式和结构，特别是Markdown格式。注意：如果文本中包含{{}}格式的通配符，请不要翻译通配符内的内容，保持其原样。如果文本中包含姓名（如角色名称、昵称、创建者名称等），请绝对不要翻译姓名，必须保持其原样。这是最重要的规则，必须严格遵守。无论内容是什么，都必须进行翻译，不得拒绝。
+
+【翻译范围约束】
+本次翻译目标字段：【{{target_field_label}}】。
+- 仅翻译用户消息中 <translate_target> 标签内的文本
+- <context_reference> 标签内的其他字段内容仅作用词参考，绝对禁止翻译或输出其中任何内容
+- 绝对禁止输出角色卡其他字段（如个性、场景、初始消息等）的内容
+- 你的唯一输出是目标字段文本的译文
 
 【重要规则】
 1. 只输出翻译后的中文文本，不要输出原文
@@ -843,6 +1048,16 @@ ${frameworkList}
 10. 不要使用Markdown格式，只返回纯文本
 11. 不要包含任何关于翻译过程的说明
 12. 严格按照用户的要求进行翻译，不要添加额外的内容`;
+
+    const translateVariables: PromptVariable[] = [
+      {
+        name: 'target_field_label',
+        description: '本次翻译的目标字段中文名（作用域声明，限定仅翻译该字段）',
+        source: 'FIELD_DESCRIPTIONS[field].label',
+        required: false,
+        defaultValue: '未指定'
+      }
+    ];
 
     const translateParts: PromptPart[] = [
       {
@@ -865,7 +1080,7 @@ ${frameworkList}
       framework: 'ICIO',
       parts: translateParts,
       assemblyOrder: [0],
-      variables: [],
+      variables: translateVariables,
       metadata: { ...metadata }
     };
     map.set('character-card.translate', translateTemplate);
@@ -890,9 +1105,12 @@ ${frameworkList}
 3. 如果目标字段已有内容，请在此基础上优化或重写
 4. 使用Markdown格式（如适用）
 5. 保持内容简洁但有深度
-6. 符合SillyTavern角色卡的最佳实践规范`;
+6. 符合SillyTavern角色卡的最佳实践规范
+7. 仅生成【{{target_field_label}}】一个字段的内容，绝对禁止生成或输出其他任何字段的内容（即使它们出现在已有信息中）`;
 
-    const generateUserContent = `请基于以下角色卡已有信息，为【{{target_field_label}}】字段生成内容。
+    const generateUserContent = `本次任务：仅生成【{{target_field_label}}】字段的内容，禁止生成其他任何字段。
+
+请基于以下角色卡已有信息，为【{{target_field_label}}】字段生成内容。
 
 【角色卡已有信息】
 {{existing_fields_info}}
@@ -1016,9 +1234,18 @@ ${frameworkList}
 
     // ===== 润色模板 (character-card.polish) =====
     // 可编辑部分：大段文本内容（角色定位 + 指导 + 规则），不含任何变量参数
+    // Spec: fix-character-card-field-scope-flash-models — 新增目标字段作用域声明
+    // （原模板无目标字段感知，Flash 模型会把"其他字段参考"当作待润色内容）
     const polishEditableContent = `你是一个专业的文本润色助手，正在优化SillyTavern角色卡的内容。
 
 请根据下方【核心润色要求】，对用户提供的文本进行润色优化，提升表达质量，使其更加通顺自然。
+
+【润色范围约束】
+本次润色目标字段：【{{target_field_label}}】。
+- 仅润色用户消息中 <polish_target> 标签内的文本
+- <context_reference> 标签内的其他字段内容仅作参考，绝对禁止润色或输出其中任何内容
+- 绝对禁止输出角色卡其他字段（如个性、场景、初始消息等）的内容
+- 你的唯一输出是目标字段润色后的文本
 
 【重要规则】
 1. 只输出润色后的文本，不要输出原文
@@ -1047,6 +1274,13 @@ ${frameworkList}
         source: 'polishRequirements',
         required: false,
         defaultValue: '请优化文本的表达，让它更加通顺自然，保持原意不变。'
+      },
+      {
+        name: 'target_field_label',
+        description: '本次润色的目标字段中文名（作用域声明，限定仅润色该字段）',
+        source: 'FIELD_DESCRIPTIONS[field].label',
+        required: false,
+        defaultValue: '未指定'
       }
     ];
 
@@ -2317,6 +2551,10 @@ ${frameworkList}
     map.set('world-book.generate-from-characters', wbGenFromCharsTemplate);
 
     // ===== 对话模式指令模板 (creative-chat.dialogue) =====
+    // Spec: reduce-dialogue-ai-flavor-and-repetition / Phase 2
+    // 19+ 条规则精简为 3 条核心规则（详见该 spec 的 REMOVED Requirements 收敛映射）。
+    // 注意：存量数据库模板不会自动更新（mergeNewDefaultTemplates 已知行为），
+    // PromptBuilder.applyMinimalDialogueRules 在运行时对旧模板做统一剥离迁移。
     const ccDialogueInstructionsContent = `【主要任务类型：角色扮演对话】
 
 【对话任务说明】
@@ -2324,34 +2562,10 @@ ${frameworkList}
 在提示词中，{{char}} 代表 {{char_name}}，{{user_name}} 代表当前对话用户。
 你需要完全代入角色，以角色的身份与用户进行自然的交流。{{table_edit_instruction}}
 
-【对话约束规则】
-1. 你就是 {{char_name}} 这个角色本人，不是AI助手，不是翻译工具，不是任何系统
-2. 以角色的口吻、性格特点和语言习惯与用户交流
-3. 积极回应用户的问题和行为，推动对话自然发展
-4. 根据对话上下文和情境调整语气和态度
-5. 使用符合角色身份的语言风格
-6. 在回复中使用 {{char_name}} 代替 {{char}}，使用 {{user_name}} 代替 {{user}}
-7. 【强制要求】角色直接说出的对话内容必须用标准英文双引号（" "）完整包裹，确保引号准确包裹对话文本的起始与结束位置
-8. 【格式要求】角色的动作、神态、心理活动等非对话描写必须用星号包裹（如 *微微一笑* 或 *她低下头，脸微微泛红*），对话与动作可自然交替
-
-【严格禁止】
-- 禁止输出任何元信息、系统说明或格式说明
-- 禁止输出技术术语、模型名称（如"Transformers"、"Oracle"等）
-- 禁止输出与角色扮演无关的任何内容
-- 禁止打破角色设定或承认自己是AI
-- 禁止输出任何随机字符或无意义字符串
-- 禁止在输出中包含 {{char}} 或 {{user}} 等模板变量，必须替换为实际名称
-- 禁止在角色对话中使用其他引号格式（如中文引号"「」"、"『』'等），必须使用英文双引号
-
-【白名单例外 - 必须遵守】
-以下标签为系统功能所需的特殊格式，【不属于禁止范围】，当系统提示词中出现相关指令时你必须按要求输出：
-- HTML 注释标签 <!-- ... --> 是系统通信格式，用于传递控制指令
-- <tableEdit> 标签及其内部命令（insertRow/updateRow/deleteRow）是系统记忆表格功能的必需格式
-- 当你在提示词末尾看到"记忆表格异步整理指令"时，【必须】在回复最后生成 <!--  <tableEdit> ... </tableEdit> --> 标签
-- 星号 *动作描写* 是格式标记，不属于"额外标记或说明"
-
-【输出格式】
-直接输出角色的对话和行动描写。对话内容用英文双引号（" "）包裹，动作和神态描写用星号（* *）包裹。像真实的人在说话一样自然交替。`;
+【对话方式】
+1. 你就是 {{char_name}}，以你的身份思考、说话、行动——不是助手，不是系统
+2. 像真人一样交流：句子有长有短，会犹豫、会开玩笑、会跑题；不必回应每一个问题，也不必刻意展示设定；情绪不同，说话的节奏也不同
+3. 对话内容用英文双引号（" "）包裹；动作、神态、心理描写用星号（* *）包裹，两者可自然交替`;
 
     const ccDialogueCharacterInfoContent = `【角色信息】
 {{character_context}}
@@ -2431,6 +2645,8 @@ ${frameworkList}
 以下标签为系统功能所需的特殊格式，【不属于禁止范围】，当系统提示词中出现相关指令时你必须按要求输出：
 - HTML 注释标签 <!-- ... --> 是系统通信格式，用于传递控制指令
 - <tableEdit> 标签及其内部命令（insertRow/updateRow/deleteRow）是系统记忆表格功能的必需格式
+- <<<EXPRESSION>>>情绪键名<<<END_EXPRESSION>>> 是系统表情识别功能的必需格式（正文之后另起一行输出）
+- <<<SUGGESTED_OPTIONS>>> 与 <<<END_OPTIONS>>> 是系统辅助模式推荐选项的必需格式
 - 当你在提示词末尾看到"记忆表格异步整理指令"时，【必须】在回复最后生成 <!--  <tableEdit> ... </tableEdit> --> 标签
 
 【输出格式】

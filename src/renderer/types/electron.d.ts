@@ -139,6 +139,14 @@ interface ElectronAPI {
     getWorldBookRelations: (path: string) => Promise<Array<{ worldBookPath: string; enabled: boolean; priority: number; filterTags?: string[] }>>;
     setWorldBookRelations: (path: string, relations: Array<{ worldBookPath: string; enabled: boolean; priority: number; filterTags?: string[] }>) => Promise<{ success: boolean; error?: string }>;
   };
+  favorites: {
+    /** 读取收藏列表（[{ path, name, addedAt }]，path 为角色卡绝对路径） */
+    read: () => Promise<Array<{ path: string; name: string; addedAt: number }>>;
+    /** 全量替换收藏（接受 path 或 name；与移动端共用同一份持久化数据） */
+    write: (items: Array<{ path?: string; name?: string; addedAt?: number }>) => Promise<{ success: boolean }>;
+    /** 主进程收藏文件是否存在且非空（localStorage 旧数据一次性迁移判断） */
+    hasStored: () => Promise<boolean>;
+  };
   characterConfig: {
     save: (characterCardId: string, config: any) => Promise<{ success: boolean; error?: string }>;
     load: (characterCardId: string) => Promise<{ success: boolean; config: any | null }>;

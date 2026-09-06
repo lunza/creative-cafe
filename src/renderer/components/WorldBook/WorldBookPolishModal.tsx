@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Button, Input } from 'antd';
+import { Modal, Button, Input, Switch } from 'antd';
 import { StopOutlined } from '@ant-design/icons';
 
 /**
@@ -16,6 +16,9 @@ import { StopOutlined } from '@ant-design/icons';
  * 中断按钮在 polishingField / isPolishingAll 真值时显示，调用
  * handleCancelAIRequest 将 isProcessingRef.current 置为 false，AI 流式
  * 读取循环在下一个 tick 退出。
+ *
+ * Spec: polish-deai-humanizer — 两个 Modal 均提供"去AI味"开关（默认开启），
+ * 控制润色 system prompt 的去AI味规则块注入。
  */
 export interface WorldBookPolishModalProps {
   // 单字段润色
@@ -34,9 +37,26 @@ export interface WorldBookPolishModalProps {
   polishAllRequirements: string;
   setPolishAllRequirements: (value: string) => void;
   performPolishAll: () => void;
+  // Spec: polish-deai-humanizer — 去AI味开关
+  polishDeAiFlavor: boolean;
+  setPolishDeAiFlavor: (value: boolean) => void;
   // 中断
   onCancelAIRequest: () => void;
 }
+
+/** 去AI味开关行（两个 Modal 复用） */
+const DeAiFlavorSwitch: React.FC<{
+  checked: boolean;
+  onChange: (value: boolean) => void;
+  disabled: boolean;
+}> = ({ checked, onChange, disabled }) => (
+  <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+    <Switch size="small" checked={checked} onChange={onChange} disabled={disabled} />
+    <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.65)' }}>
+      去AI味（抑制"禁忌之美"式浮夸辞藻与套路句式）
+    </span>
+  </div>
+);
 
 const WorldBookPolishModal: React.FC<WorldBookPolishModalProps> = ({
   isPolishModalOpen,
@@ -53,6 +73,8 @@ const WorldBookPolishModal: React.FC<WorldBookPolishModalProps> = ({
   polishAllRequirements,
   setPolishAllRequirements,
   performPolishAll,
+  polishDeAiFlavor,
+  setPolishDeAiFlavor,
   onCancelAIRequest,
 }) => {
   return (
@@ -106,6 +128,11 @@ const WorldBookPolishModal: React.FC<WorldBookPolishModalProps> = ({
             autoFocus
             disabled={polishingField !== null}
           />
+          <DeAiFlavorSwitch
+            checked={polishDeAiFlavor}
+            onChange={setPolishDeAiFlavor}
+            disabled={polishingField !== null}
+          />
         </div>
       </Modal>
 
@@ -151,6 +178,11 @@ const WorldBookPolishModal: React.FC<WorldBookPolishModalProps> = ({
             value={polishAllRequirements}
             onChange={(e) => setPolishAllRequirements(e.target.value)}
             autoFocus
+            disabled={isPolishingAll}
+          />
+          <DeAiFlavorSwitch
+            checked={polishDeAiFlavor}
+            onChange={setPolishDeAiFlavor}
             disabled={isPolishingAll}
           />
         </div>

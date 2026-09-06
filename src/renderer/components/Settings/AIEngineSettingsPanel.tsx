@@ -1,9 +1,51 @@
 import React from 'react';
-import { Card, Form, Input, Select, Button, Space, Alert, AutoComplete, Modal, Table, Tag, Tooltip, Segmented } from 'antd';
+import { Card, Form, Input, Select, Button, Space, Alert, AutoComplete, Modal, Table, Tag, Tooltip, Segmented, message } from 'antd';
 import { SettingOutlined, SaveOutlined, PlusOutlined, EditOutlined, CopyOutlined, SearchOutlined, SyncOutlined, EyeOutlined, BulbOutlined, ToolOutlined } from '@ant-design/icons';
 import { useSettingStore } from '../../stores/settingStore';
 import { useAIEngineSettings } from './hooks/useAIEngineSettings';
 import { AIEngineSetting, AIEngineCapabilities } from '../../types/setting';
+// Spec: analyze-llamacpp-model-compatibility（修复 H1/H3：按模型系列预填官方推荐参数）
+import { MODEL_SERIES_PRESETS, getModelSeriesPreset } from '../../../shared/modelParameterPresets';
+
+/** 模型系列下拉选项（tooltip 承载官方来源说明） */
+const MODEL_SERIES_SELECT_OPTIONS = MODEL_SERIES_PRESETS.map(p => ({
+  value: p.id,
+  label: p.label,
+  title: p.tooltip,
+}));
+
+/**
+ * 将所选系列的官方推荐参数写入表单。
+ *
+ * 覆盖两类字段：
+ * - 表单可见字段：temperature / top_p / top_k / min_p / frequency_penalty / presence_penalty
+ * - 引擎级字段（无 UI，保存时经 getFieldsValue(true) 持久化）：
+ *   rep_pen / dry_multiplier / dry_base / dry_allowed_length / no_repeat_ngram_size
+ */
+const applySeriesPreset = (
+  formInstance: ReturnType<typeof Form.useForm>[0],
+  seriesId?: string
+): void => {
+  const preset = getModelSeriesPreset(seriesId ?? formInstance.getFieldValue('model_series'));
+  if (!preset) {
+    message.warning('请先选择模型系列');
+    return;
+  }
+  formInstance.setFieldsValue({
+    temperature: preset.params.temperature,
+    top_p: preset.params.top_p,
+    top_k: preset.params.top_k,
+    min_p: preset.params.min_p,
+    frequency_penalty: preset.params.frequency_penalty,
+    presence_penalty: preset.params.presence_penalty,
+    rep_pen: preset.params.repetition_penalty,
+    dry_multiplier: preset.params.dry_multiplier,
+    dry_base: preset.params.dry_base,
+    dry_allowed_length: preset.params.dry_allowed_length,
+    no_repeat_ngram_size: preset.params.no_repeat_ngram_size,
+  });
+  message.success(`已应用「${preset.label}」官方推荐参数`);
+};
 
 /**
  * 渲染引擎能力徽章（文本/视觉/思维链/工具调用）。
@@ -138,6 +180,27 @@ const AIEngineSettingsPanel: React.FC<AIEngineSettingsPanelProps> = ({ form }) =
               placeholder="例如: qwen3.5-27b-heretic-v3"
               filterOption={false}
             />
+          </Form.Item>
+
+          <Form.Item
+            label="模型系列参数模板"
+            tooltip="手动选择模型系列，点击「应用参数模板」预填官方推荐采样参数（含 DRY/重复惩罚等引擎级字段）。来源见 docs/llamacpp-model-compat-analysis.md"
+          >
+            <Space.Compact style={{ width: '100%' }}>
+              <Form.Item name="model_series" noStyle>
+                <Select
+                  allowClear
+                  placeholder="选择模型系列（可选）"
+                  options={MODEL_SERIES_SELECT_OPTIONS}
+                />
+              </Form.Item>
+              <Button
+                icon={<BulbOutlined />}
+                onClick={() => applySeriesPreset(form)}
+              >
+                应用参数模板
+              </Button>
+            </Space.Compact>
           </Form.Item>
 
           <Form.Item label="API密钥传输方式" name="api_key_transmission">
@@ -388,6 +451,33 @@ const AIEngineSettingsPanel: React.FC<AIEngineSettingsPanelProps> = ({ form }) =
                 placeholder="例如: qwen3.5-27b-heretic-v3"
                 filterOption={false}
               />
+            </Form.Item>
+            <Form.Item
+              label="模型系列参数模板"
+              tooltip="手动选择模型系列预填官方推荐采样参数（新建时选择即预填；编辑已有引擎时点击「应用参数模板」确认覆盖，含 DRY/重复惩罚等引擎级字段）"
+            >
+              <Space.Compact style={{ width: '100%' }}>
+                <Form.Item name="model_series" noStyle>
+                  <Select
+                    allowClear
+                    placeholder="选择模型系列（可选）"
+                    options={MODEL_SERIES_SELECT_OPTIONS}
+                    onChange={(value) => {
+                      // 新建引擎：选择系列即预填；编辑引擎：仅记录选择，点击按钮确认应用
+                      const isEditingEngine = !!(editingEngine as AIEngineSetting | undefined)?.id;
+                      if (!isEditingEngine && value) {
+                        applySeriesPreset(engineForm, value);
+                      }
+                    }}
+                  />
+                </Form.Item>
+                <Button
+                  icon={<BulbOutlined />}
+                  onClick={() => applySeriesPreset(engineForm)}
+                >
+                  应用参数模板
+                </Button>
+              </Space.Compact>
             </Form.Item>
             <Form.Item label="API密钥传输方式" name="api_key_transmission">
               <Select

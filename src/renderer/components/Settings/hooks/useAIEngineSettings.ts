@@ -4,6 +4,9 @@ import { useSettingStore } from '../../../stores/settingStore';
 import { useLogStore } from '../../../stores/logStore';
 import { AIEngineSetting, AIEngineCapabilities } from '../../../types/setting';
 import { AppSetting } from '../../../settings';
+// Spec: analyze-llamacpp-model-compatibility（toOptionalNumber 修复 `Number(x) || undefined` 吞 0 的缺陷：
+// qwen 模板的 min_p=0、DRY 关闭 dry_multiplier=0 曾被吞成 undefined，导致库默认值 0.1/0.4 顶替引擎值）
+import { toOptionalNumber, getModelSeriesPreset } from '../../../../shared/modelParameterPresets';
 
 export interface TestResult {
   success: boolean;
@@ -149,6 +152,9 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
 
       let updatedEngines = [...(setting.aiEngines || [])];
       const isEditing = editingEngine && (editingEngine as AIEngineSetting).id;
+      // 引擎级隐藏字段（模型系列模板应用后写入表单 store，无对应 Form.Item）：
+      // getFieldsValue(true) 返回全部 store 值，validateFields 只返回已注册字段
+      const allFormValues = engineForm.getFieldsValue(true) as Record<string, unknown>;
 
       if (isEditing) {
         const editingId = (editingEngine as AIEngineSetting).id;
@@ -158,16 +164,25 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
             return {
               ...engine,
               ...values,
-              max_tokens: Number(values.max_tokens) || 10240,
-              temperature: Number(values.temperature) ?? 0.7,
-              top_p: Number(values.top_p) || undefined,
-              top_k: Number(values.top_k) || undefined,
-              min_p: Number(values.min_p) || undefined,
-              frequency_penalty: Number(values.frequency_penalty) || undefined,
-              presence_penalty: Number(values.presence_penalty) || undefined,
-              n: Number(values.n) || 1,
+              model_series: values.model_series || undefined,
+              // 思考联动：由 model_series 对应模板的 thinking 字段推导（单一来源，清空系列即回退 auto）
+              thinking_mode: getModelSeriesPreset(values.model_series)?.thinking,
+              max_tokens: toOptionalNumber(values.max_tokens) ?? 10240,
+              temperature: toOptionalNumber(values.temperature) ?? 0.7,
+              top_p: toOptionalNumber(values.top_p),
+              top_k: toOptionalNumber(values.top_k),
+              min_p: toOptionalNumber(values.min_p),
+              frequency_penalty: toOptionalNumber(values.frequency_penalty),
+              presence_penalty: toOptionalNumber(values.presence_penalty),
+              n: toOptionalNumber(values.n) ?? 1,
               connection_timeout: values.connection_timeout !== undefined && values.connection_timeout !== '' ? Number(values.connection_timeout) : 120000,
               request_timeout: values.request_timeout !== undefined && values.request_timeout !== '' ? Number(values.request_timeout) : 300000,
+              // 引擎级采样字段（含合法 0 值，未应用模板时保留引擎原值）
+              rep_pen: toOptionalNumber(allFormValues.rep_pen) ?? engine.rep_pen,
+              dry_multiplier: toOptionalNumber(allFormValues.dry_multiplier) ?? engine.dry_multiplier,
+              dry_base: toOptionalNumber(allFormValues.dry_base) ?? engine.dry_base,
+              dry_allowed_length: toOptionalNumber(allFormValues.dry_allowed_length) ?? engine.dry_allowed_length,
+              no_repeat_ngram_size: toOptionalNumber(allFormValues.no_repeat_ngram_size) ?? engine.no_repeat_ngram_size,
               // Save capabilities from test result if available (Spec: Task 4.4);
               // otherwise preserve existing engine.capabilities from spread above
               ...(engineTestResult?.capabilities ? { capabilities: engineTestResult.capabilities } : {}),
@@ -185,19 +200,27 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
           api_url: values.api_url || 'http://127.0.0.1:5000',
           api_key: values.api_key || '',
           model_name: values.model_name || 'qwen3.5-27b-heretic-v3',
+          model_series: values.model_series || undefined,
+          thinking_mode: getModelSeriesPreset(values.model_series)?.thinking,
           api_mode: values.api_mode || 'chat_completion',
           api_key_transmission: values.api_key_transmission || 'header',
-          max_tokens: Number(values.max_tokens) || 10240,
-          temperature: Number(values.temperature) ?? 0.7,
-          top_p: Number(values.top_p) || undefined,
-          top_k: Number(values.top_k) || undefined,
-          min_p: Number(values.min_p) || undefined,
-          frequency_penalty: Number(values.frequency_penalty) || undefined,
-          presence_penalty: Number(values.presence_penalty) || undefined,
-          n: Number(values.n) || 1,
+          max_tokens: toOptionalNumber(values.max_tokens) ?? 10240,
+          temperature: toOptionalNumber(values.temperature) ?? 0.7,
+          top_p: toOptionalNumber(values.top_p),
+          top_k: toOptionalNumber(values.top_k),
+          min_p: toOptionalNumber(values.min_p),
+          frequency_penalty: toOptionalNumber(values.frequency_penalty),
+          presence_penalty: toOptionalNumber(values.presence_penalty),
+          n: toOptionalNumber(values.n) ?? 1,
           connection_timeout: values.connection_timeout !== undefined && values.connection_timeout !== '' ? Number(values.connection_timeout) : 120000,
           request_timeout: values.request_timeout !== undefined && values.request_timeout !== '' ? Number(values.request_timeout) : 300000,
           system_prompt: values.system_prompt || '',
+          // 引擎级采样字段（新建时若已应用模型系列模板，则用模板值覆盖默认基线）
+          rep_pen: toOptionalNumber(allFormValues.rep_pen) ?? defaultEngine.rep_pen,
+          dry_multiplier: toOptionalNumber(allFormValues.dry_multiplier) ?? defaultEngine.dry_multiplier,
+          dry_base: toOptionalNumber(allFormValues.dry_base) ?? defaultEngine.dry_base,
+          dry_allowed_length: toOptionalNumber(allFormValues.dry_allowed_length) ?? defaultEngine.dry_allowed_length,
+          no_repeat_ngram_size: toOptionalNumber(allFormValues.no_repeat_ngram_size) ?? defaultEngine.no_repeat_ngram_size,
           // Save capabilities from test result if available (Spec: Task 4.4)
           ...(engineTestResult?.capabilities ? { capabilities: engineTestResult.capabilities } : {}),
         } as unknown as AIEngineSetting;

@@ -211,7 +211,7 @@ export class WorldBookKeywordIndex {
   rebuild(entries: Iterable<WorldBookEntry>): void {
     this.entries.clear();
     for (const e of entries) {
-      if (!e.disable) {
+      if (!isEntryDisabled(e)) {
         this.entries.set(e.uid, e);
       }
     }
@@ -220,10 +220,10 @@ export class WorldBookKeywordIndex {
 
   /**
    * 增量新增/更新单个条目（O(1)）。
-   * disable 的条目视为删除。
+   * 禁用的条目视为删除。
    */
   upsertEntry(entry: WorldBookEntry): void {
-    if (entry.disable) {
+    if (isEntryDisabled(entry)) {
       this.removeEntry(entry.uid);
       return;
     }
@@ -241,6 +241,23 @@ export class WorldBookKeywordIndex {
   /** 当前条目数。 */
   get size(): number {
     return this.entries.size;
+  }
+
+  /**
+   * 所有常驻（constant/蓝灯）条目。
+   *
+   * 【constant 支持 - Spec: fix-dialogue-worldbook-association-and-tag-output】
+   * 常驻条目不依赖关键词激活（SillyTavern 蓝灯语义），由 WorldBookKeywordMatcher.match
+   * 直接并入结果。索引层已在 rebuild/upsertEntry 过滤禁用条目，此处无需重复判断。
+   */
+  getConstantEntries(): WorldBookEntry[] {
+    const constants: WorldBookEntry[] = [];
+    for (const entry of this.entries.values()) {
+      if (entry.constant === true) {
+        constants.push(entry);
+      }
+    }
+    return constants;
   }
 
   /** 是否有未重建的变更。 */
@@ -392,6 +409,17 @@ export class WorldBookKeywordIndex {
 }
 
 // ==================== 辅助函数 ====================
+
+/**
+ * 条目禁用判定（双字段统一 - Spec: fix-dialogue-worldbook-association-and-tag-output）。
+ *
+ * 背景：类型中 `disable` 与 `enabled` 两字段并存（不同导入来源使用不同字段表达禁用），
+ * 原判定只认 `disable:true`，导致仅以 `enabled:false` 表达禁用的条目被误触发。
+ * 统一语义：`disable === true || enabled === false` 视为禁用。
+ */
+export function isEntryDisabled(entry: WorldBookEntry): boolean {
+  return entry.disable === true || entry.enabled === false;
+}
 
 /**
  * 取条目主关键词。供 WorldBookKeywordMatcher 复用，保证两边取值一致。

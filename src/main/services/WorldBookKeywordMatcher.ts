@@ -59,7 +59,26 @@ export class WorldBookKeywordMatcher {
   }
 
   match(text: string): KeywordMatchResult[] {
-    if (!text) return [];
+    const results: KeywordMatchResult[] = [];
+
+    // 0. 常驻（constant/蓝灯）条目：不依赖关键词激活，无条件并入结果。
+    //    【constant 支持 - Spec: fix-dialogue-worldbook-association-and-tag-output】
+    //    仅受 probability 过滤约束（与关键词路径一致）；仍受调用方 maxResults 截断。
+    //    注意：需在 text 空守卫与候选筛选之前处理（常驻语义不依赖文本内容）。
+    const constantEntries = this.index.getConstantEntries();
+    const constantUids = new Set<number>();
+    for (const entry of constantEntries) {
+      constantUids.add(entry.uid);
+      const match = this.matchConstantEntry(entry);
+      if (match) {
+        results.push(match);
+      }
+    }
+
+    if (!text) {
+      // 空文本时仅常驻条目生效
+      return this.sortResults(results);
+    }
 
     // 1. 倒排索引筛候选：仅对「主关键词在文本中出现」的条目运行完整判定
     const candidates = this.index.findCandidateEntries(text, {
@@ -67,19 +86,25 @@ export class WorldBookKeywordMatcher {
       matchWholeWords: this.options.matchWholeWords,
     });
 
-    if (candidates.length === 0) return [];
+    if (candidates.length === 0) {
+      return this.sortResults(results);
+    }
 
-    const results: KeywordMatchResult[] = [];
     for (const entry of candidates) {
+      // 常驻条目已在步骤 0 处理，避免重复计入结果
+      if (constantUids.has(entry.uid)) continue;
       const match = this.matchEntry(entry, text);
       if (match) {
         results.push(match);
       }
     }
 
-    // 按 order 降序排序（order 越大越优先）
-    results.sort((a, b) => b.entry.order - a.entry.order);
+    return this.sortResults(results);
+  }
 
+  /** 按 order 降序排序（order 越大越优先），原地排序后返回。 */
+  private sortResults(results: KeywordMatchResult[]): KeywordMatchResult[] {
+    results.sort((a, b) => b.entry.order - a.entry.order);
     return results;
   }
 
@@ -197,6 +222,32 @@ export class WorldBookKeywordMatcher {
       matchedKeys: allMatchedKeys,
       matchType,
       matchScore,
+    };
+  }
+
+  /**
+   * 匹配常驻（constant/蓝灯）条目 — 跳过主/次关键词判定直接激活。
+   *
+   * 【constant 支持 - Spec: fix-dialogue-worldbook-association-and-tag-output】
+   * 与 SillyTavern 蓝灯语义对齐：常驻条目不依赖关键词，始终注入。
+   * 仅保留概率过滤（与关键词路径的既有约束一致）。
+   * matchedKeys 为空（无关键词触发），格式化层（PromptBuilder.formatVectorContextItems）
+   * 对空 keys 已有兜底（仅显示条目名）。
+   */
+  private matchConstantEntry(entry: WorldBookEntry): KeywordMatchResult | null {
+    // 概率过滤（与 matchEntry 中关键词路径一致）
+    if (entry.useProbability !== false && entry.probability !== undefined && entry.probability !== null) {
+      const roll = Math.random() * 100;
+      if (roll > entry.probability) {
+        return null;
+      }
+    }
+
+    return {
+      entry,
+      matchedKeys: [],
+      matchType: 'primary',
+      matchScore: this.calculateMatchScore(entry, [], []),
     };
   }
 

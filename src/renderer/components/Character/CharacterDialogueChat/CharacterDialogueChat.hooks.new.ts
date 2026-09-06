@@ -12,6 +12,8 @@ import { ChatMessage, CharacterInfo, UserPersona, EffectiveAIParams, deriveThink
 import { chatReducer, initialChatState } from './chatReducer';
 import { AIEngineConfig, AIResponse, getDefaultEngineCapabilities } from '../../Common/ChatEngine/ChatEngine.types';
 import { TokenCounter, ContextTruncator, DEFAULT_MAX_TOKENS } from './TokenManagement';
+// Spec: analyze-llamacpp-model-compatibility（兜底值与模型系列模板同源）
+import { GENERIC_MODEL_PARAMS } from '../../../../shared/modelParameterPresets';
 import type { TruncationConfig } from './TokenManagement/types';
 import { shouldCompact, splitMessages, buildSummaryPrompt, createSummaryMessage, KEEP_RECENT_ROUNDS } from './contextCompactor';
 import { ChatEngineFactory } from '../../Common/ChatEngine/ChatEngine.factory';
@@ -58,7 +60,7 @@ export function useCharacterConfig(characterCardId: string) {
     const globalEngine = (() => { if (!setting || !setting.aiEngines || setting.aiEngines.length === 0) return null; if (setting.activeEngineId) { return setting.aiEngines.find((e: any) => e.id === setting.activeEngineId) || setting.aiEngines[0]; } return setting.aiEngines[0]; })();
     const hasCustomParams = Object.keys(customParams).length > 0;
     const source = hasCustomParams ? 'custom' : 'global';
-    const effectiveParams: EffectiveAIParams = { temperature: customParams.temperature ?? globalEngine?.temperature ?? 0.7, max_tokens: customParams.max_tokens !== undefined ? customParams.max_tokens : (globalEngine?.max_tokens !== undefined ? globalEngine.max_tokens : DEFAULT_MAX_TOKENS), source };
+    const effectiveParams: EffectiveAIParams = { temperature: customParams.temperature ?? globalEngine?.temperature ?? GENERIC_MODEL_PARAMS.temperature, max_tokens: customParams.max_tokens !== undefined ? customParams.max_tokens : (globalEngine?.max_tokens !== undefined ? globalEngine.max_tokens : DEFAULT_MAX_TOKENS), source };
     if (customParams.top_p !== undefined) effectiveParams.top_p = customParams.top_p; else if (globalEngine?.top_p !== undefined) effectiveParams.top_p = globalEngine.top_p;
     if (customParams.frequency_penalty !== undefined) effectiveParams.frequency_penalty = customParams.frequency_penalty; else if (globalEngine?.frequency_penalty !== undefined) effectiveParams.frequency_penalty = globalEngine.frequency_penalty;
     if (customParams.presence_penalty !== undefined) effectiveParams.presence_penalty = customParams.presence_penalty; else if (globalEngine?.presence_penalty !== undefined) effectiveParams.presence_penalty = globalEngine.presence_penalty;

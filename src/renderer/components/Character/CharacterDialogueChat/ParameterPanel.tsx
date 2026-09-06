@@ -98,7 +98,11 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
   const handleSliderAfterChange = useCallback((key: keyof AIParameterConfig, value: number) => {
     const configDef = [...PARAMETER_CONFIGS, ...DRY_PARAMETER_CONFIGS].find(c => c.key === key);
     const effectiveValue = value;
-    const defaultValue = configDef?.defaultValue;
+    // 基线优先取引擎生效值（Spec: analyze-llamacpp-model-compatibility：
+    // "对话默认 AI 参数与当前引擎一致"——拖回引擎值即视为恢复默认，清除会话覆盖；
+    // 引擎未配置该参数时回退滑块硬编码默认值）
+    const engineBaseline = effectiveParams[key];
+    const defaultValue = typeof engineBaseline === 'number' ? engineBaseline : configDef?.defaultValue;
 
     if (defaultValue !== undefined && Math.abs(effectiveValue - defaultValue) < 0.001) {
       const newValues = { ...localValues };
@@ -114,7 +118,7 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
     } else {
       onParameterChange({ [key]: value });
     }
-  }, [localValues, customParameters, onParameterChange]);
+  }, [localValues, customParameters, onParameterChange, effectiveParams]);
 
   const handleReset = useCallback(() => {
     setLocalValues({});

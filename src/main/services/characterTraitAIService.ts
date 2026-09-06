@@ -539,11 +539,10 @@ class CharacterTraitAIService {
         };
       }
       if (!apiKey) {
-        console.warn('[CharacterTraitAI] AI 引擎未配置 apiKey');
-        return {
-          success: false,
-          error: 'AI 引擎未配置，请先在设置中配置 API',
-        };
+        // 【修复 - Spec: fix-dialogue-worldbook-association-and-tag-output 后续缺陷】
+        // 本地 llama-server 等引擎无需 api_key（对话链路 ChatEngine 从不要求 apiKey），
+        // 空 key 是合法场景，不应判为"未配置"。远程服务缺 key 会由 HTTP 401 报错。
+        console.warn('[CharacterTraitAI] AI 引擎 apiKey 为空（本地引擎合法场景），继续调用');
       }
       if (!modelName) {
         console.warn('[CharacterTraitAI] AI 引擎未配置 modelName');
@@ -1344,11 +1343,8 @@ class CharacterTraitAIService {
         };
       }
       if (!apiKey) {
-        console.warn('[CharacterTraitAI] recognizeImageTraits: AI 引擎未配置 apiKey');
-        return {
-          success: false,
-          error: 'AI 引擎未配置，请先在设置中配置 API',
-        };
+        // 【修复】本地引擎无需 api_key，空 key 合法（同 generateCharacterTraits 处理）
+        console.warn('[CharacterTraitAI] recognizeImageTraits: AI 引擎 apiKey 为空（本地引擎合法场景），继续调用');
       }
       if (!modelName) {
         console.warn('[CharacterTraitAI] recognizeImageTraits: AI 引擎未配置 modelName');
@@ -2107,11 +2103,16 @@ basic:cat girl|猫耳少女, basic:female|女性, head:white hair|白发, head:r
       const modelName = aiConfig.modelName;
 
       // 3. 配置兜底校验
-      if (!baseUrl || !apiKey || !modelName) {
+      // 【修复】apiKey 可空（本地 llama-server 等引擎无需密钥，对话链路同语义）；
+      // 远程服务缺 key 由 HTTP 401 报错，空 key 不发送 Authorization（见下方 header 守卫）
+      if (!baseUrl || !modelName) {
         return {
           success: false,
           error: 'AI 引擎未配置，请先在设置中配置 API',
         };
+      }
+      if (!apiKey) {
+        console.warn('[TraitPromptAI] AI 引擎 apiKey 为空（本地引擎合法场景），继续调用');
       }
 
       // 4. 读取引擎运行时参数
@@ -2166,10 +2167,14 @@ basic:cat girl|猫耳少女, basic:female|女性, head:white hair|白发, head:r
         max_tokens: maxTokens,
         stream: false,
       };
-      if (apiKeyTransmission === 'header') {
-        headers['Authorization'] = apiKey.trim().startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
-      } else {
-        requestBody.api_key = apiKey;
+      // 【修复】空 apiKey（本地引擎）时不发送 Authorization / api_key 字段，
+      // 与 generateCharacterTraits 的 if (apiKey) 守卫对齐，避免 "Bearer " 空头
+      if (apiKey) {
+        if (apiKeyTransmission === 'header') {
+          headers['Authorization'] = apiKey.trim().startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
+        } else {
+          requestBody.api_key = apiKey;
+        }
       }
 
       console.log('[TraitPromptAI] Calling LLM for prompt generation:', {
@@ -2280,11 +2285,15 @@ basic:cat girl|猫耳少女, basic:female|女性, head:white hair|白发, head:r
       const modelName = aiConfig.modelName;
 
       // 3. 配置兜底校验
-      if (!baseUrl || !apiKey || !modelName) {
+      // 【修复】apiKey 可空（本地引擎合法场景，同 generateTraitPrompts）
+      if (!baseUrl || !modelName) {
         return {
           success: false,
           error: 'AI 引擎未配置，请先在设置中配置 API',
         };
+      }
+      if (!apiKey) {
+        console.warn('[TraitOptimizeAI] AI 引擎 apiKey 为空（本地引擎合法场景），继续调用');
       }
 
       // 4. 读取引擎运行时参数
@@ -2396,10 +2405,13 @@ ${conversationContext}
         max_tokens: maxTokens,
         stream: false,
       };
-      if (apiKeyTransmission === 'header') {
-        headers['Authorization'] = apiKey.trim().startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
-      } else {
-        requestBody.api_key = apiKey;
+      // 【修复】空 apiKey（本地引擎）时不发送 Authorization / api_key 字段（同上）
+      if (apiKey) {
+        if (apiKeyTransmission === 'header') {
+          headers['Authorization'] = apiKey.trim().startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
+        } else {
+          requestBody.api_key = apiKey;
+        }
       }
 
       console.log('[TraitOptimizeAI] Calling LLM for trait optimization:', {
@@ -2596,8 +2608,12 @@ ${conversationContext}
       const engineSystemPrompt = aiConfig.systemPrompt || '';
       const modelName = aiConfig.modelName;
 
-      if (!baseUrl || !apiKey || !modelName) {
+      // 【修复】apiKey 可空（本地引擎合法场景）；空 key 不发送 Authorization（header 守卫）
+      if (!baseUrl || !modelName) {
         return { success: false, error: 'AI 引擎未配置，请先在设置中配置 API' };
+      }
+      if (!apiKey) {
+        console.warn('[CharacterTraitAI] AI 引擎 apiKey 为空（本地引擎合法场景），继续调用');
       }
 
       // 2. 读取引擎运行时参数

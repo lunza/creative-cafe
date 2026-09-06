@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, Button, Space, Checkbox, Input, message, Tabs, Alert } from 'antd';
+import { Modal, Button, Space, Checkbox, Input, message, Tabs, Alert, Switch } from 'antd';
 import { PlusOutlined, StopOutlined, UserOutlined, MessageOutlined, SettingOutlined, SmileOutlined, RobotOutlined } from '@ant-design/icons';
 import { FieldEditor } from './FieldEditor';
 import { WorldBookRelationPanel } from './WorldBookRelationPanel';
@@ -172,6 +172,8 @@ const CharacterEditModal: React.FC<CharacterEditModalProps> = ({
     setIsPolishModalOpen,
     polishRequirements,
     setPolishRequirements,
+    polishDeAiFlavor,
+    setPolishDeAiFlavor,
     setCurrentPolishField,
     setCurrentPolishText,
     isGenerateModalOpen,
@@ -816,6 +818,18 @@ const CharacterEditModal: React.FC<CharacterEditModalProps> = ({
             autoFocus
             disabled={polishingField !== null}
           />
+          {/* Spec: polish-deai-humanizer — 润色"去AI味"开关（默认开启） */}
+          <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Switch
+              size="small"
+              checked={polishDeAiFlavor}
+              onChange={setPolishDeAiFlavor}
+              disabled={polishingField !== null}
+            />
+            <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.65)' }}>
+              去AI味（抑制"禁忌之美"式浮夸辞藻与套路句式）
+            </span>
+          </div>
         </div>
       </Modal>
 

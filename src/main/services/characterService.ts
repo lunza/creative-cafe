@@ -434,9 +434,46 @@ class CharacterService {
     }
   }
 
+  /**
+   * raw 级读取角色卡数据（不经过 char-card-reader 的 toSpecV3 白名单过滤）。
+   * 直接解 PNG tEXt chunk（优先 v3 ccv3，回退 v2 chara），
+   * 保证 worldBooks 等非标准字段在 PC 端关系读写链路中保真不丢（§7.55）。
+   * @returns 与 toSpecV3 同构的 { spec, spec_version, data }；失败返回 null
+   */
+  async readRawCardData(filePath: string): Promise<{ spec?: string; spec_version?: string; data: Record<string, unknown> } | null> {
+    try {
+      const buf = await fs.readFile(filePath);
+      const chunks = extract(new Uint8Array(buf));
+      let ccv3: any = null;
+      let chara: any = null;
+      for (const chunk of chunks) {
+        if (chunk.name !== 'tEXt') continue;
+        try {
+          const decoded = PNGtext.decode(chunk.data);
+          if (decoded.keyword.toLowerCase() === 'ccv3') {
+            ccv3 = JSON.parse(Buffer.from(decoded.text, 'base64').toString('utf8'));
+          } else if (decoded.keyword.toLowerCase() === 'chara') {
+            chara = JSON.parse(Buffer.from(decoded.text, 'base64').toString('utf8'));
+          }
+        } catch { /* 忽略损坏 chunk */ }
+      }
+      if (ccv3 && typeof ccv3.data === 'object' && ccv3.data) {
+        return { spec: 'chara_card_v3', spec_version: '3.0', data: ccv3.data };
+      }
+      if (chara && typeof chara.data === 'object' && chara.data) {
+        return { data: chara.data };
+      }
+      return null;
+    } catch (error) {
+      console.error('Failed to read raw card data:', error);
+      return null;
+    }
+  }
+
   async getWorldBookRelations(characterFilePath: string): Promise<Array<{ worldBookPath: string; enabled: boolean; priority: number; filterTags?: string[] }>> {
     try {
-      const data: any = await this.readCharacter(characterFilePath);
+      // raw 读取，避免 toSpecV3 白名单过滤丢弃 worldBooks（§7.55）
+      const data: any = await this.readRawCardData(characterFilePath);
       if (!data || !data.data) return [];
       
       const worldBooks = data.data.worldBooks || [];
@@ -449,7 +486,8 @@ class CharacterService {
 
   async setWorldBookRelations(characterFilePath: string, relations: Array<{ worldBookPath: string; enabled: boolean; priority: number; filterTags?: string[] }>): Promise<{ success: boolean; error?: string }> {
     try {
-      const data: any = await this.readCharacter(characterFilePath);
+      // raw 读取，保留 worldBooks 等非标准字段后整组替换
+      const data: any = await this.readRawCardData(characterFilePath);
       if (!data || !data.data) {
         return { success: false, error: '无法读取角色卡数据' };
       }

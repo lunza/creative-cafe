@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { Switch, Tooltip, Button, Radio, Select, Modal, message } from 'antd';
-import { DownOutlined, RightOutlined, TableOutlined, QuestionCircleOutlined, EyeOutlined, LinkOutlined } from '@ant-design/icons';
+import { DownOutlined, RightOutlined, TableOutlined, QuestionCircleOutlined, EyeOutlined, LinkOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import TablePreviewModal from './TablePreviewModal';
 import './ConfigPanel.css';
 
@@ -17,6 +17,9 @@ interface MemoryTablePanelProps {
   onAutoOrganizeToggle: (enabled: boolean) => void;
   onOrganizeModeChange: (mode: 'sync' | 'async') => void;
   onTemplateAssociate: (templateId: string, templateName: string) => void;
+  // 手动触发表格整理（Spec: add-manual-table-organize-button / Task 3）
+  onManualOrganize: () => void;
+  manualOrganizing: boolean;
 }
 
 const MemoryTablePanel: React.FC<MemoryTablePanelProps> = ({
@@ -30,6 +33,8 @@ const MemoryTablePanel: React.FC<MemoryTablePanelProps> = ({
   onAutoOrganizeToggle,
   onOrganizeModeChange,
   onTemplateAssociate,
+  onManualOrganize,
+  manualOrganizing,
 }) => {
   const [collapsed, setCollapsed] = useState(() => {
     const saved = localStorage.getItem('memory-table-panel-collapsed');
@@ -179,6 +184,36 @@ const MemoryTablePanel: React.FC<MemoryTablePanelProps> = ({
               className="memory-table-switch"
             />
           </div>
+
+          {/* 手动触发表格整理（Spec: add-manual-table-organize-button / Task 3）
+              仅在启用记忆表格且未启用实时整理时显示，作为实时整理功能的手动替代方案 */}
+          {enabled && !autoOrganize && (
+            <div className="memory-table-action-row">
+              <Tooltip
+                title={
+                  <div>
+                    <div><b>手动整理表格</b></div>
+                    <div>对未启用实时整理期间积累的对话记录，手动触发一次表格整理</div>
+                    <div>整理算法与规则和实时整理完全一致，仅处理上次整理位置之后的记录</div>
+                  </div>
+                }
+              >
+                <Button
+                  icon={<ThunderboltOutlined />}
+                  onClick={onManualOrganize}
+                  loading={manualOrganizing}
+                  size="small"
+                  className="memory-table-manual-organize-btn"
+                  block
+                >
+                  手动整理表格
+                </Button>
+              </Tooltip>
+              <div style={{ fontSize: '12px', color: '#999', marginTop: 4, textAlign: 'center' }}>
+                实时整理未启用，可点击上方按钮手动触发表格整理
+              </div>
+            </div>
+          )}
 
           {enabled && autoOrganize && (
             <div className="memory-table-toggle-row" style={{ paddingLeft: 24 }}>

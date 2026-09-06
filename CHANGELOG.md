@@ -1,5 +1,181 @@
 # Changelog
 
+## [缺陷修复] - 2026-08-28 - 对话模式世界书关联失效 + qwen 思考模型标签输出缺失
+
+- **需求**：① 对话交互模式下无法正确关联世界书内容（触发条件、检索流程、结果匹配异常）；② qwen3.8-next-flash 模型不按要求返回表情/辅助模式标签
+- **世界书关联修复**：
+  - `CharacterDialogueChat.hooks.ts`：检索 scopeIds 并入角色卡世界书关联（此前角色卡关联在对话检索链路中无消费方，仅对话配置的知识库绑定生效）
+  - `WorldBookKeywordMatcher.ts` / `WorldBookKeywordIndex.ts`：constant（蓝灯）常驻条目无条件注入（仅概率过滤）；条目禁用判定统一为 `disable===true || enabled===false`
+- **标签输出修复**：
+  - `creative-chat.continuation` 模板白名单豁免 `<<<EXPRESSION>>>`/`<<<SUGGESTED_OPTIONS>>>` 标签，消除与表情提示词的续写指令矛盾（内置种子 + 硬编码回退 + 存量持久化副本锚点迁移三处同步）
+  - 标签提醒注入范围从仅 dialogue 扩展到 continuation
+  - 新增定性诊断与单次补发：finish_reason=length 仅告警；stop 且标签缺失时以独立引擎实例补发一次（请求级关思考 `thinking_mode:'off'`），成功后追加正文复用现有解析
+- **验证**：WorldBookKeywordIndex 26 测试 + 对话链路 371 测试全部通过；tsc 改动文件零新增错误
+- **详见**：`docs/FIX_RECORDS.md` §7.61、`.trae/specs/fix-dialogue-worldbook-association-and-tag-output/`
+
+## [缺陷修复] - 2026-08-21 - 修复世界书关联与向量库检索功能
+
+- **需求**：版本更新后 PC 端角色卡编辑器中世界书关联功能失效（关系写入后读回为空），对话管线中向量库检索在指定多源过滤时返回空结果
+- **PC 端世界书关系修复**（`characterService.ts`）：
+  - 新增 `readRawCardData` 方法：直接解 PNG tEXt chunk（优先 v3 ccv3，回退 v2 chara），不经过 `@lenml/char-card-reader` 的 `toSpecV3()` 白名单过滤
+  - `getWorldBookRelations` / `setWorldBookRelations` / `addWorldBookRelation` / `removeWorldBookRelation` 全部改用 raw 读取，确保 `worldBooks` 非标准字段保真
+  - 与 `characterWrite.ts` 的 LAN API 修复方案（§7.55）同构，PC 端和移动端读取路径一致
+- **向量库多源过滤器修复**（`SqliteVecBackend.ts`）：
+  - `buildFilterClause` 增加数组类型处理：数组值生成 `IN` 子句（`m.source IN (?,?,...)`），单值保持 `=` 不变，空数组生成 `1=0`
+  - 修复 `ContextManager` 传入多源 filter（`source: ['worldbook', 'knowledge', 'memory']`）时更好的-sqlite3 数组绑定失败问题
+- **验证**：运行时验证脚本（世界书关系读写闭环 + 多源 IN 子句生成 + 单值回归 + 空数组边界）全部通过；编译零新增错误
+- **详见**：`docs/FIX_RECORDS.md` §7.58、§7.59
+
+## [功能对齐·Spec闭环] - 2026-08-20 - 移动端角色列表排序对齐 PC 端（V6）：收藏置顶 + 两端收藏数据互通
+
+- **需求**：用户要求移动端角色列表排序与 PC 端保持相同规则。PC 端规则（CharacterSelectorPanel）为「收藏角色置顶（组内保持文件目录顺序）→ 非收藏在后；搜索先过滤再分组」，移动端此前无收藏概念、按 API 顺序直接渲染，收藏置顶效果缺失
+- **服务端（主进程 + LAN API）**：
+  - 新增 `characterFavoritesService`：收藏持久化于 `userData/character-favorites.json`（存角色卡文件名，目录迁移不失效）
+  - IPC 通道 `favorites:read/write/hasStored`（preload 同名暴露）
+  - LAN API `GET /api/favorites`（name 列表）/ `PUT /api/favorites`（全量替换，幂等，接受 fileName/name/path 任一标识）
+- **PC 端（favoritesStore）**：localStorage persist 保留为本地缓存，rehydrate 后与主进程文件对齐（文件有数据→覆盖本地；文件空且本地有→一次性上传迁移）；add/remove 时双写主进程。实现两端收藏互通、置顶排序一致
+- **移动端（android-client）**：`fetchFavorites/saveFavorites` API；角色列表页并行拉取角色+收藏，排序对齐 PC（收藏在前组内保序/非收藏在后/搜索先过滤再分组）；卡片新增心形 toggle 按钮（乐观更新 + 全量 PUT + 失败回滚提示）
+- **验证**：服务端 API 5 用例（GET/PUT/回读/非数组/坏 JSON）全通过；模拟器实测——收藏 Kanako+克拉拉后两者置顶（组内保持 readdir 序）、服务端改收藏后下拉刷新同步、搜索过滤后收藏仍置顶、心形 toggle 服务端持久化生效；双端 tsc 通过；APK 重建安装；`npm test` 无新增回归（4 个失败均为既有）
+- **详见**：`docs/android-client.md` §2 端点表 / §3 / §5.4 18-19 项、`docs/FIX_RECORDS.md` §7.57
+
+## [缺陷修复·Spec闭环] - 2026-08-20 - 移动端对话交互对齐 PC 端（V5）：头像查看/气泡样式/卷回重新生成/辅助模式
+
+- **需求**：用户报告移动端对话界面 5 项功能缺陷（头像无全屏查看、气泡渲染与 PC 不一致、卷回/重新生成按钮丢失、辅助模式直接发送、其他差异），要求系统性测试与修复，严格对齐 PC 端实现逻辑与交互标准
+- **服务端（LAN API）**：新增 `POST /api/chats/:characterId/rollback`（body `{ messageId }`）——校验 user 消息 → 截断 chatStorage 历史并持久化 → 返回 `{ success, content, removedCount }`；错误码 `CHARACTER_NOT_FOUND/MESSAGE_NOT_FOUND/NOT_USER_MESSAGE/BAD_REQUEST`；SSE `done` 事件新增 `userMessageId` 字段（供卷回/重新生成按服务端 id 定位，规避本地 localId 不一致）；辅助模式 options 持久化到 assistantMessage（历史加载后选项仍可显示）
+- **客户端（android-client）**：
+  - 新增 `AvatarViewer.tsx`：全屏 Modal 黑遮罩 + PanResponder 双指捏合缩放（1x–4x 限幅）+ 双击 1x↔2.5x 切换 + 放大后单指拖拽平移（限幅防拖出屏）+ 单击遮罩/右上角 ✕/系统返回键三种关闭方式
+  - `ChatScreen.tsx` 气泡样式对齐 PC CSS 基准：圆角 18（用户右下小角 4/AI 左下小角 4）、内边距 16/12、名字行（用户名/角色名 + 情绪标签 + AI `#n` 序号徽章，nameUser/nameAI 色）、文本 selectable；主题色新增 `aiBubbleBorder/nameUser/nameAI`
+  - 消息操作按钮行：AI 气泡下方「复制（Snackbar 反馈）/ 重新生成」、用户气泡下方「卷回到输入框」（截断本地+服务端历史、内容回填输入框）；重新生成 = rollback 最后 user 消息 + 原文重发（无重复 user 消息）；流式期间按钮不渲染
+  - 辅助模式修复：选项点击 `setInput(opt)` 填入输入框 + Snackbar「已填入输入框，可编辑后发送」（不再直接发送）
+  - 修复 3 个实施中新发现缺陷：D1 AvatarViewer 未挂载 JSX（点击无反应）、D2 AI 头像沉底（`bubbleRow.alignItems` flex-end→flex-start 顶对齐）、D3 用户消息靠左（新增 `bubbleRowUser` justifyContent flex-end 右对齐）
+- **验证**：服务端 curl 异常路径 4 用例全通过；客户端 tsc 0 错误；assembleRelease 通过；AVD test36 模拟器实测 12 用例（五项功能全流程 + 空历史/流式禁用边界 + 窄屏 343dp/常规/横屏三档 + 亮暗主题像素级验证）全部通过；`npm test` 无回归
+- **详见**：`debug-chat-interaction-defects.md`（调试会话全记录）、`docs/android-client.md` §2/§3/§5.4 15-17 项、`docs/FIX_RECORDS.md` §7.56
+
+## [功能上线·Spec闭环] - 2026-08-20 - 移动端 UI 全面重新设计（V5）：现代视觉语言 + 图片展示重规划
+
+- **需求**：用户要求对移动端页面进行全面 UI 重新设计，重点优化视觉美观度与图片展示位置（尺寸/边距/加载状态），遵循现代移动端 UI 规范，适配主流屏幕，提升对话场景视觉体验
+- **设计方向（经确认）**：转向现代自定义风格（渐变背景+玻璃态+大圆角）、图片自适应卡片式、立绘头像化（横幅→气泡头像）、中性暖色主色调
+- **主题系统（theme.ts）**：主色从紫色 `#6750A4` 迁移至中性暖色（亮 `#8B6F5A` / 暗 `#D4B8A8`），新增玻璃态语义色 glassBg/scrim/skeleton/accentBar，亮暗对比度满足 WCAG AA
+- **对话页（ChatScreen）**：**立绘头像化**——移除顶部全宽立绘横幅，AI 消息气泡左侧圆形立绘头像（情绪表情图→角色头像回退，流式呼吸动画，情绪角标），用户气泡右侧「你」头像；气泡玻璃态（半透+阴影+情绪色点缀条）、不对称大圆角；思考面板/options chips/生成图片按钮全部新视觉；输入区圆角胶囊
+- **图片气泡（ImageBubble 重写）**：按原始宽高比自适应（限宽限高不裁切、弃用 1:1）、16dp 圆角+内阴影、骨架屏脉冲+淡入、生成中脉冲占位、历史版本切换胶囊控件悬底边（不占独立行）、玻璃态全屏遮罩
+- **其余屏幕统一**：连接页玻璃卡片、列表页 20dp 圆角+阴影、编辑页关系卡玻璃化、配置/表格弹层 24dp 圆角+阴影
+- **验证**：客户端 tsc 0 错误；assembleRelease BUILD SUCCESSFUL；APK 已复制 `android-client/apk/creative-cafe-release.apk`（16:42，58.5MB）
+- **详见**：`docs/android-client.md` §1/§3、`.trae/specs/redesign-mobile-chat-ui/`
+
+## [功能上线·Spec闭环] - 2026-08-20 - 移动端角色卡编辑模块（V4）：与 PC 端同源的角色卡编辑能力
+
+- **需求**：用户要求以 PC 端角色卡编辑能力为基准，为移动端开发完整编辑模块（基本信息/头像/背景故事/技能配置/关系管理），响应式布局 + 离线草稿同步
+- **服务端（LAN API，全部复用 characterService，与 PC 端 IPC 同一实现，数据同源）**：
+  - 新增 `lanapiserver/characterWrite.ts`：`readRawCardData`（直接解 PNG tEXt chunk，绕过 char-card-reader 的 toSpecV3 白名单过滤，保证 worldBooks 等非标准字段保真）、`updateCard`（白名单字段级合并+双 spec 写回）、`replaceAvatar`（base64→PNG 魔数校验→载体重建保留数据）、`createCard`（文件名清洗+去重+createCharacterFromImage）、`deleteCard`（对齐 PC 端 character:delete）、`readWorldBookRelations`/`writeWorldBookRelations`、`validateRelations`（worldBookPath 命中世界书目录真实文件，防路径穿越）
+  - `server.ts` 注册 7 个新端点：PUT card / PUT avatar / POST characters / DELETE characters / GET+PUT worldbook-relations / GET worldbooks；头像 base64 ≤10MB + PNG 魔数校验；错误统一 `{error:{code,message}}`
+- **客户端（android-client）**：
+  - 新增 `screens/CharacterEditScreen.tsx`：五分区顶部 Tab（基本/设定/对话/高级/关系）表单，16 个字段与 PC 端保存字段一致；关系分区支持世界书绑定增删/启用/优先级；新建模式（选图→填字段→创建）；头像更换（react-native-image-picker base64）；亮暗主题适配 + 按屏宽响应式
+  - `CharacterListScreen`：卡片新增编辑（✏️）/删除（🗑️）入口 + 新建角色 FAB + 删除二次确认
+  - 本地草稿：编辑自动暂存 AsyncStorage（`@creative_cafe/card_draft/<id|__new__>`，debounce 1s），重进提示"检测到本地草稿"，保存成功后清除
+  - `types.ts`/`client.ts`/`store.ts` 扩展（CharacterCardEditData/CharacterWorldBookRelation/WorldBookSummary/apiDelete/openCardEditor）
+- **验证**：服务端 curl 冒烟全链路通过（新建→读回→改字段→换头像→关系写入读回→删除→非法字段 400）；客户端 tsc 0 错误；assembleRelease BUILD SUCCESSFUL；APK 已复制 `android-client/apk/creative-cafe-release.apk`（10:10，58.5MB）
+- **关键修复**：`toSpecV3()` 白名单过滤丢弃 worldBooks 导致关系写入读回为空 → 新增 `readRawCardData` 原生解 chunk 保真（服务端冒烟发现）
+- **详见**：`docs/android-client.md` §2（V4 端点表）/§3、`docs/FIX_RECORDS.md` §7.55
+
+## [功能对齐·用户多次反馈] - 2026-08-19 - 安卓客户端 V3：对话模式对齐桌面端（思考处理/辅助模式/防重复预设）+ 亮暗主题切换
+
+- **需求（用户再次反馈功能不一致）**：安卓端与 PC 端对话模式不一致——思考内容处理、辅助模式、防重复强度预设缺失；并要求主题切换按钮适配暗色/亮色模式
+- **服务端（LAN API）**：
+  - `sessionConfigStore.ts` 白名单扩展：`think_tag_mode`（strip/strip_render/fold 三态）、`assist_mode`、`frequency_penalty`/`presence_penalty`/`dry_multiplier`（含取值范围校验）
+  - `dialogue.ts`：思考三态权威全文策略（strip=存储前剥离 / strip_render=存储保留渲染剥离 / fold=存储保留+折叠）；`fold` 模式新增 SSE `reasoning` 事件流式推送思考增量；辅助模式提示词注入 + `extractSuggestedOptions` 解析剥离 + 新增 `options` 事件；防重复参数注入 AI 请求
+  - 事件序列扩展：`reasoning*? → chunk* → emotion? → table? → options? → done`（向后兼容）
+- **客户端（android-client）**：
+  - 新增 `src/theme.ts`：亮/暗两套 Material 3 Palette + Paper 主题；`store` 增 `themeMode`（AsyncStorage 持久化，纯外观偏好）；`App.tsx` PaperProvider 动态主题 + StatusBar 明暗
+  - `SessionConfigSheet`：思考内容处理三态 SegmentedButtons / 辅助模式开关 / 防重复三档预设（宽松/标准/严格，参数组合回显高亮）
+  - `ChatScreen`：`ThinkingPanel` 折叠思考面板（流式自动展开+加载指示，完成收起，点击切换）、`splitThink` 三态渲染、推荐选项 chips（点击即发送）、全量主题化（样式工厂 `createStyles(palette)`）
+  - `ImageBubble`/`MemoryTableSheet`/`ConnectScreen`/`CharacterListScreen` 全部主题化；连接页/列表页右上角太阳/月亮切换按钮
+- **验证**：客户端 `tsc --noEmit` 0 错误；服务端全量 tsc 中 lanapiserver 无错误（renderer 782 个为历史遗留与本次无关）；assembleRelease BUILD SUCCESSFUL；新 APK 已复制 `android-client/apk/creative-cafe-release.apk`（19:37 构建）
+- **修复（构建期发现）**：ChatScreen V3 渲染逻辑先行但样式工厂未替换（`createStyles` 未定义 + 缺 think/options 样式，必然编译失败）；RN 0.87 `StatusBar` 已移除 `backgroundColor` 属性；NumberField 组件外引用 styles 作用域错误
+- **详见**：`docs/android-client.md` §2.1/§2.2/§3/§5.4、`docs/FIX_RECORDS.md` §7.54
+
+## [BUG修复·重点] - 2026-08-19 - 安卓端消息列表强制滚底（二次反馈）：滚动修复代码因重复声明从未进包
+
+- **现象（用户真机反馈）**：消息固定在最下方，上滑查看历史消息会被强制拉回最新消息位置
+- **根因（双层）**：
+  1. 上轮 L7 滚动修复编辑时滚动逻辑代码块（`isNearBottomRef`/`onListScroll`/`scrollToBottom` 等）在 `ChatScreen.tsx` 被**重复插入两次** → 同作用域重复 `const` 声明 → Metro 打包必然失败 → **修复从未进入 APK**，用户装的仍是旧包
+  2. Android Fabric 上 `onScroll` 的 `contentSize.height` 可能为 0，"是否在底部附近"判断失效 → 流式期间上滑仍被跟底
+- **修复**：删除重复块；`onContentSizeChange(_, contentH)` 直接用参数缓存内容高度（Fabric 可靠来源）；三层防护（仅流式期间跟随 / 上滑离底 >80px 暂停跟随 / 发送与历史加载完成才强制回底）
+- **验证（模拟器 AVD test36 实测）**：静态浏览上滑后 3s/8s 位置纹丝不动；多屏上滑稳定；流式期间上滑视图保持在中部历史位置不跟底；用户在底部时流式正常跟随 ✅
+- **交付**：新 APK（2026-08-19 18:30 构建）已复制到 `android-client/apk/creative-cafe-release.apk`，请卸载旧包后安装
+- **教训（流程级）**：tsc/构建验证必须发生在最后一次编辑之后；详见 `docs/FIX_RECORDS.md` §7.53
+
+## [BUG修复·重点] - 2026-08-19 - 安卓端图标字体未打包：所有按钮图标不可见（仅剩紫色背景）
+
+- **现象（用户真机反馈）**：对话页所有图标按钮（返回/表格/设置/清空/发送/生成图片/重试）图标位置空白，只剩紫色背景块
+- **根因**：`react-native-vector-icons` 的 19 个图标字体（.ttf）从未打包进 APK（解包验证无任何字体条目）——Android 集成必需的 `apply from: fonts.gradle` 行自 V1 起缺失，图标 `fontFamily` 解析失败
+- **修复**：`android/app/build.gradle` 添加官方 `fonts.gradle` 应用（详见 FIX_RECORDS §7.52）
+- **验证**：新 APK `assets/fonts/` 含全部 19 个 .ttf（+2MB）；cleartext=true 复验通过；双变体 17:54 构建已复制到 `android-client/apk/`
+- **教训**：RN 三方库 autolink 编译通过 ≠ 资源完整；APK 交付前须做内容级解包抽验
+
+## [功能+修复] - 2026-08-19 - 安卓客户端 V2：对话功能补全（人设/参数/记忆表格/图片生成/RAG）+ 布局修复 L1-L6
+
+- **需求（用户反馈）**：安卓端对话缺失用户人设、参数配置、记忆表格、图片生成、知识库检索等功能；图片及相关板块存在布局错位（元素重叠/位置偏移/尺寸异常）
+- **服务端（LAN API）新增**：
+  - 会话配置存储 `sessionConfigStore.ts`（每角色 JSON，`{userData}/data/lan-session-config/`）+ `GET/PUT /api/chats/:id/session-config`（白名单校验，非法值 400）
+  - `GET /api/personas`（+ `/avatar`）、`GET /api/knowledge-scopes`、`GET /api/chats/:id/memory-table`
+  - 对话管线增强：人设注入（{{user}} 指向人设名）、temperature/top_p/max_tokens 会话级覆盖、language/min_response_chars 约束、expression_display 开关、自定义停止序列合并、历史 RAG + 知识库 RAG 注入（try-catch 不阻塞）、记忆表格注入与 AI 编辑指令执行（SSE 新增 `table` 事件，序列 chunk→emotion→[table]→done）
+  - headless 图片生成 `imageGeneration.ts`：traits+LoRA+父消息情绪动态表情标签（对齐 §7.43）→ SD txt2img → 素材落盘 → `POST .../messages/:messageId/image`（regenerate 追加 history）+ `GET /api/assets/:cid/:assetId`（穿越 404）
+- **客户端（android-client）新增**：`SessionConfigSheet`（配置弹层）/`ImageBubble`（图片气泡：历史切换/重新生成/全屏）/`MemoryTableSheet`（表格查看）；ChatScreen 集成 + 布局修复 L1-L6（立绘 contain 自适应、键盘避让、长文本折行、滚动 200ms 节流、气泡 maxWidth 分档、徽章安全边距）；AsyncStorage 仍仅服务器地址一项
+- **⚠️ max_tokens 陷阱（重点）**：会话配置 `max_tokens` 过小（如 1024）时推理模型 think 阶段耗尽 token → `AI_EMPTY_RESPONSE`；属配置指引问题（建议 ≥4096 或不设置），已写入 `docs/android-client.md` §2.2
+- **验证**：服务端 curl 全端点 22 项通过（含图片真实生成 3.3MB/表格落库/SSE table 事件）；客户端 tsc 0 错误；assembleDebug+Release BUILD SUCCESSFUL；aapt2 cleartext=true；APK 已更新至 `android-client/apk/`（17:21 构建）
+- **详见**：`docs/android-client-test-report.md` V2 章节、`docs/FIX_RECORDS.md` §7.51
+
+## [功能] - 2026-08-19 - 智能助手消息操作：重新生成 + 卷回到输入框
+
+- **需求（用户反馈）**：助手中也添加重新生成和卷回按钮（与主对话交互一致）
+- **实现**：
+  - 用户消息 hover 显示「卷回」按钮（RollbackOutlined）：截断该消息及之后的对话，问题回填输入框；流式进行中先取消请求
+  - 最后一条回复 hover 显示「重新生成」按钮（ReloadOutlined）：绕过缓存重发最后一轮（`replaceLastUser` + `forceRegenerate`），成功/失败/取消后均可调用
+  - hook 新增 `regenerate()` / `rollbackToMessage(timestamp)`；Panel 以 `HoverActions` 组件实现 hover 渐显，替代原"来自之前的回复"标签旁的旧按钮
+- **详见**：`docs/FIX_RECORDS.md` §7.50
+
+## [功能] - 2026-08-19 - 智能助手回复改为流式响应
+
+- **需求（用户反馈）**：助手回复应与普通角色卡对话一样以流式输出，而非等待完整响应后一次性显示
+- **实现**：
+  - `characterAIUtils.ts` 新增 `sendAssistantAIStreamRequest`：基于 `defaultAIService.sendStreamChatRequest` 的 SSE 流式转发（onStream 增量回调 / onError / onComplete）
+  - `useCharacterCardAssistant.ts`：请求前插入空 assistant 占位消息，chunk 到达即增量更新（自动滚动跟随）；取消时保留已流出内容；流式中断但有部分内容时保留并提示；`replaceLastUser` 重试语义修复为"移除最后一轮"（兼容错误后保留部分内容的场景）
+  - `CharacterCardAssistantPanel.tsx`：流式占位（空内容）不渲染空气泡；加载文案区分"正在思考..."（等待首个 chunk）与"正在生成..."（流式输出中）
+- **保留**：缓存命中直接返回、多轮历史、引擎全局 system_prompt、取消/重试
+- **详见**：`docs/FIX_RECORDS.md` §7.49
+
+## [修复] - 2026-08-19 - 安卓 release APK 明文 HTTP 被系统拦截（App 无法连接但手机浏览器可访问）⚠️ 重点
+
+- **问题（真机实测）**：手机浏览器可访问 `http://<电脑IP>:8787/api/health`，但 release APK 在连接页输入同一地址提示"无法连接到服务器"
+- **根因**：RN Gradle 插件通过 `finalizeDsl` 强制将 release 的 `usesCleartextTraffic` 覆盖为 `false`（build.gradle 常规 `manifestPlaceholders` 写法均会被覆盖），Android 9+ 系统因此拦截应用明文 HTTP 请求
+- **修复**：`android-client/android/app/build.gradle` 新增后注册的 `androidComponents.finalizeDsl` 回调反覆盖为 `true`；重新构建并经 aapt2 验证 release APK `usesCleartextTraffic=true`，新 APK 已更新至 `android-client/apk/creative-cafe-release.apk`
+- **详见**：`docs/FIX_RECORDS.md` §7.48
+
+## [优化] - 2026-08-19 - 智能助手改为自然对话式回复（去掉结构化建议格式）
+
+- **问题（用户反馈）**：智能助手回复太乱——强制 AI 按【建议】/类型/标题/说明/内容/操作固定模板输出，前端解析为结构化卡片展示，不符合普通对话习惯
+- **调整**：助手回复改为与角色卡对话一样的自然文本展示，用户自行选择复制需要的内容
+  - `ASSISTANT_SYSTEM_PROMPT`：删除结构化输出格式要求，改为"像正常聊天一样自然回复，可用 Markdown 排版但不用固定模板"
+  - `useCharacterCardAssistant.ts`：删除 `parseAssistantSuggestions` 解析逻辑（约 110 行）及 `TYPE_ALIASES` 映射，缓存仅存回复文本
+  - `CharacterCardAssistantPanel.tsx`：assistant 消息直接渲染原始文本；删除建议卡片渲染与复制提示条
+  - 删除 `AssistantSuggestionCard.tsx` 组件；`assistant.types.ts` 移除 `Suggestion`/`SuggestionType`/`suggestions` 字段
+- **保留**：上下文感知（角色卡全字段注入）、多轮对话（6 轮历史）、缓存与失效、重新生成、取消/重试
+- **详见**：`docs/FIX_RECORDS.md` §7.47
+
+## [修复] - 2026-08-19 - 角色卡智能助手未携带 AI 引擎全局 system_prompt ⚠️ 重点
+
+- **问题**：角色卡编辑智能助手发送提问时，系统提示词只有助手任务提示词 + 角色卡上下文，遗漏了用户在 AI 引擎配置中设置的全局 `system_prompt`，导致引擎级语言/风格约束对助手失效（用户提示后发现）
+- **根因**：新增 AI 功能模块时未遵循项目既有惯例——世界书 AI 操作、对话管线等所有 AI 调用点均将 `engine.system_prompt` 前置到任务提示词
+- **修复**：`useCharacterCardAssistant.ts` 构建系统提示词改为三层拼接（引擎全局 system_prompt → 助手任务提示词 → 角色卡上下文），并在日志输出携带状态（`✅ 已携带(N字符)`）便于验证
+- **详见**：`docs/FIX_RECORDS.md` §7.46
+
+## [功能] - 2026-08-19 - 安卓 LAN 对话客户端 + 服务端 LAN API（Spec: add-android-chat-client）
+
+- **服务端 LAN API**：新增 `src/main/services/lanApiServer/`（Node http 内嵌服务，`0.0.0.0:8787` 默认开启，`lanApi.{enabled,port}` 可控），提供 health/角色卡/头像/表情立绘/对话历史/清空/SSE 流式对话 9 个接口；`:id` 白名单校验防路径穿越；`src/main/index.ts` 随主进程启停
+- **headless 对话管线**：`lanApiServer/dialogue.ts` 复用渲染进程 `PromptBuilder` 纯逻辑 + 服务端 AI 引擎配置流式调用 + `StreamSanitizer` 剥离 think/表情标记 + 情绪解析；与桌面端共用 `chatStorageService` 存储（两端历史一致）；AI 失败推 `error` 事件且不写入 assistant
+- **安卓客户端**：新增 `android-client/`（RN 0.87 + react-native-paper Material 3 + zustand + react-native-sse）：连接页（地址测试 + 自动重连 + 错误分类）、角色列表页（搜索/下拉刷新）、对话页（SSE 逐字气泡、情绪立绘切换与回退、清空上下文、失败重试）；无任何本地功能配置，仅保存服务器地址
+- **构建产物**：debug/release APK（`android-client/apk/`，release 使用 debug 签名占位）；文档见 `docs/android-client.md`（构建/API/调试）与 `docs/android-client-test-report.md`（测试报告）
+
 ## [修复] - 2026-08-16 - GLM SSE 注释行导致 JSON 解析失败 + 恢复逻辑截断
 
 - **问题**：调用 GLM 模型时 SSE 响应以 `: keep-alive` 注释行开头，`startsWith('data: ')` 检测条件失败，走了"普通 JSON 解析"分支报错 `Unexpected token ':'`。恢复逻辑取最后一个 `content` 匹配，但 SSE 流式 `delta.content` 是增量内容，导致 28624 字节数据只恢复出 4 个字符

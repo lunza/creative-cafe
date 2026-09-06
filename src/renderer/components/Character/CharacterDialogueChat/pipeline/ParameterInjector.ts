@@ -27,8 +27,13 @@ import {
 
 import { DEFAULT_MAX_TOKENS } from '../TokenManagement';
 
-/** 默认 temperature（与 hooks.ts 一致） */
-const DEFAULT_TEMPERATURE = 0.7;
+// Spec: analyze-llamacpp-model-compatibility
+// 硬编码兜底值统一改为共享"通用"模型系列模板常量（引擎值缺失时的最后兜底，
+// 保证对话默认参数与参数模板体系同源）
+import { GENERIC_MODEL_PARAMS } from '../../../../../shared/modelParameterPresets';
+
+/** 默认 temperature（引擎未配置时兜底，来源：通用模型系列模板） */
+const DEFAULT_TEMPERATURE = GENERIC_MODEL_PARAMS.temperature;
 
 export class ParameterInjector {
   /**

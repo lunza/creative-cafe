@@ -5,6 +5,54 @@
 
 ---
 
+## 安卓 LAN 对话客户端与服务端 LAN API（Spec: add-android-chat-client，2026-08-19）
+
+### 概述
+
+在 Electron 主进程内嵌 LAN HTTP API 服务（供同一 WiFi 的安卓纯客户端访问），并新建 React Native 安卓客户端 `android-client/`。V1 范围：角色卡列表/搜索/刷新 + SSE 流式对话 + 情绪立绘切换 + 清空上下文。对话历史与桌面端共用同一存储（TestChatData），两端同源。客户端无任何功能配置（模型/提示词/参数全由服务端决定），仅保存服务器地址。
+
+### 架构分层
+
+```
+Android 客户端（android-client/, RN 0.87 + paper/zustand/react-native-sse）
+  ConnectScreen（地址输入 + /api/health 测试 + 自动重连）
+  CharacterListScreen（卡片列表 + 搜索 + 下拉刷新）
+  ChatScreen（历史加载 + SSE 流式气泡 + 立绘切换 + 清空/重试）
+        │  http://<电脑IP>:8787（明文 HTTP，仅局域网）
+        ▼
+Electron 主进程 src/main/services/lanApiServer/
+  server.ts   Node http 极简路由：/api/health|characters|chats…；:id 白名单校验（防路径穿越）；SSE 封装
+  dialogue.ts headless 对话管线：复用渲染进程 PromptBuilder（纯 TS）组装提示词 →
+              读服务端 AI 引擎配置流式调用（对齐 ChatEngine/aiHandlers 超时策略）→
+              StreamSanitizer 增量剥离 <think>/表情标记 → parseExpressionFromContent 解析情绪 →
+              chatStorageService 持久化（失败不写入 assistant）
+        │  复用（只读）
+        ▼
+characterService / expressionService / chatStorageService / storageService
+```
+
+### 关键设计
+
+- **生命周期**：`src/main/index.ts` `whenReady` 调 `startLanApiServer()`（绑定 `0.0.0.0`，默认 8787；设置 `lanApi.{enabled,port}` 可控），`before-quit` 调 `stopLanApiServer()`。
+- **路径安全（R6）**：`resolveCharacterPath()` 将 `:id` 与角色卡目录 `readdir` 结果精确匹配，含 `/`、`\`、`..` 或不在目录内一律 404 `CHARACTER_NOT_FOUND`，不泄露文件系统信息；情绪键白名单 `/^[a-z][a-z0-9_]*$/`。
+- **SSE 协议**：POST `/api/chats/:id/messages` → 事件 `chunk`（增量文本，已剥离标记）→ 至多一个 `emotion` → 一个 `done`（权威全文 + messageId）；失败推 `error` 且不写库；15s `: ping` 注释心跳。
+- **客户端防重复发送**：react-native-sse 具备 EventSource 自动重连语义，`src/api/sse.ts` 在 done/error 后立即 `close()`，任何后续事件被 `finished` 闸门忽略。
+- **明文 HTTP**：`android/app/build.gradle` `manifestPlaceholders = [usesCleartextTraffic: true]`（LAN http 必需，debug/release 均生效）。
+
+### 涉及文件
+
+| 文件 | 说明 |
+|---|---|
+| `src/main/services/lanApiServer/server.ts` | LAN HTTP 服务与路由（新增） |
+| `src/main/services/lanApiServer/dialogue.ts` | headless 对话管线（新增） |
+| `src/main/index.ts` | 启动/停止 LAN API（修改） |
+| `android-client/src/api/client.ts` | 5s 超时、幂等 GET 重试 1 次、错误四分类（新增） |
+| `android-client/src/api/sse.ts` | SSE 封装与防重连（新增） |
+| `android-client/src/screens/*.tsx` | 连接/列表/对话三屏（新增） |
+| `docs/android-client.md` | 构建、API 说明（含 SSE 协议示例）、调试指南 |
+
+---
+
 ## 智能体与技能用户管理（Spec: add-agent-and-skill-user-management）
 
 ### 概述

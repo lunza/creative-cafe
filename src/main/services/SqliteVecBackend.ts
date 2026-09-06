@@ -790,6 +790,8 @@ export class SqliteVecBackend implements IVectorBackend {
   /**
    * 构建 search filter 的 SQL WHERE 子句。
    * 白名单列名防注入；未知列名忽略。
+   * 支持数组值（生成 IN 子句）和标量值（生成 = 比较）。
+   * 空数组生成 1=0（永不匹配），避免 SQL 语法错误。
    */
   private buildFilterClause(filter?: Record<string, any>): { whereClause: string; params: any[] } {
     if (!filter || Object.keys(filter).length === 0) {
@@ -800,11 +802,22 @@ export class SqliteVecBackend implements IVectorBackend {
     const params: any[] = [];
 
     for (const [key, value] of Object.entries(filter)) {
-      if (METADATA_COLUMN_WHITELIST.has(key)) {
+      if (!METADATA_COLUMN_WHITELIST.has(key)) {
+        console.warn(`[SqliteVecBackend] filter column "${key}" not in whitelist, ignored`);
+        continue;
+      }
+
+      if (Array.isArray(value)) {
+        if (value.length === 0) {
+          conditions.push('1=0');
+        } else {
+          const placeholders = value.map(() => '?').join(', ');
+          conditions.push(`m.${key} IN (${placeholders})`);
+          params.push(...value);
+        }
+      } else {
         conditions.push(`m.${key} = ?`);
         params.push(value);
-      } else {
-        console.warn(`[SqliteVecBackend] filter column "${key}" not in whitelist, ignored`);
       }
     }
 

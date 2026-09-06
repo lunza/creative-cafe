@@ -238,24 +238,52 @@ function clearMetaFile(): void {
 }
 
 /**
- * 计算 CSV 文件指纹（与 tagAutocompleteService.notifyCsvLoaded 一致）。
+ * CSV 内容指纹缓存（【修复 - mtime 误报 stale】Spec 记录: docs/FIX_RECORDS.md §7.63）。
  *
- * 指纹算法：sha256(csvPath + ':' + fileSize + ':' + mtimeMs).slice(0,16)
- * 仅用于 meta 比对，不读取文件内容（8MB 哈希耗时 ~50ms）。
+ * 背景：原指纹算法 sha256(csvPath + ':' + fileSize + ':' + mtimeMs) 对 mtime 过度敏感——
+ * CSV 文件被 git checkout / 复制 / 同步工具触碰 mtime（内容未变）即判定 stale，
+ * 迫使用户重跑 ~37 分钟的 22 万条向量化。
  *
- * @returns csvHash，加载失败时返回空字符串
+ * 新算法：**内容 sha256**（slice 16），以 (path → size+mtimeMs → hash) 内存缓存：
+ *  - mtime 未变 → 直接返回缓存（零文件读取）
+ *  - mtime 变化 → 重读文件算内容哈希（8MB 约 50ms，一次性），内容未变则 hash 不变 → 不 stale
+ *  - 内容真正变化 → hash 变化 → stale（语义正确）
+ */
+const csvContentHashCache = new Map<string, { size: number; mtimeMs: number; hash: string }>();
+
+/**
+ * 旧版指纹算法（path:size:mtimeMs）——仅用于存量 meta 的一次性迁移判定。
+ * 向量化完成后 meta 会写入新算法值，此函数不再参与日常新鲜度判定。
+ */
+function computeLegacyCsvHash(csvPath: string, stat: fs.Stats): string {
+  const crypto = require('crypto');
+  return crypto
+    .createHash('sha256')
+    .update(`${csvPath}:${stat.size}:${stat.mtimeMs}`)
+    .digest('hex')
+    .slice(0, 16);
+}
+
+/**
+ * 计算 CSV 文件指纹（内容哈希，带 stat 缓存）。
+ *
+ * @returns 内容哈希（16 位十六进制），加载失败时返回空字符串
  */
 function computeCsvHash(): string {
   try {
     const status = tagAutocompleteService.getLoadStatus();
     if (!status.csvPath) return '';
-    const crypto = require('crypto');
     const stat = fs.statSync(status.csvPath);
-    return crypto
-      .createHash('sha256')
-      .update(`${status.csvPath}:${stat.size}:${stat.mtimeMs}`)
-      .digest('hex')
-      .slice(0, 16);
+    const cached = csvContentHashCache.get(status.csvPath);
+    if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
+      return cached.hash;
+    }
+    const crypto = require('crypto');
+    const content = fs.readFileSync(status.csvPath);
+    const hash = crypto.createHash('sha256').update(content).digest('hex').slice(0, 16);
+    csvContentHashCache.set(status.csvPath, { size: stat.size, mtimeMs: stat.mtimeMs, hash });
+    logger.info(`CSV 内容指纹计算完成: ${hash} (${status.csvPath}, ${(stat.size / 1024 / 1024).toFixed(1)}MB)`);
+    return hash;
   } catch (err) {
     logger.warn('计算 csvHash 失败:', err instanceof Error ? err.message : String(err));
     return '';
@@ -317,6 +345,25 @@ function computeFreshness(): 'ready' | 'stale' {
   const currentModel = getCurrentModel();
 
   if (currentCsvHash && meta.csvHash !== currentCsvHash) {
+    // 【存量 meta 一次性迁移】meta.csvHash 可能是旧算法值（path:size:mtimeMs）。
+    // 若与旧算法指纹匹配 → 证明自向量化以来 path/size/mtime 均未变（内容必未变），
+    // 原地迁移为新算法内容哈希值，避免不必要的 stale 误报与 37 分钟重向量化。
+    try {
+      const csvStatus = tagAutocompleteService.getLoadStatus();
+      if (csvStatus.csvPath) {
+        const stat = fs.statSync(csvStatus.csvPath);
+        const legacyHash = computeLegacyCsvHash(csvStatus.csvPath, stat);
+        if (meta.csvHash === legacyHash) {
+          logger.info(`meta.csvHash 为旧算法值且匹配，迁移为新算法内容哈希: ${legacyHash} → ${currentCsvHash}`);
+          const migratedMeta = { ...meta, csvHash: currentCsvHash };
+          currentState = { ...currentState, meta: migratedMeta };
+          saveMetaToDisk(migratedMeta);
+          return 'ready';
+        }
+      }
+    } catch (migrateErr) {
+      logger.warn('meta.csvHash 迁移判定失败（按 stale 处理）:', migrateErr instanceof Error ? migrateErr.message : String(migrateErr));
+    }
     logger.info(`索引 stale: csvHash 变更 (${meta.csvHash} → ${currentCsvHash})`);
     return 'stale';
   }
@@ -941,13 +988,17 @@ function initialize(): void {
   }
 
   // 监听 CSV 加载完成事件
-  const csvListener = (payload: { csvPath: string; csvHash: string; totalCount: number }) => {
+  const csvListener = (_payload: { csvPath: string; csvHash: string; totalCount: number }) => {
     try {
       const config = readTagRagConfig();
       if (!config.autoRevectorizeOnCsvChange) return;
       if (!currentState.meta) return; // 未向量化，无需标记 stale
-      if (currentState.meta.csvHash !== payload.csvHash) {
-        logger.info(`检测到 CSV 变更: ${currentState.meta.csvHash} → ${payload.csvHash}，索引标记为 stale`);
+      // 【修复 - mtime 误报 stale】payload.csvHash 是旧算法（path:size:mtimeMs，对 mtime
+      // 敏感），统一改用 computeCsvHash()（内容哈希+缓存）与 meta 比对，与 computeFreshness
+      // 的判定口径一致
+      const currentHash = computeCsvHash();
+      if (currentHash && currentState.meta.csvHash !== currentHash) {
+        logger.info(`检测到 CSV 变更: ${currentState.meta.csvHash} → ${currentHash}，索引标记为 stale`);
         if (currentState.status === 'ready') {
           currentState = { ...currentState, status: 'stale' };
         }

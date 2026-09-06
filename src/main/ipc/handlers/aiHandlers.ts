@@ -159,6 +159,24 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
       // 完整 JSON 请求体写入日志文件（不受 DevTools 截断影响，不截断大文本）
       const fullBodyStr = JSON.stringify(sanitizedBody, null, 2);
       logger.info(`[${requestId}] 请求体（完整JSON，不截断）`, fullBodyStr);
+
+      // 【思考模式 max_tokens 预算守卫 - 16_THINKING_MODE_SAMPLING_CONFIG.md §4.2】
+      // reasoning_content（思维链）消耗 max_tokens 预算：小预算下会出现 content 为空 +
+      // finish_reason=length（非 bug）。服务端 preset 思考常开，仅当请求显式
+      // chat_template_kwargs.enable_thinking=false 时才视为关闭；开启（或未声明）时
+      // 预算低于 1024 记录警告（不改写请求体，保持调用方语义）。
+      if (
+        sanitizedBody.max_tokens !== undefined &&
+        Number(sanitizedBody.max_tokens) < 1024 &&
+        sanitizedBody.chat_template_kwargs?.enable_thinking !== false
+      ) {
+        logger.warn(`[${requestId}] 思考模式 max_tokens 预算偏低（< 1024）`, undefined, {
+          requestId,
+          max_tokens: sanitizedBody.max_tokens,
+          thinkingControl: sanitizedBody.chat_template_kwargs?.enable_thinking,
+          hint: 'reasoning_content 消耗 max_tokens 预算，过低会导致 content 为空 + finish_reason=length。请提升预算至 ≥1024（长思考模型建议 ≥2048），或在请求级关闭思考（chat_template_kwargs.enable_thinking=false）'
+        });
+      }
     } else {
       logger.info(`[${requestId}] 请求体（完整JSON）`, undefined, sanitizedBody);
     }
@@ -209,10 +227,14 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
       const senderId = event.sender.id;
 
       // 超时策略：连接超时（用户设置或默认 120s TTFB 兜底）+ 请求超时（用户设置或默认 300s，调用方可覆盖）
+      // 调用方显式传 timeout=0 表示"完全无限制"：同时跳过连接超时与请求超时。
+      // 注意：非流式 LLM 生成完成前不会返回响应头，若只跳过请求超时而保留连接超时，
+      // 长生成仍会在 connection_timeout（默认 120s）处被中止并报"请求超时"。
       const { connectionTimeout: configuredConnectionTimeout, requestTimeout: configuredRequestTimeout } = getTimeoutSettingsFromConfig();
-      const CONNECTION_TIMEOUT = configuredConnectionTimeout;
-      // 调用方传 timeout=0 表示无限制；传具体值则覆盖用户设置；不传则用用户设置或默认值
-      const effectiveTimeout = timeout === 0 ? 0 : (timeout || configuredRequestTimeout);
+      const callerUnlimited = timeout === 0;
+      const CONNECTION_TIMEOUT = callerUnlimited ? 0 : configuredConnectionTimeout;
+      // 传具体值则覆盖用户设置的请求超时；不传则用用户设置或默认值
+      const effectiveTimeout = callerUnlimited ? 0 : (timeout || configuredRequestTimeout);
 
       activeRequests.set(senderId, { controller, timeoutId: undefined, connectionTimeoutId: undefined });
       
@@ -747,9 +769,13 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
       let timeoutId: NodeJS.Timeout | undefined;
       
       // 超时策略：连接超时（用户设置或默认 120s 兜底）+ 请求超时（用户设置或默认 300s，调用方可覆盖）
+      // 调用方显式传 timeout=0 表示"完全无限制"：同时跳过连接超时与请求超时。
+      // 非流式 LLM 生成完成前不返回响应头，只跳过请求超时而保留连接超时的话，
+      // 长生成仍会在 connection_timeout（默认 120s）处被中止并报"请求超时"。
       const { connectionTimeout: configuredConnectionTimeout, requestTimeout: configuredRequestTimeout } = getTimeoutSettingsFromConfig();
-      const CONNECTION_TIMEOUT = configuredConnectionTimeout;
-      const effectiveTimeout = timeout === 0 ? 0 : (timeout || configuredRequestTimeout);
+      const callerUnlimited = timeout === 0;
+      const CONNECTION_TIMEOUT = callerUnlimited ? 0 : configuredConnectionTimeout;
+      const effectiveTimeout = callerUnlimited ? 0 : (timeout || configuredRequestTimeout);
 
       // 设置连接超时检测
       let connectionTimeoutId: NodeJS.Timeout | undefined;

@@ -1,8 +1,7 @@
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Input, Spin, Alert, Space, Tag } from 'antd';
-import { SendOutlined, StopOutlined, RobotOutlined } from '@ant-design/icons';
+import { Button, Input, Spin, Alert, Tag, Tooltip } from 'antd';
+import { SendOutlined, StopOutlined, RobotOutlined, RollbackOutlined, ReloadOutlined } from '@ant-design/icons';
 import type { AssistantMessage } from '@shared/types';
-import AssistantSuggestionCard from './AssistantSuggestionCard';
 
 const EXAMPLE_QUESTIONS = [
   '我想给这个角色添加一个能体现她正直善良的背景，我应该怎么做？',
@@ -18,15 +17,39 @@ interface CharacterCardAssistantPanelProps {
   onSend: (question: string, options?: { forceRegenerate?: boolean }) => Promise<void>;
   onCancel: () => void;
   onRetry: () => Promise<void>;
-  onRegenerate: (question: string) => void;
+  /** 重新生成最后一条回复（由容器提供） */
+  onRegenerateLast: () => void;
+  /** 卷回到指定用户消息：返回消息内容（供回填输入框），找不到返回 null */
+  onRollbackMessage: (timestamp: number) => string | null;
 }
 
 /**
  * 助手面板主体（Spec: add-ai-assistant-for-character-card-editor / Task 4）
  *
- * 负责：对话消息列表（用户/助手气泡）+ 建议卡片渲染 + 输入框 + 加载/错误/空状态。
- * 建议消息命中缓存时展示"基于之前的建议"标签与"重新获取建议"按钮。
+ * 负责：对话消息列表（用户/助手气泡，自然文本展示）+ 输入框 + 加载/错误/空状态。
+ * 消息操作（hover 显示）：用户消息「卷回到输入框」，最后一条回复「重新生成」。
  */
+
+/** hover 才显示的操作按钮组 */
+const HoverActions: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div
+      style={{ display: 'flex', gap: 2, opacity: visible ? 1 : 0, transition: 'opacity 0.15s' }}
+      onMouseEnter={() => setVisible(true)}
+      onMouseLeave={() => setVisible(false)}
+    >
+      {children}
+    </div>
+  );
+};
+
+const actionBtnStyle: React.CSSProperties = {
+  fontSize: 11,
+  padding: 0,
+  height: 20,
+  color: 'var(--text-secondary, #999)',
+};
 const CharacterCardAssistantPanel: React.FC<CharacterCardAssistantPanelProps> = ({
   messages,
   isLoading,
@@ -34,7 +57,8 @@ const CharacterCardAssistantPanel: React.FC<CharacterCardAssistantPanelProps> = 
   onSend,
   onCancel,
   onRetry,
-  onRegenerate,
+  onRegenerateLast,
+  onRollbackMessage,
 }) => {
   const [input, setInput] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
@@ -44,6 +68,12 @@ const CharacterCardAssistantPanel: React.FC<CharacterCardAssistantPanelProps> = 
     const el = listRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
+
+  /** 卷回：截断对话并回填输入框 */
+  const handleRollback = useCallback((timestamp: number) => {
+    const content = onRollbackMessage(timestamp);
+    if (content) setInput(content);
+  }, [onRollbackMessage]);
 
   const handleSend = useCallback(() => {
     const q = input.trim();
@@ -104,7 +134,19 @@ const CharacterCardAssistantPanel: React.FC<CharacterCardAssistantPanelProps> = 
         {messages.map((msg, idx) => {
           if (msg.role === 'user') {
             return (
-              <div key={idx} style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
+              <div key={idx} style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 4, marginBottom: 10 }}>
+                <HoverActions>
+                  <Tooltip title="卷回到输入框（移除该消息及之后的对话）">
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<RollbackOutlined />}
+                      style={actionBtnStyle}
+                      disabled={isLoading}
+                      onClick={() => handleRollback(msg.timestamp)}
+                    />
+                  </Tooltip>
+                </HoverActions>
                 <div
                   style={{
                     maxWidth: '85%',
@@ -124,24 +166,17 @@ const CharacterCardAssistantPanel: React.FC<CharacterCardAssistantPanelProps> = 
             );
           }
 
-          // assistant 消息：找到前一条用户消息的内容（用于重新生成）
-          const prevUserContent = idx > 0 && messages[idx - 1].role === 'user' ? messages[idx - 1].content : null;
-          const hasSuggestions = (msg.suggestions?.length ?? 0) > 0;
+          // 流式占位消息（最后一条 assistant 且内容为空）：不渲染空气泡，由底部 spinner 提示
+          const isStreamingPlaceholder = !msg.content && isLoading && idx === messages.length - 1;
+          if (isStreamingPlaceholder) return null;
+
+          // 重新生成按钮：仅最后一条回复且非加载中
+          const isLastAssistant = idx === messages.length - 1 && !!msg.content && !isLoading;
           return (
             <div key={idx} style={{ display: 'flex', marginBottom: 10 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                {msg.fromCache && prevUserContent && (
-                  <Space size={4} style={{ marginBottom: 6 }}>
-                    <Tag color="blue" style={{ fontSize: 11, marginRight: 0 }}>基于之前的建议</Tag>
-                    <Button
-                      type="link"
-                      size="small"
-                      style={{ fontSize: 11, padding: 0 }}
-                      onClick={() => onRegenerate(prevUserContent)}
-                    >
-                      重新获取建议
-                    </Button>
-                  </Space>
+                {msg.fromCache && (
+                  <Tag color="blue" style={{ fontSize: 11, marginBottom: 6 }}>来自之前的回复</Tag>
                 )}
                 <div
                   style={{
@@ -155,34 +190,42 @@ const CharacterCardAssistantPanel: React.FC<CharacterCardAssistantPanelProps> = 
                     color: 'var(--text-primary, #fff)',
                   }}
                 >
-                  {hasSuggestions ? (
-                    <>
-                      {(msg.suggestions ?? []).map((s, i) => (
-                        <AssistantSuggestionCard key={i} suggestion={s} />
-                      ))}
-                      <div style={{ fontSize: 11, color: 'var(--text-tertiary, #666)', marginTop: 2 }}>
-                        —— 可点击每条建议的复制按钮，将内容粘贴到编辑区域 ——
-                      </div>
-                    </>
-                  ) : (
-                    msg.content
-                  )}
+                  {msg.content}
                 </div>
+                {isLastAssistant && (
+                  <HoverActions>
+                    <Tooltip title="重新生成（忽略缓存）">
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<ReloadOutlined />}
+                        style={actionBtnStyle}
+                        onClick={onRegenerateLast}
+                      />
+                    </Tooltip>
+                  </HoverActions>
+                )}
               </div>
             </div>
           );
         })}
 
-        {/* 加载指示 */}
-        {isLoading && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 2px' }}>
-            <Spin size="small" />
-            <span style={{ color: 'var(--text-secondary, #a0a0a0)', fontSize: 12.5 }}>正在分析角色卡内容并生成建议...</span>
-            <Button type="link" size="small" icon={<StopOutlined />} style={{ fontSize: 12 }} onClick={onCancel}>
-              取消
-            </Button>
-          </div>
-        )}
+        {/* 加载指示：流式生成中（最后一条 assistant 已有内容）显示"正在生成"，否则显示"正在思考" */}
+        {isLoading && (() => {
+          const last = messages[messages.length - 1];
+          const streaming = last?.role === 'assistant' && !!last.content;
+          return (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 2px' }}>
+              <Spin size="small" />
+              <span style={{ color: 'var(--text-secondary, #a0a0a0)', fontSize: 12.5 }}>
+                {streaming ? '正在生成...' : '正在思考...'}
+              </span>
+              <Button type="link" size="small" icon={<StopOutlined />} style={{ fontSize: 12 }} onClick={onCancel}>
+                取消
+              </Button>
+            </div>
+          );
+        })()}
 
         {/* 错误状态 */}
         {error && !isLoading && (
@@ -223,7 +266,7 @@ const CharacterCardAssistantPanel: React.FC<CharacterCardAssistantPanelProps> = 
           </Button>
         </div>
         <div style={{ fontSize: 11, color: 'var(--text-tertiary, #666)', paddingTop: 2 }}>
-          建议内容基于当前角色卡生成，修改角色卡后建议将自动更新
+          回复基于当前角色卡内容生成，修改角色卡后将重新生成
         </div>
       </div>
     </div>

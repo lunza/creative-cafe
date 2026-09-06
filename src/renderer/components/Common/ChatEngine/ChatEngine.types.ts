@@ -64,6 +64,14 @@ export interface AIEngineConfig {
    */
   enable_chain_of_thought?: boolean;
   /**
+   * 思考模式联动（Spec: analyze-llamacpp-model-compatibility）。
+   * 由引擎 model_series 对应模板的 thinking 字段推导，保存引擎时写入：
+   * - 'off'：请求体显式 enable_thinking=false（优先级最高，Qwen 非思考模板）
+   * - 'on' ：请求体显式 enable_thinking=true（Qwen 思考模板）
+   * - 缺省/'auto'：沿用 enable_chain_of_thought + capabilities.supportsThinking 双条件旧逻辑
+   */
+  thinking_mode?: 'on' | 'off' | 'auto';
+  /**
    * 用户是否启用函数/工具调用（来自 AIEngineSetting.use_function_calling）。
    *
    * Spec: upgrade-ai-handler-multimodal-compatibility / Task 3.4

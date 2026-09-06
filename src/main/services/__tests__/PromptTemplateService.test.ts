@@ -33,9 +33,9 @@ describe('PromptTemplateService', () => {
 
   // ========== 1. 默认模板测试 ==========
   describe('Default templates', () => {
-    it('getAllTemplates() should return 21 templates (3 character-card + 14 world-book + 4 creative-chat)', () => {
+    it('getAllTemplates() should return 22 templates (3 character-card + 15 world-book + 4 creative-chat)', () => {
       const templates = service.getAllTemplates();
-      expect(templates).toHaveLength(21);
+      expect(templates).toHaveLength(22);
     });
 
     it('each default template should have correct moduleId, name, framework', () => {
@@ -60,7 +60,7 @@ describe('PromptTemplateService', () => {
       expect(polish.framework).toBe('ICIO');
     });
 
-    it('translate template should have expected parts (editable, no variables) and variables (empty)', () => {
+    it('translate template should have expected parts (editable system) and target_field_label variable', () => {
       const translate = service.getTemplate('character-card.translate');
       expect(translate).not.toBeNull();
       expect(translate.parts).toHaveLength(1);
@@ -68,7 +68,13 @@ describe('PromptTemplateService', () => {
       expect(translate.parts[0].type).toBe('editable');
       expect(translate.parts[0].role).toBe('system');
       expect(translate.parts[0].source).toBe('用户可编辑');
-      expect(translate.variables).toHaveLength(0);
+      // Spec: fix-character-card-field-scope-flash-models — 新增目标字段作用域变量
+      const varNames = translate.variables.map((v: any) => v.name);
+      expect(varNames).toContain('target_field_label');
+      // 系统提示含作用域约束锚点
+      expect(translate.parts[0].content).toContain('【翻译范围约束】');
+      expect(translate.parts[0].content).toContain('本次翻译目标字段：【{{target_field_label}}】');
+      expect(translate.parts[0].content).toContain('绝对禁止输出角色卡其他字段');
     });
 
     it('generate template should have expected parts (editable system + fixed user) and variables', () => {
@@ -110,19 +116,52 @@ describe('PromptTemplateService', () => {
 
       const varNames = polish.variables.map((v: any) => v.name);
       expect(varNames).toContain('polish_requirements');
+      // Spec: fix-character-card-field-scope-flash-models — 新增目标字段作用域变量与约束
+      expect(varNames).toContain('target_field_label');
+      expect(polish.parts[0].content).toContain('【润色范围约束】');
+      expect(polish.parts[0].content).toContain('本次润色目标字段：【{{target_field_label}}】');
+      expect(polish.parts[0].content).toContain('绝对禁止输出角色卡其他字段');
+    });
+
+    // ========== Spec: fix-character-card-field-scope-flash-models — 生成模板作用域强化 ==========
+    it('generate template should contain field-scope constraints (user prompt 首行前置 + 系统规则第 7 条)', () => {
+      const generate = service.getTemplate('character-card.generate');
+      const systemPart = generate.parts.find((p: any) => p.role === 'system');
+      const userPart = generate.parts.find((p: any) => p.role === 'user');
+      // 系统提示生成规则含"仅生成目标字段"
+      expect(systemPart.content).toContain('仅生成【{{target_field_label}}】一个字段的内容');
+      expect(systemPart.content).toContain('绝对禁止生成或输出其他任何字段的内容');
+      // user prompt 首行前置目标字段强调（位于已有信息段之前）
+      expect(userPart.content.indexOf('本次任务：仅生成【{{target_field_label}}】字段的内容')).toBeLessThan(
+        userPart.content.indexOf('【角色卡已有信息】')
+      );
+    });
+
+    it('buildPrompt should substitute target_field_label in translate/polish system prompts', () => {
+      const translateResult = service.buildPrompt('character-card.translate', { target_field_label: '描述' });
+      expect(translateResult.systemPrompt).toContain('本次翻译目标字段：【描述】');
+      expect(translateResult.systemPrompt).not.toContain('{{target_field_label}}');
+
+      const polishResult = service.buildPrompt('character-card.polish', {
+        polish_requirements: '测试要求',
+        target_field_label: '个性',
+      });
+      expect(polishResult.systemPrompt).toContain('本次润色目标字段：【个性】');
+      expect(polishResult.systemPrompt).not.toContain('{{target_field_label}}');
     });
 
     // ========== 世界书模板测试 ==========
     it('world-book templates should all exist with correct moduleId prefix', () => {
       const templates = service.getAllTemplates();
       const worldBookTemplates = templates.filter((t: any) => t.moduleId.startsWith('world-book.'));
-      expect(worldBookTemplates).toHaveLength(14);
+      expect(worldBookTemplates).toHaveLength(15);
 
       const expectedModuleIds = [
         'world-book.translate',
         'world-book.polish-keyword',
         'world-book.polish-comment',
         'world-book.polish-content',
+        'world-book.audit-content',
         'world-book.generate-keywords',
         'world-book.generate-tags',
         'world-book.sort-entries',
@@ -439,6 +478,82 @@ describe('PromptTemplateService', () => {
   });
 
   // ========== 4. 历史记录和回滚测试 ==========
+  // ========== Spec: fix-character-card-field-scope-flash-models — 存量模板迁移 ==========
+  describe('migrateCharacterCardFieldScope', () => {
+    // 从新种子推导旧种子（移除本次插入的作用域块），保持测试与种子同步自维护
+    const TRANSLATE_SCOPE_BLOCK = `\n\n【翻译范围约束】\n本次翻译目标字段：【{{target_field_label}}】。\n- 仅翻译用户消息中 <translate_target> 标签内的文本\n- <context_reference> 标签内的其他字段内容仅作用词参考，绝对禁止翻译或输出其中任何内容\n- 绝对禁止输出角色卡其他字段（如个性、场景、初始消息等）的内容\n- 你的唯一输出是目标字段文本的译文`;
+    const POLISH_SCOPE_BLOCK = `\n\n【润色范围约束】\n本次润色目标字段：【{{target_field_label}}】。\n- 仅润色用户消息中 <polish_target> 标签内的文本\n- <context_reference> 标签内的其他字段内容仅作参考，绝对禁止润色或输出其中任何内容\n- 绝对禁止输出角色卡其他字段（如个性、场景、初始消息等）的内容\n- 你的唯一输出是目标字段润色后的文本`;
+    const GENERATE_SYSTEM_RULE7 = `\n7. 仅生成【{{target_field_label}}】一个字段的内容，绝对禁止生成或输出其他任何字段的内容（即使它们出现在已有信息中）`;
+    const GENERATE_USER_PREFIX = `本次任务：仅生成【{{target_field_label}}】字段的内容，禁止生成其他任何字段。\n\n`;
+
+    it('未修改的存量旧副本 → 自动迁移为新种子（translate/polish/generate）', () => {
+      // 构造旧版 translate 副本（无作用域块、无 target_field_label 变量）
+      const newTranslate = service.getTemplate('character-card.translate');
+      const oldTranslate: PromptTemplate = JSON.parse(JSON.stringify(newTranslate));
+      oldTranslate.parts[0].content = newTranslate.parts[0].content.replace(TRANSLATE_SCOPE_BLOCK, '');
+      oldTranslate.variables = [];
+      (service as any).templates.set('character-card.translate', oldTranslate);
+
+      // 构造旧版 polish 副本
+      const newPolish = service.getTemplate('character-card.polish');
+      const oldPolish: PromptTemplate = JSON.parse(JSON.stringify(newPolish));
+      oldPolish.parts[0].content = newPolish.parts[0].content.replace(POLISH_SCOPE_BLOCK, '');
+      oldPolish.variables = oldPolish.variables.filter((v: any) => v.name === 'polish_requirements');
+      (service as any).templates.set('character-card.polish', oldPolish);
+
+      // 构造旧版 generate 副本（无规则 7、无 user prompt 首行强调）
+      const newGenerate = service.getTemplate('character-card.generate');
+      const oldGenerate: PromptTemplate = JSON.parse(JSON.stringify(newGenerate));
+      const genSystem = newGenerate.parts.find((p: any) => p.id === 'generate-system');
+      const genUser = newGenerate.parts.find((p: any) => p.id === 'generate-user');
+      const oldGenSystemPart = oldGenerate.parts.find((p: any) => p.id === 'generate-system')!;
+      const oldGenUserPart = oldGenerate.parts.find((p: any) => p.id === 'generate-user')!;
+      oldGenSystemPart.content = genSystem!.content.replace(GENERATE_SYSTEM_RULE7, '');
+      oldGenUserPart.content = genUser!.content.replace(GENERATE_USER_PREFIX, '');
+      (service as any).templates.set('character-card.generate', oldGenerate);
+
+      // 执行迁移
+      (service as any).migrateCharacterCardFieldScope();
+
+      // 断言三模板均已迁移
+      const migratedTranslate = service.getTemplate('character-card.translate');
+      expect(migratedTranslate.parts[0].content).toContain('【翻译范围约束】');
+      expect(migratedTranslate.variables.map((v: any) => v.name)).toContain('target_field_label');
+
+      const migratedPolish = service.getTemplate('character-card.polish');
+      expect(migratedPolish.parts[0].content).toContain('【润色范围约束】');
+      expect(migratedPolish.variables.map((v: any) => v.name)).toContain('target_field_label');
+
+      const migratedGenerate = service.getTemplate('character-card.generate');
+      const migratedGenSystem = migratedGenerate.parts.find((p: any) => p.id === 'generate-system');
+      const migratedGenUser = migratedGenerate.parts.find((p: any) => p.id === 'generate-user');
+      expect(migratedGenSystem.content).toContain('仅生成【{{target_field_label}}】一个字段的内容');
+      expect(migratedGenUser.content).toContain('本次任务：仅生成【{{target_field_label}}】字段的内容');
+    });
+
+    it('用户自定义修改过的副本 → 不覆盖，保留原内容', () => {
+      const newTranslate = service.getTemplate('character-card.translate');
+      const customTranslate: PromptTemplate = JSON.parse(JSON.stringify(newTranslate));
+      customTranslate.parts[0].content = newTranslate.parts[0].content
+        .replace(TRANSLATE_SCOPE_BLOCK, '')
+        + '\n自定义尾部内容';
+      (service as any).templates.set('character-card.translate', customTranslate);
+
+      (service as any).migrateCharacterCardFieldScope();
+
+      const after = service.getTemplate('character-card.translate');
+      expect(after.parts[0].content).toContain('自定义尾部内容');
+      expect(after.parts[0].content).not.toContain('【翻译范围约束】');
+    });
+
+    it('已含新锚点的副本 → 幂等跳过（重复迁移无副作用）', () => {
+      (service as any).migrateCharacterCardFieldScope();
+      // 再次执行不应改变内容（也无异常）
+      expect(() => (service as any).migrateCharacterCardFieldScope()).not.toThrow();
+      expect(service.getTemplate('character-card.translate').parts[0].content).toContain('【翻译范围约束】');
+    });
+  });
+
   describe('History and rollback', () => {
     it('saving a template should create a history record', () => {
       const original = service.getTemplate('character-card.translate');

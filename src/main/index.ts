@@ -3,6 +3,7 @@ import path from 'path';
 import { setupIpcHandlers } from './ipc';
 import { abortAllActiveRequests, abortActiveWritingAgent } from './ipc/handlers/writingHandlers';
 import { abortAllAIRequests } from './ipc/handlers/aiHandlers';
+import { startLanApiServer, stopLanApiServer } from './services/lanApiServer/server';
 
 // ========== 全局异常处理器（防止未捕获的 Promise rejection / 同步异常导致主进程崩溃） ==========
 // 【重点标记】修复：增量向量化等 fire-and-forget 调用若产生逃逸异常，Node.js 16+ 默认会退出进程，
@@ -98,6 +99,9 @@ app.whenReady().then(async () => {
   createWindow();
   setupIpcHandlers();
 
+  // 启动内嵌 LAN API 服务（供局域网安卓客户端访问；Spec: add-android-chat-client / Task 1）
+  startLanApiServer();
+
   // 初始化向量注册表服务
   (async () => {
     try {
@@ -131,6 +135,9 @@ app.on('before-quit', (event) => {
   if (hasPersisted || isQuitting) {
     return;
   }
+
+  // 停止内嵌 LAN API 服务（Spec: add-android-chat-client）
+  stopLanApiServer();
 
   // Task 15.2: 退出前取消活跃的写作智能体编排（避免后台孤儿任务持续调用 AI）
   abortActiveWritingAgent();

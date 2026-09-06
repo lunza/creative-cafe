@@ -1,7 +1,11 @@
 import { useCallback, useRef, useState } from 'react';
 import { message } from 'antd';
 import type { AIEngine } from '../../../types/setting';
-import { sendCharacterAIRequest } from '../../../utils/characterAIUtils';
+import { sendAssistantAIStreamRequest } from '../../../utils/characterAIUtils';
+// Spec: polish-deai-humanizer（润色去AI味规则运行时注入）
+import { withHumanizerRules, withHumanizerTextgenRules } from '../../../../shared/prompts/humanizerPolish';
+// Spec: fix-character-card-field-scope-flash-models — 字段元数据与输出越界防御
+import { FIELD_DESCRIPTIONS, extractTargetFieldContent } from './characterFieldScope';
 
 /**
  * AI 操作（翻译 / 润色 / 生成）从 `CharacterManager` 迁出，集中在此 hook 中。
@@ -47,6 +51,9 @@ export interface UseCharacterAIOperationsResult {
   setCurrentPolishField: React.Dispatch<React.SetStateAction<string | null>>;
   currentPolishText: string;
   setCurrentPolishText: React.Dispatch<React.SetStateAction<string>>;
+  /** Spec: polish-deai-humanizer — 润色"去AI味"开关（默认开启） */
+  polishDeAiFlavor: boolean;
+  setPolishDeAiFlavor: React.Dispatch<React.SetStateAction<boolean>>;
 
   // generate modal state
   isGenerateModalOpen: boolean;
@@ -91,44 +98,9 @@ const THOUGHT_PATTERNS_POLISH = [
   /思考:\s*[^]*?(?=\n\n|$)/gi
 ];
 
-const FIELD_DESCRIPTIONS: Record<string, { label: string; guide: string }> = {
-  post_history_instructions: {
-    label: '历史记录后指令',
-    guide: '一段在对话历史后追加给AI的额外指令，用于控制AI在长对话中的行为倾向。'
-  },
-  system_prompt: {
-    label: '系统提示',
-    guide: '一段指导AI如何扮演该角色的核心指令，包含角色行为准则、对话风格和注意事项。'
-  },
-  first_mes: {
-    label: '初始消息',
-    guide: '角色首次与用户对话时的开场白，应体现角色的性格和说话方式。'
-  },
-  mes_example: {
-    label: '示例消息',
-    guide: '多轮对话示例，展示角色在不同场景下的回应方式，每轮对话之间用空行分隔。'
-  },
-  description: {
-    label: '描述',
-    guide: '角色的详细描述，包括外貌、性格、背景等，供AI理解角色特征。'
-  },
-  personality: {
-    label: '个性',
-    guide: '角色性格的简洁描述，可以用关键词或短句，如"冷静、理智、略带傲娇"。'
-  },
-  scenario: {
-    label: '场景',
-    guide: '角色所处的环境背景和情境设定，描述角色生活的世界和当前状况。'
-  },
-  alternate_greetings: {
-    label: '替代问候',
-    guide: '角色的多个备选开场白，每段之间用空行分隔，提供不同的对话起点。'
-  },
-  creator_notes: {
-    label: '创建者笔记',
-    guide: '角色创建者对该角色的额外说明或使用建议，可以是创作思路或注意事项。'
-  }
-};
+// Spec: fix-character-card-field-scope-flash-models — FIELD_DESCRIPTIONS 与
+// extractTargetFieldContent 已抽到同目录纯模块 characterFieldScope.ts（便于单测，
+// 规避本 hook 依赖 antd/AIService 导致测试导入链路过重）
 
 /**
  * 构建角色卡其他字段的上下文信息，供翻译和润色操作参考。
@@ -185,12 +157,57 @@ export function useCharacterAIOperations(args: UseCharacterAIOperationsArgs): Us
   const [isPolishModalOpen, setIsPolishModalOpen] = useState<boolean>(false);
   const [currentPolishField, setCurrentPolishField] = useState<string | null>(null);
   const [currentPolishText, setCurrentPolishText] = useState<string>('');
+  // Spec: polish-deai-humanizer — 润色"去AI味"开关（默认开启）
+  const [polishDeAiFlavor, setPolishDeAiFlavor] = useState<boolean>(true);
 
   const [isGenerateModalOpen, setIsGenerateModalOpen] = useState<boolean>(false);
   const [generateRequirements, setGenerateRequirements] = useState<string>('');
   const [currentGenerateField, setCurrentGenerateField] = useState<string | null>(null);
 
   const isProcessingRef = useRef<boolean>(false);
+
+  /**
+   * 【流式改造 - 用户需求：去掉 TimeoutError 并改为流式响应】
+   *
+   * 背景：原实现用非流式 sendCharacterAIRequest，主进程需等待完整响应体（含思维链）
+   * 才返回响应头，qwen 等思考模型的长生成超过请求超时（AIService 默认 600s）被中止，
+   * 报 `TimeoutError: timed out`。
+   *
+   * 流式优势：响应头立即返回，主进程收到首包后即清除连接/请求超时定时器
+   * （aiHandlers.ts 流式分支 284-293 行），长生成不再超时；且 onStream 增量
+   * 实时写入表单字段，用户可见打字机效果，可随时取消。
+   *
+   * @returns text = 服务器合并内容（优先）或流式累积内容；error = 请求失败信息
+   *          （用户取消时两者均为空，由调用方通过 isProcessingRef 判定）
+   */
+  const runStreamingAI = useCallback(async (
+    engine: AIEngine,
+    systemPrompt: string,
+    userPrompt: string,
+    field: string
+  ): Promise<{ text: string; error: string | null }> => {
+    let accumulated = '';
+    let serverFinal = '';
+    let streamError: string | null = null;
+    await sendAssistantAIStreamRequest(engine, [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ], {
+      onStream: (chunk) => {
+        if (!chunk) return;
+        accumulated += chunk;
+        // 流式实时预览：增量写入目标字段
+        setFormValues((prev: any) => ({ ...prev, [field]: accumulated }));
+      },
+      onError: (msg) => {
+        streamError = msg;
+      },
+      onComplete: (full) => {
+        if (full) serverFinal = full;
+      },
+    });
+    return { text: serverFinal || accumulated, error: streamError };
+  }, [setFormValues]);
 
   const handleTranslate = useCallback(async (field: string) => {
     const startTime = Date.now();
@@ -232,7 +249,10 @@ export function useCharacterAIOperations(args: UseCharacterAIOperationsArgs): Us
       addLog(`[Character] 模型: ${activeEngine.model_name ?? '未配置'}`, 'info');
       addLog(`[Character] ===================================`, 'info');
 
-      const variables: Record<string, string> = {};
+      const fieldLabel = FIELD_DESCRIPTIONS[field]?.label || field;
+      const variables: Record<string, string> = {
+        target_field_label: fieldLabel,
+      };
 
       const promptResult = await window.electronAPI.prompt.build('character-card.translate', variables);
       if (!promptResult.success || !promptResult.data) {
@@ -242,23 +262,35 @@ export function useCharacterAIOperations(args: UseCharacterAIOperationsArgs): Us
 
       addLog(`[Character] 系统提示词长度: ${finalSystemPrompt.length} 字符`, 'info');
 
-      // 构建包含角色卡上下文的 user prompt（与 generate 操作保持一致的参数参考机制）
+      // Spec: fix-character-card-field-scope-flash-models — 目标文本标签包裹 + 上下文隔离：
+      // 原实现将目标文本与其他字段完整内容平铺拼接（无边界标识），Flash 模型会将其
+      // 理解为"翻译整张角色卡"并输出全字段内容。现用 <translate_target> 明确翻译对象，
+      // 其他字段收进 <context_reference> 并声明禁止输出。
       const characterContext = buildCharacterContext(formValues, field);
       const contextFieldCount = characterContext ? characterContext.split('\n').length : 0;
       addLog(`[Character] 角色卡上下文参考: ${characterContext.length} 字符, ${contextFieldCount} 个字段`, 'info');
       const enhancedUserPrompt = characterContext
-        ? `${text}\n\n【角色卡其他字段参考】\n${characterContext}\n\n请在翻译时参考上述角色卡上下文信息，确保翻译用词与角色卡整体设定保持一致。`
-        : text;
+        ? `请翻译以下 <translate_target> 标签内的文本（仅此文本，其他内容一律忽略）：\n\n<translate_target>\n${text}\n</translate_target>\n\n<context_reference>\n以下为角色卡其他字段，仅作翻译用词参考，禁止翻译或输出其中任何内容：\n${characterContext}\n</context_reference>`
+        : `请翻译以下 <translate_target> 标签内的文本：\n\n<translate_target>\n${text}\n</translate_target>`;
       addLog(`[Character] user prompt 总长度: ${enhancedUserPrompt.length} 字符 (原文 ${text.length} + 上下文 ${characterContext.length})`, 'info');
 
-      const translatedText = await sendCharacterAIRequest(activeEngine, finalSystemPrompt, enhancedUserPrompt);
+      // 【流式改造】实时预览写入表单字段；中断/失败时恢复原值
+      const originalText = text;
+      const { text: translatedText, error: streamError } = await runStreamingAI(activeEngine, finalSystemPrompt, enhancedUserPrompt, field);
 
       if (!isProcessingRef.current) {
         addLog('[Character] 翻译请求已被用户中断', 'warn');
+        setFormValues((prev: any) => ({ ...prev, [field]: originalText }));
         return;
       }
 
+      if (streamError) {
+        setFormValues((prev: any) => ({ ...prev, [field]: originalText }));
+        throw new Error(streamError);
+      }
+
       if (!translatedText) {
+        setFormValues((prev: any) => ({ ...prev, [field]: originalText }));
         message.error('AI未返回有效内容，请重试');
         setTranslatingField(null);
         isProcessingRef.current = false;
@@ -274,6 +306,17 @@ export function useCharacterAIOperations(args: UseCharacterAIOperationsArgs): Us
 
       // 移除可能的"译文:"、"Translation:"等前缀
       cleanedText = cleanedText.replace(/^(译文:|翻译:|Translation:)\s*/i, '').trim();
+
+      // Spec: fix-character-card-field-scope-flash-models — 输出越界防御（写回前净化）
+      const defenseResult = extractTargetFieldContent(cleanedText, field, addLog);
+      if (defenseResult.overflow) {
+        setFormValues((prev: any) => ({ ...prev, [field]: originalText }));
+        message.warning('模型输出越界（包含其他字段内容），已保留原文，建议重试或更换模型');
+        setTranslatingField(null);
+        isProcessingRef.current = false;
+        return;
+      }
+      cleanedText = defenseResult.content;
 
       cleanedText = normalizeTagsField(cleanedText, field, addLog);
 
@@ -390,7 +433,11 @@ export function useCharacterAIOperations(args: UseCharacterAIOperationsArgs): Us
       if (!promptResult.success || !promptResult.data) {
         throw new Error('获取提示词模板失败: ' + (promptResult.error || '未知错误'));
       }
-      const finalSystemPrompt = promptResult.data.systemPrompt;
+      // Spec: polish-deai-humanizer v3 — 字段生成为直接文本输出（非 JSON），
+      // 注入文本生成变体去AI味规则（完整指南 + RP 词表，默认开启无开关，
+      // 与世界书生成策略一致；不用 JSON-aware 生成变体以免误导模型输出 JSON）
+      const finalSystemPrompt = withHumanizerTextgenRules(promptResult.data.systemPrompt);
+      addLog(`[Character] 去AI味规则: 已注入`, 'info');
       const userPrompt = promptResult.data.userPrompt;
 
       addLog(`[Character] 系统提示词长度: ${finalSystemPrompt.length} 字符`, 'info');
@@ -398,14 +445,23 @@ export function useCharacterAIOperations(args: UseCharacterAIOperationsArgs): Us
       addLog(`[Character] existingFieldsInfo 长度: ${existingFieldsInfo.length} 字符`, 'info');
       addLog(`[Character] 用户生成指导: ${requirements || '无'}`, 'info');
 
-      const generatedContent = await sendCharacterAIRequest(activeEngine, finalSystemPrompt, userPrompt);
+      // 【流式改造】实时预览写入表单字段；中断/失败时恢复原值
+      const originalText = formValues[field];
+      const { text: generatedContent, error: streamError } = await runStreamingAI(activeEngine, finalSystemPrompt, userPrompt, field);
 
       if (!isProcessingRef.current) {
         addLog('[Character] 生成请求已被用户中断', 'warn');
+        setFormValues((prev: any) => ({ ...prev, [field]: originalText }));
         return;
       }
 
+      if (streamError) {
+        setFormValues((prev: any) => ({ ...prev, [field]: originalText }));
+        throw new Error(streamError);
+      }
+
       if (!generatedContent) {
+        setFormValues((prev: any) => ({ ...prev, [field]: originalText }));
         message.error('AI未返回有效内容，请重试');
         setGeneratingField(null);
         isProcessingRef.current = false;
@@ -414,9 +470,20 @@ export function useCharacterAIOperations(args: UseCharacterAIOperationsArgs): Us
 
       addLog(`[Character] 生成成功，内容长度: ${generatedContent.length} 字符`, 'info');
 
+      // Spec: fix-character-card-field-scope-flash-models — 输出越界防御（写回前净化）
+      const defenseResult = extractTargetFieldContent(generatedContent, field, addLog);
+      if (defenseResult.overflow) {
+        setFormValues((prev: any) => ({ ...prev, [field]: originalText }));
+        message.warning('模型输出越界（包含其他字段内容），已保留原文，建议重试或更换模型');
+        setGeneratingField(null);
+        isProcessingRef.current = false;
+        return;
+      }
+      const finalContent = defenseResult.content;
+
       setFormValues((prev: any) => ({
         ...prev,
-        [field]: generatedContent
+        [field]: finalContent
       }));
 
       message.success('生成成功');
@@ -516,35 +583,52 @@ export function useCharacterAIOperations(args: UseCharacterAIOperationsArgs): Us
       addLog(`[Character] API配置: URL=${activeEngine.api_url}, Model=${activeEngine.model_name ?? '未配置'}`);
       addLog(`[Character] 用户润色要求: ${polishRequirements || '无'}`, 'info');
 
+      const polishFieldLabel = FIELD_DESCRIPTIONS[currentPolishField]?.label || currentPolishField;
       const variables: Record<string, string> = {
-        polish_requirements: polishRequirements || '请优化文本的表达，让它更加通顺自然，保持原意不变。',
+        // Spec: polish-deai-humanizer — 默认要求措辞中性化：
+        // 原"更加通顺自然"对 LLM 等价于"请堆砌华丽辞藻"，是"禁忌之美"式浮夸的直接诱因
+        polish_requirements: polishRequirements || '优化表达使其自然流畅、细节具体，保持原意不变。',
+        target_field_label: polishFieldLabel,
       };
 
       const promptResult = await window.electronAPI.prompt.build('character-card.polish', variables);
       if (!promptResult.success || !promptResult.data) {
         throw new Error('获取提示词模板失败: ' + (promptResult.error || '未知错误'));
       }
-      const finalSystemPrompt = promptResult.data.systemPrompt;
+      // Spec: polish-deai-humanizer — 按开关状态注入去AI味规则块（运行时注入，
+      // 不烘焙进模板：开关关闭时可完全撤下，且规避存量 DB 模板不更新的坑）
+      const finalSystemPrompt = withHumanizerRules(promptResult.data.systemPrompt, polishDeAiFlavor);
+      addLog(`[Character] 去AI味规则: ${polishDeAiFlavor ? '已注入' : '已关闭（开关）'}`, 'info');
 
       addLog(`[Character] 系统提示词长度: ${finalSystemPrompt.length} 字符`, 'info');
 
-      // 构建包含角色卡上下文的 user prompt（与 generate 操作保持一致的参数参考机制）
+      // Spec: fix-character-card-field-scope-flash-models — 目标文本标签包裹 + 上下文隔离
+      // （与翻译操作同构：防止 Flash 模型把全字段上下文理解为"润色整张角色卡"）
       const characterContext = buildCharacterContext(formValues, currentPolishField);
       const contextFieldCount = characterContext ? characterContext.split('\n').length : 0;
       addLog(`[Character] 角色卡上下文参考: ${characterContext.length} 字符, ${contextFieldCount} 个字段`, 'info');
       const enhancedUserPrompt = characterContext
-        ? `${currentPolishText}\n\n【角色卡其他字段参考】\n${characterContext}\n\n请在润色时参考上述角色卡上下文信息，确保润色结果与角色卡整体设定保持一致。`
-        : currentPolishText;
+        ? `请润色以下 <polish_target> 标签内的文本（仅此文本，其他内容一律忽略）：\n\n<polish_target>\n${currentPolishText}\n</polish_target>\n\n<context_reference>\n以下为角色卡其他字段，仅作润色参考，禁止润色或输出其中任何内容：\n${characterContext}\n</context_reference>`
+        : `请润色以下 <polish_target> 标签内的文本：\n\n<polish_target>\n${currentPolishText}\n</polish_target>`;
       addLog(`[Character] user prompt 总长度: ${enhancedUserPrompt.length} 字符 (原文 ${currentPolishText.length} + 上下文 ${characterContext.length})`, 'info');
 
-      const polishedText = await sendCharacterAIRequest(activeEngine, finalSystemPrompt, enhancedUserPrompt);
+      // 【流式改造】实时预览写入表单字段；中断/失败时恢复原值
+      const originalText = currentPolishText;
+      const { text: polishedText, error: streamError } = await runStreamingAI(activeEngine, finalSystemPrompt, enhancedUserPrompt, currentPolishField);
 
       if (!isProcessingRef.current) {
         addLog('[Character] 润色请求已被用户中断', 'warn');
+        setFormValues((prev: any) => ({ ...prev, [currentPolishField]: originalText }));
         return;
       }
 
+      if (streamError) {
+        setFormValues((prev: any) => ({ ...prev, [currentPolishField]: originalText }));
+        throw new Error(streamError);
+      }
+
       if (!polishedText) {
+        setFormValues((prev: any) => ({ ...prev, [currentPolishField]: originalText }));
         message.error('AI未返回有效内容，请重试');
         setPolishingField(null);
         isProcessingRef.current = false;
@@ -559,6 +643,17 @@ export function useCharacterAIOperations(args: UseCharacterAIOperationsArgs): Us
       }
 
       cleanedText = cleanedText.replace(/^(润色:|Polished:)\s*/i, '').trim();
+
+      // Spec: fix-character-card-field-scope-flash-models — 输出越界防御（写回前净化）
+      const defenseResult = extractTargetFieldContent(cleanedText, currentPolishField, addLog);
+      if (defenseResult.overflow) {
+        setFormValues((prev: any) => ({ ...prev, [currentPolishField]: originalText }));
+        message.warning('模型输出越界（包含其他字段内容），已保留原文，建议重试或更换模型');
+        setPolishingField(null);
+        isProcessingRef.current = false;
+        return;
+      }
+      cleanedText = defenseResult.content;
 
       cleanedText = normalizeTagsField(cleanedText, currentPolishField, addLog);
 
@@ -585,7 +680,7 @@ export function useCharacterAIOperations(args: UseCharacterAIOperationsArgs): Us
       setPolishingField(null);
       isProcessingRef.current = false;
     }
-  }, [addLog, currentPolishField, currentPolishText, formValues, getActiveEngineConfig, polishRequirements, setFormValues, setPolishingField]);
+  }, [addLog, currentPolishField, currentPolishText, formValues, getActiveEngineConfig, polishDeAiFlavor, polishRequirements, runStreamingAI, setFormValues, setPolishingField]);
 
   return {
     aiOperation,
@@ -604,6 +699,8 @@ export function useCharacterAIOperations(args: UseCharacterAIOperationsArgs): Us
     setCurrentPolishField,
     currentPolishText,
     setCurrentPolishText,
+    polishDeAiFlavor,
+    setPolishDeAiFlavor,
     isGenerateModalOpen,
     setIsGenerateModalOpen,
     generateRequirements,

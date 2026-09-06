@@ -1405,3 +1405,20 @@
   border-color: rgba(139, 92, 246, 0.5) !important;
   color: #a78bfa !important;
 }
+
+/* 手动整理表格按钮（Spec: add-manual-table-organize-button / Task 3） */
+.memory-table-manual-organize-btn {
+  background: rgba(245, 158, 11, 0.08) !important;
+  border: 1px solid rgba(245, 158, 11, 0.3) !important;
+  color: #f59e0b !important;
+  font-size: 12px !important;
+  height: 28px !important;
+  border-radius: 6px !important;
+  transition: all 0.2s ease !important;
+}
+
+.memory-table-manual-organize-btn:hover {
+  background: rgba(245, 158, 11, 0.15) !important;
+  border-color: rgba(245, 158, 11, 0.5) !important;
+  color: #fbbf24 !important;
+}

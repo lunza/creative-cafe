@@ -28,6 +28,8 @@ const CharacterCardAssistant: React.FC<CharacterCardAssistantProps> = ({ open, a
     sendQuestion,
     cancel,
     retry,
+    regenerate,
+    rollbackToMessage,
     closePanel,
     clear,
   } = assistant;
@@ -44,10 +46,6 @@ const CharacterCardAssistant: React.FC<CharacterCardAssistantProps> = ({ open, a
   }, [open]);
 
   if (!rendered) return null;
-
-  const handleRegenerate = (question: string) => {
-    void sendQuestion(question, { forceRegenerate: true });
-  };
 
   return (
     <div
@@ -114,7 +112,8 @@ const CharacterCardAssistant: React.FC<CharacterCardAssistantProps> = ({ open, a
           onSend={sendQuestion}
           onCancel={cancel}
           onRetry={() => retry()}
-          onRegenerate={handleRegenerate}
+          onRegenerateLast={() => void regenerate()}
+          onRollbackMessage={rollbackToMessage}
         />
       </div>
     </div>

@@ -53,6 +53,8 @@ import type { ToolCallContext, ToolExecutionResult, IMemoryProvider } from '../c
 import { retryAsync } from '../infra/retry';
 import { toAgentError } from '../infra/errors';
 import { resolvePacedNextRunAtMs } from '../learning/pacing';
+// Spec: polish-deai-humanizer 扩展 — 生成场景去AI味规则（与渲染进程 6 个生成入口同款 JSON-aware 变体）
+import { withHumanizerGenerationRules } from '../../../../shared/prompts/humanizerPolish';
 
 // ==================== 常量 ====================
 
@@ -2070,7 +2072,9 @@ export function createDefaultEntryGenerator(
             '\n\n请参考上述资料提升内容事实准确性，但保持世界书文风一致，不要直接复制粘贴。'
           : '';
 
-      const systemPrompt = `你是一个世界书条目生成器。根据维度描述与已有条目，生成 ${targetCount} 个不重复的新条目。
+      // 去AI味规则注入（Spec: polish-deai-humanizer 扩展）：智能体生成的条目同样
+      // 供 RP 检索注入，JSON-aware 规则只约束 name/content/comment 文本字段行文
+      const systemPrompt = withHumanizerGenerationRules(`你是一个世界书条目生成器。根据维度描述与已有条目，生成 ${targetCount} 个不重复的新条目。
 
 【输出格式强制要求】
 - 你的响应必须且只能是一个合法的 JSON 对象
@@ -2102,7 +2106,7 @@ ${existingNames.length > 0 ? existingNames.join('、') : '（暂无）'}
 【世界书主题】
 ${plan.goal.theme}
 ${researchSection}
-请生成 ${targetCount} 个新条目。只输出 JSON。`;
+请生成 ${targetCount} 个新条目。只输出 JSON。`);
 
       try {
         const aiConfig = await ai.getConfig();

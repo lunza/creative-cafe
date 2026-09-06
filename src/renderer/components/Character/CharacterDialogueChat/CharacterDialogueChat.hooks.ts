@@ -11,10 +11,13 @@ import { useExpressionStore } from '../../../stores/expressionStore';
 import { ChatMessage, CharacterInfo, UserPersona, EffectiveAIParams, deriveThinkTagMode, ImageAttachment } from './CharacterDialogueChat.types';
 import { chatReducer, initialChatState } from './chatReducer';
 import { ChatEngineFactory } from '../../Common/ChatEngine/ChatEngine.factory';
+import { ChatEngine } from '../../Common/ChatEngine/ChatEngine';
 import { AIEngineConfig, AIResponse, getDefaultEngineCapabilities } from '../../Common/ChatEngine/ChatEngine.types';
 import { usePromptBuilder } from './usePromptBuilder';
 import { buildAssistModePrompt, buildAsyncTableOrganizeInstructions, buildStopSequences, buildRoleAnchorMessage, buildContinueNudgePrompt, buildLengthGuidancePrompt, buildLanguagePrompt, buildUserReplySystemPrompt, buildStopSequencesForUserReply, buildPolishInputSystemPrompt, buildExpressionPrompt, parseExpressionFromContent } from './PromptBuilder';
 import { TokenCounter, ContextTruncator, DEFAULT_MAX_TOKENS } from './TokenManagement';
+// Spec: analyze-llamacpp-model-compatibility（兜底值与模型系列模板同源）
+import { GENERIC_MODEL_PARAMS } from '../../../../shared/modelParameterPresets';
 import type { TruncationConfig } from './TokenManagement/types';
 import {
   shouldCompact,
@@ -30,6 +33,16 @@ import {
   shouldTriggerIncrementalVectorize,
   extractRecentMessagesForVectorize,
 } from './utils/chatHistoryRagUtils';
+// Spec: reduce-dialogue-ai-flavor-and-repetition / Phase 3（防重复提示词层）
+import {
+  extractStyleFingerprint,
+  buildStyleAvoidancePrompt,
+  buildCreativeRotationPrompt,
+  hashString,
+  STYLE_FINGERPRINT_WINDOW,
+} from './utils/styleFingerprint';
+// Spec: reduce-dialogue-ai-flavor-and-repetition / Phase 1（多样性诊断指标）
+import { computeDiversityReport, formatDiversityReport } from './utils/diversityMetrics';
 
 // ==================== 去重检测配置（Spec: optimize-chat-ai-intelligence / Task 5） ====================
 
@@ -278,7 +291,8 @@ export function useCharacterConfig(characterCardId: string) {
     const source = hasCustomParams ? 'custom' : 'global';
 
     const effectiveParams: EffectiveAIParams = {
-      temperature: customParams.temperature ?? globalEngine?.temperature ?? 0.7,
+      // 兜底值取共享"通用"模型系列模板（Spec: analyze-llamacpp-model-compatibility）
+      temperature: customParams.temperature ?? globalEngine?.temperature ?? GENERIC_MODEL_PARAMS.temperature,
       max_tokens: customParams.max_tokens !== undefined ? customParams.max_tokens : (globalEngine?.max_tokens !== undefined ? globalEngine.max_tokens : DEFAULT_MAX_TOKENS),
       source,
     };
@@ -468,6 +482,8 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
   const memoryTableDataRef = useRef<string>('');
   const isOrganizingRef = useRef(false);
   const [isOrganizing, setIsOrganizing] = useState(false);
+  // 手动整理按钮 loading 状态（Spec: add-manual-table-organize-button / Task 1）
+  const [manualOrganizing, setManualOrganizing] = useState(false);
   // 用户回复生成状态与累积缓冲（Spec: add-ai-user-reply-button / Task 2.2 + 2.3）
   // - isGeneratingUserReply：state，驱动 UI 按钮态切换与 Send/textarea 禁用
   // - isGeneratingUserReplyRef：ref，cancelRequest 中同步读取避免闭包陈旧
@@ -845,8 +861,36 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       const boundKnowledgeBaseIds = characterConfig?.boundKnowledgeBaseIds || [];
       const lastUserMessage = [...contextMessages].reverse().find(m => m.role === 'user');
       if (lastUserMessage && lastUserMessage.content) {
+        // 【角色卡世界书关联接入 - Spec: fix-dialogue-worldbook-association-and-tag-output】
+        // 缺陷修复：此前 scopeIds 仅来自对话配置的知识库绑定（boundKnowledgeBaseIds），
+        // 角色卡关联的世界书（data.worldBooks）在对话检索链路中无消费方——用户在角色管理
+        // 里关联的世界书对话时从不触发。此处读取角色卡关联（characterCardId 即角色卡文件
+        // 路径字符串，见 assetStore.ts），将启用的 worldBookPath（文件路径，可被
+        // worldBookService.resolveWorldBookPaths 直接解析）并入 scopeIds。
+        // 失败兜底：IPC 异常时回退仅绑定列表，不阻断对话；关联文件缺失由主进程
+        // resolveWorldBookPaths warn 跳过。
+        let mergedScopeIds: string[] = boundKnowledgeBaseIds.length > 0 ? [...boundKnowledgeBaseIds] : [];
+        try {
+          const relations = await window.electronAPI.character.getWorldBookRelations(characterInfo.characterCardId);
+          const enabledPaths = (relations || [])
+            .filter((rel: any) => rel?.enabled !== false && typeof rel?.worldBookPath === 'string' && rel.worldBookPath)
+            .map((rel: any) => rel.worldBookPath as string);
+          let mergedCount = 0;
+          for (const wbPath of enabledPaths) {
+            if (!mergedScopeIds.includes(wbPath)) {
+              mergedScopeIds.push(wbPath);
+              mergedCount++;
+            }
+          }
+          if (enabledPaths.length > 0) {
+            addLog(`[CharacterDialogueChat] 角色卡世界书关联: ${enabledPaths.length} 条（并入 ${mergedCount} 条新 scope）`, 'info');
+          }
+        } catch (relErr) {
+          addLog(`[CharacterDialogueChat] 读取角色卡世界书关联失败，回退仅知识库绑定: ${relErr instanceof Error ? relErr.message : 'Unknown error'}`, 'warn');
+        }
+
         // 使用综合检索 API：同时执行向量检索和关键词匹配
-        addLog(`[CharacterDialogueChat] Calling retrieveWithKeywords with scopeIds: ${JSON.stringify(boundKnowledgeBaseIds)}`, 'info');
+        addLog(`[CharacterDialogueChat] Calling retrieveWithKeywords with scopeIds: ${JSON.stringify(mergedScopeIds)}`, 'info');
 
         // 安全的序列化全局扫描数据，避免循环引用导致 Maximum call stack size exceeded
         // 注意：不包含 characterDescription/personality/depthPrompt，因为角色卡片中嵌入了完整的
@@ -859,7 +903,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
 
         const contextResult = await window.electronAPI.context.retrieveWithKeywords(
           [...contextMessages.slice(-20), { role: 'user', content: lastUserMessage.content }],
-          { topK: 5, minScore: 0.3, sources: ['worldbook', 'knowledge', 'memory'], scopeIds: boundKnowledgeBaseIds.length > 0 ? boundKnowledgeBaseIds : undefined },
+          { topK: 5, minScore: 0.3, sources: ['worldbook', 'knowledge', 'memory'], scopeIds: mergedScopeIds.length > 0 ? mergedScopeIds : undefined },
           true,  // 启用关键词匹配
           4,     // 扫描深度：最近4条消息
           safeGlobalScanData
@@ -1096,6 +1140,35 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       addLog(`[CharacterDialogueChat] 表情提示词已注入（${availableEmotionKeys.length} 个可用情绪键）`, 'info');
     }
 
+    // ========== 防重复提示词层（Spec: reduce-dialogue-ai-flavor-and-repetition / Phase 3） ==========
+    // 仅 dialogue 模式注入：continuation（续写）需与原文风格一致，注入规避/轮换指令反而有害。
+    // 两道防线均为纯提示词层（无额外生成成本）：
+    // 1. 风格指纹规避：最近 N 条 assistant 回复出现句式重复信号时注入描述性规避指令
+    // 2. 创意轮换：按 seed（末条用户消息哈希 + 重试次数）轮换注入表达策略建议，
+    //    重试时 seed 变化自动换策略，避免坏指令重复
+    if (promptType === 'dialogue') {
+      const recentAssistantReplies = messagesToSend
+        .filter(m => m.role === 'assistant' && m.content)
+        .slice(-STYLE_FINGERPRINT_WINDOW)
+        .map(m => m.content);
+
+      if (recentAssistantReplies.length >= 3) {
+        const fingerprint = extractStyleFingerprint(recentAssistantReplies);
+        const avoidancePrompt = buildStyleAvoidancePrompt(fingerprint);
+        if (avoidancePrompt) {
+          effectiveSystemPrompt += avoidancePrompt;
+          addLog(
+            `[CharacterDialogueChat] 风格规避指令已注入（基于最近 ${recentAssistantReplies.length} 条回复指纹）`,
+            'info'
+          );
+        }
+      }
+
+      const lastUserMessage = [...messagesToSend].reverse().find(m => m.role === 'user')?.content || '';
+      const rotationSeed = hashString(lastUserMessage) + (dedupConfig?.retryCount ?? 0) * 97;
+      effectiveSystemPrompt += buildCreativeRotationPrompt(rotationSeed);
+    }
+
     // Debug: 显示提示词末尾（背景知识注入位置）
     const promptTail = effectiveSystemPrompt.substring(Math.max(0, effectiveSystemPrompt.length - 500));
     addLog(`[CharacterDialogueChat] System prompt length: ${effectiveSystemPrompt.length}, tail: ...${promptTail}`, 'info');
@@ -1243,7 +1316,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       }
     });
 
-    engine.onComplete((response: AIResponse) => {
+    engine.onComplete(async (response: AIResponse) => {
       console.log('[DEBUG-COMPLETE] === engine.onComplete called ===');
       console.log('[DEBUG-COMPLETE] response?.content length:', response?.content?.length || 0);
       console.log('[DEBUG-COMPLETE] response?.content contains tableEdit:', response?.content?.includes('tableEdit') || false);
@@ -1309,6 +1382,72 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         if (finalContent.length !== beforeStripLen) {
           thinkTagsStripped = true;
           addLog(`[CharacterDialogueChat] think 标签已剥离，原始长度: ${beforeStripLen}, 剥离后: ${finalContent.length}`, 'info');
+        }
+      }
+
+      // ============================================================
+      // 【思考模型标签定性诊断 + 单次补发 - Spec: fix-dialogue-worldbook-association-and-tag-output / Task 4】
+      // ============================================================
+      // 定性判据：正文完全不含 EXPRESSION/OPTIONS 关键字 → 模型未生成标签；
+      // 含关键字但后续解析失败 → 解析问题（由解析段的诊断日志定位，不在此处理）。
+      // - finish_reason=length → 标签位于输出末尾最先被截断，仅告警不补发（补发同样截断）
+      // - finish_reason=stop   → 思考模型（qwen3.8-next-flash 等）常发：格式指令被
+      //   思维链"吸收"后正文直接 stop。自动发起【一次】标签补发请求（短提示词 +
+      //   请求级关闭思考 chat_template_kwargs.enable_thinking=false，防补发再次被
+      //   思维链吸收），成功后将标签行追加至正文，由下方现有解析器正常解析。
+      //   补发失败/仍无标签 → warn 保持现状，不循环重试。
+      {
+        const assistModeNow = characterConfig?.customParameters?.assist_mode === true;
+        const contentUpper = finalContent.toUpperCase();
+        const missingExpression = !contentUpper.includes('EXPRESSION');
+        const missingOptions = assistModeNow && !contentUpper.includes('OPTIONS');
+        if (missingExpression || missingOptions) {
+          if (finishReason === 'length') {
+            addLog('[CharacterDialogueChat] 标签缺失定性：输出预算截断（finish_reason=length）导致标签丢失，不发起补发。建议提升 max_tokens 或请求级关闭思考', 'warn');
+          } else {
+            addLog(`[CharacterDialogueChat] 标签缺失定性：模型未生成（缺表情=${missingExpression}, 缺选项=${missingOptions}），发起一次标签补发`, 'warn');
+            try {
+              const availableEmotionKeys = useExpressionStore.getState().getAvailableEmotionKeys();
+              const contentTail = finalContent.substring(Math.max(0, finalContent.length - 400));
+              const repairUserParts: string[] = [
+                '以下是一段 AI 回复的结尾，它缺少系统要求的标签。请只输出标签行，不要输出任何正文、解释或其他文字：',
+                '',
+                '1. 必须输出表情标签：<<<EXPRESSION>>>情绪键名<<<END_EXPRESSION>>>',
+                `   情绪键名必须从中选择：${availableEmotionKeys.join(', ')}（情绪中性时用 neutral）`,
+              ];
+              if (missingOptions) {
+                repairUserParts.push(
+                  '2. 必须输出选项块：<<<SUGGESTED_OPTIONS>>> 换行 3 个选项（每行一个） 换行 <<<END_OPTIONS>>>',
+                );
+              }
+              repairUserParts.push('', '--- 回复结尾 ---', contentTail);
+              // 补发配置：复制引擎参数并请求级关闭思考（嵌套 chat_template_kwargs 协议，
+              // 由 ChatEngine 的 thinking_mode 注入机制实现），避免补发内容再次被思维链吸收
+              const repairConfig: AIEngineConfig = { ...engineConfigWithParams, thinking_mode: 'off' };
+              const repairEngine = new ChatEngine();
+              const repairText = await new Promise<string | null>((resolve) => {
+                let settled = false;
+                const done = (v: string | null) => { if (!settled) { settled = true; resolve(v); } };
+                repairEngine.onError(() => done(null));
+                repairEngine.onComplete((resp: AIResponse) => done(resp?.content || ''));
+                // 30s 超时兜底，防止补发挂起阻塞消息后处理
+                setTimeout(() => done(null), 30000);
+                repairEngine.sendMessage(
+                  [{ id: `tag-repair-${Date.now()}`, role: 'user' as const, content: repairUserParts.join('\n'), timestamp: Date.now() }],
+                  '你是格式修复助手。只输出要求的标签行，不要输出任何解释、正文或其他文字。',
+                  repairConfig
+                ).catch(() => done(null));
+              });
+              if (repairText && repairText.toUpperCase().includes('EXPRESSION')) {
+                finalContent = `${finalContent}\n\n${repairText.trim()}`;
+                addLog(`[CharacterDialogueChat] 标签补发成功（${repairText.trim().length} chars），已追加至正文交由解析器处理`, 'info');
+              } else {
+                addLog('[CharacterDialogueChat] 标签补发失败或仍无标签，保持现状（不循环重试）', 'warn');
+              }
+            } catch (repairErr) {
+              addLog(`[CharacterDialogueChat] 标签补发异常: ${repairErr instanceof Error ? repairErr.message : 'Unknown error'}`, 'warn');
+            }
+          }
         }
       }
 
@@ -1803,6 +1942,26 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         }
       }
 
+      // ========== 多样性诊断日志（Spec: reduce-dialogue-ai-flavor-and-repetition / Phase 1 / Task 1.3） ==========
+      // 对"含本轮在内的最近 10 条 assistant 回复"计算 5 项表达多样性指标并写日志，
+      // 用于基线采集与改造效果对比。纯诊断，计算失败不阻塞主流程。
+      // 样本 = contextMessages 中 assistant 回复 + 本轮 finalContent（contextMessages 不含本轮）。
+      try {
+        const assistantReplies = contextMessages
+          .filter(m => m.role === 'assistant' && m.content)
+          .map(m => m.content)
+          .concat(finalContent && finalContent.length > 0 ? [finalContent] : [])
+          .slice(-10);
+        if (assistantReplies.length >= 2) {
+          const report = computeDiversityReport(assistantReplies);
+          const metricsLog = formatDiversityReport(report);
+          console.log(metricsLog);
+          addLog(metricsLog, 'info');
+        }
+      } catch (e) {
+        console.warn('[Diversity] diagnostic logging failed:', e);
+      }
+
       // Task 1.2 + 1.3：回复长度诊断日志
       // 记录每轮回复的字符数、token 估算、生成耗时、关键采样参数，便于定位长度递减拐点
       // 自动恢复（Task 4.4）：shouldStrengthenLength 基于 responseLengthHistoryRef 动态判定，
@@ -1890,7 +2049,12 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     // 修复：将标签提醒追加到最后一条 user 消息末尾（不能用 system 消息，
     //   因为 ChatEngine.sanitizeChatHistory 会剔除所有 system 角色消息）。
     // 测试验证：注入提醒后标签返回率从 0% 提升至 100%。
-    if (promptType === 'dialogue' && messagesToSendFinal.length > 0) {
+    // 【续写模式扩展 - Spec: fix-dialogue-worldbook-association-and-tag-output】
+    // 提醒注入范围从仅 dialogue 扩展到 continuation：表情提示词对续写同样注入
+    // （hooks.ts 表情提示词段无 promptType 判断），且 continuation 模板白名单已豁免
+    // 表情/选项标签——注入范围必须与表情提示词一致，否则续写场景下指令矛盾
+    //（模板曾禁止标签但表情提示词要求输出）。
+    if ((promptType === 'dialogue' || promptType === 'continuation') && messagesToSendFinal.length > 0) {
       const assistModeEnabled = characterConfig?.customParameters?.assist_mode === true;
       const tagReminderParts: string[] = [
         '\n\n【系统提醒】请在回复正文末尾严格按格式输出 <<<EXPRESSION>>>情绪键名<<<END_EXPRESSION>>> 标签。',
@@ -1983,10 +2147,12 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       ? (characterConfig?.customStopSequences || [])
       : undefined;
 
-    // 构建用户回复专用系统提示（Spec: add-ai-user-reply-button / Task 1.1）
+    // 构建 preliminary 系统提示（不含对话历史，Spec: fix-user-reply-persona-echo / Task 2.1）
+    // 仅用于 token 计数与裁剪预算估算（镜像 polishInput 的 preliminary 模式）；
+    // 最终发送给引擎的系统提示在裁剪后构建（含嵌入的对话历史）
     // 与 requestAIResponse 不同：不拼接全局 system_prompt，避免淡化"仅生成用户回复"约束
     // userInstruction: 输入框中的内容作为用户指令，引导 AI 按用户意图生成回复
-    const userReplySystemPrompt = buildUserReplySystemPrompt(
+    const preliminarySystemPrompt = buildUserReplySystemPrompt(
       {
         characterCardName: characterInfo.characterCardName,
         personality: characterInfo.personality,
@@ -2074,14 +2240,15 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       };
       try {
         // 预热精确 Token 计数缓存（与 requestAIResponse 一致）
+        // 使用 preliminary 提示（不含历史）：历史 token 已由 contextMessages 侧计入
         await Promise.all([
           TokenCounter.precountMessages(contextMessages),
-          TokenCounter.precountSystemPrompt(userReplySystemPrompt),
+          TokenCounter.precountSystemPrompt(preliminarySystemPrompt),
         ]);
       } catch (err) {
         console.warn('[TokenManagement] generateUserReply precount failed, falling back to byte estimation:', err);
       }
-      const systemPromptTokens = TokenCounter.countSystemPromptTokens(userReplySystemPrompt);
+      const systemPromptTokens = TokenCounter.countSystemPromptTokens(preliminarySystemPrompt);
       const truncatedMessages = ContextTruncator.truncateMessages(
         contextMessages,
         systemPromptTokens,
@@ -2103,6 +2270,24 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       }
       contextMessages = truncatedMessages;
     }
+
+    // 裁剪后构建最终系统提示：将裁剪后的对话历史嵌入"## 对话历史"段落
+    // （Spec: fix-user-reply-persona-echo / Task 2.3）
+    const userReplySystemPrompt = buildUserReplySystemPrompt(
+      {
+        characterCardName: characterInfo.characterCardName,
+        personality: characterInfo.personality,
+        characterCardContent: characterInfo.characterCardContent,
+        scenario: characterInfo.scenario,
+        mes_example: characterInfo.mes_example,
+        system_prompt: characterInfo.system_prompt,
+        creator_notes: characterInfo.creator_notes,
+      },
+      selectedPersona,
+      characterConfig?.userReplyPerson,  // 人称视角（Spec: add-person-attribute-to-ai-reply / Task 2）
+      userInstruction,                   // 用户指令（输入框内容，可选）
+      contextMessages                    // 裁剪后的对话历史（嵌入系统提示）
+    );
 
     // 获取引擎实例
     const engine = ChatEngineFactory.getInstance().getOrCreateDefaultEngine(engineConfigWithParams);
@@ -2136,8 +2321,21 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         reject(new Error(error.message));
       });
 
-      // 调用引擎发送消息
-      engine.sendMessage(contextMessages, userReplySystemPrompt, engineConfigWithParams).catch((err: any) => {
+      // 用户回复请求 user 消息：明确指示 AI 扮演用户生成下一句回复
+      // （Spec: fix-user-reply-persona-echo / Task 2.4）
+      // 真实对话历史已嵌入 userReplySystemPrompt 的"## 对话历史"段落，
+      // engine.sendMessage 的 messages 数组仅含此单条 user 消息，
+      // 消除此前以 assistant 消息结尾的 messages 数组被后端视为
+      // 续写前缀（prefill）导致的回显问题
+      const userName = selectedPersona.name.trim();
+      const userReplyRequestMessages: ChatMessage[] = [{
+        id: `user-reply-request-${Date.now()}`,
+        role: 'user',
+        content: `请以 ${userName} 的身份，直接输出下一句回复内容本身。`,
+        timestamp: Date.now(),
+        status: 'sent',
+      }];
+      engine.sendMessage(userReplyRequestMessages, userReplySystemPrompt, engineConfigWithParams).catch((err: any) => {
         console.error('[CharacterDialogueChat] generateUserReply sendMessage threw:', err);
         message.error(`生成用户回复失败: ${err?.message || '未知错误'}`);
         reject(err instanceof Error ? err : new Error(String(err)));
@@ -2846,6 +3044,48 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     addLog(`[CharacterDialogueChat] Memory table template associated: ${templateName} (${templateId})`, 'info');
   }, [updateConfig, addLog]);
 
+  // 手动触发表格整理（Spec: add-manual-table-organize-button / Task 1）
+  // 未启用实时整理时，用户可通过按钮对未整理的对话记录执行一次性整理。
+  // 调用参数与同步整理（onComplete 自动触发）完全一致，保证整理算法与结果一致性；
+  // continueFromLast: true 确保仅处理上次整理位置之后的未整理记录。
+  const handleManualOrganize = useCallback(async () => {
+    if (isOrganizingRef.current) {
+      message.warning('表格整理正在进行中，请稍候');
+      return;
+    }
+    const activeEngine = getActiveEngineConfig();
+    if (!activeEngine) {
+      message.error('未找到可用的 AI 引擎配置，无法执行表格整理');
+      addLog('[CharacterDialogueChat] Manual organize skipped: no active engine configured', 'warn');
+      return;
+    }
+    const chatId = characterInfo.characterCardName || characterInfo.characterCardId;
+    isOrganizingRef.current = true;
+    setManualOrganizing(true);
+    try {
+      addLog('[CharacterDialogueChat] Manual table organize triggered', 'info');
+      const result = await window.electronAPI.memory.processChatProgressive(chatId, '', {
+        apiKey: activeEngine.api_key || '',
+        apiUrl: activeEngine.api_url || '',
+        modelName: activeEngine.model_name || '',
+        apiMode: activeEngine.api_mode || 'chat_completion'
+      }, { continueFromLast: true, minInterval: 3000 });
+      if (result.success) {
+        message.success(`表格整理完成，共处理 ${result.processedCount} 条记录`);
+      } else {
+        message.error(`表格整理失败${result.errors?.length ? `：${result.errors[0]}` : ''}`);
+      }
+      addLog(`[CharacterDialogueChat] Manual table organize finished: processed=${result.processedCount}, errors=${result.errorCount}`, 'info');
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      message.error(`表格整理失败：${errMsg}`);
+      addLog(`[CharacterDialogueChat] Manual table organize failed: ${errMsg}`, 'error');
+    } finally {
+      isOrganizingRef.current = false;
+      setManualOrganizing(false);
+    }
+  }, [characterInfo.characterCardName, characterInfo.characterCardId, getActiveEngineConfig, addLog]);
+
   const tokenManagementConfig = useMemo(() => ({
     enabled: characterConfig?.tokenManagementEnabled ?? false,
     maxContextTokens: characterConfig?.maxContextTokens ?? 256000,
@@ -3221,6 +3461,9 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     handleMemoryTableAutoOrganizeToggle,
     handleMemoryTableOrganizeModeChange,
     handleMemoryTableTemplateAssociate,
+    // 手动触发表格整理（Spec: add-manual-table-organize-button / Task 1）
+    manualOrganizing,
+    handleManualOrganize,
     tokenManagementConfig,
     handleTokenManagementConfigChange,
     handleStopOrganizing,

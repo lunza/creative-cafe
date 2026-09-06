@@ -86,6 +86,9 @@ interface ConfigPanelProps {
   onMemoryTableAutoOrganizeToggle: (enabled: boolean) => void;
   onMemoryTableOrganizeModeChange: (mode: 'sync' | 'async') => void;
   onMemoryTableTemplateAssociate: (templateId: string, templateName: string) => void;
+  // 手动触发表格整理（Spec: add-manual-table-organize-button / Task 2）
+  onMemoryTableManualOrganize: () => void;
+  memoryTableManualOrganizing: boolean;
   onTokenManagementConfigChange: (config: Partial<TokenManagementConfig>) => void;
   onSaveConfig: () => void;
 }
@@ -136,6 +139,8 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
   onMemoryTableAutoOrganizeToggle,
   onMemoryTableOrganizeModeChange,
   onMemoryTableTemplateAssociate,
+  onMemoryTableManualOrganize,
+  memoryTableManualOrganizing,
   onTokenManagementConfigChange,
   onSaveConfig,
 }) => {
@@ -727,6 +732,8 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
           onAutoOrganizeToggle={onMemoryTableAutoOrganizeToggle}
           onOrganizeModeChange={onMemoryTableOrganizeModeChange}
           onTemplateAssociate={onMemoryTableTemplateAssociate}
+          onManualOrganize={onMemoryTableManualOrganize}
+          manualOrganizing={memoryTableManualOrganizing}
         />
         <div style={{ fontSize: '12px', color: 'var(--config-panel-sub-text-color, #94a3b8)', marginTop: 4 }}>
           AI 自动整理对话中的关键信息到表格

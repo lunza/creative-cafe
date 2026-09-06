@@ -162,22 +162,36 @@ export class ChatEngine implements IChatEngine {
 
       // ============================================================
       // 能力感知：思维链参数注入（Spec: upgrade-ai-handler-multimodal-compatibility / Task 3.2）
+      // + 模型系列模板思考联动（Spec: analyze-llamacpp-model-compatibility）
       // ============================================================
-      // 能力感知逻辑：思维链参数仅在"双条件"同时满足时才注入请求体：
-      //   1. enable_chain_of_thought === true（用户在引擎设置中启用了思维链）
-      //   2. capabilities.supportsThinking === true（模型探测支持思维链/推理）
-      // 触发条件：双条件判断（用户配置 + 模型能力），缺一不可。
-      // 兼容性考量（降级策略）：
-      //   - 若 enable_chain_of_thought=true 但 supportsThinking!==true：模型不支持思维链，
-      //     此时【不注入】任何思维链参数，保持纯文本聊天，避免向后端发送不支持字段导致 4xx 错误。
-      //   - 若 enable_chain_of_thought 未启用：用户未开启，自然不注入。
-      // 注入字段 `enable_thinking: true` 为 OpenAI 兼容后端常见思维链开关（如 Qwen3 系列）；
-      // 具体字段名取决于模型 API，supportsThinking 探测成功即认为后端可识别该参数。
-      const thinkingEnabled =
-        config.enable_chain_of_thought === true &&
-        config.capabilities?.supportsThinking === true;
-      if (thinkingEnabled) {
-        requestBody.enable_thinking = true;
+      // ⚠ 协议规范（16_THINKING_MODE_SAMPLING_CONFIG.md §4.1）：
+      // llama-server 仅识别嵌套形式 chat_template_kwargs.enable_thinking；
+      // 顶层 enable_thinking 字段会被 llama-server 静默忽略（creative-cafe 历史 bug，
+      // 曾致 CoT 开关对本地后端完全失效——勿回退为顶层字段）。
+      // 优先级：
+      //   1. thinking_mode='off' → 嵌套 enable_thinking=false（Qwen 指令模式模板联动，
+      //      请求级关闭思考，无需 llama-server --reasoning off）
+      //   2. thinking_mode='on'  → 嵌套 enable_thinking=true（Qwen 思考模板联动，显式防服务端配置漂移）
+      //   3. 未设置 thinking_mode → 沿用旧双条件逻辑（同样走嵌套协议）：
+      //      enable_chain_of_thought === true 且 capabilities.supportsThinking === true
+      const thinkingMode = config.thinking_mode;
+      // 'off'/'on' 为模板显式声明；未声明模板时仅当旧双条件满足才注入 true，否则 undefined（不干预，
+      // 跟随服务端 --reasoning / 模板默认值——勿改成 false，否则会强制关闭所有未配模板引擎的思考）
+      const wantsThinking: boolean | undefined =
+        thinkingMode === 'off' ? false
+        : thinkingMode === 'on' ? true
+        : (config.enable_chain_of_thought === true &&
+           config.capabilities?.supportsThinking === true ? true : undefined);
+      if (wantsThinking !== undefined) {
+        requestBody.chat_template_kwargs = {
+          ...(requestBody.chat_template_kwargs as Record<string, unknown> | undefined),
+          enable_thinking: wantsThinking,
+        };
+        if (thinkingMode === 'off') {
+          console.log('[ChatEngine] 指令模式模板联动：请求级关闭思考（chat_template_kwargs.enable_thinking=false）');
+        } else if (thinkingMode === 'on') {
+          console.log('[ChatEngine] 思考模式模板联动：请求级开启思考（chat_template_kwargs.enable_thinking=true）');
+        }
       }
 
       // ============================================================

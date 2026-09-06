@@ -1,10 +1,11 @@
-import React, { memo, useCallback } from 'react';
+import React, { memo, useCallback, useState } from 'react';
 import { Modal, Input, Select, Switch, Space, Button, message } from 'antd';
 import {
   TranslationOutlined,
   EditOutlined,
   StopOutlined,
-  SafetyCertificateOutlined
+  SafetyCertificateOutlined,
+  ReloadOutlined
 } from '@ant-design/icons';
 import type { UseWorldBookFormStateReturn } from './hooks/useWorldBookFormState';
 
@@ -34,6 +35,12 @@ export interface WorldBookEntryEditorProps {
   onPolish: (field: string) => void;
   /** 触发 AI 单字段审核流程（弹出审核要求 Modal） */
   onAudit: (field: string) => void;
+  /**
+   * AI 生成关键词（Spec: regenerate-key-in-entry-editor）
+   * 以传入的条目内容/注释为依据，返回 { key, keysecondary }。
+   * 编辑器用"表单当前值"调用（而非已保存内容），支持改完条目说明后立即重新生成。
+   */
+  onGenerateKeywords: (content: string, comment: string, worldBookDescription?: string) => Promise<{ key: string[]; keysecondary: string[] }>;
   /** 中断 AI 请求 */
   onCancelAIRequest: () => void;
   /** 写日志 */
@@ -45,6 +52,7 @@ const WorldBookEntryEditor: React.FC<WorldBookEntryEditorProps> = ({
   onTranslate,
   onPolish,
   onAudit,
+  onGenerateKeywords,
   onCancelAIRequest,
   addLog,
 }) => {
@@ -133,6 +141,48 @@ const WorldBookEntryEditor: React.FC<WorldBookEntryEditorProps> = ({
     setEditingEntryUid(null);
   }, [setIsEditEntryModalOpen, setEditingEntry, setEditingEntryUid]);
 
+  /**
+   * AI 重新生成主要/次要关键词（Spec: regenerate-key-in-entry-editor）
+   *
+   * 与表格视图"AI生成关键词"（handleGenerateKeywordsForEntry，直接写盘）的关键差异：
+   * 1. 以"表单当前值"（含未保存的条目说明修改）为生成依据——改完说明立即重生成
+   * 2. 结果写回表单（key + keysecondary 同步刷新），随编辑器保存一起落盘，
+   *    规避"表格按钮直接写盘 + 编辑器保存用表单旧值整体覆盖"的数据冲突
+   * 3. 生成后用户仍可在 Select 中手动增删，最终以保存动作为准
+   *
+   * generateKeywords 为非流式请求（无法真正中断），用 loading 状态防重复触发。
+   */
+  const [regeneratingKeys, setRegeneratingKeys] = useState(false);
+  const handleRegenerateKeys = useCallback(async () => {
+    if (regeneratingKeys) return;
+    setRegeneratingKeys(true);
+    try {
+      const description = worldBookContent?.description || worldBookContent?.name || '';
+      const keywords = await onGenerateKeywords(
+        formValues.content || '',
+        formValues.comment || '',
+        description
+      );
+      if (keywords.key.length === 0 && keywords.keysecondary.length === 0) {
+        message.warning('AI 未返回有效关键词，已保留现有值');
+        return;
+      }
+      setFormValues(prev => ({
+        ...prev,
+        key: keywords.key.length > 0 ? keywords.key : prev.key,
+        keysecondary: keywords.keysecondary,
+      }));
+      addLog(`[WorldBook] 编辑器内重新生成关键词成功: key=[${keywords.key.join(', ')}], keysecondary=[${keywords.keysecondary.join(', ')}]（随保存落盘）`, 'info');
+      message.success('关键词已重新生成，保存后生效');
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : '未知错误';
+      addLog(`[WorldBook] 编辑器内重新生成关键词失败: ${errMsg}`, 'error');
+      message.error('重新生成关键词失败: ' + errMsg);
+    } finally {
+      setRegeneratingKeys(false);
+    }
+  }, [regeneratingKeys, formValues.content, formValues.comment, worldBookContent, onGenerateKeywords, setFormValues, addLog]);
+
   return (
     <Modal
       title={`编辑条目: ${editingEntry?.comment || '无注释'}`}
@@ -203,6 +253,18 @@ const WorldBookEntryEditor: React.FC<WorldBookEntryEditorProps> = ({
             tokenSeparators={[',']}
             allowClear
           />
+          {/* Spec: regenerate-key-in-entry-editor — 按当前表单内容（含未保存修改）重新生成 key/keysecondary */}
+          <Button
+            type="link"
+            icon={<ReloadOutlined />}
+            onClick={handleRegenerateKeys}
+            size="small"
+            loading={regeneratingKeys}
+            style={{ paddingLeft: 0, marginTop: 4 }}
+            title="根据当前条目说明（含未保存的修改）重新生成主要/次要关键词，结果写入表单，保存后生效"
+          >
+            {regeneratingKeys ? 'AI生成中…' : 'AI重新生成'}
+          </Button>
         </div>
 
         <div style={{ marginBottom: 16 }}>

@@ -433,8 +433,10 @@ export class AIService {
 
       const data = await response.json();
       const message = data.choices?.[0]?.message;
-      // 优先取 content；若为空（推理模型可能将内容放在 reasoning_content），取 reasoning_content
-      const content = message?.content || message?.reasoning_content;
+      // 【协议规范 - 16_THINKING_MODE_SAMPLING_CONFIG.md §4.3 / F5 教训】
+      // 只取 content 作为正文；勿回退 reasoning_content（思考中模型会复述/分析提示词，
+      // content 为空 = max_tokens 预算被思维链耗尽，回退会把思维链污染为正文）
+      const content = message?.content;
 
       if (!content) {
         throw new Error('AI 返回内容为空');

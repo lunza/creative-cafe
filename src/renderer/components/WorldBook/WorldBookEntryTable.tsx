@@ -1,5 +1,5 @@
-import React, { memo, useMemo, useCallback } from 'react';
-import { Modal, Input, Button, Space, Tag, Card, Pagination, message } from 'antd';
+import React, { memo, useMemo, useCallback, useState } from 'react';
+import { Modal, Input, Button, Space, Tag, Card, Pagination, Select, message } from 'antd';
 import {
   PlusOutlined,
   EditOutlined,
@@ -125,20 +125,6 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
     setEditingDescriptionTemp(worldBookContent?.description || '');
     setIsDescriptionModalOpen(true);
   }, [setEditingDescriptionTemp, setIsDescriptionModalOpen, worldBookContent]);
-
-  // 全选 / 取消全选
-  const handleSelectAll = useCallback((checked: boolean) => {
-    if (checked && worldBookContent?.entries) {
-      const allUids = new Set<string | number>();
-      Object.keys(worldBookContent.entries).forEach(key => {
-        const entry = worldBookContent.entries[key];
-        allUids.add(entry.uid || key);
-      });
-      setSelectedEntries(allUids);
-    } else {
-      setSelectedEntries(new Set());
-    }
-  }, [worldBookContent, setSelectedEntries]);
 
   // 单条目 checkbox 切换
   const handleToggleSelect = useCallback((uid: number | string, checked: boolean) => {
@@ -319,33 +305,81 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
     onGenerateKeywordsAll, onTranslateAll, onPolishAll, onAuditAll,
   ]);
 
-  // entry 列表 + 分组渲染（保持与原实现完全一致的视觉与行为）
+  // ==================== 标签筛选（按标签多选筛选条目） ====================
+  /** "无标签"伪标签值（与真实 tag.id 字符串空间隔离） */
+  const UNTAGGED_FILTER = '__untagged__';
+  /** 当前选中的筛选项（tag.id 集合或"无标签"伪值）；空数组 = 不筛选显示全部 */
+  const [selectedTagFilters, setSelectedTagFilters] = useState<string[]>([]);
+
+  /**
+   * 筛选选项 = 全部本地标签 + "无标签"，均带条目计数。
+   * 计数基于全量条目（不随筛选变化），便于用户判断各标签规模。
+   */
+  const tagFilterOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    let untaggedCount = 0;
+    Object.values(worldBookContent?.entries || {}).forEach((entry: any, index: number) => {
+      const uid = entry.uid !== undefined ? entry.uid : index;
+      // 与下方 entryList 一致：String 化比较（entryUid 可能是 number 或 string，tagId 恒为 string）
+      const entryTagIds = associations
+        .filter((assoc: any) => String(assoc.entryUid) === String(uid))
+        .map((assoc: any) => String(assoc.tagId));
+      if (entryTagIds.length === 0) {
+        untaggedCount++;
+      } else {
+        entryTagIds.forEach(id => counts.set(id, (counts.get(id) || 0) + 1));
+      }
+    });
+    const options = tags
+      .filter((tag: any) => (counts.get(String(tag.id)) || 0) > 0)
+      .map((tag: any) => ({ value: String(tag.id), label: `${tag.name}（${counts.get(String(tag.id))}）` }));
+    options.push({ value: UNTAGGED_FILTER, label: `无标签（${untaggedCount}）` });
+    return options;
+  }, [worldBookContent, associations, tags]);
+
+  // entry 列表 + 分组渲染（保持与原实现完全一致的视觉与行为；新增标签筛选）
   const entryList = useMemo(() => {
     if (!worldBookContent || !worldBookContent.entries) return null;
 
-    const entries = Object.values(worldBookContent.entries);
-    const totalEntries = entries.length;
+    // 统一 uid（无 uid 条目以全局索引为回退——原实现用页内索引，翻页会漂移导致勾选错乱）
+    const allEntries = Object.values(worldBookContent.entries).map((entry: any, index: number) => ({
+      ...entry,
+      uid: entry.uid !== undefined ? entry.uid : index,
+    }));
+
+    // 标签筛选：多选时"任一命中即显示"（OR 语义）。
+    // 含"无标签"时同时放行无标签条目与命中标签的条目。
+    const filteredEntries = selectedTagFilters.length === 0
+      ? allEntries
+      : allEntries.filter((entry: any) => {
+          const entryTagIds = associations
+            .filter((assoc: any) => String(assoc.entryUid) === String(entry.uid))
+            .map((assoc: any) => String(assoc.tagId));
+          const hasTagHit = entryTagIds.some(id => selectedTagFilters.includes(id));
+          const wantsUntagged = selectedTagFilters.includes(UNTAGGED_FILTER);
+          return hasTagHit || (wantsUntagged && entryTagIds.length === 0);
+        });
+
+    const totalEntries = filteredEntries.length;
     const startIndex = (currentPage - 1) * pageSize;
     const endIndex = startIndex + pageSize;
-    const currentPageEntries = entries.slice(startIndex, endIndex);
+    const currentPageEntries = filteredEntries.slice(startIndex, endIndex);
 
     // 为每个条目分配标签
-    const entriesWithTags = currentPageEntries.map((entry: any, index: number) => {
-      const uid = entry.uid !== undefined ? entry.uid : (startIndex + index);
+    const entriesWithTags = currentPageEntries.map((entry: any) => {
       const entryTags = associations
-        .filter((assoc: any) => assoc.entryUid === uid)
-        .map((assoc: any) => tags.find((tag: any) => tag.id === assoc.tagId))
+        .filter((assoc: any) => String(assoc.entryUid) === String(entry.uid))
+        .map((assoc: any) => tags.find((tag: any) => String(tag.id) === String(assoc.tagId)))
         .filter((tag: any): tag is any => tag !== undefined);
       return {
         ...entry,
-        uid,
         tags: entryTags
       };
     });
 
     // 按标签分组
     const groupedEntries: Record<string, typeof entriesWithTags> = {};
-    const processedEntries = new Set<number>();
+    const processedEntries = new Set<number | string>();
 
     entriesWithTags.forEach(entry => {
       const uid = entry.uid;
@@ -367,8 +401,23 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
       processedEntries.add(uid);
     });
 
-    return { sortedTagIds: Object.keys(groupedEntries), groupedEntries, totalEntries };
-  }, [worldBookContent, associations, tags, currentPage, pageSize]);
+    return { sortedTagIds: Object.keys(groupedEntries), groupedEntries, totalEntries, filteredUids: filteredEntries.map((e: any) => e.uid) as (number | string)[] };
+  }, [worldBookContent, associations, tags, currentPage, pageSize, selectedTagFilters]);
+
+  // 全选 / 取消全选：作用于"当前筛选可见"的条目（未筛选 = 全部）。
+  // 定义在 entryList 之后以引用 filteredUids（依赖数组立即求值，前置声明会触发 TDZ）。
+  const handleSelectAll = useCallback((checked: boolean) => {
+    if (checked && entryList && entryList.filteredUids.length > 0) {
+      setSelectedEntries(new Set(entryList.filteredUids));
+    } else {
+      setSelectedEntries(new Set());
+    }
+  }, [entryList, setSelectedEntries]);
+
+  /** 可见条目是否全部选中（全选框 checked 判断，随筛选联动） */
+  const allVisibleSelected = !!entryList &&
+    entryList.filteredUids.length > 0 &&
+    entryList.filteredUids.every(uid => selectedEntries.has(uid));
 
   // 属性名映射（用于"更多属性"展开区域）
   const propertyNames: Record<string, string> = useMemo(() => ({
@@ -414,13 +463,13 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
       .trim();
   }, [propertyNames]);
 
-  // 全选 checkbox indeterminate 状态由 ref 在渲染期间设置
+  // 全选 checkbox indeterminate 状态由 ref 在渲染期间设置（基于可见条目，随筛选联动）
   const selectAllCheckboxRef = useCallback((el: HTMLInputElement | null) => {
-    if (el && worldBookContent?.entries) {
-      const totalEntries = Object.keys(worldBookContent.entries).length;
-      el.indeterminate = selectedEntries.size > 0 && selectedEntries.size < totalEntries;
+    if (el && entryList) {
+      el.indeterminate = selectedEntries.size > 0 && !allVisibleSelected &&
+        entryList.filteredUids.some(uid => selectedEntries.has(uid));
     }
-  }, [worldBookContent, selectedEntries]);
+  }, [entryList, selectedEntries, allVisibleSelected]);
 
   return (
     <Modal
@@ -465,10 +514,36 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
 
       {worldBookContent && worldBookContent.entries && (
         <div style={{ backgroundColor: 'var(--bg-container, #1f1f1f)', color: 'var(--text-primary, #ffffff)' }}>
+          {/* 标签筛选（多选，OR 语义；筛选发生在分页之前，分页计数随之联动） */}
+          <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: 500, flexShrink: 0 }}>按标签筛选：</span>
+            <Select
+              mode="multiple"
+              allowClear
+              placeholder="选择标签筛选条目（可多选，不选显示全部）"
+              value={selectedTagFilters}
+              onChange={(values) => {
+                setSelectedTagFilters(values);
+                // 筛选结果变少后当前页可能越界，统一回到第 1 页
+                if (currentPage !== 1) {
+                  setCurrentPage(1);
+                }
+              }}
+              options={tagFilterOptions}
+              style={{ minWidth: 320, flex: 1, maxWidth: 700 }}
+              maxTagCount="responsive"
+              size="middle"
+            />
+            {selectedTagFilters.length > 0 && (
+              <span style={{ color: 'var(--text-secondary, #8c8c8c)', fontSize: 13, flexShrink: 0 }}>
+                筛选后 {entryList?.totalEntries ?? 0} / {Object.keys(worldBookContent.entries).length} 条
+              </span>
+            )}
+          </div>
           <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-start', alignItems: 'center', gap: 8 }}>
             <input
               type="checkbox"
-              checked={Object.keys(worldBookContent.entries).length > 0 && selectedEntries.size === Object.keys(worldBookContent.entries).length}
+              checked={allVisibleSelected}
               ref={selectAllCheckboxRef}
               onChange={(e) => handleSelectAll(e.target.checked)}
               style={{ transform: 'scale(1.2)' }}
@@ -675,12 +750,12 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
             );
           })}
 
-          {/* 分页控件 */}
+          {/* 分页控件（total 用筛选后的数量，与列表渲染一致） */}
           <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--border-base, #333)' }}>
             <Pagination
               current={currentPage}
               pageSize={pageSize}
-              total={Object.keys(worldBookContent.entries).length}
+              total={entryList?.totalEntries ?? Object.keys(worldBookContent.entries).length}
               showSizeChanger
               pageSizeOptions={['10', '20', '50', '100']}
               showTotal={(total, range) => `第 ${range[0]}-${range[1]} 条，共 ${total} 条`}

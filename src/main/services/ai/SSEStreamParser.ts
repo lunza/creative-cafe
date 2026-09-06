@@ -205,7 +205,6 @@ export class SSEStreamParser {
 
     const decoder = new TextDecoder('utf-8');
     let fullContent = '';
-    let fullReasoningContent = '';
     let buffer = '';
     // 【F1 修复】累积 tool_calls 分片与 finish_reason
     const toolCallsAccumulator: any[] = [];
@@ -277,10 +276,8 @@ export class SSEStreamParser {
               fullContent += detailed.content;
               onChunk(detailed.content);
             }
-            // 【重点标记 - reasoning_content 兼容性】累积推理内容，用于 content 为空时的回退
-            if (detailed.reasoningContent) {
-              fullReasoningContent += detailed.reasoningContent;
-            }
+            // 【协议规范 - §4.3/F5】reasoning_content 不再累积回退：思考内容与正文严格分离，
+            // 展示思维链需独立通道（避免 max_tokens 耗尽时思维链污染正文）
             if (detailed.toolCallsDelta) {
               this.mergeToolCallsDelta(toolCallsAccumulator, detailed.toolCallsDelta);
             }
@@ -307,11 +304,10 @@ export class SSEStreamParser {
       }
     }
 
-    // 【重点标记 - reasoning_content 兼容性】当 content 为空或过短时，使用 reasoning_content 作为回退
-    // 适用于直连 DeepSeek API 等使用独立 reasoning_content 字段的模型
-    if (fullContent.length < 100 && fullReasoningContent.length > 0) {
-      fullContent = fullReasoningContent;
-    }
+    // 【协议规范 - 16_THINKING_MODE_SAMPLING_CONFIG.md §4.3 / F5 教训】
+    // 禁止将 reasoning_content 回退为 content：思考中模型会复述/分析提示词，
+    // content 为空通常意味着 max_tokens 预算被思维链耗尽（finish_reason=length），
+    // 此时回退会把思维链内容污染为正文。评分/展示正文只用 content。
 
     return {
       content: fullContent,

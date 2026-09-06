@@ -87,3 +87,5 @@ ts*-errors.txt
 errors-group*.txt
 eslint-results.json
 creative_errors*.txt
+
+*.apk

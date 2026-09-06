@@ -205,6 +205,20 @@ export interface AIEngineSetting {
   model_name: string;
   api_mode: string;
   /**
+   * 模型系列参数模板 id（Spec: analyze-llamacpp-model-compatibility）。
+   * 用户在引擎表单手动选择的系列，用于"应用官方推荐参数"；缺省未选择。
+   * 取值见 src/shared/modelParameterPresets.ts MODEL_SERIES_PRESETS。
+   */
+  model_series?: string;
+  /**
+   * 思考模式联动（Spec: analyze-llamacpp-model-compatibility）。
+   * 保存引擎时由 model_series 对应模板的 thinking 字段推导：
+   * - 'off'：请求体显式 enable_thinking=false（Qwen 非思考）
+   * - 'on' ：请求体显式 enable_thinking=true（Qwen 思考）
+   * - 缺省：不干预（沿用 enable_chain_of_thought + supportsThinking 旧逻辑）
+   */
+  thinking_mode?: 'on' | 'off' | 'auto';
+  /**
    * 后端能力探测（Spec: optimize-chat-ai-intelligence / Task 3.3）。
    * 缺省时由调用方通过 getDefaultEngineCapabilities() 推断默认值。
    * Task 6 将在设置 UI 中允许用户按 engine type 显式配置。

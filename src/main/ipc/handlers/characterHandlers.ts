@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron';
 import { characterService, encode } from '../../services/characterService';
+import { characterFavoritesService } from '../../services/characterFavoritesService';
 import { resolveUserDataPlaceholder } from '../../utils/appPath';
 import { getStorageService } from '../../services/storageService';
 import fs from 'fs/promises';
@@ -35,6 +36,20 @@ export function characterHandlers() {
 
   ipcMain.handle('character:list', async () => {
     return await characterService.listCharacters();
+  });
+
+  // 角色收藏（与移动端 LAN API 共用同一份持久化数据）
+  ipcMain.handle('favorites:read', async () => {
+    return await characterFavoritesService.readFavorites();
+  });
+
+  ipcMain.handle('favorites:write', async (_event, items: Array<{ path?: string; name?: string; addedAt?: number }>) => {
+    await characterFavoritesService.writeFavorites(items);
+    return { success: true };
+  });
+
+  ipcMain.handle('favorites:hasStored', async () => {
+    return await characterFavoritesService.hasStoredFavorites();
   });
 
   ipcMain.handle('character:read', async (_event, filePath: string) => {

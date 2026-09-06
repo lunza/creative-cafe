@@ -1,4 +1,4 @@
-import { useCallback, useRef, useEffect } from 'react';
+import { useCallback, useRef, useEffect, useState } from 'react';
 import { message, Modal } from 'antd';
 import { useSettingStore } from '../../../stores/settingStore';
 import {
@@ -8,6 +8,8 @@ import {
 } from '../../../utils/worldBookUtils';
 import type { WorldBookTemplate } from '../../../utils/worldBookTemplates';
 import type { UseWorldBookFormStateReturn } from './useWorldBookFormState';
+// Spec: polish-deai-humanizer（润色去AI味规则运行时注入；generation 变体用于条目生成流程）
+import { withHumanizerRules, withHumanizerGenerationRules } from '../../../../shared/prompts/humanizerPolish';
 
 /**
  * 世界书 AI 操作 Hook（Task 8 拆分产物）。
@@ -102,6 +104,10 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
   // 批量审核：跟踪用户是否已处理完当前条目的结果 Modal
   const isAuditResultModalOpenRef = useRef(false);
   const batchAppliedTextRef = useRef<string | null>(null);
+
+  // Spec: polish-deai-humanizer — 润色"去AI味"开关（默认开启），
+  // 由 WorldBookPolishModal 的单字段/一键润色 Modal 控制
+  const [polishDeAiFlavor, setPolishDeAiFlavor] = useState<boolean>(true);
 
   useEffect(() => {
     isAuditResultModalOpenRef.current = isAuditResultModalOpen;
@@ -213,6 +219,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
         method: 'POST',
         headers: requestHeaders,
         body: requestBody,
+        timeout: 0, // 无超时限制（用户要求：不写死超时；主进程 timeout===0 表示不设置请求超时）
 
       });
 
@@ -317,6 +324,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
         method: 'POST',
         headers: requestHeaders,
         body: requestBody,
+        timeout: 0 // 无超时限制（用户要求：不写死超时；主进程 timeout===0 表示不设置请求超时）
       });
 
       if (!result.success) {
@@ -339,7 +347,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
   };
 
   // 辅助函数：润色单个文本
-  const polishText = async (text: string, apiUrl: string, apiKey: string, apiMode: string, modelName: string, apiKeyTransmission: string, requirements: string = '', worldBookDescription: string = '', textType: 'keyword' | 'content' | 'comment' = 'content', maxTokens: number = 10240, temperature: number = 0.7, topP: number = 0.95, globalSystemPrompt: string = ''): Promise<string> => {
+  const polishText = async (text: string, apiUrl: string, apiKey: string, apiMode: string, modelName: string, apiKeyTransmission: string, requirements: string = '', worldBookDescription: string = '', textType: 'keyword' | 'content' | 'comment' = 'content', maxTokens: number = 10240, temperature: number = 0.7, topP: number = 0.95, globalSystemPrompt: string = '', deAiFlavor: boolean = true): Promise<string> => {
     if (!text || text.trim() === '') {
       return text;
     }
@@ -363,7 +371,9 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
     if (!promptResult.success || !promptResult.data) {
       throw new Error('获取提示词模板失败: ' + (promptResult.error || '未知错误'));
     }
-    let basePrompt = promptResult.data.systemPrompt;
+    // Spec: polish-deai-humanizer — 按开关状态注入去AI味规则块（运行时注入，
+    // 不烘焙进模板：开关关闭时可完全撤下，且规避存量 DB 模板不更新的坑）
+    let basePrompt = withHumanizerRules(promptResult.data.systemPrompt, deAiFlavor);
 
     // 如果提供了世界书描述，添加到提示词中
     if (worldBookDescription) {
@@ -429,6 +439,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
         method: 'POST',
         headers: requestHeaders,
         body: requestBody,
+        timeout: 0, // 无超时限制（用户要求：不写死超时；主进程 timeout===0 表示不设置请求超时）
 
       });
 
@@ -500,7 +511,9 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
     if (!promptResult.success || !promptResult.data) {
       throw new Error('获取审核提示词模板失败: ' + (promptResult.error || '未知错误'));
     }
-    let basePrompt = promptResult.data.systemPrompt;
+    // 去AI味规则注入（Spec: polish-deai-humanizer v3）——审核产出的修订/优化文本
+    // 同样是 AI 生成文本，与润色同款规则约束（默认开启）
+    let basePrompt = withHumanizerGenerationRules(promptResult.data.systemPrompt);
 
     // 添加世界书描述
     if (worldBookDescription) {
@@ -561,6 +574,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
         method: 'POST',
         headers: requestHeaders,
         body: requestBody,
+        timeout: 0 // 无超时限制（用户要求：不写死超时；主进程 timeout===0 表示不设置请求超时）
       });
 
       if (!result.success) {
@@ -705,6 +719,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
         method: 'POST',
         headers: requestHeaders,
         body: requestBody,
+        timeout: 0, // 无超时限制（用户要求：不写死超时；主进程 timeout===0 表示不设置请求超时）
 
       });
 
@@ -1431,7 +1446,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
         // 润色内容（仅润色 content 字段）
         if (entryAny.content) {
           addLog(`[WorldBook] 润色内容: ${entryAny.content.length} 字符`);
-          entryAny.content = await polishText(entryAny.content, apiUrl, apiKey, apiMode, modelName, apiKeyTransmission, requirements, worldBookDescription, 'content', maxTokens, temperature, topP, activeEngine.system_prompt || '');
+          entryAny.content = await polishText(entryAny.content, apiUrl, apiKey, apiMode, modelName, apiKeyTransmission, requirements, worldBookDescription, 'content', maxTokens, temperature, topP, activeEngine.system_prompt || '', polishDeAiFlavor);
         }
 
         const entryEndTime = Date.now();
@@ -1687,7 +1702,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       }
 
       // 调用润色函数
-      let cleanedText = await polishText(currentPolishText, apiUrl, apiKey, apiMode, modelName, apiKeyTransmission, polishRequirements, worldBookDescription, textType, maxTokens, temperature, topP, activeEngine.system_prompt || '');
+      let cleanedText = await polishText(currentPolishText, apiUrl, apiKey, apiMode, modelName, apiKeyTransmission, polishRequirements, worldBookDescription, textType, maxTokens, temperature, topP, activeEngine.system_prompt || '', polishDeAiFlavor);
 
       // 如果润色的是关键词字段（key 或 keysecondary），处理顿号分隔的情况
       if (currentPolishField === 'key' || currentPolishField === 'keysecondary') {
@@ -1847,7 +1862,8 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
           url: requestUrl,
           method: 'POST',
           headers: requestHeaders,
-          body: requestBody
+          body: requestBody,
+          timeout: 0 // 无超时限制（用户要求：不写死超时；主进程 timeout===0 表示不设置请求超时）
         });
 
         addLog(`[WorldBook] AI排序: IPC请求已发送，等待响应...`);
@@ -2020,7 +2036,8 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       if (!promptResult.success || !promptResult.data) {
         throw new Error('获取提示词模板失败: ' + (promptResult.error || '未知错误'));
       }
-      let systemPrompt = promptResult.data.systemPrompt;
+      // 去AI味规则注入（Spec: polish-deai-humanizer 扩展 — 生成场景默认开启）
+      let systemPrompt = withHumanizerGenerationRules(promptResult.data.systemPrompt);
       const userPrompt = promptResult.data.userPrompt;
 
       // 获取世界书描述
@@ -2085,7 +2102,8 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
         url: requestUrl,
         method: 'POST',
         headers: requestHeaders,
-        body: requestBody
+        body: requestBody,
+        timeout: 0 // 无超时限制（用户要求：不写死超时；主进程 timeout===0 表示不设置请求超时）
       });
 
       if (!result.success) {
@@ -2226,7 +2244,8 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       if (!promptResult.success || !promptResult.data) {
         throw new Error('获取提示词模板失败: ' + (promptResult.error || '未知错误'));
       }
-      let systemPrompt = promptResult.data.systemPrompt;
+      // 去AI味规则注入（Spec: polish-deai-humanizer 扩展 — 生成场景默认开启）
+      let systemPrompt = withHumanizerGenerationRules(promptResult.data.systemPrompt);
       const userPrompt = promptResult.data.userPrompt;
 
       let finalSystemPrompt = systemPrompt;
@@ -2270,7 +2289,8 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
         url: requestUrl,
         method: 'POST',
         headers: requestHeaders,
-        body: requestBody
+        body: requestBody,
+        timeout: 0 // 无超时限制（用户要求：不写死超时；主进程 timeout===0 表示不设置请求超时）
       });
 
       if (!result.success) {
@@ -2414,7 +2434,8 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
         url: requestUrl,
         method: 'POST',
         headers: requestHeaders,
-        body: requestBody
+        body: requestBody,
+        timeout: 0 // 无超时限制（用户要求：不写死超时；主进程 timeout===0 表示不设置请求超时）
       });
 
       if (!result.success) {
@@ -2479,7 +2500,8 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       if (!promptResult.success || !promptResult.data) {
         throw new Error('获取提示词模板失败: ' + (promptResult.error || '未知错误'));
       }
-      const systemPrompt = promptResult.data.systemPrompt;
+      // 去AI味规则注入（Spec: polish-deai-humanizer 扩展 — 生成场景默认开启）
+      const systemPrompt = withHumanizerGenerationRules(promptResult.data.systemPrompt);
       const userPrompt = promptResult.data.userPrompt;
 
       // 拼接全局system_prompt
@@ -2537,7 +2559,8 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
         url: requestUrl,
         method: 'POST',
         headers: requestHeaders,
-        body: requestBody
+        body: requestBody,
+        timeout: 0 // 无超时限制（用户要求：不写死超时；主进程 timeout===0 表示不设置请求超时）
       });
 
       if (!result.success) {
@@ -2613,7 +2636,8 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       if (!promptResult.success || !promptResult.data) {
         throw new Error('获取提示词模板失败: ' + (promptResult.error || '未知错误'));
       }
-      const systemPrompt = promptResult.data.systemPrompt;
+      // 去AI味规则注入（Spec: polish-deai-humanizer 扩展 — 生成场景默认开启）
+      const systemPrompt = withHumanizerGenerationRules(promptResult.data.systemPrompt);
       const userPrompt = promptResult.data.userPrompt;
 
       // 拼接全局 system_prompt
@@ -2660,7 +2684,8 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
         url: requestUrl,
         method: 'POST',
         headers: requestHeaders,
-        body: requestBody
+        body: requestBody,
+        timeout: 0 // 无超时限制（用户要求：不写死超时；主进程 timeout===0 表示不设置请求超时）
       });
 
       if (!result.success) {
@@ -2835,7 +2860,8 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       if (!promptResult.success || !promptResult.data) {
         throw new Error('获取提示词模板失败: ' + (promptResult.error || '未知错误'));
       }
-      const systemPrompt = promptResult.data.systemPrompt;
+      // 去AI味规则注入（Spec: polish-deai-humanizer 扩展 — 生成场景默认开启）
+      const systemPrompt = withHumanizerGenerationRules(promptResult.data.systemPrompt);
       const userPrompt = promptResult.data.userPrompt;
 
       // 获取引擎配置参数
@@ -2889,7 +2915,8 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
         url: requestUrl,
         method: 'POST',
         headers: requestHeaders,
-        body: requestBody
+        body: requestBody,
+        timeout: 0 // 无超时限制（用户要求：不写死超时；主进程 timeout===0 表示不设置请求超时）
       });
 
       if (!aiResult.success) {
@@ -3040,7 +3067,8 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       if (!promptResult.success || !promptResult.data) {
         throw new Error('获取提示词模板失败: ' + (promptResult.error || '未知错误'));
       }
-      let systemPrompt = promptResult.data.systemPrompt;
+      // 去AI味规则注入（Spec: polish-deai-humanizer 扩展 — 生成场景默认开启）
+      let systemPrompt = withHumanizerGenerationRules(promptResult.data.systemPrompt);
       const userPrompt = promptResult.data.userPrompt;
 
       // 获取世界书描述
@@ -3106,7 +3134,8 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
         url: requestUrl,
         method: 'POST',
         headers: requestHeaders,
-        body: requestBody
+        body: requestBody,
+        timeout: 0 // 无超时限制（用户要求：不写死超时；主进程 timeout===0 表示不设置请求超时）
       });
 
       if (!result.success) {
@@ -3517,6 +3546,9 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
     getActiveEngineConfig,
     translateText,
     polishText,
+    // Spec: polish-deai-humanizer — 润色"去AI味"开关（供 WorldBookPolishModal 控制）
+    polishDeAiFlavor,
+    setPolishDeAiFlavor,
     generateTagsForEntry,
     generateKeywords,
     extractExistingKeywords,

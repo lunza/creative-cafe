@@ -873,6 +873,7 @@ const WorldBookManager: React.FC = () => {
         onTranslate={aiOps.handleTranslate}
         onPolish={aiOps.handlePolish}
         onAudit={aiOps.handleAudit}
+        onGenerateKeywords={aiOps.generateKeywords}
         onCancelAIRequest={handleCancelAIRequest}
         addLog={adaptAddLog}
       />
@@ -933,6 +934,8 @@ const WorldBookManager: React.FC = () => {
         polishAllRequirements={polishAllRequirements}
         setPolishAllRequirements={setPolishAllRequirements}
         performPolishAll={aiOps.performPolishAll}
+        polishDeAiFlavor={aiOps.polishDeAiFlavor}
+        setPolishDeAiFlavor={aiOps.setPolishDeAiFlavor}
         onCancelAIRequest={handleCancelAIRequest}
       />
 

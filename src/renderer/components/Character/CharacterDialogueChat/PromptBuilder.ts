@@ -272,15 +272,17 @@ export function buildContinueNudgePrompt(): string {
  * 构建回复长度引导约束提示词。
  *
  * Spec: fix-ai-response-length-degradation / Task 3.2
- * 通过在系统提示末尾注入字数下限约束，防止 AI 在持续对话中因上下文学习
+ * 通过在系统提示末尾注入长度引导约束，防止 AI 在持续对话中因上下文学习
  * 复制逐渐缩短的回复模式（LLM 固有特性）。
  *
- * 默认约束段：`【回复要求】{{char}} 的每次回复应不少于 X 字，包含详细的
- * 动作描写、语言对话和内心活动，避免简短敷衍的回复。`
+ * Spec: reduce-dialogue-ai-flavor-and-repetition / Phase 2
+ * 日常约束段改为信息密度引导：`【回复要求】{{char}} 的每次回复通常在 X 字左右
+ * ——重点是有实质推进：新的情节点、情绪变化或信息，而不是堆砌描写。`
+ * （硬性字数下限会引发填充式写作，是"AI 味"成因之一，故降为软参考）
  *
  * 当 `strengthen=true` 时（由 Task 4 检测到连续 3 轮短回复触发），追加
  * 强化约束段：`【重要提醒】你最近的回复过短。请务必每次回复至少 X 字，
- * 展开细节描写，包括动作、神态、语言和内心活动。`
+ * 展开细节描写，包括动作、神态、语言和内心活动。`（救火机制，原样保留）
  *
  * 注：`charName` 参数与 `buildCharacterContext` 中 `charName = name || 'Character'`
  * 保持一致（直接使用实际角色名而非 `{{char}}` 模板变量，避免下游未替换时残留）。
@@ -297,7 +299,13 @@ export function buildLengthGuidancePrompt(
 ): string {
   if (!minResponseChars || minResponseChars <= 0) return '';
   const name = charName || 'Character';
-  let prompt = `\n【回复要求】${name} 的每次回复应不少于 ${minResponseChars} 字，包含详细的动作描写、语言对话和内心活动，避免简短敷衍的回复。`;
+  // Spec: reduce-dialogue-ai-flavor-and-repetition / Phase 2
+  // 日常模式从"字数下限 + 三要素"改为信息密度引导：
+  // 硬性字数下限会引发填充式写作（堆砌形容词凑字数），是"AI 味"成因之一。
+  // 字数降为软参考，核心约束改为"每次推进至少一个新的情节点或情绪变化"。
+  // 强化模式（strengthen=true）保留原硬性字数下限——它是连续 3 轮短回复时的
+  // 救火机制（Spec: fix-ai-response-length-degradation），字符数检测逻辑不动。
+  let prompt = `\n【回复要求】${name} 的每次回复通常在 ${minResponseChars} 字左右——重点是有实质推进：新的情节点、情绪变化或信息，而不是堆砌描写。`;
   if (strengthen) {
     prompt += `\n【重要提醒】你最近的回复过短。请务必每次回复至少 ${minResponseChars} 字，展开细节描写，包括动作、神态、语言和内心活动。`;
   }
@@ -525,7 +533,8 @@ export function buildUserReplySystemPrompt(
   characterInfo: CharacterInfoForPrompt,
   persona: UserPersona,
   person?: 'first' | 'second' | 'third',
-  userInstruction?: string
+  userInstruction?: string,
+  conversationHistory?: ChatMessage[]
 ): string {
   // 防御性校验：persona 缺失或 name 为空时返回空串
   if (!persona || !persona.name || !persona.name.trim()) return '';
@@ -538,6 +547,15 @@ export function buildUserReplySystemPrompt(
   const personaDescription = persona.description && persona.description.trim()
     ? persona.description.trim()
     : '（未提供用户描述）';
+
+  // 格式化对话历史为文本（Spec: fix-user-reply-persona-echo）
+  // 将对话历史嵌入系统提示而非作为 messages 数组传给 engine，避免以 assistant 结尾的
+  // 对话历史被 llama.cpp 等后端视为续写前缀（prefill），导致模型直接回显上一条消息
+  const historyText = (!conversationHistory || conversationHistory.length === 0)
+    ? '（无历史对话）'
+    : conversationHistory
+        .map(msg => msg.role === 'user' ? `[${userName}]: ${msg.content}` : `[${charName}]: ${msg.content}`)
+        .join('\n');
 
   // 角色个性（如存在）
   const personality = characterInfo.personality && characterInfo.personality.trim()
@@ -590,6 +608,9 @@ export function buildUserReplySystemPrompt(
 
 ## 对方角色上下文
 ${charContextLines}
+
+## 对话历史
+${historyText}
 ${instructionSection}
 ## 任务要求
 1. 仅输出 ${userName} 的下一句回复内容
@@ -835,7 +856,10 @@ export function buildCharacterContext(
   if (mes_example) {
     const examples = parseMesExample(mes_example);
     if (examples.length > 0) {
-      context += `示例对话：\n`;
+      // Spec: reduce-dialogue-ai-flavor-and-repetition / Phase 2
+      // 标注为"风格范本"：few-shot 范例对"人味"的引导效率远高于规则指令，
+      // 但需明确"模仿语气节奏、不照抄内容"，避免示例内容被逐句复述（长程重复来源之一）。
+      context += `示例对话（${charName} 的说话风格范本——模仿其语气、用词与节奏，但不要照抄内容）：\n`;
       examples.forEach((ex, i) => {
         if (i > 0) context += `<START>\n`;
         if (ex.user) context += `${userName}: ${ex.user}\n`;
@@ -925,6 +949,10 @@ export function buildPromptCore(
  * 此函数在提示词返回前做后处理：
  * 1. 移除"不要添加任何额外的标记或说明"语句
  * 2. 追加格式要求指令（对话用双引号，动作用星号）
+ *
+ * Spec: reduce-dialogue-ai-flavor-and-repetition / Phase 2
+ * 守卫短语从完整旧句放宽为子串"用星号包裹"，覆盖新旧两版格式规则表述，
+ * 保证任意模板版本下格式规则至多注入一次。
  */
 function injectDialogueFormatInstructions(systemPrompt: string): string {
   let result = systemPrompt;
@@ -942,11 +970,96 @@ function injectDialogueFormatInstructions(systemPrompt: string): string {
 - 对话与动作描写可自然交替，像真实的人在说话一样
 - 星号 *动作描写* 是格式标记，不属于"额外标记或说明"`;
 
-  if (!result.includes('角色的动作、神态、心理活动等非对话描写必须用星号包裹')) {
+  if (!result.includes('用星号包裹')) {
     result = result.trimEnd() + '\n' + formatInstruction;
   }
 
   return result;
+}
+
+// ==================== 旧版规则块运行时剥离（Spec: reduce-dialogue-ai-flavor-and-repetition / Phase 2） ====================
+
+/**
+ * 精简指令集锚点（新指令集标题）。
+ * 存在于新默认模板或已注入的提示词中时，跳过剥离与追加，防止重复注入。
+ */
+const MINIMAL_DIALOGUE_RULES_ANCHOR = '【对话方式】';
+
+/**
+ * 精简指令集（3 条核心规则）。
+ *
+ * Spec: reduce-dialogue-ai-flavor-and-repetition / Phase 2（用户已确认"激进精简"）
+ * 原 19+ 条规则（8 约束 + 7 禁止 + 4 白名单 + 输出格式段）的收敛映射：
+ * - 规则 1/2/5/12（四条语义重复的"代入角色"）→ 核心规则 1
+ * - 规则 3/4 + 负面禁令 9-13 → 核心规则 2（自然度正面引导，负面禁令转正面特征）
+ * - 规则 7/8/15 + 输出格式段（格式规则模板内 2 次重复）→ 核心规则 3（单次注入）
+ * - 规则 6/14（变量替换）→ 由【对话任务说明】既有说明句覆盖 + 显示层 replaceTemplates 兜底
+ * - 白名单 16-19 → tableEdit 由 {{table_edit_instruction}} 变量自带说明承接；
+ *   其余白名单守护的"禁止额外标记"类禁令已同步移除，冲突源消失
+ */
+const MINIMAL_DIALOGUE_RULES = `\n${MINIMAL_DIALOGUE_RULES_ANCHOR}
+1. 你就是 {CHAR_NAME}，以你的身份思考、说话、行动——不是助手，不是系统
+2. 像真人一样交流：句子有长有短，会犹豫、会开玩笑、会跑题；不必回应每一个问题，也不必刻意展示设定；情绪不同，说话的节奏也不同
+3. 对话内容用英文双引号（" "）包裹；动作、神态、心理描写用星号（* *）包裹，两者可自然交替`;
+
+/**
+ * ⚠️【重点标记】剥离旧版对话规则块。
+ *
+ * 背景（存量模板迁移风险）：mergeNewDefaultTemplates 不更新数据库中已有模板
+ * （removeOldFormatProhibition hack 即此坑的历史证据）。若仅更新默认模板，
+ * 存量用户会话将永远使用旧版 19+ 条规则。此函数在运行时统一剥离旧块，
+ * 对新装 / 存量 / 用户轻度自定义的模板一致生效。
+ *
+ * 剥离范围（块标题到下一个【标题】或文本末尾）：
+ * - 【对话约束规则】（8 条规则，含 2 次格式规则重复中的第 1 次）
+ * - 【严格禁止】（7 条负面禁令，"越禁越像 AI"的反噬源）
+ * - 【白名单例外…】（4 条，随禁令移除失去对抗对象）
+ * - 【输出格式】（格式规则第 2 次重复）
+ *
+ * 安全边界：用户深度自定义的模板（不含上述已知块标题）不做任何剥离，
+ * 仅在缺少新指令集锚点时追加精简指令集。
+ */
+export function stripLegacyDialogueRuleBlocks(systemPrompt: string): string {
+  if (!systemPrompt) return systemPrompt;
+
+  let result = systemPrompt;
+  result = result.replace(/【对话约束规则】[\s\S]*?(?=【|$)/g, '');
+  result = result.replace(/【严格禁止】[\s\S]*?(?=【|$)/g, '');
+  result = result.replace(/【白名单例外[^】]*】[\s\S]*?(?=【|$)/g, '');
+  result = result.replace(/【输出格式】[\s\S]*?(?=【|$)/g, '');
+
+  // 清理剥离后残留的多余空行
+  result = result.replace(/\n{3,}/g, '\n\n');
+
+  return result.trimEnd();
+}
+
+/**
+ * 应用精简指令集：剥离旧规则块后追加新指令集（锚点守卫防重复）。
+ *
+ * 插入位置：模板含【角色信息】段时插到其前（紧跟任务说明，保持
+ * "指令 → 规则 → 角色信息"的自然分组）；否则追加到末尾。
+ *
+ * @param systemPrompt 模板系统产出的对话模式指令
+ * @param charName 角色名（注入核心规则 1）
+ * @returns 处理后的指令文本
+ */
+export function applyMinimalDialogueRules(systemPrompt: string, charName: string): string {
+  if (!systemPrompt) return systemPrompt;
+
+  // 新模板（已含锚点）原样通过，不剥离不追加
+  if (systemPrompt.includes(MINIMAL_DIALOGUE_RULES_ANCHOR)) {
+    return systemPrompt;
+  }
+
+  const stripped = stripLegacyDialogueRuleBlocks(systemPrompt);
+  const rules = MINIMAL_DIALOGUE_RULES.replace(/\{CHAR_NAME\}/g, charName || 'Character');
+
+  const charInfoIdx = stripped.indexOf('【角色信息】');
+  if (charInfoIdx > 0) {
+    return stripped.slice(0, charInfoIdx).trimEnd() + '\n' + rules + '\n\n' + stripped.slice(charInfoIdx);
+  }
+  return stripped + '\n' + rules;
 }
 
 // ==================== 第四步：构建基础任务提示词 ====================
@@ -977,47 +1090,30 @@ export async function buildDialoguePrompt(
       persona_section: personaSection
     });
     if (promptResult.success && promptResult.data) {
-      return injectDialogueFormatInstructions(promptResult.data.systemPrompt);
+      // Spec: reduce-dialogue-ai-flavor-and-repetition / Phase 2
+      // 先剥离旧版规则块并注入精简指令集（存量 DB 模板统一迁移），
+      // 再做格式指令兜底注入（守卫保证至多一次）。
+      return injectDialogueFormatInstructions(
+        applyMinimalDialogueRules(promptResult.data.systemPrompt, charName)
+      );
     }
   } catch (e) {
     console.error('[PromptBuilder] 获取对话模式模板失败，使用硬编码回退:', e);
   }
 
-  // 回退：使用硬编码内容（保留原始逻辑）
+  // 回退：使用硬编码内容（Spec: reduce-dialogue-ai-flavor-and-repetition / Phase 2
+  // 回退内容同步精简为 3 条核心规则，与 applyMinimalDialogueRules 输出对齐）
   return `【主要任务类型：角色扮演对话】
 
 【对话任务说明】
 你正在扮演 {{char}} 这个角色，与 ${userName} 进行角色扮演对话。${tableEditInstruction}
 在提示词中，{{char}} 代表 ${charName}，${userName} 代表当前对话用户。
 你需要完全代入角色，以角色的身份与用户进行自然的交流。${tableEditInstruction}
-【对话约束规则】
-1. 你就是 ${charName} 这个角色本人，不是AI助手，不是翻译工具，不是任何系统
-2. 以角色的口吻、性格特点和语言习惯与用户交流
-3. 积极回应用户的问题和行为，推动对话自然发展
-4. 根据对话上下文和情境调整语气和态度
-5. 使用符合角色身份的语言风格
-6. 在回复中使用 ${charName} 代替 {{char}}，使用 ${userName} 代替 {{user}}
-7. 【强制要求】角色直接说出的对话内容必须用标准英文双引号（" "）完整包裹，确保引号准确包裹对话文本的起始与结束位置
-8. 【格式要求】角色的动作、神态、心理活动等非对话描写必须用星号包裹（如 *微微一笑* 或 *她低下头，脸微微泛红*），对话与动作可自然交替
 
-【严格禁止】
-- 禁止输出任何元信息、系统说明或格式说明
-- 禁止输出技术术语、模型名称（如"Transformers"、"Oracle"等）
-- 禁止输出与角色扮演无关的任何内容
-- 禁止打破角色设定或承认自己是AI
-- 禁止输出任何随机字符或无意义字符串
-- 禁止在输出中包含 {{char}} 或 {{user}} 等模板变量，必须替换为实际名称
-- 禁止在角色对话中使用其他引号格式（如中文引号"「」"、"『』'等），必须使用英文双引号
-
-【白名单例外 - 必须遵守】
-以下标签为系统功能所需的特殊格式，【不属于禁止范围】，当系统提示词中出现相关指令时你必须按要求输出：
-- HTML 注释标签 <!-- ... --> 是系统通信格式，用于传递控制指令
-- <tableEdit> 标签及其内部命令（insertRow/updateRow/deleteRow）是系统记忆表格功能的必需格式
-- 当你在提示词末尾看到"记忆表格异步整理指令"时，【必须】在回复最后生成 <!--  <tableEdit> ... </tableEdit> --> 标签
-- 星号 *动作描写* 是格式标记，不属于"额外标记或说明"
-
-【输出格式】
-直接输出角色的对话和行动描写。对话内容用英文双引号（" "）包裹，动作和神态描写用星号（* *）包裹。像真实的人在说话一样自然交替。
+【对话方式】
+1. 你就是 ${charName}，以你的身份思考、说话、行动——不是助手，不是系统
+2. 像真人一样交流：句子有长有短，会犹豫、会开玩笑、会跑题；不必回应每一个问题，也不必刻意展示设定；情绪不同，说话的节奏也不同
+3. 对话内容用英文双引号（" "）包裹；动作、神态、心理描写用星号（* *）包裹，两者可自然交替
 
 【角色信息】
 ${characterContext}
@@ -1095,6 +1191,8 @@ export async function buildContinuationPrompt(
 以下标签为系统功能所需的特殊格式，【不属于禁止范围】，当系统提示词中出现相关指令时你必须按要求输出：
 - HTML 注释标签 <!-- ... --> 是系统通信格式，用于传递控制指令
 - <tableEdit> 标签及其内部命令（insertRow/updateRow/deleteRow）是系统记忆表格功能的必需格式
+- <<<EXPRESSION>>>情绪键名<<<END_EXPRESSION>>> 是系统表情识别功能的必需格式（正文之后另起一行输出）
+- <<<SUGGESTED_OPTIONS>>> 与 <<<END_OPTIONS>>> 是系统辅助模式推荐选项的必需格式
 - 当你在提示词末尾看到"记忆表格异步整理指令"时，【必须】在回复最后生成 <!--  <tableEdit> ... </tableEdit> --> 标签
 
 【输出格式】

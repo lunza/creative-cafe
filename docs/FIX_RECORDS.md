@@ -5835,7 +5835,8 @@ Note: Instead of labeling these emotions, describe the physical manifestations a
 **涉及文件：**
 - 删除：lockedWordsMatcher.ts + 测试、BlockedWordsPlugin.ts + 测试、src/shared/types/blockedWords.ts
 - 新增：src/shared/types/forbiddenWords.ts、pipeline/providers/ForbiddenWordsPromptProvider.ts + 测试
-- 修改：shared/types/index.ts、shared/settings.ts、enderer/types/setting.ts、pipeline/providers/index.ts（注册 14 个 Provider）、Settings/BlockedWordsSettings.tsx（重写）、Settings/Settings.tsx、pipeline/plugins/index.ts（回滚）
+- 修改：shared/types/index.ts、shared/settings.ts、
+enderer/types/setting.ts、pipeline/providers/index.ts（注册 14 个 Provider）、Settings/BlockedWordsSettings.tsx（重写）、Settings/Settings.tsx、pipeline/plugins/index.ts（回滚）
 - Git 分支/提交状态：未提交
 
 **验证：**
@@ -5855,12 +5856,14 @@ Note: Instead of labeling these emotions, describe the physical manifestations a
 聊天模式的「AI 参数配置」面板中，min_p 参数文字显示默认值为 0，但将滑块拖到最左端时最低只能到达 0.01，无法精确到 0。
 
 ### 根因
-ParameterPanel.tsx 的 enderSlider 直接使用 antd v6 Slider（min=0, max=1, step=0.01）。antd Slider 内部按「位置比例 × (max-min) → 归一到 step 倍数」计算值，当鼠标拖到最左边缘 1-2px 时，计算值会落到第一个 tick（min + step = 0.01）而非 min（0）。
+ParameterPanel.tsx 的 
+enderSlider 直接使用 antd v6 Slider（min=0, max=1, step=0.01）。antd Slider 内部按「位置比例 × (max-min) → 归一到 step 倍数」计算值，当鼠标拖到最左边缘 1-2px 时，计算值会落到第一个 tick（min + step = 0.01）而非 min（0）。
 
 该问题影响所有 min=0 且 step 较小的参数滑块（min_p step=0.01、	op_k step=1、max_tokens step=256 等），但仅 min_p 被用户实际触发（0 表示"禁用"，用户需要真正到达 0）。
 
 ### 修复方案
-在 enderSlider 中新增 
+在 
+enderSlider 中新增 
 ormalizeSliderValue 吸附函数：**当 config.min === 0 且 value 为第一个 tick（min + step）时，吸附回 min（0）**。onChange 与 onAfterChange 均应用吸附，保证拖动过程中与松手后显示一致。
 
 `	ypescript
@@ -5873,7 +5876,8 @@ const normalizeSliderValue = (value: number): number => {
 **副作用**：min=0 的滑块将无法设置第一个 tick 值（如 min_p=0.01、	op_k=1）。对实际使用场景（0 = 禁用/无限制，0.01 与 0 无实质差异；top_k=1 过窄无意义）可接受。
 
 ### 涉及文件
-- src/renderer/components/Character/CharacterDialogueChat/ParameterPanel.tsx — enderSlider 新增 
+- src/renderer/components/Character/CharacterDialogueChat/ParameterPanel.tsx — 
+enderSlider 新增 
 ormalizeSliderValue，应用于 onChange/onAfterChange
 
 ### 验证
@@ -5894,6 +5898,742 @@ ormalizeSliderValue，应用于 onChange/onAfterChange
 - onAfterChange 中吸附生效时**跳过** handleSliderAfterChange 的删除字段逻辑，直接写入吸附值到 customParameters，确保不回弹
 - 吸附阈值 1.5 倍：覆盖 antd 浮点误差（0.009999→0.014999），同时保留 0.02 及以上可设置
 
-**涉及文件**：src/renderer/components/Character/CharacterDialogueChat/ParameterPanel.tsx — enderSlider 函数
+**涉及文件**：src/renderer/components/Character/CharacterDialogueChat/ParameterPanel.tsx — renderSlider 函数
 
 **教训**：antd Slider min=0 边界问题本质是"最小 tick 不可达"。修复时必须同时处理两个问题：(1) 浮点吸附用容差比较；(2) 吸附后的值不能触发"值等于默认值则删除"逻辑，否则会回弹到引擎值。
+
+---
+
+## §7.46 ⚠️ 重点 — 角色卡智能助手未携带 AI 引擎全局 system_prompt（2026-08-19）
+
+### ⚠️【重点标记 - 用户提示后发现的问题】
+
+**现象（用户直接指出）：**
+角色卡编辑智能助手（Spec: add-ai-assistant-for-character-card-editor）发送提问时，请求中的系统提示词只有助手自身的 `ASSISTANT_SYSTEM_PROMPT` + 角色卡上下文，**没有包含用户在 AI 引擎配置中设置的全局 `system_prompt`**。导致引擎级人设/风格约束（如语言偏好、输出风格要求）对助手失效。
+
+**根因：**
+`useCharacterCardAssistant.ts` 的 `sendQuestion` 中直接拼接：
+```typescript
+const systemPrompt = `${ASSISTANT_SYSTEM_PROMPT}\n\n${contextBlock}`;
+```
+未参考项目既有惯例——世界书 AI 操作（`useWorldBookAIOperations.ts` L662-664）、对话管线（`CharacterDialogueChat.hooks.ts` L1055）等所有 AI 调用点都会将 `engine.system_prompt` 前置到任务提示词：
+```typescript
+if (engine.system_prompt && engine.system_prompt.trim()) {
+  systemPrompt = engine.system_prompt.trim() + '\n\n' + systemPrompt;
+}
+```
+新增 AI 功能模块时遗漏了这一全局约定。
+
+**修复：**
+`useCharacterCardAssistant.ts` 构建系统提示词时前置引擎全局 `system_prompt`（引擎配置 → 助手任务提示词 → 角色卡上下文，三层拼接）：
+```typescript
+const globalSystemPrompt = activeEngine.system_prompt?.trim();
+const assistantSystemPrompt = `${ASSISTANT_SYSTEM_PROMPT}\n\n${contextBlock}`;
+const systemPrompt = globalSystemPrompt
+  ? `${globalSystemPrompt}\n\n${assistantSystemPrompt}`
+  : assistantSystemPrompt;
+```
+同时在日志中输出全局提示词携带状态（`✅ 已携带(N字符) / ❌ 未配置`），便于调试验证。
+
+**涉及文件：**
+- `src/renderer/components/Character/hooks/useCharacterCardAssistant.ts` — systemPrompt 构建逻辑（L317-L326）+ 日志增强（L338）
+
+**验证：**
+- TypeScript 诊断零错误（useCharacterCardAssistant.ts）
+- 运行时验证：助手发送提问时日志应显示 `全局system_prompt: ✅ 已携带(N字符)`；AI 回复风格应遵循引擎全局提示词约束
+
+### 教训（重点标记）
+- ⚠️ **新增 AI 调用点必须携带引擎全局 system_prompt**：项目中所有既有 AI 功能（世界书操作、对话管线、角色卡字段操作）都遵循「引擎 system_prompt 前置 + 任务提示词」的拼接惯例。新增 AI 功能模块前应先检索 `engine.system_prompt` 的既有用法，保持一致性
+- ⚠️ **AIEngineConfig 的 system_prompt 是用户级全局约束**：用户在设置中配置的引擎级提示词（语言、风格、行为约束）应作用于所有 AI 功能，遗漏会导致"设置不生效"类 Bug
+
+---
+
+## §7.47 — 智能助手改为自然对话式回复（去掉结构化建议格式，2026-08-19）
+
+### 现象（用户反馈）
+
+用户使用后反馈：「感觉智能助手回复太乱了，我只要一段修改建议就行，就像和正常的角色卡对话一样，我需要什么就自己复制出来，不需要特意格式化」。
+
+### 根因
+
+初版设计过度工程化：
+1. `ASSISTANT_SYSTEM_PROMPT` 强制 AI 按固定模板输出（【建议】分隔 + 类型/标题/说明/内容/操作 五段式）
+2. 前端 `parseAssistantSuggestions`（约 110 行）将响应解析为 `Suggestion[]` 结构化卡片
+3. `AssistantSuggestionCard` 组件按类型图标+标签+代码块渲染，并提供"复制内容/复制全部"按钮
+
+该设计的问题：模板化输出让 AI 回复僵硬割裂；解析器对模型输出变体容错要求高（TYPE_ALIASES 中英映射、内容/操作顺序互换兼容等）；用户实际只需要自然文本，自己选择复制。
+
+### 修复方案（简化）
+
+| 层 | 变更 |
+|----|------|
+| 提示词 | `ASSISTANT_SYSTEM_PROMPT` 删除「输出格式（严格遵守）」整节，改为「像正常聊天一样自然回复，可用 Markdown 排版但不要使用【建议】、类型：等固定格式模板」 |
+| Hook | 删除 `TYPE_ALIASES`/`parseType`/`parseAssistantSuggestions`；缓存值简化为 `{ content, signature }`；assistant 消息不再携带 suggestions |
+| 面板 | assistant 气泡直接渲染 `msg.content` 原始文本（pre-wrap）；删除建议卡片列表与复制提示条 |
+| 组件 | 删除 `AssistantSuggestionCard.tsx` |
+| 类型 | `assistant.types.ts` 移除 `SuggestionType`/`Suggestion`/`AssistantMessage.suggestions` |
+
+保留能力：角色卡全字段上下文注入、引擎全局 system_prompt 前置、多轮对话（6 轮历史）、回复缓存与角色卡变更失效、"来自之前的回复"标签 + 重新生成、请求取消/重试。
+
+### 涉及文件
+- `src/renderer/utils/promptTemplates.ts` — ASSISTANT_SYSTEM_PROMPT 重写
+- `src/renderer/components/Character/hooks/useCharacterCardAssistant.ts` — 删除解析逻辑
+- `src/renderer/components/Character/CharacterCardAssistantPanel.tsx` — 直接渲染文本
+- `src/renderer/components/Character/AssistantSuggestionCard.tsx` — 删除
+- `src/shared/types/assistant.types.ts` — 类型简化
+
+### 验证
+- TypeScript 诊断零错误（相关文件）
+- Vite HMR 生效
+
+### 教训
+- ⚠️ **助手类功能优先做"自然对话"，结构化解析是负担而非能力**：强模板输出+前端解析引入双重脆弱性（模型不遵守格式 → 解析失败回退原始文本；遵守格式 → 回复僵硬）。除非用户明确要求结构化交互（如卡片式选择），AI 回复应保持自然文本，把"复制什么"的选择权交给用户
+- ⚠️ **spec 阶段的"结构化建议展示"需求未经用户确认就直接实现**：用户原始需求只说了"提供针对性的内容设计建议"和"支持一键复制"，并没有要求固定五段式模板+类型枚举。实现时自行加码了格式约定
+
+---
+
+## §7.48 ⚠️ 重点 — 安卓 release APK 明文 HTTP 被系统拦截：手机浏览器可访问但 App 报"无法连接到服务器"（2026-08-19）
+
+### ⚠️【重点标记 - 真机实测发现的 Bug】
+
+**现象（用户真机反馈）：**
+手机浏览器访问 `http://192.168.3.43:8787/api/health` 正常返回 JSON，但安卓客户端（release APK）在连接页输入 `192.168.3.43:8787` 点"测试并连接"后提示 `[不可达] 无法连接到服务器`。
+
+**排查过程：**
+1. 排除网络/服务端问题：手机浏览器同 URL 可访问，`Get-NetIPAddress` 确认电脑局域网 IP，防火墙已加 8787 入站规则
+2. 客户端地址处理无问题：`normalizeServerAddress('192.168.3.43:8787')` 校验通过，fetch 的是同一个 URL
+3. **aapt2 解析两个 APK 的 Manifest**：debug APK `usesCleartextTraffic=true`，**release APK `usesCleartextTraffic=false`** —— Android 9+（API 28+）默认禁止应用发起明文 HTTP 请求，系统层直接拦截（浏览器不受此限制，所以浏览器正常）
+
+**根因（两层）：**
+1. RN Gradle 插件 `@react-native/gradle-plugin` 的 `AgpConfiguratorUtils.configureBuildTypesForApp`（`AgpConfiguratorUtils.kt` L39-41）通过 `androidComponents.finalizeDsl` 在 **DSL 定稿阶段**强制将 release 的 `usesCleartextTraffic` 占位符设为 `"false"`
+2. `finalizeDsl` 回调在项目 build.gradle 所有常规配置（`defaultConfig`/`buildTypes` 的 `manifestPlaceholders`）**之后**执行，因此 build.gradle 里任何常规写法都会被覆盖（本项目最初在 `defaultConfig` 设置了 `manifestPlaceholders = [usesCleartextTraffic: true]`，实测被覆盖，无效）
+
+**修复：**
+`android-client/android/app/build.gradle` 末尾新增一个**后注册**的 `finalizeDsl` 回调（finalizeDsl 回调按注册顺序执行，插件先注册先执行、脚本后注册后执行，后者生效）：
+```groovy
+androidComponents {
+    finalizeDsl { androidEx ->
+        androidEx.buildTypes.getByName("release").manifestPlaceholders["usesCleartextTraffic"] = "true"
+        androidEx.buildTypes.getByName("debug").manifestPlaceholders["usesCleartextTraffic"] = "true"
+    }
+}
+```
+
+**涉及文件：**
+- `android-client/android/app/build.gradle` — 新增 finalizeDsl 反覆盖块（L110-123）；删除 defaultConfig 中被证明无效的占位符配置
+
+**验证：**
+- `gradlew assembleRelease` 重新构建后，aapt2 解析新 APK：`usesCleartextTraffic=true` ✅
+- 新 APK 已复制到 `android-client/apk/creative-cafe-release.apk`（59MB，2026-08-19 15:56+ 构建）
+- 真机复测：安装新 release APK 后连接 `192.168.3.43:8787` 应成功（待用户复核）
+
+### 教训（重点标记）
+- ⚠️ **RN Gradle 插件会用 `finalizeDsl` 强制覆盖 manifestPlaceholders**：凡是 RN 项目需要在 release 中放宽安全默认值（cleartext/备份策略等），常规 `manifestPlaceholders` 写法一律无效，必须用后注册的 `androidComponents.finalizeDsl` 反覆盖
+- ⚠️ **明文 HTTP 的 Android 客户端，交付前必须用 aapt2 校验 release APK 的 `usesCleartextTraffic`**：`aapt2 dump xmltree --file AndroidManifest.xml <apk>`——本机无设备的静态验证也要覆盖 Manifest 安全属性，"构建成功"不等于"属性正确"
+- ⚠️ **"浏览器能访问但 App 不能"是 cleartext 拦截的典型特征**：浏览器不走应用层 cleartext 策略，排查客户端网络问题时优先对比系统策略差异而非网络本身
+
+---
+
+## §7.49 — 智能助手回复改为流式响应（2026-08-19）
+
+### 现象（用户反馈）
+
+用户要求：「应该也以流式响应」——助手回复应与普通角色卡对话一样边生成边显示，而非等待完整响应后一次性渲染。
+
+### 实现方案
+
+复用项目既有流式管线（`defaultAIService.sendStreamChatRequest`，SSE 经主进程 `ai:stream` IPC 事件转发，`ai:cancel` 可中止）：
+
+**1. `characterAIUtils.ts` 新增 `sendAssistantAIStreamRequest(engine, messages, callbacks)`**
+- `onStream(chunk, isDone)`：chunk 为增量文本；`onError(message)`：失败（含取消中止）；`onComplete(fullContent)`：主进程汇总的完整内容（比流式累积更完整时覆盖）
+
+**2. `useCharacterCardAssistant.ts` 流式状态管理**
+- 请求前插入空 assistant 占位消息 → 每 chunk `updateLastAssistant(accumulated)` 增量更新（依赖 `[messages]` 的自动滚动随每次更新触发）
+- `onComplete` 时若主进程完整内容更长则覆盖（防最后 chunk 解析丢失）
+- 取消：保留已流出内容（为空则移除占位）；流式中断有部分内容：保留并提示「已保留部分生成内容」；完全失败：移除占位、保留用户问题便于重试
+- **重试语义修复**：`replaceLastUser` 原实现 `slice(0, -1)` 只移除最后一条消息，在"错误后保留部分内容"场景下会残留旧 user 消息导致历史出现连续两条 user。改为 `stripLastRound()`（移除最后一条 user 及其后所有消息），无论上一轮以成功/失败/取消结束都能正确回退
+
+**3. `CharacterCardAssistantPanel.tsx` 流式渲染**
+- 流式占位（最后一条 assistant 且 content 为空 + isLoading）不渲染空气泡
+- 加载文案区分：无内容时「正在思考...」，有内容流出后「正在生成...」
+
+### 涉及文件
+- `src/renderer/utils/characterAIUtils.ts` — 新增流式请求方法；顺手清理预存 TS6133（未使用的 `AIService` import、`ensurePositiveInteger`）
+- `src/renderer/components/Character/hooks/useCharacterCardAssistant.ts` — 流式状态管理 + stripLastRound 重试语义修复
+- `src/renderer/components/Character/CharacterCardAssistantPanel.tsx` — 占位气泡隐藏 + 加载文案区分
+
+### 验证
+- TypeScript 诊断零错误（三个涉及文件；tsc 全量输出中仅剩其他模块预存错误）
+- Vite HMR 生效，主进程 ai:stream 管线运行正常（dev server 日志可见流式请求处理）
+
+### 教训
+- **流式取消/中断要区分三种收尾**：正常完成（写缓存）、用户取消（保留已流出内容）、错误中断（有部分内容保留+提示 / 无内容回退+可重试）。一次性追加 assistant 消息的写法无法直接套用到流式，状态机需重新设计
+- **回调式错误处理无法 throw 到 await 调用方**（`sendStreamChatRequest` 的 onError 是回调），需用局部变量捕获错误、await 返回后再判断
+- **流式场景下"替换最后一条"的重试逻辑必须按轮次回退**（stripLastRound），否则失败残留消息会破坏多轮历史构建
+
+---
+
+## §7.50 — 智能助手消息操作：重新生成 + 卷回到输入框（2026-08-19）
+
+### 需求（用户反馈）
+
+「智能助手里也添加重新生成和卷回的按钮」——与主对话（ChatMessageBubble）的消息操作交互保持一致。
+
+### 主对话语义参照
+- **卷回**（RollbackOutlined，用户消息上）：`rollbackToMessage(messageId)` → 截断该消息及其后所有消息，内容回填输入框（`CharacterDialogueChat.hooks.ts` L2765）
+- **重新生成**（ReloadOutlined，AI 消息上）：重发该轮请求
+
+### 实现
+
+**Hook（`useCharacterCardAssistant.ts`）新增两个方法：**
+```typescript
+/** 重新生成最后一条回复：绕过缓存 + 替换最后一轮 */
+regenerate(): 取最后一条 user 消息，sendQuestion(content, { replaceLastUser: true, forceRegenerate: true })
+
+/** 卷回到指定用户消息：截断该消息及之后的所有消息，返回内容供回填输入框 */
+rollbackToMessage(timestamp): 找到 user 消息 → 流式中先 cancel → setMessages(slice(0, idx)) → 返回 content
+```
+
+**Panel（`CharacterCardAssistantPanel.tsx`）：**
+- 新增 `HoverActions` 组件（hover 渐显 opacity 0→1）
+- 用户消息气泡左侧：「卷回到输入框（移除该消息及之后的对话）」，loading 中 disabled
+- 最后一条回复气泡下方：「重新生成（忽略缓存）」，仅 `idx === messages.length - 1 && !!content && !isLoading` 时显示
+- 移除原"来自之前的回复"标签旁的旧重新生成按钮（统一到新按钮），标签本身保留
+
+**容器（`CharacterCardAssistant.tsx`）**：props 从 `onRegenerate(question)` 改为 `onRegenerateLast()` + `onRollbackMessage(timestamp)`，直接透传 hook 方法。
+
+### 消息标识说明
+AssistantMessage 无 id 字段，卷回以 `timestamp` 定位（同一毫秒内两条 user 消息理论上可能冲突，但面板串行发送下不可能出现）。
+
+### 涉及文件
+- `src/renderer/components/Character/hooks/useCharacterCardAssistant.ts` — regenerate / rollbackToMessage + 接口类型
+- `src/renderer/components/Character/CharacterCardAssistantPanel.tsx` — HoverActions + 两个操作按钮
+- `src/renderer/components/Character/CharacterCardAssistant.tsx` — props 透传调整
+
+### 验证
+- TypeScript 诊断零错误（三个涉及文件）
+- Vite HMR 生效
+
+## §7.51 安卓客户端 V2 功能补全与布局修复（Spec: fix-android-chat-feature-parity）
+
+**日期**：2026-08-19　**类型**：功能补全 + 布局修复　**重点等级**：⚠️ 含重点陷阱记录
+
+### 问题（用户反馈）
+
+1. 功能模块缺失：用户人设、参数配置、记忆表格、图片生成、知识库检索等预期功能未实现
+2. 布局错位：图片及相关板块元素重叠、位置偏移、尺寸异常（不同屏幕表现不一致）
+
+### 修复内容
+
+**服务端**（`src/main/services/lanApiServer/`）：
+- `sessionConfigStore.ts`（新增）：每角色会话配置 JSON 持久化（人设/参数子集/知识库绑定/表格开关/停止序列）
+- `dialogue.ts`：人设注入、参数覆盖、language/min_response_chars 约束、expression_display、停止序列合并、历史 RAG + KB RAG、记忆表格注入与编辑指令执行（SSE `table` 事件）
+- `imageGeneration.ts`（新增）：headless 图片生成（traits+LoRA+情绪动态表情标签，对齐 §7.43；interaction 权重提升；regenerate history 追加）
+- `personas.ts`（新增）：人设扫描与查询；`server.ts` 路由扩展 + `/api/assets` 白名单防穿越
+
+**客户端**（`android-client/src/`）：
+- 新组件：`SessionConfigSheet` / `ImageBubble` / `MemoryTableSheet`；`types.ts`/`client.ts`/`sse.ts` 扩展
+- `ChatScreen.tsx` 布局修复 L1-L6：立绘 contain 自适应（onLoad 宽高比 + 四重限高）、键盘避让（keyboardDidShow/Hide → paddingBottom）、长文本折行（flexShrink+textBreakStrategy）、流式滚动 200ms 节流、气泡 maxWidth 三档分档（useWindowDimensions）、徽章流式布局避让
+
+### ⚠️ 重点标记 1：max_tokens 配置陷阱（AI_EMPTY_RESPONSE）
+
+- **现象**：curl 实测仅设 `max_tokens=1024` 稳定复现 `AI_EMPTY_RESPONSE`；`max_tokens=4096` 或不设置均正常
+- **根因**：推理型模型 think 阶段消耗输出 token，上限过小 → 思考未完成即截断 → sanitizer 剥离 think 后正文为空
+- **结论**：**配置指引问题，非代码缺陷**（桌面端同参数同样现象）；已写入 `docs/android-client.md` §2.2（建议 ≥4096 或不设置）
+- **复现/验证记录**：`docs/android-client-test-report.md` V2.2 #10-#12
+
+### ⚠️ 重点标记 2：RN 类型修正 4 处（初版编译错误）
+
+1. `keyboardType='decimal'` → RN 合法值为 `'decimal-pad'`（KeyboardTypeOptions）
+2. JSX 文本中 `{{user}}` 被解析为表达式 → 转义为 `{'{{user}}'}`
+3. RN Text 属性为 `textBreakStrategy`（非 `breakStrategy`）
+4. 其枚举值为 `'highQuality'`（非 CSS 风格 `'high-quality'`）
+
+### 验证
+
+- 服务端 curl 22 项全通过（图片真实生成 3.3MB/regen history+1/表格落库 5 表/SSE chunk→emotion→table→done/穿越 404/非法配置 400）
+- 客户端 `npx tsc --noEmit` 0 错误；assembleDebug+assembleRelease BUILD SUCCESSFUL；aapt2 双变体 `usesCleartextTraffic=true`（对齐 §7.48 教训）
+- 真机复核清单 10 项（三档屏幕）见测试报告 V2.5，待用户执行
+
+## §7.52 安卓端图标字体未打包：所有按钮图标渲染失败（用户真机反馈"按钮全是紫色看不见"）
+
+**日期**：2026-08-19　**类型**：构建配置缺失（BUG）　**重点等级**：⚠️⚠️ 用户真机实测反馈
+
+### 问题（用户原话）
+
+> 在安卓端的对话里的按钮全都看不见啊，都是紫色的
+
+对话页所有图标按钮（顶栏返回/表格/设置/清空、发送按钮、生成图片、重试等）图标位置空白，只显示主题色（紫色）背景块 → 按钮"看不见"。
+
+### 根因
+
+`react-native-vector-icons` 的图标字体（MaterialCommunityIcons.ttf 等 19 个 .ttf）**从未被打包进 APK**：
+
+- 解包 17:21 版 `creative-cafe-release1.apk` 检查：`assets/` 下**无任何 .ttf 条目**
+- react-native-vector-icons 的 Android 官方集成要求在 `android/app/build.gradle` 添加：
+  `apply from: "../../node_modules/react-native-vector-icons/fonts.gradle"`
+- 该行自 V1 起就缺失 → 字体不进 APK → 图标组件 `fontFamily: 'MaterialCommunityIcons'` 解析失败 → 图标字符渲染为空，只剩背景色
+- 桌面端 Web/Electron 无此机制（字体随 JS 加载），RN 端必须走 fonts.gradle，属 RN 特有集成步骤遗漏
+
+### 修复
+
+`android-client/android/app/build.gradle`（dependencies 块内）添加官方 fonts.gradle 应用（含详细注释说明本 BUG）。
+
+### 关键验证（构建产物级）
+
+- `copyReactNativeVectorIconFonts` 任务执行 → 新 APK `assets/fonts/` 含全部 19 个 .ttf（MaterialCommunityIcons.ttf 1,147,844 字节）
+- APK 体积 59.3MB → 61.3MB（+2MB 字体，符合预期）
+- `usesCleartextTraffic=true` 不受影响（aapt2 复验）
+- debug/release 双变体 BUILD SUCCESSFUL；产物：`android-client/apk/creative-cafe-{debug,release}.apk`（2026-08-19 17:54 构建）
+
+### ⚠️ 教训（对齐 §7.48 模式：构建产物内容必须解包验证）
+
+1. RN 三方库"autolink 编译通过"≠"资源完整"——字体/manifest 等资源型依赖需单独集成步骤，构建成功不报错
+2. 交付前应对 APK 做**内容级抽验**（fonts/manifest/JS bundle 关键符号），本次在 V2 静态验证清单中补充了 bundle 符号检查却漏了字体检查
+3. 用户反馈"按钮紫色看不见"时优先怀疑：主题背景正常渲染 + 前景（图标字体）缺失 → 解包 APK 查资源
+
+---
+
+## §7.53 ⚠️⚠️ 重点 — 安卓端消息列表强制滚底：滚动修复代码因重复声明从未进包（用户真机二次反馈"上滑看历史被拉回底部"）
+
+**日期**：2026-08-19　**类型**：AI 编辑引入的编译级回归 + 滚动逻辑平台兼容（BUG）　**重点等级**：⚠️⚠️⚠️ 用户真机实测二次反馈，修复未生效的根因是**上一轮修复代码本身打不进 APK**
+
+### 问题（用户原话）
+
+> 消息一直固定在最下方即使往上滑动想看一下之前的消息，仍旧会强制固定到最新的消息为止
+
+### 根因（双层）
+
+**第一层（真正的回归）**：上一轮 L7 滚动修复在应用编辑时，`ChatScreen.tsx` 中滚动逻辑代码块（`isNearBottomRef`/`lastContentHRef`/`onListScroll`/`scrollToBottom`）被**重复插入了两次**（原 L112-158 与 L220-266 完全相同的 `const` 声明）。同作用域重复 `const` 声明是语法错误 → Metro 打包 `createBundleReleaseJsAndAssets` 必然失败 → **修复从未进入任何 APK**，用户真机装的一直是 V2.5 旧包（无条件 `onContentSizeChange` 滚底），bug 自然依旧。
+
+**第二层（滚动逻辑本身的平台兼容缺陷）**：Android Fabric 上 `onScroll` 事件的 `contentSize.height` 可能为 0，导致"用户是否在底部附近"（`isNearBottomRef`）计算失效回退初始值 `true` → 流式期间用户上滑后仍被判定"在底部"而持续跟底。
+
+### 修复（android-client/src/screens/ChatScreen.tsx）
+
+1. 删除重复声明的整块滚动逻辑（保留单份）
+2. `onContentSizeChange={(_, contentH) => ...}` 直接用回调参数缓存内容高度到 `lastContentHRef`（该参数在 Fabric 上可靠），保证 `onListScroll` 距离计算始终有据可依
+3. 最终生效的三层防护：
+   - `onContentSizeChange` 仅在 `streaming` 期间触发跟随；静态浏览历史时任何内容尺寸变化（图片加载/windowing 重布局）都不滚底
+   - 用户上滑离开底部 >80px 即暂停跟随，滚回底部自动恢复
+   - 主动场景（发送消息/历史加载完成）用 `scrollToBottom(true)` 强制回底
+
+### 模拟器实测（AVD test36 @ 1080x2400，连接 10.0.2.2:8787）
+
+| 场景 | 操作 | 结果 |
+|---|---|---|
+| 静态浏览（Milf dog，59 条历史） | 上滑 1 屏 → 等 3s 再取证 | 位置纹丝不动 ✅ |
+| 静态浏览·多屏 | 连续上滑 3 次到更早位置 → 等 8s | 同一消息同 bounds，未被拉回 ✅ |
+| 流式期间上滑（AmazingAA） | 发送后 ~2.5s（流式进行中）上滑 2 次 → 等流结束 | 视图停留在中部历史位置（含失败气泡插入），未跟底 ✅ |
+| 正常跟底 | 用户位于底部时流式输出 | 跟随最新消息 ✅ |
+
+### ⚠️ 教训（流程级，比 §7.48/§7.52 更严重）
+
+1. **"tsc 通过 + 构建成功"必须发生在"最后一次编辑之后"**——上轮验证顺序是 编辑→验证→又编辑（引入重复块）→直接交付，跳过了最终态验证。交付前必须以最终文件状态重跑 `tsc --noEmit` + `assembleRelease`
+2. **AI 应用编辑（Edit 工具）插入大块代码时必须先检查目标锚点是否会导致重复**——本例是"移动代码块"操作被退化成"复制粘贴"
+3. 模拟器复测脚本要点（本次踩坑记录）：
+   - 发送后**不要按 BACK 收键盘**——发送使 `input disabled` 键盘会自动收起，此时 BACK 直接退出应用并取消 SSE 流（服务端不落盘，计数不变易误判为"发送失败"）
+   - 流式期间 `uiautomator dump` 常报 `could not get idle state`（屏幕持续重绘），需轮询重试直到流结束
+   - 键盘状态用 `dumpsys input_method | grep mInputShown` 校验，手势必须落在键盘收起后的列表区域
+4. 模型首 token 延迟可达 15-30s（推理模型），流式滚动测试的窗口期要按"发送后 2~10s 内上滑"设计，不能等首 chunk 出现后再滑
+
+## §7.54 安卓客户端 V3：对话模式对齐桌面端 + 亮暗主题切换（用户再次反馈功能不一致）
+
+**日期**：2026-08-19　**类型**：功能对齐（FEATURE）+ 主题系统　**重点等级**：⚠️ 用户多轮反馈的功能差距收敛项
+
+### 需求（用户原话）
+
+> 还是跟pc端的对话模式功能不一致，比如思考内容处理。辅助模式、防重复强度预设等等，并且给一个主题切换的按钮，能够适配暗色模式/亮色模式
+
+### 服务端实现（src/main/services/lanapiserver/）
+
+1. **sessionConfigStore.ts 白名单扩展**：`LanCustomParameters` 新增 `think_tag_mode`（枚举校验 strip/strip_render/fold）、`assist_mode`（bool）、`frequency_penalty`/`presence_penalty`（-2..2）、`dry_multiplier`（0..2）
+2. **dialogue.ts 思考三态**（权威全文策略随模式变化）：
+   - `strip`：存储前剥离 `<think>`（V1/V2 默认行为）
+   - `strip_render`：存储保留 `<think>`，SSE chunk 仍剥离（渲染端不可见，其他端可查原文）
+   - `fold`：存储保留 + SSE 新增 `reasoning` 事件流式推送思考增量（`StreamSanitizer` 改造支持流式 think 直通）
+3. **dialogue.ts 辅助模式**：`assist_mode=true` 时注入提示词要求回复末尾以固定标记输出 3 个推荐选项；`extractSuggestedOptions` 解析并从存储正文中剥离，经 SSE `options` 事件推送
+4. **防重复参数注入**：frequency_penalty / presence_penalty / dry_multiplier 会话级覆盖注入 AI 请求（三档预设值见 docs/android-client.md §2.2）
+5. 事件序列：`reasoning*? → chunk* → emotion? → table? → options? → done`（完全向后兼容）
+
+### 客户端实现（android-client/src/）
+
+1. **theme.ts（新）**：亮/暗 Palette（含 userBubble/aiBubble/reasoningBg 等语义色）+ Paper MD3 主题；`store.themeMode` AsyncStorage 持久化（纯外观，不违反"客户端无功能配置"约束）；连接页/列表页右上角太阳/月亮切换
+2. **SessionConfigSheet**：思考内容处理三态 / 辅助模式开关 / 防重复三档 SegmentedButtons（按参数组合精确匹配回显高亮，手动改单值则不选中任何档）
+3. **ChatScreen**：`ThinkingPanel`（fold 折叠面板：流式自动展开+ActivityIndicator，完成自动收起，点击切换）；`splitThink()` 提取 `<think>`；推荐选项 chips 点击即发送；样式全面改为 `createStyles(palette)` 工厂
+4. ImageBubble / MemoryTableSheet / ConnectScreen / CharacterListScreen 全部主题化
+
+### ⚠️ 本轮构建期发现并修复的三个问题（自查）
+
+1. **ChatScreen 半成品状态**：V3 渲染逻辑（ThinkingPanel/options chips）先行写入，但底部样式块未替换（`createStyles` 未定义、缺 `thinkWrap`/`optionChip` 等样式键）——若直接构建必然 Metro 失败。修复：样式声明移至 renderItem 前 + 全量替换为工厂函数（再次印证 §7.53 教训：验证必须发生在最后一次编辑之后）
+2. **RN 0.87 StatusBar 类型收紧**：edge-to-edge 下 `backgroundColor` 属性已从类型中移除，仅保留 `barStyle`（图标明暗）
+3. **NumberField 作用域**：组件定义在 `createStyles` 作用域外却引用 `styles.field` → 改为 `style` prop 注入
+
+### 验证
+
+- 客户端 `npx tsc --noEmit` 0 错误（最终文件状态）
+- 服务端全量 tsc：lanapiserver 相关文件 0 错误（renderer 782 个历史遗留错误与本次改动无关）
+- `assembleRelease` BUILD SUCCESSFUL；APK 已复制 `android-client/apk/creative-cafe-release.apk`（19:37，61.3MB）
+- 真机复核清单见 `docs/android-client.md` §5.4 第 9-12 项（思考折叠/辅助模式/防重复回显/主题切换与记忆）
+
+## §7.55 移动端角色卡编辑模块：toSpecV3() 白名单过滤丢弃 worldBooks 导致关系写入读回为空
+
+**日期**：2026-08-20　**类型**：架构级数据丢失 BUG（SERVICE）　**重点等级**：⚠️ 服务端冒烟测试发现的关键数据保真问题
+
+### 现象
+
+`PUT /api/characters/:id/worldbook-relations` 返回 HTTP 200 成功，但紧接的 GET 读回为空。关系写入成功但读回时被静默丢弃。
+
+### 根因
+
+`characterService.getWorldBookRelations` 内部调用 `readCharacter` → `CharacterCard.toSpecV3()`，该函数仅提取白名单字段（20 余个标准字段），`worldBooks` 作为项目自定义非标准字段被静默丢弃。`toSpecV3()` 是**白名单过滤**而非**保真传输**。
+
+### 修复
+
+`characterWrite.ts` 新增 `readRawCardData(filePath)`：直接解 PNG tEXt chunk（优先 v3 ccv3，回退 v2 chara），`JSON.parse` 原始数据，不经过 toSpecV3 白名单过滤。同时将 `updateCard`/`replaceAvatar`/关系读写全部改用 raw 级读取，保证编辑链路中 worldBooks 等非标准字段保真。
+
+### 教训
+
+- 扩展已有数据模型时，不能依赖第三方库的序列化/反序列化链路（白名单过滤），必须自己实现 raw 级读写。
+- 冒烟测试设计必须覆盖**写入后立即读回**的闭环（而非仅检查 HTTP 响应码），否则此类"写成功但读不对"的 BUG 会被遗漏。
+
+
+## §7.56 移动端对话交互对齐 PC：5 项用户报告缺陷 + 3 项实施中新发现缺陷（D1-D3）
+
+**日期**：2026-08-20　**类型**：功能缺失 + 布局 BUG（CLIENT+SERVICE）　**重点等级**：⚠️ 用户报告的系统性功能对齐问题（spec: fix-android-chat-interaction-parity）
+
+### 现象（用户报告 5 项）
+
+1. 点击用户/系统头像无全屏查看（需放大/缩放/关闭）
+2. 对话气泡形状、边角、颜色、对齐、内外边距与 PC 端不一致
+3. 「卷回」「重新生成」按钮丢失
+4. 辅助模式选项点击直接发送，应先填入输入框可编辑
+5. 其他与 PC 端差异项
+
+### 实施中新发现缺陷（⚠️ 重点标记）
+
+- **D1【半成品代码】AvatarViewer 组件已实现并 import，但从未加入 JSX 渲染树**——state/handler 全存在，点击头像却无任何反应。教训：上下文截断/分段生成大型组件时，必须以"运行时点击实测"验证组件真正挂载，静态 tsc 通过不代表功能存在。
+- **D2【flex 对齐陷阱】AI 头像沉底**：`bubbleRow.alignItems: 'flex-end'` + AI 头像 `alignSelf: 'flex-start'` 写在内层 Animated.View 而外层 Pressable 无 style——alignSelf 只影响无 style 的 Pressable **内部**（无效），Pressable 本身仍被容器底对齐。长 AI 消息时头像沉到消息底部甚至滚出屏幕。修复：容器改 `alignItems: 'flex-start'`。教训：RN 中 `alignSelf` 作用于**自身在父容器**中的对齐，包裹层（Pressable 无 style）会吞掉内层节点的 alignSelf。
+- **D3【嵌套对齐失效】用户消息整体靠左**：`contentColUser.alignItems: 'flex-end'` 只让内容在 shrink-to-fit 的列**内部**右对齐，列本身仍贴左。修复：行级 `bubbleRowUser: { justifyContent: 'flex-end' }`（对齐 PC `.chat-msg-wrapper.is-user`）。教训：RN 嵌套 flex 的"右对齐"必须在外层 row 用 justifyContent，内层 alignItems 仅影响列内元素。
+
+### 修复方案
+
+- 服务端：`POST /api/chats/:characterId/rollback`（截断历史+持久化）；SSE `done` 新增 `userMessageId`（卷回/重新生成按服务端 id 定位，规避本地 localId 不一致）；辅助模式 options 持久化。
+- 客户端：AvatarViewer 全屏查看器（捏合/双击/拖拽/三种关闭）；气泡样式对齐 PC CSS（圆角 18/小角 4/padding 16/12/名字行+情绪标签+序号徽章）；操作按钮行（复制/重新生成/卷回）；辅助模式 `setInput` 填入输入框。
+
+### 验证
+
+模拟器（AVD test36）12 用例全通过：五项功能全流程 + 空历史卷回/流式禁用边界 + 窄屏 343dp/常规/横屏三档 + 亮暗主题像素级验证（背景 #141110、AI 气泡 rgba(30,30,46,0.8) 与 PC 原值一致）。双指捏合缩放 adb 无法模拟，留待真机复核。完整记录见 `debug-chat-interaction-defects.md`。
+
+### 测试方法学备注
+
+- uiautomator dump 对 RN Fabric FlatList 不稳定（丢节点 + 显示滞后的旧内容），必须"重新 dump + 服务端 API 状态"双源交叉验证。
+- PowerShell 传中文 JSON 到 curl 会编码损坏，服务端测试须用英文内容。
+- 像素分析（screencap + System.Drawing）可弥补 dump 缺失，验证颜色/位置。
+
+## §7.57 移动端角色列表排序与 PC 端不一致（收藏置顶缺失 + 收藏数据两端隔离）
+
+**日期**：2026-08-20　**类型**：功能对齐缺陷（SERVICE+CLIENT）　**重点等级**：⚠️ 用户报告的对齐问题
+
+### 现象
+
+用户要求"角色列表的排序也和 PC 端保持相同的排序规则"。排查确认 PC 端排序规则（`CharacterSelectorPanel.tsx` sortedCharacters）：**收藏角色置顶（组内保持 readdir 顺序）→ 非收藏在后；搜索先过滤再分组**。移动端按 `/api/characters` 返回顺序直接渲染、无收藏概念，收藏置顶效果缺失。
+
+### 根因
+
+1. 移动端未实现收藏功能（无 UI/无排序分组）
+2. 深层问题：PC 端收藏存于渲染进程 localStorage（zustand persist），**主进程与 LAN API 均无法读取**——即使移动端做收藏，两端数据也是隔离的，排序结果不可能一致
+
+### 修复方案（收藏数据互通架构）
+
+- 收藏唯一真源迁移到主进程文件 `userData/character-favorites.json`（存**文件名**而非绝对路径，角色目录迁移不失效）
+- PC 端 favoritesStore：localStorage 保留为本地缓存，rehydrate 后与主进程文件对齐（文件有→覆盖本地；文件空且本地有→一次性上传迁移）；add/remove 双写主进程
+- LAN API `GET/PUT /api/favorites`：移动端读写同一份文件
+- 移动端角色列表：并行拉取 characters+favorites → 排序对齐 PC（收藏在前组内保序/非收藏在后/搜索先过滤再分组）→ 心形 toggle（乐观更新+PUT+失败回滚）
+
+### 验证
+
+服务端 API 5 用例全过（GET/PUT/回读/非数组 400/坏 JSON 400）；模拟器实测：收藏 Kanako+克拉拉（原 #2/#18）后置顶且组内保持 readdir 序、服务端改收藏后下拉刷新同步、搜索过滤后收藏仍置顶、心形 toggle 持久化生效；npm test 无新增回归。
+
+### ⚠️ 经验教训
+
+- **跨端共享数据必须落到服务端可读位置**：渲染进程 localStorage 是主进程/其他客户端的盲区，做多端一致功能前先审计数据存储位置
+- PC 端同步采用"启动时对齐 + 变更时双写"弱一致模型（运行中的 PC 感知不到移动端修改，下次启动同步），足够收藏场景；强一致需引入推送机制（SSE/WS），勿过度设计
+- PowerShell curl.exe 传 JSON 的引号转义坑再次确认：`-d '{\"k\":\"v\"}'` 会破坏 JSON，用 `Invoke-RestMethod -Body` 或临时文件
+- Android 模拟器下拉刷新需**慢速长拖**（`input swipe y1 y2` 时长 ≥600ms）才能触发 RefreshControl，快速 swipe 会被当 fling
+
+## §7.58 ⚠️ 重点 — PC 端世界书关系读写 via toSpecV3 白名单过滤丢弃 worldBooks（Spec: fix-worldbook-relation-and-vector-retrieval）
+
+**日期**：2026-08-21　**类型**：架构级数据丢失 BUG（SERVICE）　**重点等级**：⚠️ 静态分析 + 运行时验证（§7.55 的 PC 端遗留问题）
+
+### 现象
+
+PC 端角色卡编辑器中，添加世界书关联后保存并重新打开，关联关系消失。`characterService.getWorldBookRelations` 始终返回空数组。
+
+### 根因
+
+§7.55 在移动端 LAN API 中修复了 `toSpecV3()` 白名单过滤丢弃 `worldBooks` 的问题，但 **PC 端主进程** `characterService.ts` 的 `getWorldBookRelations` / `setWorldBookRelations` 仍使用 `readCharacter()` → `CharacterCard.toSpecV3()` 路径，该函数仅提取 24 个标准字段，`worldBooks` 被静默丢弃。
+
+### 修复
+
+1. `characterService.ts` 新增 `readRawCardData(filePath)`：直接解 PNG tEXt chunk（优先 v3 ccv3，回退 v2 chara），不经过 `toSpecV3()` 白名单过滤（与 `characterWrite.ts` 同构）
+2. `getWorldBookRelations` 改用 `readRawCardData` 读取 `data.worldBooks`
+3. `setWorldBookRelations` 改用 `readRawCardData` 读取 + 合并写入后走 `writeCharacter`（双 spec 写回）
+4. `addWorldBookRelation` / `removeWorldBookRelation` 底层复用修复后的方法，自动受益
+
+### 验证
+
+- 运行时验证脚本：创建含 worldBooks 的测试 PNG → `readRawCardData` 读回 2 条关联 → 新增 1 条后写回 → 读回 3 条 → 闭环验证通过
+- 对比验证：模拟 `toSpecV3()` 白名单过滤确认 worldBooks 被丢弃（原 bug 复现）
+- 编译零新增错误（VS Code 零诊断）
+
+### 教训
+
+- 修复 LAN API 时（§7.55）只覆盖了移动端（`characterWrite.ts`），未同步修复 PC 端主进程（`characterService.ts`）的同一问题。修复应统一检查所有调用路径，而不是仅修复单端。
+- 跨端（PC LAN API / PC IPC / 移动端）的同一数据模型操作应共享底层读取逻辑，避免各端各自实现导致修复遗漏。
+
+## §7.59 向量库多源检索过滤器数组绑定失败（Spec: fix-worldbook-relation-and-vector-retrieval）
+
+**日期**：2026-08-21　**类型**：运行时静默失败 BUG（SERVICE）　**重点等级**：⚠️ 静态分析 + 运行时验证
+
+### 现象
+
+对话管线中向量库检索在指定多源过滤（如 `source: ['worldbook', 'knowledge', 'memory']`）时返回空结果，导致对话无法获取世界书/知识库的向量检索内容。
+
+### 根因
+
+`ContextManager.retrieveContext` / `retrieveContextWithKeywords` 将 `options.sources` 数组赋值给 `filter.source` 并传入 `vectorStoreService.search`。`SqliteVecBackend.buildFilterClause` 对 filter 值直接生成 `m.source = ?` SQL 并 `params.push(value)`，当 value 为数组时，better-sqlite3 无法绑定数组类型，抛出 `TypeError: Invalid value` → 整个 search 被 try/catch 捕获 → 返回空数组。
+
+### 修复
+
+`SqliteVecBackend.buildFilterClause` 增加数组类型处理：
+- 数组值：生成 `m.source IN (?, ?, ...)` 子句，展开数组为独立参数
+- 单值：保持 `m.source = ?` 不变（回归）
+- 空数组：生成 `1=0` 避免 SQL 语法错误
+
+### 验证
+
+- 运行时验证脚本：旧行为 `m.source = ?` 生成 `params: [["worldbook","knowledge","memory"]]` → better-sqlite3 绑定失败；新行为 `m.source IN (?, ?, ?)` 生成 `params: ["worldbook","knowledge","memory"]` → 绑定成功
+- 单值 filter 行为不变（`m.source = ?`）
+- 空数组 filter 正确处理（`1=0`）
+- 编译零新增错误（VS Code 零诊断）
+
+### 教训
+
+- 类型安全的 filter 接口应明确参数类型，避免使用者传入数组但底层不支持
+- 静默失败（try/catch 返回空数组）比显式报错更难排查，搜索请求的异常应至少记录 warn 日志
+- `buildFilterClause` 的白名单机制（METADATA_COLUMN_WHITELIST）已过滤非法字段，但合法字段的值类型校验缺失
+
+---
+
+## §7.60 ⚠️ 重点 — "以当前用户人设生成对话回复"按钮回显上一条消息（Spec: fix-user-reply-persona-echo，2026-08-27）
+
+### 【重点标记】trailing-assistant 消息数组被后端视为续写前缀，导致模型原样回显
+
+**现象：**
+- 点击"以当前用户人设生成对话回复"按钮后，生成的"回复"并非基于用户人设的新内容，而是将对话中的上一条消息（通常为角色的 assistant 消息）原封不动返回到输入框
+
+**根因（日志证据）：**
+分析 `logs/ai-handler/ai-handler_20260827_210504.log` 中请求 `req-bc4fe8539372` 的入参发现：
+- `generateUserReply` 将完整对话历史作为 `messages` 数组直接传给 `engine.sendMessage`，对话以角色的 assistant 消息结尾
+- 该消息结构在 llama.cpp 等后端被解释为"对话续写前缀（prefill）"：模型任务是接续最后一条 assistant 消息继续写，而非响应新的 user 请求
+- 结果模型直接"续写"出上一条消息的内容（即回显），系统提示中"扮演用户生成回复"的约束被消息结构完全压制
+
+**修复方案（镜像 polishInput 的上下文隔离模式，Spec: fix-polish-context-isolation）：**
+1. **PromptBuilder.ts** — `buildUserReplySystemPrompt` 新增可选参数 `conversationHistory?: ChatMessage[]`，将对话历史格式化为文本（`[用户名]: ...` / `[角色名]: ...`）嵌入系统提示的"## 对话历史"段落
+2. **CharacterDialogueChat.hooks.ts** — `generateUserReply` 重构消息结构：
+   - 构建 preliminary 系统提示（不含历史）专用于 token 计数与裁剪预算估算
+   - ContextTruncator 裁剪逻辑保持不变（仍对 contextMessages 操作）
+   - 裁剪后调用 `buildUserReplySystemPrompt` 传入裁剪后的 contextMessages，构建最终系统提示（历史在系统提示内，不再进入 messages 数组）
+   - `engine.sendMessage` 改为发送**单条 user 角色请求消息**（含 id/timestamp/status 的 ChatMessage 结构），内容为"请以 {userName} 的身份，直接输出下一句回复内容本身。"
+
+**修改文件：**
+- `src/renderer/components/Character/CharacterDialogueChat/PromptBuilder.ts` — `buildUserReplySystemPrompt` 签名扩展 + "## 对话历史"段落
+- `src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.hooks.ts` — `generateUserReply` 消息结构重构（preliminary 提示 / 裁剪后构建最终提示 / 单条 user 请求消息）
+
+**教训：**
+- 以 assistant 消息结尾的 messages 数组对续写型后端（llama.cpp 等）等效于 prefill 前缀，模型会接续而非响应——任何"生成新内容"的请求都不应携带 trailing-assistant 历史
+- 系统提示中的角色指令无法对抗消息结构层面的续写暗示；上下文隔离（历史嵌入 system + 单条 user 请求）是根治手段，而非权宜补丁
+- 本修复与 §fix-polish-context-isolation（润色功能同型问题）构成可复用模式：凡"AI 扮演特定身份生成文本"的功能，一律采用"历史入 system、请求入单条 user"结构
+
+---
+
+## §7.61 ⚠️ 重点 — 对话模式世界书关联失效 + qwen 思考模型标签输出缺失（Spec: fix-dialogue-worldbook-association-and-tag-output，2026-08-28）
+
+### 问题一：对话模式无法关联世界书内容
+
+**根因（代码证据）：**
+- 对话检索入口 `retrieveWithKeywords` 被 `scopeIds` 门控（ContextManager.ts:211），而 hooks 仅传入对话配置的 `boundKnowledgeBaseIds`（知识库绑定）
+- **角色卡世界书关联（data.worldBooks）在对话检索链路中没有任何消费方**——§7.55/§7.58 修复了关联的读写保真，但对话检索侧从未接入；用户在角色管理里关联的世界书对话时从不触发
+- 次要：constant（蓝灯）条目无关键词即永不注入；`enabled:false` 禁用语义不识别（只认 `disable:true`，双字段并存）
+
+**修复：**
+1. `CharacterDialogueChat.hooks.ts` — 检索请求构造处读取角色卡关联（`character.getWorldBookRelations(characterCardId)`，characterCardId 即角色卡文件路径），启用的 `worldBookPath` 并入 scopeIds 与绑定去重合并；IPC 异常回退仅绑定列表不阻断
+2. `WorldBookKeywordMatcher.ts` — `match()` 步骤0 无条件并入 constant 条目（`matchConstantEntry` 仅受概率过滤），候选循环按 uid 去重；空文本时仅常驻生效
+3. `WorldBookKeywordIndex.ts` — 新增导出 `isEntryDisabled`（`disable===true || enabled===false`），rebuild/upsertEntry 统一使用；新增 `getConstantEntries()`
+
+### 问题二：qwen3.8-next-flash 不输出表情/辅助模式标签
+
+**根因（代码证据）：**
+- 续写模式提示词硬冲突：`creative-chat.continuation` 模板【严格禁止】"禁止添加任何标签"，但表情提示词对续写同样注入（hooks 无 promptType 判断）；且**标签提醒仅注入 dialogue 模式**——续写场景指令自相矛盾
+- 思考常开（qwen3.8 preset 特性）下格式指令被思维链"吸收"，正文直接 stop 不带标签；无"未生成 vs 解析丢失"的定性手段，截断时（finish_reason=length）标签位于末尾最先丢失
+- **持久化模板迁移陷阱**：`mergeNewDefaultTemplates` 只补充新增 moduleId，改内置种子对已有安装的持久化副本永远不生效（"文件已保存 ≠ 运行时已生效"的又一实例）
+
+**修复：**
+1. continuation 模板白名单豁免表情/选项标签——**三处同步**：内置种子（promptTemplateService.ts）、PromptBuilder 硬编码回退、持久化副本按锚点非破坏性迁移（新增 `migrateContinuationWhitelist`：已含 EXPRESSION 跳过 / 无锚点（用户深度自定义）跳过 / 异常不阻断启动）
+2. 标签提醒注入范围扩展到 continuation（hooks.ts）
+3. 定性诊断 + 单次补发（hooks.ts onComplete，think 剥离后、解析前）：
+   - 判据：正文不含 EXPRESSION/OPTIONS 关键字 → 未生成；含关键字但解析失败 → 解析问题（既有诊断日志定位）
+   - `finish_reason=length` → 截断专项 warn，不补发（补发同样截断）
+   - `finish_reason=stop` → 独立 `new ChatEngine()` 实例发起一次补发（短提示词：末尾 400 字 + 格式要求 + 可用情绪键，30s 超时兜底），`thinking_mode:'off'` 请求级关思考防补发再被吸收，成功后标签行追加正文交由现有解析器；失败 warn 保持现状不循环
+
+**修改文件：**
+- `src/renderer/components/Character/CharacterDialogueChat/CharacterDialogueChat.hooks.ts`
+- `src/main/services/WorldBookKeywordMatcher.ts` / `WorldBookKeywordIndex.ts`
+- `src/main/services/promptTemplateService.ts`
+- `src/renderer/components/Character/CharacterDialogueChat/PromptBuilder.ts`
+
+**验证：**
+- WorldBookKeywordIndex 26 测试 + 对话链路 371 测试全部通过；tsc 改动文件零新增错误
+- 运行时判据日志：`Calling retrieveWithKeywords with scopeIds`（应含角色卡关联路径）、`角色卡世界书关联: N 条`、`关键词匹配返回: N 个匹配`、`标签缺失定性`、`标签补发成功/失败`
+
+**教训：**
+- 关联关系"能保存能回显"≠"运行时被消费"——读写保真修复（§7.55/§7.58）后必须检查消费方是否接入
+- 提示词模板的持久化副本会永久固化旧内容：任何模板内容修复必须同步处理"内置种子 + 硬编码回退 + 存量副本迁移"三处，缺一即对已有安装无效
+- 思考模型的格式遵循需要"末尾 user 提醒 + 未生成时请求级关思考补发"双保险，仅靠 system 指令会被思维链稀释
+
+---
+
+## §7.62 ⚠️ 重点 — 素材管理 AI 功能误报"AI 引擎未配置"（2026-08-28，用户报告）
+
+### 【重点标记】本地无密钥引擎被强校验 apiKey 一刀切拦截
+
+**现象：**
+角色卡素材管理相关 AI 功能（特征生成/图片特征识别/特征提示词生成/标签优化/表情生成）一律报错「AI 引擎未配置，请先在设置中配置 API」，而对话功能完全正常
+
+**根因（配置实证）：**
+- 当前激活引擎"本地引擎qwen3.8"（llama-server 127.0.0.1:5000）`api_key` 为空——本地引擎无需密钥，这是**合法配置**
+- `characterTraitAIService.ts` 全部 5 个 AI 方法把 `!apiKey` 与 `!baseUrl`/`!modelName` 同等对待，直接返回"未配置"错误
+- 对话链路（ChatEngine）从不要求 apiKey，故仅主进程 AI 服务报错——同一引擎在两条链路行为不一致
+
+**修复（characterTraitAIService.ts）：**
+1. 5 处校验点放宽：apiKey 为空 → console.warn 继续调用（远程服务缺 key 由 HTTP 401 报错，语义更准确）
+2. 2 处 header 构建补 `if (apiKey)` 守卫（generateTraitPrompts/TraitOptimize）：空 key 不发送 `Authorization: Bearer `（空头）/`api_key` 字段，与 generateCharacterTraits/recognizeImageTraits 既有守卫对齐
+3. baseUrl / modelName / temperature / max_tokens 校验保持不变（必需项语义不变）
+
+**同型隐患（未修，另行立项）：**
+- `AIConfigProvider.getApiKey()`（抛错型，TableOrganizeService 表格整理消费）对空 apiKey 抛"未配置 API Key"——本地引擎下表格整理会报同型错误
+- writing/* 各服务经 getAIConfig 拿到空 apiKey 后的强校验情况未逐一排查
+
+**教训：**
+- apiKey 必填是远程 SaaS 时代假设；多引擎架构下"本地引擎无密钥"是一等公民场景，主进程所有 AI 服务校验须与对话链路（不要求 apiKey）对齐
+- 排查此类问题最快路径：先读 `%APPDATA%/creative-cafe/data/settings.json` 的 aiEngines 实际数据，再对照校验代码，避免猜配置
+
+---
+
+## §7.63 ⚠️ 重点 — RAG 索引误报 stale（mtime 触碰即要求重向量化 37 分钟）（2026-08-28，用户报告）
+
+### 【重点标记】CSV 指纹含 mtimeMs，内容未变也被判 stale
+
+**现象：**
+素材管理一直提示「⚠️ RAG 索引状态为 stale，请先在设置面板完成向量化」，而标签库 CSV（22 万条）实际从未变更
+
+**根因（配置 + 指纹实证）：**
+- 指纹算法 `sha256(csvPath:size:mtimeMs)`（tagRagService.computeCsvHash 与 tagAutocompleteService.notifyCsvLoaded 两处）——**CSV 文件的 mtime 被触碰即指纹变化**
+- 实测：当前指纹 `30f5dc2618f7fe55` ≠ meta.csvHash `2af350ff6a86e6d6`，dimension(1024)/model(bge-m3-f16.gguf) 均一致 → 唯一命中 csvHash 条件
+- CSV 内容未变（8MB 静态库），仅 mtime 因 git/复制/同步等操作变化；重向量化成本 ~37 分钟（meta.durationMs=2204401）
+
+**修复（tagRagService.ts）：**
+1. `computeCsvHash` 改为**内容 sha256**（slice 16），以 (path → size+mtimeMs → hash) 内存缓存：mtime 未变零读取；mtime 变化时重算一次内容哈希（8MB ~50ms），内容未变则不 stale
+2. `computeFreshness` 增加存量 meta 一次性迁移：meta.csvHash 与旧算法指纹匹配 → 证明 path/size/mtime 自向量化以来均未变 → 原地迁移为新算法值并持久化，返回 ready
+3. `tag-csv-loaded` 事件监听器改用 `computeCsvHash()` 比对（原用 payload 中的旧算法 hash，口径不一致会误报）
+4. vectorizeAll 完成后 meta.csvHash 自动写入新算法值（无需额外改动）
+
+**用户存量数据注意：**
+当前 meta.csvHash 与旧算法指纹不匹配（mtime 已变）→ 迁移不命中 → **需重新向量化一次（~37 分钟）**。此后 mtime 触碰不再误报，仅 CSV 内容真正变化才会要求重向量。
+
+**教训：**
+- "轻量指纹"（path:size:mtime）隐含假设"文件不被触碰"——在 git/同步工具环境不成立；内容指纹 + stat 缓存是正确折中（mtime 稳定时零成本，变化时 50ms 一次）
+- 同一指纹存在双实现（tagAutocompleteService 与 tagRagService）且算法漂移，修复时必须统一口径
+
+---
+
+## §7.64 — 角色卡润色/翻译/生成按钮超时（TimeoutError: timed out）改为流式响应（2026-08-28，用户需求）
+
+**现象：**
+角色卡编辑器的润色/翻译/生成按钮频繁报 `TimeoutError: timed out`
+
+**根因：**
+三个按钮走 `defaultAIService.sendChatRequest`（**非流式**）→ 主进程 aiHandlers 需等待完整响应体（qwen 思考模型含思维链，可能长达数分钟）才返回响应头 → 超过请求超时（AIService 默认 timeout=600s，aiHandlers 引擎级 request_timeout 默认 300s）被 AbortController 中止
+
+**修复（useCharacterAIOperations.ts）：**
+1. 三处调用改为 `sendAssistantAIStreamRequest`（SSE 流式，主进程流式分支收到首包后即清除连接/请求超时定时器 aiHandlers.ts:284-293 → **长生成不再超时**）
+2. 新增 `runStreamingAI` 内部执行器：onStream 增量实时写入表单字段（打字机预览）；onComplete 取服务器合并内容（优先于流式累积）
+3. 中断/失败/空结果时恢复字段原值（流式预览可能已写入半截内容）；成功路径沿用既有清理逻辑（思考前缀正则、译文/润色前缀、顿号分隔）
+4. 用户取消链路不变（ai.cancel → 主进程 abort → onError，isProcessingRef 判定静默）
+
+**效果：**
+- TimeoutError 消失（流式响应头立即返回，超时定时器只覆盖首包等待窗口）
+- 字段内容实时流式显示，长生成体验与对话一致
+
+## §7.65 ⚠️ 重点 — 世界书 AI 按钮仍报"请求超时"：timeout:0 未跳过连接超时（2026-08-31，用户两次反馈）
+
+**⚠️ 本条为"用户明确要求后第一次修复仍不彻底、再次反馈才补全"的问题，重点标记。**
+
+**现象：**
+世界书条目润色/审查等按钮报 `[ai-handler] [req-xxx] 请求超时: API请求超过了设定的超时时间`，按钮弹回。此前的第一轮修复（13 处 `ai.request` 全部补 `timeout: 0`）**未能消除**该报错。
+
+**根因（双重超时陷阱）：**
+主进程 `aiHandlers.ts` 非流式分支存在**两个独立超时定时器**：
+1. **请求超时**（等待完整响应体）：`effectiveTimeout = timeout === 0 ? 0 : (timeout || 配置值)` —— `timeout: 0` 可跳过 ✅
+2. **连接超时**（等待响应头）：独立取引擎级 `connection_timeout`（多数引擎为默认 120s）—— **不受 timeout:0 影响** ❌
+
+关键事实：**非流式 LLM 生成完成前不返回响应头**（TTFB = 完整生成时长）。因此即使 `timeout: 0` 跳过了请求超时，连接超时定时器仍在 120s 处 abort → fetch 抛 "This operation was aborted" → 命中 catch 分支 `error.message.includes('abort')` → 返回「请求超时」。实测引擎配置：Gemma4-bf16/muse/Deepseek/Proxy 均 connection_timeout=120000，长生成必被中止。
+
+**修复（aiHandlers.ts，流式 + 非流式两分支同步）：**
+`timeout === 0` 语义升级为「完全无限制」：同时将连接超时与请求超时置 0（不设任何定时器）。
+```typescript
+const callerUnlimited = timeout === 0;
+const CONNECTION_TIMEOUT = callerUnlimited ? 0 : configuredConnectionTimeout;
+const effectiveTimeout = callerUnlimited ? 0 : (timeout || configuredRequestTimeout);
+```
+调用方语义对照：
+| 调用方式 | 请求超时 | 连接超时 |
+|---|---|---|
+| 不传 timeout | 引擎级 request_timeout | 引擎级 connection_timeout |
+| timeout: 具体值 | 该值（覆盖配置） | 引擎级 connection_timeout |
+| **timeout: 0** | **无** | **无（本次修复点）** |
+
+**配套变更：**
+- `useWorldBookAIOperations.ts` 13 处 `ai.request` 全部补 `timeout: 0`（第一轮修复，保留有效）
+- **教训**：改动主进程超时逻辑后必须完整重启 Electron（vite-plugin-electron 会自动重启，但若 dev server 未运行则需手动 `npm run dev`）——用户复测前需确认新代码已加载
+
+**验证：**
+`tsc --noEmit` aiHandlers.ts 零错误；dev server 已重启（job-6d52c04b031c4e3dabca91cf2d02c76e），Electron 正常启动。
+
+## §7.66 ⚠️ 重点 — Flash 模型角色卡字段级任务全字段泛化输出（Spec: fix-character-card-field-scope-flash-models，2026-08-31）
+
+**现象：**
+角色卡编辑器中，用户明确要求对**单个字段**（如描述）执行生成/翻译/润色时，国产 Flash 类模型（glm5.3-flash、qwen3.8-flash 等 100B+ MoE）会返回**包含所有字段**（个性、场景、初始消息等）的完整角色卡内容。Gemma4-31B 小模型反而无此问题 —— 说明与参数量无关，是提示词工程问题。
+
+**根因（提示词作用域缺失，三层叠加）：**
+1. **目标文本无边界标识**：user prompt 中目标字段文本与角色卡全量字段上下文**平铺混排**，模型无法区分"待处理文本"与"参考上下文"，长上下文下倾向文档补全式输出（补全整个角色卡）
+2. **系统提示不知道目标字段是什么**：翻译/润色模板系统提示完全未提及目标字段，仅说"翻译用户提供的文本"，字段指向只能靠 user prompt 中一句自然语言
+3. **无输出净化兜底**：即使模型越界输出，旧逻辑直接整段写回表单
+
+**修复（三层防御 + 模板迁移）：**
+1. **提示词工程**（promptTemplateService.ts 三个模板种子）：
+   - 翻译/润色系统提示新增【翻译/润色范围约束】段落，注入 `{{target_field_label}}` 变量（目标字段中文名）
+   - 生成模板系统提示新增规则 7（仅生成目标字段），user prompt 首行前置"本次任务：仅生成【xx】字段"强调
+2. **user prompt 标签化**（useCharacterAIOperations.ts）：目标文本用 `<translate_target>`/`<polish_target>` 标签包裹，其他字段上下文用 `<context_reference>` 包裹并声明"仅作参考，禁止输出"
+3. **输出越界防御**（新文件 `src/renderer/components/Character/hooks/characterFieldScope.ts`）：
+   - `extractTargetFieldContent(raw, fieldKey)` 三重防御：① 字段段落提取（识别"描述："、"【个性】"、"# 场景"等行首标签变体，提取目标字段段落）② 越界回退判定（无目标段落且 ≥2 个其他字段标签 → overflow=true，恢复原文并提示）③ 标签残留清理
+   - 接入翻译/润色/生成三个写回点，越界时保留原文 + message.warning
+4. **存量模板迁移**（`migrateCharacterCardFieldScope`）：按"旧种子精确匹配"非破坏性迁移 —— 未修改副本整模板替换为新默认，用户自定义副本仅记 warn 不覆盖，已含新锚点幂等跳过
+
+**⚠️ 调试期教训（重点标记）：**
+- 迁移函数中 `OLD_GENERATE_SYSTEM` 旧种子误用了**长描述版**字段规范（个性：如"冷静、理智、略带傲娇"…），但 git HEAD 改动前真实种子是**短描述版**（个性：可以用关键词或短句。）→ 精确匹配失败 → generate 模板静默不迁移。**编写"旧种子精确匹配"迁移时，必须从 git 历史复制旧种子原文，不能凭记忆或从其他模块（FIELD_DESCRIPTIONS）拼接**
+- 测试从新种子反向派生旧副本（replace 移除新增块）是自维护的好模式，但前提是旧种子常量必须与真实历史种子一致，否则测试通过≠迁移生效
+- 顺带修复：`world-book.audit-content` 模板之前加入种子后，PromptTemplateService.test.ts 的模板总数断言（21→22、14→15）未同步，属遗留失败
+
+**验证：**
+`PromptTemplateService.test.ts` + `characterFieldScope.test.ts` 共 41 个测试全部通过；`tsc --noEmit` 本次涉及文件零新增错误；dev server 已重启，Electron 正常启动。

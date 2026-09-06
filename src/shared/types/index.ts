@@ -74,7 +74,7 @@ export * from './forbiddenWords';
 export * from './tag.types';
 
 // 角色卡编辑智能助手类型（Spec: add-ai-assistant-for-character-card-editor / Task 1）
-// SuggestionType / Suggestion / AssistantMessage / AssistantState
+// AssistantMessage / AssistantState（自然对话式回复，无结构化建议）
 export * from './assistant.types';
 
 // === 冲突消解 ===

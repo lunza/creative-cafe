@@ -184,6 +184,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     savePNGToDirectory: (base64Data: string, filename: string) => ipcRenderer.invoke('character:savePNGToDirectory', base64Data, filename),
     exportCharacterCard: (params: { base64Image: string; filename: string; characterData: any }) => ipcRenderer.invoke('character:exportCharacterCard', params)
   },
+  favorites: {
+    /** 读取收藏列表（[{ path, name, addedAt }]，path 为角色卡绝对路径） */
+    read: () => ipcRenderer.invoke('favorites:read'),
+    /** 全量替换收藏（接受 path 或 name；与移动端共用同一份持久化数据） */
+    write: (items: Array<{ path?: string; name?: string; addedAt?: number }>) => ipcRenderer.invoke('favorites:write', items),
+    /** 主进程收藏文件是否存在且非空（用于 localStorage 旧数据一次性迁移判断） */
+    hasStored: () => ipcRenderer.invoke('favorites:hasStored')
+  },
   characterConfig: {
     save: (characterCardId: string, config: any) => ipcRenderer.invoke('characterConfig:save', characterCardId, config),
     load: (characterCardId: string) => ipcRenderer.invoke('characterConfig:load', characterCardId)
