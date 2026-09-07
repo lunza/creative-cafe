@@ -17,7 +17,19 @@ import { usePromptBuilder } from './usePromptBuilder';
 import { buildAssistModePrompt, buildAsyncTableOrganizeInstructions, buildStopSequences, buildRoleAnchorMessage, buildContinueNudgePrompt, buildLengthGuidancePrompt, buildLanguagePrompt, buildUserReplySystemPrompt, buildStopSequencesForUserReply, buildPolishInputSystemPrompt, buildExpressionPrompt, parseExpressionFromContent } from './PromptBuilder';
 import { TokenCounter, ContextTruncator, DEFAULT_MAX_TOKENS } from './TokenManagement';
 // Spec: analyze-llamacpp-model-compatibility（兜底值与模型系列模板同源）
-import { GENERIC_MODEL_PARAMS } from '../../../../shared/modelParameterPresets';
+import { GENERIC_MODEL_PARAMS, getModelSeriesPreset } from '../../../../shared/modelParameterPresets';
+// Spec: enforce-forbidden-words-and-dialogue-naturalness（对话自然度：去AI味词表注入）
+import { withHumanizerDialogueRules } from '../../../../shared/prompts/humanizerPolish';
+// Spec: enforce-forbidden-words-and-dialogue-naturalness（禁词线上接线 + 输出合规硬执行）
+import { buildForbiddenWordsPrompt } from './pipeline/providers/ForbiddenWordsPromptProvider';
+import {
+  checkCompliance,
+  replaceForbiddenWords,
+  resolveEnforcement,
+  resolveReplacementText,
+  resolveMaxRetries,
+} from './utils/complianceChecker';
+import type { ForbiddenWordsConfig } from '@shared/types/forbiddenWords';
 import type { TruncationConfig } from './TokenManagement/types';
 import {
   shouldCompact,
@@ -62,12 +74,20 @@ import { computeDiversityReport, formatDiversityReport } from './utils/diversity
  *
  * 续写去重（overlapRate > 0.6）的触发不依赖 previousResponse，而是由
  * promptType === 'continuation' && initialContent 非空 自动启用。
+ *
+ * Spec: enforce-forbidden-words-and-dialogue-naturalness — 合规重试复用本机制：
+ * - complianceFeedback：合规重试时拼到最后一条 user 消息末尾的违规反馈
+ *   （"上一条回复包含禁词 X，请重写并避开"——不能用 system 消息，
+ *   ChatEngine.sanitizeChatHistory 会剔除 system 角色）
+ * - complianceRetryCount：合规重试已进行次数（与去重重试计数独立）
  */
 interface DedupConfig {
   previousResponse?: string;
   retryCount?: number;
   maxRetries?: number;
   injectContinueNudge?: boolean;
+  complianceFeedback?: string;
+  complianceRetryCount?: number;
 }
 
 /**
@@ -77,6 +97,50 @@ interface DedupConfig {
  * "自动重新生成（最多 2 次）" → 总生成次数上限 = 1（首次）+ 2（重试）= 3 次。
  */
 const DEFAULT_MAX_DEDUP_RETRIES = 2;
+
+// ==================== 对话采样预设（Spec: enforce-forbidden-words-and-dialogue-naturalness / Task 6） ====================
+
+/**
+ * 按模型系列预设覆盖对话请求的采样参数（请求级，不改引擎持久化配置）。
+ *
+ * 预设来源：MODEL_SERIES_PRESETS（Spec: analyze-llamacpp-model-compatibility 产物，
+ * 各系列官方推荐值，见 docs/llamacpp-model-compat-analysis.md §2.2/§5.1）。
+ * 系列判定：优先引擎显式标记的 model_series；无标记时按 model_name 前缀推断兜底。
+ * 未匹配系列 / 开关关闭：原样返回（请求体与改动前完全一致）。
+ *
+ * ⚠ 0 是合法预设值（qwen min_p=0、dry_multiplier=0），覆盖逻辑不得用 || 兜底吞 0。
+ */
+function applySamplingPreset(
+  params: EffectiveAIParams,
+  opts: { modelName?: string; modelSeries?: string | null; enabled: boolean }
+): { applied: boolean; seriesId?: string } {
+  if (!opts.enabled) return { applied: false };
+  // 系列判定：显式标记优先，model_name 前缀兜底
+  let seriesId = opts.modelSeries || undefined;
+  if (!seriesId && opts.modelName) {
+    const name = opts.modelName.toLowerCase();
+    if (name.includes('qwen')) seriesId = 'qwen-thinking';
+    else if (name.includes('gemma')) seriesId = 'gemma';
+    else if (name.includes('glm')) seriesId = 'glm';
+    else if (name.includes('muse') || name.includes('glimmer')) seriesId = 'muse-glimmer';
+  }
+  const preset = getModelSeriesPreset(seriesId);
+  if (!preset) return { applied: false };
+
+  const p = preset.params;
+  params.temperature = p.temperature;
+  params.top_p = p.top_p;
+  params.top_k = p.top_k;
+  params.min_p = p.min_p;
+  params.frequency_penalty = p.frequency_penalty;
+  params.presence_penalty = p.presence_penalty;
+  params.repetition_penalty = p.repetition_penalty;
+  params.dry_multiplier = p.dry_multiplier;
+  params.dry_base = p.dry_base;
+  params.dry_allowed_length = p.dry_allowed_length;
+  params.no_repeat_ngram_size = p.no_repeat_ngram_size;
+  return { applied: true, seriesId: preset.id };
+}
 
 /**
  * 重试去重相似度阈值（spec 约定）。
@@ -474,6 +538,10 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
   const firstMessageSentRef = useRef(false);
   const initialContentRef = useRef('');
   const streamContentRef = useRef('');
+  // 思考增量累积缓冲（Spec: reasoning-content-display-for-llamacpp / Task 2）
+  // 与 streamContentRef 同构：engine.onReasoning 累积 delta.reasoning_content 全文，
+  // 完成后随消息持久化到 message.reasoning（think_tag_mode='strip' 时不存储）
+  const streamReasoningRef = useRef('');
   const targetMessageIdRef = useRef('');
   const isSavingRef = useRef(false);
   const memoryTableEnabledRef = useRef(false);
@@ -749,6 +817,22 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     }
 
     const effectiveParams = getEffectiveParams();
+
+    // 对话采样预设（Spec: enforce-forbidden-words-and-dialogue-naturalness / Task 6）
+    // 开关默认关；开启时按模型系列官方推荐值覆盖（请求级，不触碰引擎持久化）。
+    // max_tokens 不覆盖（回复长度由用户/角色配置控制，与采样质量无关）。
+    {
+      const dnConfig = useSettingStore.getState().setting?.dialogueNaturalness;
+      const presetResult = applySamplingPreset(effectiveParams, {
+        modelName: activeEngine.model_name,
+        modelSeries: (activeEngine as any).model_series,
+        enabled: dnConfig?.samplingPresetEnabled === true,
+      });
+      if (presetResult.applied && presetResult.seriesId) {
+        addLog(`[Sampling] ${presetResult.seriesId} 预设覆盖: temp=${effectiveParams.temperature} top_p=${effectiveParams.top_p} top_k=${effectiveParams.top_k} min_p=${effectiveParams.min_p}`, 'info');
+      }
+    }
+
     let streamTimeout: NodeJS.Timeout | null = null;
 
     const clearStreamTimeout = () => {
@@ -809,6 +893,9 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       // 将用户思维链/工具调用开关透传给 ChatEngine，由其在 sendMessage 中按
       // supportsThinking / supportsToolCalling 做双条件守卫后再决定是否注入参数。
       enable_chain_of_thought: activeEngine.enable_chain_of_thought,
+      // 思考模式透传（2026-09-08 修复：此前三处构造均未透传，引擎 thinking_mode='on'
+      // 也到不了 ChatEngine，请求永远不带 enable_thinking → 混合思考模型默认不思考）
+      thinking_mode: activeEngine.thinking_mode,
       use_function_calling: activeEngine.use_function_calling,
     };
 
@@ -853,6 +940,8 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
 
     initialContentRef.current = initialContent;
     streamContentRef.current = initialContent;
+    // 重置思考累积缓冲（Spec: reasoning-content-display-for-llamacpp / Task 2）
+    streamReasoningRef.current = '';
     targetMessageIdRef.current = targetMessageId;
 
     // 步骤A：向量知识库检索 + 关键词匹配（限定在已绑定的知识库范围内）
@@ -1140,6 +1229,36 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       addLog(`[CharacterDialogueChat] 表情提示词已注入（${availableEmotionKeys.length} 个可用情绪键）`, 'info');
     }
 
+    // ========== 禁词线上接线（Spec: enforce-forbidden-words-and-dialogue-naturalness / Task 1） ==========
+    // 根因修复：ForbiddenWordsPromptProvider 只注册在休眠 pipeline（hooks.new 未接线），
+    // 线上路径此前从未注入 forbiddenWords——用户配置的内容约束形同虚设。
+    // 此处直接复用其纯函数 buildForbiddenWordsPrompt（含锚点防重复守卫语义：已含则跳过）。
+    // 覆盖 dialogue / continuation（user-reply 在 generateUserReply 内单独注入）。
+    let forbiddenWordsConfig: ForbiddenWordsConfig | undefined;
+    {
+      const fwConfig = useSettingStore.getState().setting?.forbiddenWords;
+      if (fwConfig?.enabled && fwConfig.categories.length > 0) {
+        const fwPrompt = buildForbiddenWordsPrompt(fwConfig);
+        if (fwPrompt && !effectiveSystemPrompt.includes('Forbidden Word List (Strict Constraints)')) {
+          effectiveSystemPrompt += '\n\n' + fwPrompt;
+          addLog(`[ForbiddenWords] 已注入 ${fwConfig.categories.length} 个类别（线上路径接线修复）`, 'info');
+        }
+        forbiddenWordsConfig = fwConfig;
+      }
+    }
+
+    // ========== 对话去AI味词表注入（Spec: enforce-forbidden-words-and-dialogue-naturalness / Task 5） ==========
+    // 仅 dialogue 模式：continuation 需与已有内容风格一致（与防重复层同样的模式限定）。
+    // RP 词表 + 完整 27 模式指南（完整接入不简写），开关 AppSetting.dialogueNaturalness.deAiEnabled（默认开）。
+    if (promptType === 'dialogue') {
+      const deAiEnabled = useSettingStore.getState().setting?.dialogueNaturalness?.deAiEnabled !== false;
+      const promptBeforeDialogueRules = effectiveSystemPrompt.length;
+      effectiveSystemPrompt = withHumanizerDialogueRules(effectiveSystemPrompt, deAiEnabled);
+      if (effectiveSystemPrompt.length > promptBeforeDialogueRules) {
+        addLog(`[CharacterDialogueChat] 对话去AI味词表已注入（+${effectiveSystemPrompt.length - promptBeforeDialogueRules} 字符，开关=${deAiEnabled ? '开' : '关'}）`, 'info');
+      }
+    }
+
     // ========== 防重复提示词层（Spec: reduce-dialogue-ai-flavor-and-repetition / Phase 3） ==========
     // 仅 dialogue 模式注入：continuation（续写）需与原文风格一致，注入规避/轮换指令反而有害。
     // 两道防线均为纯提示词层（无额外生成成本）：
@@ -1314,6 +1433,20 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
 
         dispatch({ type: 'STREAM_CHUNK', targetMessageId, content: currentContent });
       }
+    });
+
+    // 思考增量通道（Spec: reasoning-content-display-for-llamacpp / Task 2）。
+    // llama-server --reasoning on/auto 等推理后端先推 delta.reasoning_content（思考期）
+    // 再推 delta.content（正文期）。按 think_tag_mode 决定去留：
+    //   - 'strip'（默认）：不 dispatch、不存储（对齐"移除"语义）
+    //   - 'strip_render'：dispatch 更新 message.reasoning（存储保留，渲染层不显示）
+    //   - 'fold'：dispatch + 气泡折叠块实时展示
+    // chunk 为本批次增量（与 onStream 的 chunk 语义一致），hooks 侧累积为全文。
+    const reasoningThinkMode = deriveThinkTagMode(characterConfig?.customParameters);
+    engine.onReasoning((chunk: string) => {
+      if (!chunk || reasoningThinkMode === 'strip') return;
+      streamReasoningRef.current += chunk;
+      dispatch({ type: 'STREAM_REASONING', targetMessageId, reasoning: streamReasoningRef.current });
     });
 
     engine.onComplete(async (response: AIResponse) => {
@@ -1684,6 +1817,87 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         }
       }
 
+      // ===== 输出合规硬执行（Spec: enforce-forbidden-words-and-dialogue-naturalness / Task 4）=====
+      // 检测顺序在去重检测之前：禁词命中优先处理（违规内容必须重写，相似度是次级问题）。
+      // 三档执行模式（AppSetting.forbiddenWords.enforcement，缺省 retry-and-replace）：
+      // - prompt-only:        仅记录不处理（软约束现状）
+      // - retry:              命中 → 带违规反馈重试（≤maxRetries）→ 超限保留原文
+      // - retry-and-replace:  重试超限 → 硬替换命中词（唯一保证 100% 合规的模式）
+      // 重试复用去重重试的流式重置 + requestAIResponse 自引用模式；流式期间用户
+      // 不会看到中间脏内容（重置为 initialContent 前缀 + sending 状态）。
+      if (forbiddenWordsConfig) {
+        const enforcement = resolveEnforcement(forbiddenWordsConfig);
+        const complianceReport = checkCompliance(displayContent, forbiddenWordsConfig);
+        const complianceRetryCount = dedupConfig?.complianceRetryCount ?? 0;
+        const complianceMaxRetries = resolveMaxRetries(forbiddenWordsConfig);
+        const roundNum = contextMessages.filter(m => m.role === 'user').length;
+
+        if (!complianceReport.clean) {
+          const hitWords = Array.from(new Set(complianceReport.hits.map(h => h.word))).join('、');
+          const canRetry = (enforcement === 'retry' || enforcement === 'retry-and-replace')
+            && complianceRetryCount < complianceMaxRetries;
+
+          if (canRetry) {
+            // 合规重试：违规反馈随 DedupConfig 传递，在消息组装处拼到最后一条 user 消息末尾
+            //（system 消息会被 ChatEngine.sanitizeChatHistory 剔除，不能用）
+            const complianceFeedback =
+              `\n\n【系统反馈】你刚才的回复包含禁词（${hitWords}）。请重新生成整条回复，` +
+              `严格避开所有禁词及同类表达，其余内容保持自然。`;
+            addLog(
+              `[Compliance] round=${roundNum} hit=${hitWords} mode=${enforcement} ` +
+              `retries=${complianceRetryCount + 1}/${complianceMaxRetries} result=retrying`,
+              'warn'
+            );
+            // 重置流式累积与消息状态（与去重重试同款：防中间脏内容闪烁）
+            streamContentRef.current = initialContentRef.current;
+            const complianceRetryState = stateRef.current;
+            const complianceRetryMessages = complianceRetryState.messages.map(msg =>
+              msg.id === targetMessageId
+                ? { ...msg, content: initialContentRef.current, status: 'sending' as const }
+                : msg
+            );
+            dispatch({ type: 'UPDATE_MESSAGES', messages: complianceRetryMessages });
+            dispatch({ type: 'SET_LOADING', isLoading: true, isStreaming: true });
+            requestAIResponse(contextMessages, targetMessageId, initialContentRef.current, promptType, {
+              ...dedupConfig,
+              complianceRetryCount: complianceRetryCount + 1,
+              complianceFeedback,
+            }).catch(err => {
+              const errMsg = err instanceof Error ? err.message : String(err);
+              addLog(`[CharacterDialogueChat] Compliance retry failed: ${errMsg}`, 'error');
+              message.error(`合规重试失败: ${errMsg}`);
+            });
+            return;
+          }
+
+          // 重试超限（或 retry 模式耗尽）：替换兜底 / 保留原文
+          if (enforcement === 'retry-and-replace') {
+            const replacementText = resolveReplacementText(forbiddenWordsConfig);
+            const replacedContent = replaceForbiddenWords(displayContent, forbiddenWordsConfig, replacementText);
+            addLog(
+              `[Compliance] round=${roundNum} hit=${hitWords} mode=${enforcement} ` +
+              `retries=${complianceRetryCount}/${complianceMaxRetries} result=replaced`,
+              'warn'
+            );
+            displayContent = replacedContent;
+          } else {
+            // retry 超限保留原文 / prompt-only 仅记录
+            addLog(
+              `[Compliance] round=${roundNum} hit=${hitWords} mode=${enforcement} ` +
+              `retries=${complianceRetryCount}/${complianceMaxRetries} result=kept-original`,
+              'warn'
+            );
+          }
+        } else {
+          // 干净：若本轮是合规重试产物则标记 clean-by-retry（A/B 对比指标依据）
+          const cleanResult = complianceRetryCount > 0 ? 'clean-by-retry' : 'clean';
+          addLog(
+            `[Compliance] round=${roundNum} hit=- mode=${enforcement} retries=${complianceRetryCount} result=${cleanResult}`,
+            'info'
+          );
+        }
+      }
+
       // ===== 去重检测（Spec: optimize-chat-ai-intelligence / Task 5.2 + 5.3）=====
       // 在最终 setState 前检查：
       // - 重试去重：nGramJaccard(previousResponse, displayContent) > 0.8 → 重新生成
@@ -1832,6 +2046,10 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         suggestedOptions: msg.suggestedOptions,
         // 保存情绪键名，使刷新/重启后表情仍可还原（Spec: add-character-expression-system / Task 9.4）
         emotion: msg.emotion,
+        // 保存思考过程全文，刷新/重启后折叠块仍可展示
+        // （Spec: reasoning-content-display-for-llamacpp / Task 2；strip 模式下
+        //  onReasoning 未累积，msg.reasoning 为 undefined 自然不落盘）
+        reasoning: msg.reasoning,
         // 【Bug 4 修复】图片消息字段透传（Spec: fix-conversation-image-generation-bugs）
         generatedImage: msg.generatedImage,
         isImageMessage: msg.isImageMessage,
@@ -2083,6 +2301,29 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       }
     }
 
+    // ========== 合规重试反馈注入（Spec: enforce-forbidden-words-and-dialogue-naturalness / Task 4） ==========
+    // 合规重试时（dedupConfig.complianceFeedback 由 onComplete 硬执行层构造），
+    // 将违规反馈拼到最后一条 user 消息末尾——与标签提醒同款注入模式
+    //（system 消息会被 sanitizeChatHistory 剔除，不可用）。
+    if (dedupConfig?.complianceFeedback && messagesToSendFinal.length > 0) {
+      let lastUserIdxCompliance = -1;
+      for (let i = messagesToSendFinal.length - 1; i >= 0; i--) {
+        if (messagesToSendFinal[i].role === 'user') {
+          lastUserIdxCompliance = i;
+          break;
+        }
+      }
+      if (lastUserIdxCompliance >= 0) {
+        const lastMsg = messagesToSendFinal[lastUserIdxCompliance];
+        messagesToSendFinal = [...messagesToSendFinal];
+        messagesToSendFinal[lastUserIdxCompliance] = {
+          ...lastMsg,
+          content: lastMsg.content + dedupConfig.complianceFeedback,
+        };
+        addLog(`[Compliance] 违规反馈已注入到末尾 user 消息 (${dedupConfig.complianceFeedback.length} chars)`, 'info');
+      }
+    }
+
     try {
       console.log('[DEBUG-FLOW] Step E: Calling engine.sendMessage');
       await engine.sendMessage(messagesToSendFinal, effectiveSystemPrompt, engineConfigWithParams);
@@ -2189,6 +2430,8 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       // 能力感知透传（Spec: upgrade-ai-handler-multimodal-compatibility / Task 3.2 + 3.4）
       // 将用户思维链/工具调用开关透传给 ChatEngine，由其按 supportsThinking / supportsToolCalling 守卫。
       enable_chain_of_thought: activeEngine.enable_chain_of_thought,
+      // 思考模式透传（2026-09-08 修复：构造均未透传导致引擎 thinking_mode 失效）
+      thinking_mode: activeEngine.thinking_mode,
       use_function_calling: activeEngine.use_function_calling,
     };
 
@@ -2289,6 +2532,23 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       contextMessages                    // 裁剪后的对话历史（嵌入系统提示）
     );
 
+    // ========== 禁词注入 — user-reply（Spec: enforce-forbidden-words-and-dialogue-naturalness / Task 1） ==========
+    // 用户侧回复也是对话型输出，同样受内容约束；仅提示词注入（无重试基础设施），
+    // 输出侧在 onComplete 做替换级兜底（见下）。
+    let userReplyForbiddenConfig: ForbiddenWordsConfig | undefined;
+    let userReplyFinalSystemPrompt = userReplySystemPrompt;
+    {
+      const fwConfig = useSettingStore.getState().setting?.forbiddenWords;
+      if (fwConfig?.enabled && fwConfig.categories.length > 0) {
+        const fwPrompt = buildForbiddenWordsPrompt(fwConfig);
+        if (fwPrompt && !userReplyFinalSystemPrompt.includes('Forbidden Word List (Strict Constraints)')) {
+          userReplyFinalSystemPrompt = userReplyFinalSystemPrompt + '\n\n' + fwPrompt;
+          addLog(`[ForbiddenWords] user-reply 已注入 ${fwConfig.categories.length} 个类别`, 'info');
+        }
+        userReplyForbiddenConfig = fwConfig;
+      }
+    }
+
     // 获取引擎实例
     const engine = ChatEngineFactory.getInstance().getOrCreateDefaultEngine(engineConfigWithParams);
 
@@ -2309,8 +2569,29 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
 
       engine.onComplete((response: AIResponse) => {
         // 优先使用 server 返回的 content，回退到本地流式累积（与 requestAIResponse 一致）
-        const finalContent = response?.content || generatedReplyAccumulatedRef.current;
+        let finalContent = response?.content || generatedReplyAccumulatedRef.current;
         addLog(`[CharacterDialogueChat] generateUserReply completed: ${finalContent.length} chars`, 'info');
+
+        // 输出合规兜底 — user-reply（Spec: enforce-forbidden-words-and-dialogue-naturalness / Task 4）
+        // Promise 结构无重试基础设施，命中时仅做替换级兜底（保证 100% 合规）；
+        // retry / prompt-only 模式仅记录不处理，与主对话链行为一致。
+        if (userReplyForbiddenConfig) {
+          const cr = checkCompliance(finalContent, userReplyForbiddenConfig);
+          const mode = resolveEnforcement(userReplyForbiddenConfig);
+          if (!cr.clean) {
+            const hitWords = Array.from(new Set(cr.hits.map(h => h.word))).join('、');
+            if (mode === 'retry-and-replace') {
+              finalContent = replaceForbiddenWords(
+                finalContent, userReplyForbiddenConfig, resolveReplacementText(userReplyForbiddenConfig)
+              );
+              addLog(`[Compliance] user-reply hit=${hitWords} mode=${mode} result=replaced`, 'warn');
+            } else {
+              addLog(`[Compliance] user-reply hit=${hitWords} mode=${mode} result=kept-original`, 'warn');
+            }
+          } else {
+            addLog(`[Compliance] user-reply hit=- mode=${mode} result=clean`, 'info');
+          }
+        }
         resolve(finalContent);
       });
 
@@ -2335,7 +2616,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         timestamp: Date.now(),
         status: 'sent',
       }];
-      engine.sendMessage(userReplyRequestMessages, userReplySystemPrompt, engineConfigWithParams).catch((err: any) => {
+      engine.sendMessage(userReplyRequestMessages, userReplyFinalSystemPrompt, engineConfigWithParams).catch((err: any) => {
         console.error('[CharacterDialogueChat] generateUserReply sendMessage threw:', err);
         message.error(`生成用户回复失败: ${err?.message || '未知错误'}`);
         reject(err instanceof Error ? err : new Error(String(err)));
@@ -2442,6 +2723,8 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       // 能力感知透传（Spec: upgrade-ai-handler-multimodal-compatibility / Task 3.2 + 3.4）
       // 将用户思维链/工具调用开关透传给 ChatEngine，由其按 supportsThinking / supportsToolCalling 守卫。
       enable_chain_of_thought: activeEngine.enable_chain_of_thought,
+      // 思考模式透传（2026-09-08 修复：构造均未透传导致引擎 thinking_mode 失效）
+      thinking_mode: activeEngine.thinking_mode,
       use_function_calling: activeEngine.use_function_calling,
     };
 

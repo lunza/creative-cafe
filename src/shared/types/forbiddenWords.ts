@@ -27,6 +27,14 @@ export interface ForbiddenWordCategory {
 }
 
 /**
+ * 禁词执行模式。
+ * - 'prompt-only': 仅提示词约束（软约束，现状行为）
+ * - 'retry': 命中后自动重试（带违规反馈），超限后保留原文
+ * - 'retry-and-replace': 重试超限后硬替换命中词（默认，唯一保证 100% 合规的模式）
+ */
+export type ForbiddenWordsEnforcement = 'prompt-only' | 'retry' | 'retry-and-replace';
+
+/**
  * 禁词提示词注入配置结构。
  */
 export interface ForbiddenWordsConfig {
@@ -34,7 +42,23 @@ export interface ForbiddenWordsConfig {
   enabled: boolean;
   /** 禁词类别列表 */
   categories: ForbiddenWordCategory[];
+  /**
+   * 输出合规执行模式（Spec: enforce-forbidden-words-and-dialogue-naturalness）。
+   * 可选字段：存量配置缺省时视为 'retry-and-replace'（默认保证 100% 合规）。
+   */
+  enforcement?: ForbiddenWordsEnforcement;
+  /** 硬替换兜底使用的替换文本（retry-and-replace 模式），默认 '***' */
+  replacementText?: string;
+  /** 合规重试上限，默认 2（范围 1-5） */
+  maxRetries?: number;
 }
+
+/** enforcement 缺省默认值（存量配置无此字段时取此值） */
+export const DEFAULT_ENFORCEMENT: ForbiddenWordsEnforcement = 'retry-and-replace';
+/** replacementText 缺省默认值 */
+export const DEFAULT_REPLACEMENT_TEXT = '***';
+/** maxRetries 缺省默认值 */
+export const DEFAULT_MAX_RETRIES = 2;
 
 /**
  * 禁词提示词注入默认配置常量。

@@ -11,6 +11,7 @@ import {
   IChatEngine,
   AIEngineConfig,
   StreamCallback,
+  ReasoningCallback,
   CompleteCallback,
   ErrorCallback,
   AIResponse,
@@ -20,6 +21,7 @@ import {
 
 export class ChatEngine implements IChatEngine {
   private streamCallback: StreamCallback | null = null;
+  private reasoningCallback: ReasoningCallback | null = null;
   private completeCallback: CompleteCallback | null = null;
   private errorCallback: ErrorCallback | null = null;
   private removeStreamListener: (() => void) | null = null;
@@ -29,6 +31,14 @@ export class ChatEngine implements IChatEngine {
 
   onStream(callback: StreamCallback): void {
     this.streamCallback = callback;
+  }
+
+  /**
+   * 注册思考增量回调（llama.cpp reasoning_content 独立字段，Spec: reasoning-content-display-for-llamacpp）。
+   * 与 onStream 并行触发：模型思考期间推送思考增量，正文 chunk 仍走 onStream。
+   */
+  onReasoning(callback: ReasoningCallback): void {
+    this.reasoningCallback = callback;
   }
 
   onComplete(callback: CompleteCallback): void {
@@ -465,6 +475,10 @@ export class ChatEngine implements IChatEngine {
 
   private setupEventListeners(): void {
     let tempContent = '';
+    // 思考增量累积（Spec: reasoning-content-display-for-llamacpp / Task 1）
+    // llama-server 等推理后端先推送 delta.reasoning_content（思考期），后推送 delta.content
+    // （正文期）。原实现只解析 content，思考内容被整体丢弃——用户侧表现为"模型不思考"。
+    let tempReasoning = '';
     // ⚠️【重点标记 - Bug 修复 - SSE 跨 chunk 行丢失】
     // 原用 lastProcessedLineCount 计数已处理的 data: 行数，但当一个 SSE data: 行
     // 跨越多个网络 chunk 时，不完整的行也会被 filter 匹配并计入计数（虽然 JSON.parse
@@ -503,10 +517,16 @@ export class ChatEngine implements IChatEngine {
           );
 
           let extractedFromBatch = '';
+          let reasoningFromBatch = '';
           for (const line of dataLines) {
             const content = this.parseSSEChunk(line);
             if (content) {
               extractedFromBatch += content;
+            }
+            // 思考增量提取（与 content/tool_calls 解析并行，互不影响）
+            const reasoningDelta = this.parseSSELineReasoning(line);
+            if (reasoningDelta) {
+              reasoningFromBatch += reasoningDelta;
             }
             // 【F1 修复】累积 tool_calls delta（与 content 解析并行，互不影响）
             const toolCallsDelta = this.parseSSELineToolCalls(line);
@@ -519,6 +539,10 @@ export class ChatEngine implements IChatEngine {
             tempContent += extractedFromBatch;
             this.streamCallback?.(extractedFromBatch, false);
           }
+          if (reasoningFromBatch) {
+            tempReasoning += reasoningFromBatch;
+            this.reasoningCallback?.(reasoningFromBatch, false);
+          }
         }
       } else if (data.chunk) {
         // 兼容旧格式：直接处理 chunk
@@ -526,6 +550,12 @@ export class ChatEngine implements IChatEngine {
         if (extractedContent) {
           tempContent += extractedContent;
           this.streamCallback?.(extractedContent, false);
+        }
+        // 思考增量提取（旧格式 chunk 同样可能携带 reasoning_content）
+        const reasoningDelta = this.parseSSELineReasoning(data.chunk);
+        if (reasoningDelta) {
+          tempReasoning += reasoningDelta;
+          this.reasoningCallback?.(reasoningDelta, false);
         }
         // 【F1 修复】旧格式 chunk 也需累积 tool_calls
         const toolCallsDelta = this.parseSSELineToolCalls(data.chunk);
@@ -552,9 +582,12 @@ export class ChatEngine implements IChatEngine {
             line.trim().startsWith('data: ') && line.trim().substring(6).trim() !== '[DONE]'
           );
           let remainingContent = '';
+          let remainingReasoning = '';
           for (const line of dataLines) {
             const content = this.parseSSEChunk(line);
             if (content) remainingContent += content;
+            const reasoningDelta = this.parseSSELineReasoning(line);
+            if (reasoningDelta) remainingReasoning += reasoningDelta;
             const toolCallsDelta = this.parseSSELineToolCalls(line);
             if (toolCallsDelta) {
               this.mergeToolCallDelta(accumulatedToolCalls, toolCallsDelta);
@@ -562,6 +595,10 @@ export class ChatEngine implements IChatEngine {
           }
           if (remainingContent) {
             finalContent += remainingContent;
+          }
+          if (remainingReasoning) {
+            tempReasoning += remainingReasoning;
+            this.reasoningCallback?.(remainingReasoning, false);
           }
         }
       }
@@ -607,6 +644,9 @@ export class ChatEngine implements IChatEngine {
 
       const response: AIResponse = {
         content: finalContent || '',
+        // 完整思考过程回传（Spec: reasoning-content-display-for-llamacpp / Task 1）。
+        // 仅供展示层渲染思考折叠块；禁止作为 content 回退（协议 §4.3 / 历史教训 F5）。
+        reasoningContent: tempReasoning || undefined,
         finishReason: data.data?.choices?.[0]?.finish_reason || 'stop',
         usage: data.data?.usage,
         id: data.data?.id || '',
@@ -615,6 +655,10 @@ export class ChatEngine implements IChatEngine {
       this.completeCallback?.(response);
 
       this.streamCallback?.('', true);
+      // 思考通道收尾（与 streamCallback 收尾语义对齐）
+      if (tempReasoning) {
+        this.reasoningCallback?.('', true);
+      }
       this.cleanupListeners();
     };
 
@@ -677,6 +721,57 @@ export class ChatEngine implements IChatEngine {
       const contentMatch = rawChunk.match(/"content"\s*:\s*"([^"]*)"/);
       if (contentMatch && contentMatch[1]) {
         return contentMatch[1].replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"');
+      }
+
+      return '';
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * 解析 SSE 单行数据，提取思考增量（reasoning_content）。
+   *
+   * Spec: reasoning-content-display-for-llamacpp / Task 1
+   * llama-server（--reasoning on/auto）等推理后端在流式响应中使用 `delta.reasoning_content`
+   * 独立字段输出思考过程（与 delta.content 分离，思考期间 content 为空）。
+   * parseSSEChunk 仅返回 content 字符串，无法承载思考内容，本方法为 reasoning 专用解析，
+   * 与 parseSSEChunk / parseSSELineToolCalls 并行调用（接受同一 SSE 行）。
+   *
+   * @param line 单行 SSE 数据或原始 chunk
+   * @returns 思考增量文本；非 data 行 / 无 reasoning_content / 解析失败返回 ''
+   */
+  private parseSSELineReasoning(line: string): string {
+    if (!line || line.trim().length === 0) return '';
+    try {
+      const dataLineRegex = /^data:\s+(.+)$/gm;
+      let match;
+      let extracted = '';
+      const regex = new RegExp(dataLineRegex);
+
+      while ((match = regex.exec(line)) !== null) {
+        const jsonStr = match[1].trim();
+        if (!jsonStr || jsonStr === '[DONE]') continue;
+        try {
+          const parsed = JSON.parse(jsonStr);
+          const reasoning = parsed.choices?.[0]?.delta?.reasoning_content;
+          if (typeof reasoning === 'string' && reasoning.length > 0) {
+            extracted += reasoning;
+          }
+        } catch {
+          // 忽略单行 JSON 解析错误
+        }
+      }
+
+      if (extracted) return extracted;
+
+      // Fallback: 直接 JSON 解析（非 SSE 格式的 chunk）
+      try {
+        const parsed = JSON.parse(line);
+        const reasoning = parsed.choices?.[0]?.delta?.reasoning_content;
+        if (typeof reasoning === 'string' && reasoning.length > 0) return reasoning;
+      } catch {
+        // 非 JSON，忽略
       }
 
       return '';

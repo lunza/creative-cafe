@@ -6,7 +6,7 @@ import { AIEngineSetting, AIEngineCapabilities } from '../../../types/setting';
 import { AppSetting } from '../../../settings';
 // Spec: analyze-llamacpp-model-compatibility（toOptionalNumber 修复 `Number(x) || undefined` 吞 0 的缺陷：
 // qwen 模板的 min_p=0、DRY 关闭 dry_multiplier=0 曾被吞成 undefined，导致库默认值 0.1/0.4 顶替引擎值）
-import { toOptionalNumber, getModelSeriesPreset } from '../../../../shared/modelParameterPresets';
+import { toOptionalNumber, resolveThinkingMode } from '../../../../shared/modelParameterPresets';
 
 export interface TestResult {
   success: boolean;
@@ -112,6 +112,7 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
       api_url: 'http://127.0.0.1:5000',
       api_key: '',
       model_name: 'qwen3.5-27b-heretic-v3',
+      thinking_mode: 'auto',
       api_mode: 'chat_completion',
       api_key_transmission: 'header',
       max_tokens: 10240,
@@ -134,7 +135,8 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
 
   const handleEditEngine = useCallback((engine: AIEngineSetting) => {
     setEditingEngine(engine);
-    engineForm.setFieldsValue(engine);
+    // thinking_mode normalize：undefined（旧数据/跟随系列）回填为 'auto'，Segmented 三态不显示空
+    engineForm.setFieldsValue({ ...engine, thinking_mode: engine.thinking_mode || 'auto' });
     setShowEngineModal(true);
   }, [engineForm]);
 
@@ -165,8 +167,8 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
               ...engine,
               ...values,
               model_series: values.model_series || undefined,
-              // 思考联动：由 model_series 对应模板的 thinking 字段推导（单一来源，清空系列即回退 auto）
-              thinking_mode: getModelSeriesPreset(values.model_series)?.thinking,
+              // 思考联动：表单显式选择（on/off）优先，否则由 model_series 模板推导
+              thinking_mode: resolveThinkingMode(values.thinking_mode, values.model_series),
               max_tokens: toOptionalNumber(values.max_tokens) ?? 10240,
               temperature: toOptionalNumber(values.temperature) ?? 0.7,
               top_p: toOptionalNumber(values.top_p),
@@ -201,7 +203,7 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
           api_key: values.api_key || '',
           model_name: values.model_name || 'qwen3.5-27b-heretic-v3',
           model_series: values.model_series || undefined,
-          thinking_mode: getModelSeriesPreset(values.model_series)?.thinking,
+          thinking_mode: resolveThinkingMode(values.thinking_mode, values.model_series),
           api_mode: values.api_mode || 'chat_completion',
           api_key_transmission: values.api_key_transmission || 'header',
           max_tokens: toOptionalNumber(values.max_tokens) ?? 10240,

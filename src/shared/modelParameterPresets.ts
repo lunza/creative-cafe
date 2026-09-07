@@ -146,6 +146,30 @@ export const MODEL_SERIES_PRESETS: ModelSeriesPreset[] = [
     },
   },
   {
+    id: 'deepseek',
+    label: 'DeepSeek V4 / V3.2',
+    tooltip:
+      'DeepSeek 混合思考系列（V3.1+/V3.2/V4/Flash）：思考模式官方风格基线 temperature=1.0, top_p=0.95, top_k 禁用, min_p=0, presence_penalty=0。' +
+      '⚠ 应用后请求级显式开启思考（chat_template_kwargs.enable_thinking=true）——' +
+      'llama.cpp DeepSeek V4 官方模板默认 thinking=false（与 Qwen 早期默认思考相反），' +
+      '不显式开启则模型永远不思考。推理深度 reasoning_effort 可选 high/max（模板支持）。' +
+      '来源：llama.cpp models/templates/deepseek-ai-DeepSeek-V4-Flash-0731.jinja + DeepSeek 官方 API 文档',
+    params: {
+      temperature: 1.0,
+      top_p: 0.95,
+      top_k: 0,
+      min_p: 0,
+      frequency_penalty: 0,
+      presence_penalty: 0,
+      repetition_penalty: 1.0,
+      dry_multiplier: 0,
+      dry_base: 1.75,
+      dry_allowed_length: 2,
+      no_repeat_ngram_size: 0,
+    },
+    thinking: 'on',
+  },
+  {
     id: 'muse-glimmer',
     label: 'Muse-Glimmer',
     tooltip:
@@ -214,6 +238,23 @@ export const GENERIC_MODEL_SERIES_ID = 'generic';
 export function getModelSeriesPreset(id: string | undefined | null): ModelSeriesPreset | undefined {
   if (!id) return undefined;
   return MODEL_SERIES_PRESETS.find(p => p.id === id);
+}
+
+/**
+ * 思考模式解析（表单显式选择优先于模型系列推导）。
+ *
+ * 修复背景（2026-09-08）：thinking_mode 此前仅由 model_series 推导，无独立 UI，
+ * 导致未收录系列（如 DeepSeek）或 model_name 为占位符（llama-server 单模型模式
+ * model_name 任意填，如 local-llm）的引擎永远无法开启思考——
+ * enable_chain_of_thought 又无 UI 可设（恒为 false），双条件全断。
+ * 优先级：显式 'on'/'off' > 系列模板 thinking > undefined（不干预）。
+ */
+export function resolveThinkingMode(
+  explicit: 'on' | 'off' | 'auto' | undefined,
+  seriesId: string | undefined | null
+): 'on' | 'off' | undefined {
+  if (explicit === 'on' || explicit === 'off') return explicit;
+  return getModelSeriesPreset(seriesId)?.thinking;
 }
 
 /** 通用基线参数（各处硬编码兜底值的统一来源） */

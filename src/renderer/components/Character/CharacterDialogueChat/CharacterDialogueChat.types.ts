@@ -10,6 +10,17 @@ export interface ChatMessage {
   speakerName?: string;
   /** AI 推荐选项（辅助模式开启时，AI 回复中解析出的 3 个推荐选项） */
   suggestedOptions?: string[];
+  /**
+   * AI 思考过程全文（Spec: reasoning-content-display-for-llamacpp / Task 2）。
+   *
+   * 来自推理后端流式响应的 `delta.reasoning_content` 独立字段（llama-server
+   * --reasoning on/auto、DeepSeek 官方 API 等），与 content 严格分离：
+   *   - 不参与对话上下文回传（sanitizeChatHistory 仅发送 role/content）
+   *   - 不参与 RAG / 向量化（各检索管线仅读取 content）
+   *   - 仅由气泡渲染层按 think_tag_mode='fold' 折叠展示
+   * think_tag_mode='strip' 时不存储（对齐"移除"语义）。
+   */
+  reasoning?: string;
   /** AI 回复情绪键名（Spec: add-character-expression-system），用于驱动表情图像渲染 */
   emotion?: string;
   versionInfo?: ChatMessageVersionInfo;

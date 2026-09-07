@@ -51,8 +51,8 @@ export interface DialogueStreamHandlers {
   onTable?: (result: { executed: number; errors: string[] }) => void;
   /** 辅助模式推荐选项解析结果（Spec: fix-android-chat-parity-v3；至多一次，可能不触发） */
   onOptions?: (options: string[]) => void;
-  /** 本轮对话成功完成（content 为剥离标记后的权威全文；userMessageId 供客户端同步服务端消息 id） */
-  onDone: (result: { messageId: string; userMessageId?: string; emotion: string | null; content: string; timestamp: number }) => void;
+  /** 本轮对话成功完成（content 为剥离标记后的权威全文；userMessageId 供客户端同步服务端消息 id；reasoning 为思考全文，仅 fold/strip_render 模式非空） */
+  onDone: (result: { messageId: string; userMessageId?: string; emotion: string | null; content: string; timestamp: number; reasoning?: string }) => void;
   /** 失败（此时不写入任何消息） */
   onError: (err: { code: string; message: string }) => void;
 }
@@ -355,6 +355,27 @@ function extractDeltaFromSSELine(line: string): string {
   return '';
 }
 
+/**
+ * 提取 SSE 行的思考增量（Spec: reasoning-content-display-for-llamacpp / Task 4）。
+ * 与桌面端 ChatEngine.parseSSELineReasoning 对齐：llama-server 等推理后端在思考期
+ * 推送 delta.reasoning_content（与 delta.content 严格分离），非思考期返回 ''。
+ */
+function extractReasoningFromSSELine(line: string): string {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('data: ')) return '';
+  const jsonStr = trimmed.substring(6).trim();
+  if (!jsonStr || jsonStr === '[DONE]') return '';
+  try {
+    const parsed = JSON.parse(jsonStr);
+    const reasoning = parsed?.choices?.[0]?.delta?.reasoning_content
+      ?? parsed?.choices?.[0]?.delta?.reasoning;
+    if (typeof reasoning === 'string' && reasoning.length > 0) return reasoning;
+  } catch {
+    // 单行 JSON 解析失败：忽略
+  }
+  return '';
+}
+
 // ==================== 主流程 ====================
 
 /**
@@ -623,6 +644,23 @@ export async function runDialogueTurn(
       requestBody.max_tokens = maxTokens; // 0 = 不限制（对齐桌面端语义）
     }
 
+    // 思考模式注入（2026-09-08 对齐桌面端 ChatEngine：llama-server 仅识别嵌套
+    // chat_template_kwargs.enable_thinking，顶层字段被静默忽略）。
+    // thinking_mode='on'/'off' 显式注入；缺省走 enable_chain_of_thought +
+    // supportsThinking 双条件（与 ChatEngine.ts 优先级一致）
+    const thinkingMode = (engine as any).thinking_mode;
+    const wantsThinking: boolean | undefined =
+      thinkingMode === 'off' ? false
+      : thinkingMode === 'on' ? true
+      : ((engine as any).enable_chain_of_thought === true &&
+         (engine as any).capabilities?.supportsThinking === true ? true : undefined);
+    if (wantsThinking !== undefined) {
+      requestBody.chat_template_kwargs = {
+        ...(requestBody.chat_template_kwargs as Record<string, unknown> | undefined),
+        enable_thinking: wantsThinking,
+      };
+    }
+
     // 停止序列防抢话：用户名变体 + 自定义序列合并（对齐桌面端 buildStopSequences(userName, custom)）
     const customStops = sessionConfig.customStopSequencesEnabled === true
       ? sessionConfig.customStopSequences
@@ -705,6 +743,16 @@ export async function runDialogueTurn(
     });
     const decoder = new TextDecoder();
 
+    // 独立思考通道累积（Spec: reasoning-content-display-for-llamacpp / Task 4）。
+    // delta.reasoning_content 与 content 内 <think> 标签是两条互斥路径：
+    // 服务端剥离模式下思考走 reasoning_content；strip 模式对齐桌面端不推送不存储。
+    let reasoningFull = '';
+    const handleReasoningDelta = (delta: string) => {
+      if (!delta || thinkMode === 'strip') return;
+      reasoningFull += delta;
+      handlers.onReasoning?.(delta);
+    };
+
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -717,6 +765,8 @@ export async function runDialogueTurn(
       bufferTail = bufferTail.slice(lastNewline + 1);
 
       for (const line of complete.split('\n')) {
+        const reasoningDelta = extractReasoningFromSSELine(line);
+        if (reasoningDelta) handleReasoningDelta(reasoningDelta);
         const delta = extractDeltaFromSSELine(line);
         if (delta) {
           const visible = sanitizer.push(delta);
@@ -727,6 +777,8 @@ export async function runDialogueTurn(
 
     // 处理尾部残行
     if (bufferTail.trim()) {
+      const reasoningDelta = extractReasoningFromSSELine(bufferTail);
+      if (reasoningDelta) handleReasoningDelta(reasoningDelta);
       const delta = extractDeltaFromSSELine(bufferTail);
       if (delta) {
         const visible = sanitizer.push(delta);
@@ -807,6 +859,9 @@ export async function runDialogueTurn(
       ...(emotion ? { emotion } : {}),
       // 辅助模式推荐选项持久化（与 SSE options 事件同源；重新进入对话页加载历史时可见）
       ...(suggestedOptions && suggestedOptions.length > 0 ? { options: suggestedOptions } : {}),
+      // 思考过程全文持久化（Spec: reasoning-content-display-for-llamacpp / Task 4；
+      // reasoning_content 独立通道，strip 模式下 reasoningFull 为空串不落盘）
+      ...(reasoningFull ? { reasoning: reasoningFull } : {}),
     };
 
     const greeting = contextMessages[0]?.role === 'assistant' && history.length === 0 && d.first_mes
@@ -849,6 +904,9 @@ export async function runDialogueTurn(
       emotion,
       content: finalContent,
       timestamp: assistantMessage.timestamp,
+      // 思考过程全文（Spec: reasoning-content-display-for-llamacpp / Task 4；可选字段，
+      // 老客户端忽略；strip 模式为 undefined）
+      ...(reasoningFull ? { reasoning: reasoningFull } : {}),
     });
   } catch (error) {
     const isAbort = error instanceof Error && error.name === 'AbortError';

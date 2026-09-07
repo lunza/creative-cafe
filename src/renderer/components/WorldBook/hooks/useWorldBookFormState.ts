@@ -36,7 +36,15 @@ import { useWorldBookStore } from '../../../stores/worldBookStore';
 export function useWorldBookFormState() {
   // ===== 查看世界书详情 Modal =====
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
-  const [viewingItem, setViewingItem] = useState<any>(null);
+  const [viewingItem, setViewingItemState] = useState<any>(null);
+  // viewingItemRef：与 viewingItem state 同步的 ref。
+  // 用于一键翻译/润色/审核等长循环中检测用户是否已切换/关闭世界书，
+  // 防止闭包中的旧 worldBookContent 污染当前状态后写坏目标文件（跨文件覆盖事故）。
+  const viewingItemRef = useRef<any>(null);
+  const setViewingItem = useCallback((item: any) => {
+    viewingItemRef.current = item;
+    setViewingItemState(item);
+  }, []);
   const [worldBookContent, setWorldBookContent] = useState<any>(null);
   const [expandedEntries, setExpandedEntries] = useState<Set<number | string>>(new Set());
   const [selectedEntries, setSelectedEntries] = useState<Set<number | string>>(new Set());
@@ -230,6 +238,7 @@ export function useWorldBookFormState() {
     // 查看详情
     isViewModalOpen, setIsViewModalOpen,
     viewingItem, setViewingItem,
+    viewingItemRef,
     worldBookContent, setWorldBookContent,
     expandedEntries, setExpandedEntries,
     selectedEntries, setSelectedEntries,

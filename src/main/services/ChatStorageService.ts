@@ -11,6 +11,8 @@ interface ChatMessage {
   timestamp: number;
   suggestedOptions?: string[];
   emotion?: string;
+  /** AI 思考过程全文（Spec: reasoning-content-display-for-llamacpp / Task 2，推理后端 reasoning_content 独立通道） */
+  reasoning?: string;
 }
 
 interface ChatData {

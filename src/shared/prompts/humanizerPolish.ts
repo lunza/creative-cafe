@@ -256,3 +256,39 @@ export function withHumanizerTextgenRules(systemPrompt: string): string {
 
   return systemPrompt.trimEnd() + '\n' + HUMANIZER_TEXTGEN_RULES;
 }
+
+// ==================== 对话场景变体（RP 对话流，Spec: enforce-forbidden-words-and-dialogue-naturalness / Task 5） ====================
+
+/**
+ * 对话场景规则块。
+ *
+ * 与其他变体的差异：
+ * 1. 文体总则是"像真人说话"——RP 对话轮是口语化对话文本，既非润色的"改写既有文本"，
+ *    也非世界书的"百科条目化"，也非角色卡的"设定+对话双轨"
+ * 2. 对话每轮请求都携带（长对话成本敏感），但遵循用户既定决策"完整接入不简写"
+ *    （v1/v2 蒸馏版两次因覆盖不足被打回的教训）——完整指南 + RP 词表全量
+ * 3. 与 reduce-dialogue-ai-flavor-and-repetition 的 applyMinimalDialogueRules
+ *    （行为规则，独立锚点）共存：那个管"怎么行动"，这个管"怎么说话"
+ */
+export const HUMANIZER_DIALOGUE_RULES = `\n${HUMANIZER_GENERATION_ANCHOR}（以下约束你扮演角色的说话方式——像真人说话：句式自然、口语节奏、长短句交错、不堆砌辞藻、不写书面腔）
+${HUMANIZER_RP_WARNLIST}
+
+${HUMANIZER_FULL_GUIDE}`;
+
+/**
+ * 为 RP 对话请求的 system prompt 注入去 AI 味规则块（对话场景变体）。
+ *
+ * @param systemPrompt 对话请求组装后的 system prompt
+ * @param enabled 对话自然度开关（AppSetting.dialogueNaturalness.deAiEnabled，默认 true）
+ * @returns 处理后的 system prompt
+ */
+export function withHumanizerDialogueRules(systemPrompt: string, enabled: boolean): string {
+  // 开关关闭：原样返回（对话每轮都发，开关必须能完全撤下规则块以控制 token 成本）
+  if (!enabled) return systemPrompt;
+  // 空输入保护
+  if (!systemPrompt) return systemPrompt;
+  // 锚点守卫：与生成/文本生成变体共用锚点（同一请求只会有一个变体，防重复）
+  if (systemPrompt.includes(HUMANIZER_GENERATION_ANCHOR)) return systemPrompt;
+
+  return systemPrompt.trimEnd() + '\n' + HUMANIZER_DIALOGUE_RULES;
+}

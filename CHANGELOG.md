@@ -1,5 +1,46 @@
 # Changelog
 
+## [UI重构] - 2026-09-08 - 世界书详情页布局重构（方案B：顶部粘性工具栏）
+
+- **需求**：详情 Modal 底部 10 个 primary 按钮堆叠拥挤难点击、嵌套滚动混乱（body 75vh + 卡片 200px 内滚 + 分页随内容滚走）、单条目操作散落卡片各处
+- **方案比选**：A 保守分区（滚动后仍需回底部）/ **B 顶部粘性工具栏（用户已选）** / C 紧凑列表+虚拟滚动（改动过大）
+- **重构内容（Spec: redesign-worldbook-detail-ui）**：
+  - 新增顶部粘性工具栏（滚动常驻）：左区全选+已选计数 → 批量组（翻译/润色/审核/删除，含中断态与互斥禁用）→ 管理组（AI关键词/整理/标签/添加），分区分隔线区隔，短标签+图标+Tooltip，按钮 ≥32px 高
+  - footer 精简：保存（唯一 primary）+ 关闭 + 状态摘要（总数/筛选数/已选）
+  - 卡片操作统一为右上角图标按钮行（编辑/AI关键词/编辑标签/删除，Tooltip 齐全）；复选框点击区扩大至标题行（antd Checkbox 替代原生 scale hack，indeterminate prop 原生支持）
+  - 滚动体验：自定义 .wbet-scroll-area（平滑滚动+主题滚动条+自适应高度），分页粘性固定底部，新增「回到顶部」悬浮按钮（滚动 >300px 出现）
+  - 内容预览保留 200px 折叠 + 新增「展开全部/收起」（>400 字符显示）
+  - 内联样式收敛至新文件 WorldBookEntryTable.css（全 CSS 变量，dark/light 双主题）
+- **守卫**：业务逻辑零改动（全部回调 props 原样）；Modal body 滚动改为自定义容器承载
+- **验证**：tsc 零新增错误；worldbookTools 21/21 通过；10 项核心操作接线核验齐全；dev server 已重启
+- **详见**：`.trae/specs/redesign-worldbook-detail-ui/`
+
+## [缺陷修复·追加] - 2026-09-08 - reasoning_content 独立通道消费链补全（思考已生成但应用丢弃）
+
+- **需求**：上轮思考开关全链路修复后用户反馈"仍旧没有"；ai-handler 日志实锤请求已携带 enable_thinking:true 且服务端返回思考内容，真正问题是应用不消费独立思考通道
+- **根因**：llama-server 将思考剥离到 `delta.reasoning_content`（与 delta.content 严格分离），应用只处理 content 内 `<think>` 标签路径，reasoning_content 全程被丢弃（流式抓包：思考期每 chunk rc=True content=[]）
+- **修复（Spec: reasoning-content-display-for-llamacpp）**：① hooks.ts messagesToSave 白名单补 reasoning 持久化字段 + ChatStorageService 接口；② ChatMessageBubble.tsx 气泡渲染紫色 Collapse 折叠块（流式"思考中…"动画/字数统计/320px 滚动区，fold 模式显示）；③ LAN dialogue.ts 新增 extractReasoningFromSSELine + 流式推送 + 持久化 + onDone 携带
+- **验证**：tsc 零新增错误；345 项单测全过；dev server 已重启
+- **用户验证**：引擎思考模式=开启 + 参数面板思考内容处理=折叠展示 → 气泡顶部出现折叠块
+- **详见**：`docs/FIX_RECORDS.md` §7.68 追加修复段
+
+## [缺陷修复·追加] - 2026-09-08 - 思考开关全链路三处断裂（thinking_mode 无 UI/未透传/LAN 无注入）
+
+- **需求**：上轮探测关键词修复后用户实测仍不思考（无灯泡图标），深挖发现思考开关根本到不了请求体
+- **新发现的根因**：① 用户开的「思考内容处理」（thinkTagMode）只是显示开关，不触发模型思考；② thinking_mode 无独立 UI（系列下拉无 DeepSeek 选项）、enable_chain_of_thought 全项目无 UI 可设（7 引擎实测全 false）；③ CharacterDialogueChat.hooks.ts 三处 engineConfig 构造未透传 thinking_mode（引擎存了 'on' 也到不了 ChatEngine）；④ LAN dialogue.ts 请求体无 enable_thinking 注入；⑤ model_name 为占位符（local-llm），关键词探测天然失效
+- **修复（6 文件）**：modelParameterPresets.ts 新增 DeepSeek 系列 preset（thinking:'on'）+ resolveThinkingMode 共享函数；AIEngineSettingsPanel.tsx 两处新增「思考模式」Segmented（跟随系列/开启/关闭）；Settings.tsx + useAIEngineSettings.ts 回填 normalize + 三处保存显式优先；hooks.ts 三处补透传 thinking_mode；dialogue.ts 补思考注入（对齐 ChatEngine 优先级）
+- **用户操作**：设置 → 编辑 DeepSeek 引擎 → 「思考模式」选**开启** → 保存（不再依赖测试连通性/模型名）
+- **详见**：`docs/FIX_RECORDS.md` §7.68 追加修复段
+
+## [缺陷修复] - 2026-09-08 - 开启思考后 deepseekv4-flash 等混合思考模型不思考
+
+- **需求**：引擎开启思考开关，调用 llama.cpp 上的 deepseekv4-flash 模型完全不输出思考内容；调整采样参数无效；直接在 llama.cpp web UI 测试思考正常
+- **根因**：`AIService.probeThinkingCapability` 模型名关键词探测仅覆盖 `['thinking','reasoning','r1','o1','o3','qwq']`，2025-2026 新一代混合思考模型（DeepSeek V3.1+/V4、GLM-4.5+、Qwen3+ 等）模型名不含显式关键词 → `supportsThinking=false` → ChatEngine 双条件守卫不满足 → 请求不带 `chat_template_kwargs.enable_thinking=true` → DeepSeek V4 模板默认 `thinking=false` 不思考（且 launcher 默认 `--reasoning off`）
+- **修复**：`AIService.ts` 探测关键词新增 `hybridThinkingSeries` 组（deepseek/glm/qwen3/kimi/minimax/gpt-oss）；误报无害（模板不消费 enable_thinking 时自动忽略），漏报直接吞掉用户开关
+- **用户操作**：设置 → 编辑引擎 → 重新"测试连通性"→ 保存（刷新存量 capabilities），再开启思考
+- **验证**：tsc 本次修改零新增错误；dev server 已重启
+- **详见**：`docs/FIX_RECORDS.md` §7.68
+
 ## [缺陷修复] - 2026-08-28 - 对话模式世界书关联失效 + qwen 思考模型标签输出缺失
 
 - **需求**：① 对话交互模式下无法正确关联世界书内容（触发条件、检索流程、结果匹配异常）；② qwen3.8-next-flash 模型不按要求返回表情/辅助模式标签

@@ -61,6 +61,7 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
     selectedEntries,
     formValues, setFormValues,
     viewingItem,
+    viewingItemRef,
     isProcessingRef,
     // 仅使用 setter 的状态值不在此处解构，避免 noUnusedLocals 错误。
     // 这些状态值仍由 useWorldBookFormState 暴露给编排层 WorldBookManager 在 JSX 中读取。
@@ -873,9 +874,18 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
 
       const newContent = JSON.parse(JSON.stringify(worldBookContent));
 
+      // 记录本次操作开始时的世界书路径；循环中检测用户是否切换/关闭了世界书（防跨文件覆盖）
+      const operationStartPath = viewingItem?.path;
+
       for (let i = 0; i < entries.length; i++) {
         const entry = entries[i];
         try {
+          if (viewingItemRef.current?.path !== operationStartPath) {
+            addLog(`[WorldBook] 检测到世界书已切换/关闭，中止批量关键词生成以防止跨文件覆盖`, 'warn');
+            message.warning('检测到已切换或关闭世界书，批量关键词生成已中止');
+            return;
+          }
+
           addLog(`[WorldBook] 正在为条目 ${entry.comment || entry.uid} 生成关键词 (${i + 1}/${entries.length})`);
 
           const keywords = await generateKeywords(entry.content || '', entry.comment || '', description);
@@ -1068,10 +1078,22 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
 
       let translatedCount = 0;
 
+      // 记录本次操作开始时的世界书路径；循环中检测用户是否切换/关闭了世界书，
+      // 切换后立即中止，防止闭包中的旧 worldBookContent 污染状态并写坏目标文件。
+      const operationStartPath = viewingItem?.path;
+
       for (const entry of entries) {
         if (!isProcessingRef.current) {
           addLog(`[WorldBook] 一键翻译已被用户中断`, 'warn');
           message.info('已中断翻译');
+          return;
+        }
+
+        if (viewingItemRef.current?.path !== operationStartPath) {
+          addLog(`[WorldBook] 检测到世界书已切换/关闭，中止一键翻译以防止跨文件覆盖 (起始: ${operationStartPath}, 当前: ${viewingItemRef.current?.path ?? '已关闭'})`, 'warn');
+          message.warning('检测到已切换或关闭世界书，一键翻译已中止');
+          isProcessingRef.current = false;
+          setIsTranslatingAll(false);
           return;
         }
 
@@ -1147,13 +1169,15 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
         message.success(`已翻译 ${translatedCount}/${entries.length} 个条目`, 1);
       }
 
-      // 重新读取世界书内容，确保显示最新数据
-      const content = await window.electronAPI.worldBook.read(viewingItem!.path);
-      setWorldBookContent(content);
+      // 重新读取世界书内容，确保显示最新数据（若用户已切换世界书则跳过，避免污染状态）
+      if (viewingItemRef.current?.path === operationStartPath) {
+        const content = await window.electronAPI.worldBook.read(viewingItem!.path);
+        setWorldBookContent(content);
+      }
 
       const totalEndTime = Date.now();
       const totalDuration = (totalEndTime - totalStartTime) / 1000;
-      addLog(`[WorldBook] 一键翻译全部完成: 共${translatedCount}个条目, 总耗时=${totalDuration}秒, 平均每个条目=${(totalDuration/translatedCount).toFixed(2)}秒`, 'info');
+      addLog(`[WorldBook] 一键翻译全部完成: 共${translatedCount}个条目, 总耗时=${totalDuration}秒, 平均每个条目=${translatedCount > 0 ? (totalDuration/translatedCount).toFixed(2) : '0'}秒`, 'info');
 
       message.success(`成功翻译 ${translatedCount} 个条目，总耗时 ${totalDuration.toFixed(2)} 秒`);
       isProcessingRef.current = false;
@@ -1285,10 +1309,21 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
       let auditedCount = 0;
       let appliedCount = 0;
 
+      // 记录本次操作开始时的世界书路径；循环中检测用户是否切换/关闭了世界书（防跨文件覆盖）
+      const operationStartPath = viewingItem?.path;
+
       for (const entry of entries) {
         if (!isProcessingRef.current) {
           addLog(`[WorldBook] 一键审核已被用户中断`, 'warn');
           message.info('已中断审核');
+          return;
+        }
+
+        if (viewingItemRef.current?.path !== operationStartPath) {
+          addLog(`[WorldBook] 检测到世界书已切换/关闭，中止一键审核以防止跨文件覆盖 (起始: ${operationStartPath}, 当前: ${viewingItemRef.current?.path ?? '已关闭'})`, 'warn');
+          message.warning('检测到已切换或关闭世界书，一键审核已中止');
+          isProcessingRef.current = false;
+          setIsAuditingAll(false);
           return;
         }
 
@@ -1333,23 +1368,31 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
           });
 
           // 如果用户采用了审核文本（通过 applyAuditResultForBatch 设置），则更新条目
+          // 注意：等待 Modal 期间用户可能已切换世界书，写入前必须再次校验
           if (batchAppliedTextRef.current) {
-            entryAny.content = batchAppliedTextRef.current;
-            batchAppliedTextRef.current = null;
-            appliedCount++;
+            if (viewingItemRef.current?.path !== operationStartPath) {
+              addLog(`[WorldBook] 检测到世界书已切换/关闭，跳过审核文本保存以防止跨文件覆盖`, 'warn');
+              batchAppliedTextRef.current = null;
+            } else {
+              entryAny.content = batchAppliedTextRef.current;
+              batchAppliedTextRef.current = null;
+              appliedCount++;
 
-            setWorldBookContent({ ...worldBookContent });
-            await window.electronAPI.worldBook.write(viewingItem!.path, worldBookContent);
-            addLog(`[WorldBook] 条目审核文本已采用并保存: UID=${entryUid}`);
+              setWorldBookContent({ ...worldBookContent });
+              await window.electronAPI.worldBook.write(viewingItem!.path, worldBookContent);
+              addLog(`[WorldBook] 条目审核文本已采用并保存: UID=${entryUid}`);
+            }
           }
 
           message.success(`已审核 ${auditedCount}/${entries.length} 个条目`, 1);
         }
       }
 
-      // 重新读取世界书内容
-      const content = await window.electronAPI.worldBook.read(viewingItem!.path);
-      setWorldBookContent(content);
+      // 重新读取世界书内容（若用户已切换世界书则跳过，避免污染状态）
+      if (viewingItemRef.current?.path === operationStartPath) {
+        const content = await window.electronAPI.worldBook.read(viewingItem!.path);
+        setWorldBookContent(content);
+      }
 
       const totalEndTime = Date.now();
       const totalDuration = (totalEndTime - totalStartTime) / 1000;
@@ -1430,10 +1473,21 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
 
       let polishedCount = 0;
 
+      // 记录本次操作开始时的世界书路径；循环中检测用户是否切换/关闭了世界书（防跨文件覆盖）
+      const operationStartPath = viewingItem?.path;
+
       for (const entry of entries) {
         if (!isProcessingRef.current) {
           addLog(`[WorldBook] 一键润色已被用户中断`, 'warn');
           message.info('已中断润色');
+          return;
+        }
+
+        if (viewingItemRef.current?.path !== operationStartPath) {
+          addLog(`[WorldBook] 检测到世界书已切换/关闭，中止一键润色以防止跨文件覆盖 (起始: ${operationStartPath}, 当前: ${viewingItemRef.current?.path ?? '已关闭'})`, 'warn');
+          message.warning('检测到已切换或关闭世界书，一键润色已中止');
+          isProcessingRef.current = false;
+          setIsPolishingAll(false);
           return;
         }
 
@@ -1465,13 +1519,15 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
         message.success(`已润色 ${polishedCount}/${entries.length} 个条目`, 1);
       }
 
-      // 重新读取世界书内容，确保显示最新数据
-      const content = await window.electronAPI.worldBook.read(viewingItem!.path);
-      setWorldBookContent(content);
+      // 重新读取世界书内容，确保显示最新数据（若用户已切换世界书则跳过，避免污染状态）
+      if (viewingItemRef.current?.path === operationStartPath) {
+        const content = await window.electronAPI.worldBook.read(viewingItem!.path);
+        setWorldBookContent(content);
+      }
 
       const totalEndTime = Date.now();
       const totalDuration = (totalEndTime - totalStartTime) / 1000;
-      addLog(`[WorldBook] 一键润色全部完成: 共${polishedCount}个条目, 总耗时=${totalDuration}秒, 平均每个条目=${(totalDuration/polishedCount).toFixed(2)}秒`, 'info');
+      addLog(`[WorldBook] 一键润色全部完成: 共${polishedCount}个条目, 总耗时=${totalDuration}秒, 平均每个条目=${polishedCount > 0 ? (totalDuration/polishedCount).toFixed(2) : '0'}秒`, 'info');
 
       message.success(`成功润色 ${polishedCount} 个条目，总耗时 ${totalDuration.toFixed(2)} 秒`);
       isProcessingRef.current = false;

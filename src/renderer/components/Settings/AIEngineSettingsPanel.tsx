@@ -222,6 +222,20 @@ const AIEngineSettingsPanel: React.FC<AIEngineSettingsPanelProps> = ({ form }) =
             />
           </Form.Item>
 
+          <Form.Item
+            label="思考模式"
+            name="thinking_mode"
+            tooltip="控制请求是否注入 enable_thinking 思考开关。开启：请求级显式开启思考（DeepSeek V4/GLM/Qwen3 等混合思考模型在 llama.cpp 默认不思考，必须显式开启）；关闭：请求级关闭思考；跟随系列：按「模型系列参数模板」推导。对话参数面板的「思考内容处理」仅控制思考内容的显示方式，不是此开关。"
+          >
+            <Segmented
+              options={[
+                { label: '跟随系列', value: 'auto' },
+                { label: '开启', value: 'on' },
+                { label: '关闭', value: 'off' },
+              ]}
+            />
+          </Form.Item>
+
           <Form.Item>
             <Button
               type="primary"
@@ -493,6 +507,19 @@ const AIEngineSettingsPanel: React.FC<AIEngineSettingsPanelProps> = ({ form }) =
                   { label: '自动', value: 'auto' },
                   { label: '强制开启', value: 'force-on' },
                   { label: '强制关闭', value: 'force-off' },
+                ]}
+              />
+            </Form.Item>
+            <Form.Item
+              label="思考模式"
+              name="thinking_mode"
+              tooltip="控制请求是否注入 enable_thinking 思考开关。开启：请求级显式开启思考（DeepSeek V4/GLM/Qwen3 等混合思考模型在 llama.cpp 默认不思考，必须显式开启）；关闭：请求级关闭思考；跟随系列：按「模型系列参数模板」推导。对话参数面板的「思考内容处理」仅控制思考内容的显示方式，不是此开关。"
+            >
+              <Segmented
+                options={[
+                  { label: '跟随系列', value: 'auto' },
+                  { label: '开启', value: 'on' },
+                  { label: '关闭', value: 'off' },
                 ]}
               />
             </Form.Item>

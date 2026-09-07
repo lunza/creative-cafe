@@ -166,6 +166,21 @@ export interface AIEngineConfig {
 // 流式回调函数类型
 export type StreamCallback = (chunk: string, isDone: boolean) => void;
 
+/**
+ * 思考增量回调函数类型（Spec: reasoning-content-display-for-llamacpp / Task 1）。
+ *
+ * llama-server（--reasoning on/auto）等推理后端在流式响应中以 `delta.reasoning_content`
+ * 独立字段输出思考过程（与 delta.content 分离）。ChatEngine 解析该字段后通过本回调
+ * 推送思考增量，与 onStream（正文）并行触发：
+ *   - 模型思考期间：仅触发本回调（content 为空）
+ *   - 正文生成期间：仅触发 onStream
+ *   - 流结束：以 ('', true) 收尾（与 StreamCallback 语义对齐）
+ *
+ * ⚠ 协议规范（16_THINKING_MODE_SAMPLING_CONFIG.md §4.3）：思考内容与正文严格分离，
+ * 禁止将 reasoning_content 作为 content 的回退（思考中模型会复述/分析提示词——历史教训 F5）。
+ */
+export type ReasoningCallback = (chunk: string, isDone: boolean) => void;
+
 // 完成回调函数类型
 export type CompleteCallback = (response: AIResponse) => void;
 
@@ -175,6 +190,15 @@ export type ErrorCallback = (error: AIError) => void;
 // AI响应接口
 export interface AIResponse {
   content: string;
+  /**
+   * 完整思考过程文本（Spec: reasoning-content-display-for-llamacpp / Task 1）。
+   *
+   * 来自流式响应中 `delta.reasoning_content` 增量的累积（llama-server --reasoning on/auto、
+   * DeepSeek 官方 API 等推理后端）。与 content 严格分离，仅供展示层渲染思考折叠块，
+   * 禁止回填为 content 或拼入对话上下文（协议规范 §4.3 / 历史教训 F5）。
+   * 非思考模型 / 思考关闭时为 undefined。
+   */
+  reasoningContent?: string;
   finishReason: string;
   usage?: {
     promptTokens: number;
@@ -214,6 +238,7 @@ export interface IChatEngine {
   cancelRequest(): void;
 
   onStream(callback: StreamCallback): void;
+  onReasoning?(callback: ReasoningCallback): void;
   onComplete(callback: CompleteCallback): void;
   onError(callback: ErrorCallback): void;
 }

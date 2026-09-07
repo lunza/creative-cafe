@@ -268,6 +268,44 @@
   position: relative;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
+
+/* ===== 思考过程折叠块（Spec: reasoning-content-display-for-llamacpp / Task 3） ===== */
+.chat-msg-reasoning-collapse {
+  margin-bottom: 10px;
+  background: rgba(114, 46, 209, 0.08);
+  border: 1px solid rgba(114, 46, 209, 0.25);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.chat-msg-reasoning-collapse .ant-collapse-header {
+  padding: 6px 12px !important;
+  font-size: 12px;
+  color: #b39ddb;
+}
+.chat-msg-reasoning-collapse .ant-collapse-content-box {
+  padding: 8px 12px !important;
+}
+.chat-msg-reasoning-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.chat-msg-reasoning-chars {
+  font-size: 11px;
+  opacity: 0.6;
+}
+.chat-msg-reasoning-body {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--chat-text-secondary, #9ca3af);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
 .chat-msg-bubble.is-user {
   background: var(--chat-bubble-user-bg, linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%));
   color: var(--chat-bubble-user-color, #fff);

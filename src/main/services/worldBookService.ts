@@ -75,6 +75,17 @@ class WorldBookService {
   private readonly keywordMatcherCache = new Map<string, KeywordMatcherCacheEntry>();
   private readonly keywordMatcherCacheMaxSize = 16;
 
+  /**
+   * 写入前备份：最近一次备份时间戳（按文件路径）。
+   * 用于一键翻译/润色等"每条目写一次文件"的场景下做时间窗口去重，
+   * 避免一次批量操作产生上百份备份。
+   */
+  private readonly writeBackupTimestamps = new Map<string, number>();
+  /** 同一文件的备份时间窗口（10 分钟） */
+  private static readonly BACKUP_INTERVAL_MS = 10 * 60 * 1000;
+  /** 每本世界书保留的最大备份份数 */
+  private static readonly BACKUP_MAX_PER_FILE = 5;
+
   constructor() {
     const userDataPath = getUserDataPath();
     this.worldBookDir = path.join(userDataPath, 'data', 'worldbooks');
@@ -276,8 +287,57 @@ class WorldBookService {
     }
   }
 
+  /**
+   * 写入前备份现有文件到 <世界书目录>/.backups/。
+   *
+   * 动机：曾发生"一键翻译期间切换世界书 → 状态污染 → 保存时 A 的内容覆盖 B 文件"
+   * 的事故，且 writeFile 直接覆盖无任何后悔药。此备份为最后兜底：
+   * - 同一文件 10 分钟窗口内只备份一次（防批量操作产生海量备份）
+   * - 每本世界书滚动保留最近 5 份
+   * - 备份失败仅记录日志，不阻断正常写入
+   */
+  private async backupBeforeWrite(filePath: string): Promise<void> {
+    try {
+      // 目标文件不存在（新建）则无需备份
+      try {
+        await fs.access(filePath);
+      } catch {
+        return;
+      }
+
+      const now = Date.now();
+      const last = this.writeBackupTimestamps.get(filePath) ?? 0;
+      if (now - last < WorldBookService.BACKUP_INTERVAL_MS) return;
+
+      const backupDir = path.join(path.dirname(filePath), '.backups');
+      await fs.mkdir(backupDir, { recursive: true });
+
+      const base = path.basename(filePath, path.extname(filePath));
+      const stamp = new Date(now)
+        .toISOString()
+        .replace(/[:.]/g, '-') // Windows 文件名禁止 : .
+        .replace('T', '_');
+      const backupPath = path.join(backupDir, `${base}.${stamp}.json`);
+      await fs.copyFile(filePath, backupPath);
+      this.writeBackupTimestamps.set(filePath, now);
+
+      // 滚动清理：仅保留最近 N 份（文件名含时间戳，字典序即时间序）
+      const prefix = `${base}.`;
+      const backups = (await fs.readdir(backupDir))
+        .filter(f => f.startsWith(prefix) && f.endsWith('.json') && f !== `${base}.json`)
+        .sort();
+      for (let i = 0; i < backups.length - WorldBookService.BACKUP_MAX_PER_FILE; i++) {
+        await fs.unlink(path.join(backupDir, backups[i])).catch(() => {});
+      }
+    } catch (err) {
+      console.warn('[WorldBookService] backupBeforeWrite failed (non-blocking):', err);
+    }
+  }
+
   async writeWorldBook(filePath: string, data: any) {
     try {
+      // 写入前备份现有文件（防止误覆盖不可恢复）
+      await this.backupBeforeWrite(filePath);
       const standardizedData = this.standardizeWorldBookContent(data);
       const exportData = this.exportToSillyTavernFormat(standardizedData);
       await fs.writeFile(filePath, JSON.stringify(exportData, null, 2), 'utf-8');

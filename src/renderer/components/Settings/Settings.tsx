@@ -17,7 +17,9 @@ import TagRagSettings, { TagRagSettingsRef } from './TagRagSettings';
 import BlockedWordsSettings, { BlockedWordsSettingsRef } from './BlockedWordsSettings';
 import './Settings.css';
 // Spec: analyze-llamacpp-model-compatibility（思考联动：model_series → thinking_mode 推导）
-import { getModelSeriesPreset } from '../../../shared/modelParameterPresets';
+// 2026-09-08：思考模式改为表单显式选择优先（resolveThinkingMode），修复 DeepSeek 等
+// 未收录系列/占位符 model_name 引擎无法开启思考的问题
+import { resolveThinkingMode } from '../../../shared/modelParameterPresets';
 
 const Settings: React.FC = () => {
   const [form] = Form.useForm();
@@ -62,6 +64,7 @@ const Settings: React.FC = () => {
         api_key: engine?.api_key || '',
         model_name: engine?.model_name || '',
         model_series: engine?.model_series,
+        thinking_mode: engine?.thinking_mode || 'auto',
         api_key_transmission: engine?.api_key_transmission || 'header',
         agentModeOverride: engine?.agentModeOverride || 'auto',
         max_tokens: (typeof engine?.max_tokens === 'number' && engine.max_tokens > 0) ? engine.max_tokens : 10240,
@@ -117,8 +120,8 @@ const Settings: React.FC = () => {
               api_key: values.api_key || '',
               model_name: values.model_name || '',
               model_series: values.model_series || undefined,
-              // 思考联动：由 model_series 对应模板的 thinking 字段推导（单一来源，清空系列即回退 auto）
-              thinking_mode: getModelSeriesPreset(values.model_series)?.thinking,
+              // 思考联动：表单显式选择（on/off）优先，否则由 model_series 模板推导
+              thinking_mode: resolveThinkingMode(values.thinking_mode, values.model_series),
               api_key_transmission: values.api_key_transmission || 'header',
               agentModeOverride: values.agentModeOverride || 'auto',
               max_tokens: toOptionalNumber(values.max_tokens) ?? 10240,
@@ -152,6 +155,8 @@ const Settings: React.FC = () => {
         const tagRagConfig = tagRagConfigRef.current?.getFormValues();
         // Spec: add-forbidden-words-prompt / Task 4
         const blockedWordsConfig = blockedWordsConfigRef.current?.getFormValues();
+        // Spec: enforce-forbidden-words-and-dialogue-naturalness / Task 2（对话自然度分组）
+        const dialogueNaturalnessConfig = blockedWordsConfigRef.current?.getDialogueNaturalnessValues();
 
         const updatedSetting = {
           ...setting,
@@ -165,6 +170,7 @@ const Settings: React.FC = () => {
           ...(tagAutocompleteConfig ? { tagAutocomplete: tagAutocompleteConfig } : {}),
           ...(tagRagConfig ? { tagRag: tagRagConfig } : {}),
           ...(blockedWordsConfig ? { forbiddenWords: blockedWordsConfig } : {}),
+          ...(dialogueNaturalnessConfig ? { dialogueNaturalness: dialogueNaturalnessConfig } : {}),
         };
 
         addLog(`更新后的设置: ${JSON.stringify(updatedSetting)}`, 'info');

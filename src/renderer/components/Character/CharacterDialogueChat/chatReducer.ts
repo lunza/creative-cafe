@@ -37,6 +37,7 @@ export interface ChatReducerState {
 export type ChatAction =
   | { type: 'SEND_MESSAGE'; messages: ChatMessage[] }
   | { type: 'STREAM_CHUNK'; targetMessageId: string; content: string }
+  | { type: 'STREAM_REASONING'; targetMessageId: string; reasoning: string }
   | { type: 'STREAM_COMPLETE'; messages: ChatMessage[] }
   | { type: 'STREAM_ERROR'; targetMessageId: string; content: string; error: string | null }
   | { type: 'SET_LOADING'; isLoading: boolean; isStreaming: boolean }
@@ -76,6 +77,19 @@ export function chatReducer(state: ChatReducerState, action: ChatAction): ChatRe
         messages: state.messages.map(msg =>
           msg.id === action.targetMessageId
             ? { ...msg, content: action.content, status: 'sending' as const }
+            : msg
+        ),
+      };
+
+    case 'STREAM_REASONING':
+      // 流式思考增量更新（Spec: reasoning-content-display-for-llamacpp / Task 2）。
+      // reasoning 为累积全文（与 STREAM_CHUNK 的 content 语义一致），仅更新思考字段，
+      // 不触碰 content / status——思考期间 content 保持空、状态由 STREAM_CHUNK 维护。
+      return {
+        ...state,
+        messages: state.messages.map(msg =>
+          msg.id === action.targetMessageId
+            ? { ...msg, reasoning: action.reasoning }
             : msg
         ),
       };

@@ -656,11 +656,33 @@ export class AIService {
 
   /**
    * 探测模型是否支持思维链（基于模型名关键词匹配）
+   *
+   * 修复（2026-09-08）：新增 hybridThinkingSeries 系列。2025-2026 新一代混合思考模型
+   * （DeepSeek V3.1+/V4、GLM-4.5+、Qwen3+、Kimi K2/K3、MiniMax M1+、GPT-OSS 等）
+   * 模型名不含显式思考关键词，导致 supportsThinking 误判为 false → 用户开启思考后
+   * 请求不带 chat_template_kwargs.enable_thinking → llama.cpp 模板默认 thinking=false
+   * → 模型完全不思考（deepseekv4-flash 实测复现）。
+   *
+   * 误报安全性：supportsThinking=true 仅在用户显式开启思考时注入
+   * chat_template_kwargs.enable_thinking=true；不消费该模板变量的模型会自动忽略，
+   * 无副作用。依据：llama.cpp models/templates/*.jinja（deepseek V4 模板
+   * L4-L8 显式回退 enable_thinking → thinking；GLM-4.6/Qwen3 同类分支）。
    */
   probeThinkingCapability(modelName: string): boolean {
     const lower = (modelName || '').toLowerCase();
     const keywords = ['thinking', 'reasoning', 'r1', 'o1', 'o3', 'qwq'];
-    return keywords.some(kw => lower.includes(kw));
+    const hybridThinkingSeries = [
+      'deepseek',   // V3.1/V3.2/V4 全系混合思考（V3 及更老误报无害：模板忽略未知变量）
+      'glm',        // GLM-4.5+/GLM-5 混合思考
+      'qwen3',      // Qwen3+ 全系混合思考（enable_thinking 为 Qwen3 引入）
+      'kimi',       // K2-Thinking/K3 思考系
+      'minimax',    // M1/M2/M3 思考系
+      'gpt-oss',    // OpenAI open-weight 推理模型
+    ];
+    return (
+      keywords.some(kw => lower.includes(kw)) ||
+      hybridThinkingSeries.some(kw => lower.includes(kw))
+    );
   }
 
   /**

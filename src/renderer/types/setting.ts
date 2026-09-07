@@ -562,6 +562,24 @@ export interface AppSetting {
    * 旧配置兼容：可选字段，缺失时 ForbiddenWordsPromptProvider 使用 DEFAULT_FORBIDDEN_WORDS_CONFIG。
    */
   forbiddenWords?: ForbiddenWordsConfig;
+
+  /**
+   * 对话自然度配置（Spec: enforce-forbidden-words-and-dialogue-naturalness / Task 2）。
+   *
+   * 持久化策略：与 forbiddenWords 一致，随整体 setting 持久化。
+   * 可选字段：缺失时 deAiEnabled=true / samplingPresetEnabled=false。
+   */
+  dialogueNaturalness?: DialogueNaturalnessConfig;
+}
+
+/**
+ * 对话自然度配置 — 控制对话请求的去AI味词表注入与采样预设覆盖。
+ */
+export interface DialogueNaturalnessConfig {
+  /** 对话去AI味词表注入开关（humanizerPolish 对话变体），默认 true */
+  deAiEnabled?: boolean;
+  /** 对话采样预设开关（按模型系列覆盖采样参数，对齐 llamacpp 兼容文档 5.1），默认 false */
+  samplingPresetEnabled?: boolean;
 }
 
 export type AIEngine = AIEngineSetting;

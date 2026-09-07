@@ -2,21 +2,26 @@
  * ForbiddenWordsSettings — 禁词提示词注入设置面板
  *
  * Spec: add-forbidden-words-prompt / Task 4
+ * Spec: enforce-forbidden-words-and-dialogue-naturalness / Task 2（执行模式 + 对话自然度分组）
  *
  * 职责：
  *  1. 全局开关（启用禁词提示词注入）→ forbiddenWords.enabled
  *  2. 禁词类别管理（添加/编辑/删除/导入/导出）→ forbiddenWords.categories
+ *  3. 输出合规执行模式（prompt-only / retry / retry-and-replace）→ forbiddenWords.enforcement 等
+ *  4. 对话自然度分组（去AI味开关 + 采样预设开关）→ dialogueNaturalness
  *
  * 配置读写方式（与 TagAutocompleteSettings / WebSearchSettings 一致）：
  *  - 读取：useSettingStore 的 setting.forbiddenWords（Zustand store）
- *  - 保存：通过 forwardRef + useImperativeHandle 暴露 getFormValues()，
- *          由 Settings.tsx 的 handleSave 合并到 updatedSetting.forbiddenWords 中保存
+ *  - 保存：通过 forwardRef + useImperativeHandle 暴露 getFormValues() / getDialogueNaturalnessValues()，
+ *          由 Settings.tsx 的 handleSave 合并到 updatedSetting 中保存
  */
 import { forwardRef, useImperativeHandle, useState, useEffect, useCallback } from 'react';
 import {
   Card,
   Form,
   Input,
+  InputNumber,
+  Radio,
   Button,
   Switch,
   Space,
@@ -38,8 +43,9 @@ import {
   WarningOutlined,
 } from '@ant-design/icons';
 import { useSettingStore } from '../../stores/settingStore';
-import type { ForbiddenWordsConfig, ForbiddenWordCategory } from '@shared/types/forbiddenWords';
-import { DEFAULT_FORBIDDEN_WORDS_CONFIG } from '@shared/types/forbiddenWords';
+import type { ForbiddenWordsConfig, ForbiddenWordCategory, ForbiddenWordsEnforcement } from '@shared/types/forbiddenWords';
+import { DEFAULT_FORBIDDEN_WORDS_CONFIG, DEFAULT_ENFORCEMENT, DEFAULT_REPLACEMENT_TEXT, DEFAULT_MAX_RETRIES } from '@shared/types/forbiddenWords';
+import type { DialogueNaturalnessConfig } from '../../types/setting';
 
 const { Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -50,6 +56,8 @@ const { TextArea } = Input;
  */
 export interface BlockedWordsSettingsRef {
   getFormValues: () => ForbiddenWordsConfig | undefined;
+  /** 对话自然度配置（Spec: enforce-forbidden-words-and-dialogue-naturalness / Task 2） */
+  getDialogueNaturalnessValues: () => DialogueNaturalnessConfig | undefined;
 }
 
 /** JSON 文件选择对话框过滤器 */
@@ -82,6 +90,8 @@ const BlockedWordsSettings = forwardRef<BlockedWordsSettingsRef>((_props, ref) =
   const [editingIndex, setEditingIndex] = useState(-1);
   // 编辑表单数据
   const [editForm, setEditForm] = useState<ForbiddenWordCategory>({ ...EMPTY_CATEGORY });
+  // 对话自然度配置（Spec: enforce-forbidden-words-and-dialogue-naturalness / Task 2）
+  const [dialogueNaturalness, setDialogueNaturalness] = useState<DialogueNaturalnessConfig>({});
 
   // 暴露 getFormValues 给父组件
   useImperativeHandle(ref, () => ({
@@ -93,6 +103,7 @@ const BlockedWordsSettings = forwardRef<BlockedWordsSettingsRef>((_props, ref) =
         categories, // 使用本地列表状态
       } as ForbiddenWordsConfig;
     },
+    getDialogueNaturalnessValues: () => ({ ...dialogueNaturalness }),
   }));
 
   // 当 setting 加载/变化时，初始化表单和列表
@@ -109,6 +120,13 @@ const BlockedWordsSettings = forwardRef<BlockedWordsSettingsRef>((_props, ref) =
     };
     form.setFieldsValue(initialValues);
     setCategories(initialValues.categories || []);
+    // 对话自然度：存量配置缺字段取默认语义（deAiEnabled 默认开 / samplingPresetEnabled 默认关），
+    // 此处落显式值，保存后写入 settings.json
+    const savedDn = setting?.dialogueNaturalness;
+    setDialogueNaturalness({
+      deAiEnabled: savedDn?.deAiEnabled !== false,
+      samplingPresetEnabled: savedDn?.samplingPresetEnabled === true,
+    });
   }, [setting, form]);
 
   // ===== 类别编辑 Modal 操作 =====
@@ -296,7 +314,122 @@ const BlockedWordsSettings = forwardRef<BlockedWordsSettingsRef>((_props, ref) =
         >
           <Switch />
         </Form.Item>
+
+        {/* ==================== 输出合规执行模式 ==================== */}
+        <Form.Item
+          name="enforcement"
+          label={
+            <Space>
+              <span>输出合规执行模式</span>
+              <Tooltip title="提示词注入是软约束，模型仍可能输出禁词。执行模式决定命中后的处理策略；仅 retry-and-replace 能保证 100% 合规">
+                <QuestionCircleOutlined />
+              </Tooltip>
+            </Space>
+          }
+          initialValue={DEFAULT_ENFORCEMENT}
+        >
+          <Radio.Group>
+            <Space direction="vertical">
+              <Radio value="prompt-only">
+                仅提示词约束（软约束） — 命中后仅记录日志，不处理
+              </Radio>
+              <Radio value="retry">
+                命中后自动重试 — 带违规反馈重新生成，超限后保留原文
+              </Radio>
+              <Radio value="retry-and-replace">
+                重试 + 硬替换（默认，100% 合规） — 重试超限后替换命中词入库
+              </Radio>
+            </Space>
+          </Radio.Group>
+        </Form.Item>
+
+        {/* 替换文本 / 重试次数：按执行模式条件显示 */}
+        <Form.Item noStyle shouldUpdate={(prev, cur) => prev.enforcement !== cur.enforcement}>
+          {({ getFieldValue }) => {
+            const enforcement: ForbiddenWordsEnforcement =
+              getFieldValue('enforcement') || DEFAULT_ENFORCEMENT;
+            return (
+              <Space direction="vertical" style={{ width: '100%' }} size={12}>
+                {enforcement === 'retry-and-replace' && (
+                  <Form.Item
+                    name="replacementText"
+                    label={
+                      <Space>
+                        <span>替换文本</span>
+                        <Tooltip title="重试超限后，命中词将替换为此文本（默认 ***）">
+                          <QuestionCircleOutlined />
+                        </Tooltip>
+                      </Space>
+                    }
+                    initialValue={DEFAULT_REPLACEMENT_TEXT}
+                    style={{ marginBottom: 0 }}
+                  >
+                    <Input placeholder="***" style={{ maxWidth: 240 }} />
+                  </Form.Item>
+                )}
+                {enforcement !== 'prompt-only' && (
+                  <Form.Item
+                    name="maxRetries"
+                    label={
+                      <Space>
+                        <span>合规重试上限</span>
+                        <Tooltip title="命中禁词后最多重新生成的次数（1-5，默认 2）">
+                          <QuestionCircleOutlined />
+                        </Tooltip>
+                      </Space>
+                    }
+                    initialValue={DEFAULT_MAX_RETRIES}
+                    style={{ marginBottom: 0 }}
+                  >
+                    <InputNumber min={1} max={5} precision={0} style={{ width: 120 }} />
+                  </Form.Item>
+                )}
+              </Space>
+            );
+          }}
+        </Form.Item>
       </Form>
+
+      {/* ==================== 对话自然度分组 ==================== */}
+      {/* 注：antd v7 Divider orientation 类型损坏（TagRagSettings 同款存量错误），改用样式标题 */}
+      <div
+        style={{
+          margin: '20px 0 12px',
+          paddingBottom: 8,
+          fontWeight: 600,
+          fontSize: 14,
+          borderBottom: '1px solid rgba(128, 128, 128, 0.2)',
+        }}
+      >
+        对话自然度
+      </div>
+      <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
+          <div>
+            <Text strong>对话去AI味</Text>
+            <Paragraph style={{ margin: '2px 0 0', fontSize: 12, color: '#9ca3af' }}>
+              注入真人化说话方式约束（RP 词表 + 27 种 AI 写作模式修正），降低对话的机器感
+            </Paragraph>
+          </div>
+          <Switch
+            checked={dialogueNaturalness.deAiEnabled !== false}
+            onChange={checked => setDialogueNaturalness(prev => ({ ...prev, deAiEnabled: checked }))}
+          />
+        </div>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
+          <div>
+            <Text strong>对话采样预设（按模型系列）</Text>
+            <Paragraph style={{ margin: '2px 0 0', fontSize: 12, color: '#9ca3af' }}>
+              按当前引擎模型系列覆盖请求采样参数（qwen: temp 0.7 / top_p 0.8；gemma: temp 1.0 / top_p 0.95），
+              仅影响请求体，不修改引擎配置。默认关闭
+            </Paragraph>
+          </div>
+          <Switch
+            checked={dialogueNaturalness.samplingPresetEnabled === true}
+            onChange={checked => setDialogueNaturalness(prev => ({ ...prev, samplingPresetEnabled: checked }))}
+          />
+        </div>
+      </Space>
 
       {/* ==================== 类别管理 ==================== */}
       <div style={{ marginTop: 16 }}>

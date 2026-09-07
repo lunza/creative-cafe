@@ -6637,3 +6637,153 @@ const effectiveTimeout = callerUnlimited ? 0 : (timeout || configuredRequestTime
 
 **验证：**
 `PromptTemplateService.test.ts` + `characterFieldScope.test.ts` 共 41 个测试全部通过；`tsc --noEmit` 本次涉及文件零新增错误；dev server 已重启，Electron 正常启动。
+
+## §7.67 ⚠️⚠️ 重点 — 禁词约束失效 + 对话 AI 味：Provider 休眠路径接线断裂与三层硬执行体系（Spec: enforce-forbidden-words-and-dialogue-naturalness，2026-09-07）
+
+**现象：**
+1. 用户配置了内容约束词表（Forbidden Word List），但 AI 对话输出**完全不遵守**——禁词照常出现，词表形同虚设
+2. 对话内容存在明显"AI 味"：书面腔、辞藻堆砌、"嘴角勾起一抹""冰冷的"等 RP 高频 AI 腔表达泛滥，缺乏真人说话的自然感
+
+**根因（禁词失效，⚠️ 核心根因为第 1 条）：**
+1. **⚠️【重点标记】Provider 注册在休眠路径，线上路径从未接线**：`ForbiddenWordsPromptProvider` 注册在 pipeline Provider 体系（hooks.new.ts），但线上对话走的是 legacy hooks.ts 路径——**Provider 从未被消费**。这是本项目第二次出现"两套独立机制的断裂"bug 模式（§7.61 世界书关联失效同款）。防复发铁律：**新增 Provider 时必须同步接线线上路径（hooks.ts），不能只注册到 pipeline**
+2. **仅提示词软约束**：即使注入成功，提示词也只是软约束——qwen 等 Flash 模型在 temp=1 / top_p=1 采样下指令跟随能力弱，命中禁词概率高
+3. **采样参数错配**：对话请求未按模型系列区分采样参数（qwen 官方推荐 temp 0.7 / top_p 0.8，实际用 1.0 / 1.0），进一步削弱指令跟随
+
+**修复（三层防御 + 对话去 AI 味，7 个 Task）：**
+
+*层 1 — 提示词注入（软约束，Task 1）*：
+- hooks.ts 三请求点（dialogue/continuation/user-reply）直接调用 `buildForbiddenWordsPrompt(config)` 注入 system prompt 末尾，锚点守卫防重复
+- 复用 Provider 的纯函数而非走 pipeline——与线上路径现状一致，绕开休眠问题
+
+*层 2 — 输出合规硬执行（Task 2/3/4）*：
+- `ForbiddenWordsConfig` 扩展：`enforcement`（'prompt-only' | 'retry' | 'retry-and-replace'，默认 retry-and-replace）/ `replacementText`（默认 '***'）/ `maxRetries`（默认 2）
+- 新建 `complianceChecker.ts` 纯函数：中文词子串匹配 + 英文词 `\b` 全词匹配（大小写不敏感）+ 双语词条拆解（"sacrifice (献祭)" → 两检测词，否则精确匹配永不命中）+ WeakMap 编译缓存（1000 词 < 50ms）
+- hooks.ts 响应完成后校验：命中 → retry 模式带违规反馈自动重发（不向用户展示中间脏内容，流状态重置）→ 超限后 retry-and-replace 模式硬替换命中词入库（唯一保证 100% 合规的模式）
+- user-reply 路径同样接入检测 + 替换兜底
+- `[Compliance]` 指标日志：`round=N hit=<词> mode=<模式> retries=<次数> result=<clean|clean-by-retry|replaced>`
+
+*层 3 — 对话去 AI 味（Task 5）*：
+- `HUMANIZER_DIALOGUE_RULES` 对话场景变体（humanizerPolish.ts）：文体总则"像真人说话" + RP 词表 + 完整 27 模式指南（完整接入不简写，沿用用户既定决策）+ 与生成/文本生成变体共用锚点守卫
+- 开关 `AppSetting.dialogueNaturalness.deAiEnabled`（默认开），每轮请求注入
+
+*附加 — 采样预设（Task 6）*：
+- hooks.ts 按当前引擎 model_series/model_name 匹配：qwen 系 temp 0.7 / top_p 0.8 / min_p 0.0；gemma 系 temp 1.0 / top_p 0.95 / min_p 0.01；仅覆盖请求 body，不动引擎持久化配置
+- 开关 `dialogueNaturalness.samplingPresetEnabled`（默认关，避免静默改变用户引擎行为）
+
+*UI（Task 2）*：BlockedWordsSettings.tsx 新增执行模式 Radio（三种模式说明）、替换文本/重试次数条件显示、"对话自然度"分组（去 AI 味开关 + 采样预设开关）；Settings.tsx 保存链路接入 dialogueNaturalness
+
+**⚠️ 调试期教训（重点标记）：**
+- antd v7 `Divider orientation` 类型损坏（Orientation 被混淆为 'horizontal'|'vertical'，TagRagSettings 有 5 处同款存量错误）——新代码改用样式标题规避，勿再引入
+- 合规检测的编译缓存以 config 对象引用为 WeakMap 键，Zustand setting 未变更期间引用稳定，缓存有效；测试需每次新建配置对象防串扰
+
+**A/B 验证方法（不建独立框架）：**
+同一角色同一开场，开关切换前后各跑 10+ 轮对话：
+1. 合规率：日志过滤 `[Compliance]`，对比 result=clean 占比（修复前无此日志=未接线，修复后应有 clean/clean-by-retry/replaced 分布）
+2. AI 味：日志过滤 `[Diversity]` 指标（开头重复率/结构模板率/跨轮 Jaccard）+ 用户主观盲测（RP 高频腔调词是否减少）
+3. 采样预设：日志过滤 `[Sampling]`，确认 qwen 引擎输出 `预设覆盖: temp=0.7 top_p=0.8 min_p=0.0`
+
+**验证：**
+complianceChecker.test.ts（19 项，含中文子串/英文 \b/大小写/双语拆解/性能 <50ms）+ humanizerPolish.test.ts（36 项，含对话变体 9 项：开关撤下/锚点防重/跨变体守卫/规模下限 ≥3500）全部通过；`tsc --noEmit` 本次涉及文件零新增错误（存量基线不变）；dev server 已重启（VITE ready in 441ms），全量测试 1947 passed（2 个失败为 skills.test.ts / agentModeService.test.ts 存量问题，与本 spec 无关）。
+
+## §7.68 ⚠️ 重点 — 开启思考后 deepseekv4-flash 等混合思考模型不思考（2026-09-08，用户报告）
+
+**现象：**
+1. 引擎开启思考（enable_chain_of_thought），调用 llama.cpp 上的 deepseekv4-flash，模型**完全不输出思考内容**
+2. 用户调整采样参数（温度等）无效——问题与采样无关
+3. 用户直接在 llama.cpp（web UI）测试同一模型**思考正常**
+
+**根因（五环断链，核心为第 4 环）：**
+1. DeepSeek V4 Flash 的 llama.cpp 官方模板 `models/templates/deepseek-ai-DeepSeek-V4-Flash-0731.jinja` L4-L8：`thinking` 未定义且请求未传 `enable_thinking` 时 **默认 `set thinking = false`（不思考）**——与 Qwen 早期"默认思考"行为相反
+2. 用户 llama-server 由 launcher 启动，默认 `--reasoning off`（16_THINKING_MODE_SAMPLING_CONFIG.md §1 2026-08-28 决策），服务端兜底也是关
+3. 应用请求要开启思考必须**显式携带嵌套参数** `chat_template_kwargs.enable_thinking=true`（llama-server 顶层字段被静默忽略，历史 bug 见 §4.1）
+4. **⚠️【重点标记】`AIService.probeThinkingCapability` 关键词探测漏掉混合思考模型**：关键词仅 `['thinking','reasoning','r1','o1','o3','qwq']`，而 2025-2026 新一代混合思考模型（DeepSeek V3.1+/V4、GLM-4.5+、Qwen3+、Kimi、MiniMax、GPT-OSS 等）**模型名不含任何显式思考关键词** → `deepseekv4-flash` 探测为 `supportsThinking=false`
+5. ChatEngine 双条件守卫（[ChatEngine.ts L187-L205]）：`enable_chain_of_thought===true && capabilities.supportsThinking===true` 才注入 `enable_thinking=true`——第 4 环误判导致条件不满足 → **请求根本不带思考开关** → 模板默认不思考
+
+**修复（AIService.ts `probeThinkingCapability`）：**
+新增 `hybridThinkingSeries` 关键词组：`deepseek` / `glm` / `qwen3` / `kimi` / `minimax` / `gpt-oss`，与原显式关键词取并集。
+
+**误报安全性论证**（为何宁可放宽）：`supportsThinking=true` 的唯一作用是"用户显式开启思考时注入 `chat_template_kwargs.enable_thinking=true`"；模板不消费该变量时 llama.cpp 自动忽略，无副作用（老 DeepSeek-V3、GLM-4 等误报无害）。漏报则直接吞掉用户开关（本 bug）。依据：llama.cpp 模板库逐一核实（deepseek V4 模板 L4-L8 显式回退 `enable_thinking → thinking`）。
+
+**⚠️ 存量引擎数据不自动刷新（用户必读）：**
+capabilities 在"测试连通性"时探测并随保存写入引擎。**修复后必须手动刷新**：设置 → 编辑引擎 → 点"测试连通性"（重新探测，Header 出现灯泡图标 🟣 即 supportsThinking=true）→ 保存 → 聊天中开启思考。仅改代码不重新探测，旧引擎的 `supportsThinking=false` 仍在生效。
+
+**排查命令备查**（下次类似问题定位请求体差异）：
+- 渲染进程 Console 过滤 `[ChatEngine]`：`思考模式模板联动：请求级开启思考` 日志出现即参数已注入
+- 抓请求体确认 `"chat_template_kwargs":{"enable_thinking":true}` 为嵌套形式
+
+**验证：**
+`tsc --noEmit` AIService.ts 本次修改零新增错误（仅存量 TS6133/测试文件历史问题）；无 probeThinkingCapability 既有单测需同步；dev server 已重启正常初始化。**功能验证待用户操作**：重新测试连通性 → 开启思考 → deepseekv4-flash 应回复带思考内容（reasoning_content 或 think 折叠块）。
+
+**⚠️ 追加修复（同日二轮，用户反馈"测试后仍无灯泡图标"后深挖出三个新断点）：**
+
+上轮探测关键词修复已正确编译进运行 bundle（dist/main/index-BrVIh6DR.js 含 hybridThinkingSeries，Electron 0:44:07 加载），但用户实测仍不思考。检查 settings.json 与全链路后发现**根因比关键词探测更深**——即使探测修好，思考开关依然到不了请求体：
+
+1. **⚠️【重点标记】用户开的"思考"是 thinkTagMode（显示开关）非请求开关**：对话参数面板「思考内容处理」（移除/仅渲染剥离/折叠展示）只控制思考内容的**显示方式**，不触发模型思考。用户以为开了思考，实际只是开了"如果有思考就折叠显示"
+2. **⚠️【重点标记】thinking_mode 全链路三处断裂**（本 bug 的核心，属"注册了但从未接线"模式，与 §7.61/§7.67 同款）：
+   - **无 UI 可设**：thinking_mode 仅由 model_series 下拉推导，而系列列表（qwen/glm/muse/gemma/generic）**无 DeepSeek 选项**；enable_chain_of_thought 更是全项目无 UI 写入（恒为 false，settings.json 实测 7 引擎全 false）→ 两个开思考通道全断
+   - **hooks 未透传**：CharacterDialogueChat.hooks.ts 三处 engineConfigWithParams 构造（dialogue/continuation/user-reply）均未透传 `thinking_mode`——即使引擎存了 'on'（用户 qwen3.8 引擎实测已存）也到不了 ChatEngine
+   - **LAN 链路无注入**：lanApiServer/dialogue.ts 请求体构造完全没有 enable_thinking 注入逻辑
+3. **model_name 占位符**：llama-server 单模型模式 model 字段任意填（用户引擎实测 local-llm/deepseek-v4-pro），与实际部署模型（deepseekv4-flash）不一致——关键词探测对该场景天然失效，思考开关必须与 model_name 解耦
+
+**追加修复内容（6 文件）：**
+- `modelParameterPresets.ts`：新增 DeepSeek V4/V3.2 系列 preset（thinking:'on'，temp 1.0/top_p 0.95/top_k 0，注明 V4 模板默认不思考必须显式开启）；新增 `resolveThinkingMode(explicit, seriesId)` 共享函数（表单显式 on/off 优先，否则系列推导）
+- `AIEngineSettingsPanel.tsx`：主表单+引擎编辑模态框两处新增「思考模式」Segmented（跟随系列/开启/关闭，与智能体模式同款范式），tooltip 明确与「思考内容处理」的区别
+- `Settings.tsx` / `useAIEngineSettings.ts`：回填 normalize（undefined→'auto'）+ 三处保存改为 resolveThinkingMode（显式选择优先）
+- `CharacterDialogueChat.hooks.ts`：三处 engineConfigWithParams 补透传 `thinking_mode: activeEngine.thinking_mode`
+- `lanApiServer/dialogue.ts`：请求体补思考注入（与 ChatEngine 同优先级：显式 on/off > enable_chain_of_thought+supportsThinking 双条件，嵌套 chat_template_kwargs 协议）
+
+**修复后用户操作（关键）：**
+设置 → 编辑 DeepSeek 引擎 → 「思考模式」选**开启** → 保存 → 对话。不再依赖测试连通性/模型名/系列选择。Console 应出现 `[ChatEngine] 思考模式模板联动：请求级开启思考`。
+
+**验证：**
+tsc 六个修改文件零新增错误；dev server 重启（VITE ready in 448ms + LAN API 正常）。
+
+**⚠️ 追加修复（同日三轮，用户反馈"仍旧没有"后日志实锤 + 消费链补全）：**
+
+上轮修复经 ai-handler 日志验证**已生效**（0:58:23 主对话请求携带 `chat_template_kwargs.enable_thinking:true`，`false` 那条为格式修复补发的独立请求属正常行为；curl 直连 llama-server 确认思考内容返回 102 字符 reasoning_content）。**真正剩余问题：思考已生成但应用不消费**——llama-server 将思考剥离到 `delta.reasoning_content` 独立通道（与 delta.content 严格分离，非 content 内 `<think>` 标签），而应用只处理 content 内标签路径，reasoning_content 全程被丢弃。流式抓包实锤：思考期每 chunk `rc=True content=[]`。
+
+**消费链补全（Spec: reasoning-content-display-for-llamacpp，Task 1-4 闭环）：**
+- Task 1（ChatEngine，此前已完成）：ReasoningCallback 类型 + parseSSELineReasoning + onReasoning 注册 + onComplete 回传
+- Task 2 补齐（本轮）：hooks.ts messagesToSave 白名单**漏 reasoning 字段**（STREAM_COMPLETE 的 `...msg` 展开保留 UI 态但持久化丢）→ 补 `reasoning: msg.reasoning`；ChatStorageService.ts ChatMessage 接口加可选 `reasoning`（存储层整体 JSON.stringify 天然透传，历史加载同样透传无需改）
+- Task 3（本轮）：ChatMessageBubble.tsx 气泡正文前渲染 Collapse 折叠块——流式期 LoadingOutlined"思考中…"动画 + 完成态 BulbOutlined"思考过程" + 字数统计 + pre 滚动区（max-height 320px）；仅 `showThinking`（fold 模式）显示，strip 不 dispatch、strip_render 仅存储，三态语义与 hooks 注释一致；CSS 新增 chat-msg-reasoning-collapse 系列
+- Task 4（本轮）：lanApiServer/dialogue.ts 新增 `extractReasoningFromSSELine`（对齐桌面端，兼容 delta.reasoning_content/delta.reasoning）；流式循环提取→handleReasoningDelta（strip 短路）→onReasoning 推送 + reasoningFull 累积；assistantMessage 与 onDone 均携带 reasoning（可选字段向后兼容，老 Android 客户端忽略）
+
+**验证：**
+tsc 五个修改文件零新增错误（其余为 hooks.new.ts/ChatStorageService TS6133 等存量基线）；CharacterDialogueChat 单测 19 文件 345 项全过；dev server 重启（VITE ready 452ms + LAN API 启动）。
+
+**用户验证路径（思考显示三条件）：**
+① 引擎「思考模式」=开启（上轮修复的 UI）② 对话参数面板「思考内容处理」=折叠展示（fold）③ 发送消息 → 气泡顶部出现紫色折叠块"思考中…"实时增长，完成后可展开查看，刷新/重启后仍保留。
+
+## §7.69 ⚠️ 重点 — 一键翻译期间切换世界书导致跨文件内容覆盖（2026-09-08，用户报告：女性通用世界书被 main_Extreme NSFL Lorebook 内容覆盖）
+
+**现象：**
+用户对世界书 A（main_Extreme NSFL Lorebook）执行一键翻译后，又打开世界书 B（女性通用世界书.json）操作，B 的全部内容被 A 的内容覆盖，且 B 的 name 变成 A 的 name（"Extreme NSFL Lorebook v1.0"）。用户自述"只进行了翻译和保存"。
+
+**取证（数据侧证据链）：**
+- B 文件 108 条 = A 的 106 条（内容完全一致）+ 2 条 uid 107/108 新条目，uid 连续追加模式正是 handleSaveAddedEntries 的 `maxUid+1/+2`
+- B 的 tags.json 同秒写入 107/108 的关联（该函数独有行为）
+- A 的 mtime 0:26:27（翻译循环逐条写回），B 的 mtime 0:34:07（保存+追加写入）
+- 向量注册表显示 B 昨日 19:44 曾向量化 70 条（67 成功 3 失败）——覆盖后原内容已不可恢复（vectors.db 文件不存在，writeFile 覆盖无备份不进回收站）
+
+**根因（状态污染 + 无校验写入，两环叠加）：**
+1. **⚠️【重点标记】`handleTranslateAll` 循环内 `setWorldBookContent({ ...worldBookContent })` 闭包污染**：一键翻译是长循环（106 条 × 每条多次 API 调用），闭包捕获开始时的 `worldBookContent`。用户中途关闭 Modal 打开另一本世界书后，`handleView` 正确设置了新状态，但后台循环每翻完一条就执行 `setWorldBookContent({...旧闭包数据})` **把 A 的数据强行覆盖回全局状态** → UI 呈现"打开着 B，内容却是 A"
+2. 此时用户点"保存"或用"添加条目"（`handleSaveAddedEntries` 以 `worldBookContent?.name` 作为写入 name），执行 `write(viewingItem.path=B, worldBookContent=A的数据)` → **A 的内容写入 B 的文件**
+3. `writeWorldBook` 直接 writeFile 覆盖，无备份兜底 → 原数据不可恢复
+
+同模式隐患共 4 处：handleTranslateAll / handleAuditAll / handlePolishAll / handleGenerateKeywordsAll。
+
+**修复：**
+1. `useWorldBookFormState.ts`：新增 `viewingItemRef`（与 viewingItem state 同步的 ref），`setViewingItem` 包装为双写
+2. `useWorldBookAIOperations.ts`：4 个一键循环开始时记录 `operationStartPath`，每次迭代开头校验 `viewingItemRef.current?.path !== operationStartPath` → 中止 + 警告 + 清理 loading 状态；循环收尾的 read+setWorldBookContent 同样加守卫；handleAuditAll 的"等待 Modal 后采用文本"写入前二次校验（等待期间也可能切换）
+3. `worldBookService.ts`：`writeWorldBook` 写入前调用新增的 `backupBeforeWrite` 备份到 `<worldbooks>/.backups/<名称>.<时间戳>.json`（10 分钟窗口去重防批量操作备份风暴，每本滚动保留 5 份，失败不阻断写入）——最后兜底，此后任何覆盖均可从 .backups 恢复
+
+**经验教训：**
+- React 长循环（批量 AI 操作）中，凡是"循环体内 setState + 以 state 为数据源写文件"的模式，都必须用 ref 检测操作目标是否已切换，否则闭包旧数据会静默污染状态并写坏文件
+- 覆盖式写文件（writeFile）必须先备份；本次事故若有备份可直接恢复
+- 事故取证方法：对比两文件条目内容/uid 分布/tags 关联的写入模式 + mtime 时间线，可精确还原操作序列
+
+**验证：**
+`tsc --noEmit` 本次涉及文件零新增错误（存量基线不变，stash 对照确认）；worldbookTools.test.ts 21/21 通过；dev server 已重启。
+
+**用户数据恢复指引：**
+女性通用世界书原内容（约 70 条）应用内已无副本（无备份机制是本次教训）。恢复途径：从原始下载源重新获取；或若在其他设备/导入源留有副本，重新导入。当前被污染文件如需留证可先重命名备份。

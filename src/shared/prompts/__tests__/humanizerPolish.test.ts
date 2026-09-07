@@ -13,17 +13,20 @@ import {
   withHumanizerRules,
   withHumanizerGenerationRules,
   withHumanizerTextgenRules,
+  withHumanizerDialogueRules,
   HUMANIZER_POLISH_ANCHOR,
   HUMANIZER_POLISH_RULES,
   HUMANIZER_GENERATION_ANCHOR,
   HUMANIZER_GENERATION_RULES,
   HUMANIZER_TEXTGEN_RULES,
+  HUMANIZER_DIALOGUE_RULES,
   HUMANIZER_RP_WARNLIST,
   HUMANIZER_FULL_GUIDE,
 } from '../humanizerPolish';
 
 const BASE_PROMPT = '你是一个专业的文本润色助手，正在优化SillyTavern角色卡的内容。';
 const GENERATION_PROMPT = '你是一个专业的世界书（Lorebook）创建助手。请根据用户提供的主题描述，生成完整的世界书数据结构。';
+const DIALOGUE_PROMPT = '你是 {{char}}，正在与 {{user}} 进行角色扮演对话。请以角色身份自然回应。';
 
 describe('withHumanizerRules（润色）', () => {
   it('开关开启：追加规则块', () => {
@@ -117,6 +120,66 @@ describe('withHumanizerTextgenRules（文本生成，角色卡字段等非 JSON 
 
   it('空输入：原样返回空串', () => {
     expect(withHumanizerTextgenRules('')).toBe('');
+  });
+});
+
+describe('withHumanizerDialogueRules（RP 对话流，Spec: enforce-forbidden-words-and-dialogue-naturalness / Task 5）', () => {
+  it('开关开启：追加规则块且保留原 prompt', () => {
+    const result = withHumanizerDialogueRules(DIALOGUE_PROMPT, true);
+    expect(result).toContain(HUMANIZER_GENERATION_ANCHOR);
+    expect(result).toContain(DIALOGUE_PROMPT);
+    expect(result.startsWith(DIALOGUE_PROMPT)).toBe(true);
+  });
+
+  it('开关关闭：原样返回（规则块完全撤下，控制每轮 token 成本）', () => {
+    const result = withHumanizerDialogueRules(DIALOGUE_PROMPT, false);
+    expect(result).toBe(DIALOGUE_PROMPT);
+    expect(result).not.toContain(HUMANIZER_GENERATION_ANCHOR);
+  });
+
+  it('空输入：原样返回空串', () => {
+    expect(withHumanizerDialogueRules('', true)).toBe('');
+    expect(withHumanizerDialogueRules('', false)).toBe('');
+  });
+
+  it('锚点守卫：重复调用不二次注入', () => {
+    const once = withHumanizerDialogueRules(DIALOGUE_PROMPT, true);
+    expect(withHumanizerDialogueRules(once, true)).toBe(once);
+    // 锚点出现且仅出现一次
+    expect(once.split(HUMANIZER_GENERATION_ANCHOR).length - 1).toBe(1);
+  });
+
+  it('锚点守卫：与其他变体（生成/文本生成）共用锚点，先注入者生效', () => {
+    const viaGen = withHumanizerGenerationRules(DIALOGUE_PROMPT);
+    expect(withHumanizerDialogueRules(viaGen, true)).toBe(viaGen);
+    const viaTextgen = withHumanizerTextgenRules(DIALOGUE_PROMPT);
+    expect(withHumanizerDialogueRules(viaTextgen, true)).toBe(viaTextgen);
+  });
+
+  it('文体总则是"像真人说话"（非百科条目化、非 JSON 声明）', () => {
+    expect(HUMANIZER_DIALOGUE_RULES).toContain('像真人说话');
+    expect(HUMANIZER_DIALOGUE_RULES).not.toContain('百科条目');
+    expect(HUMANIZER_DIALOGUE_RULES).not.toContain('仅约束 JSON');
+    expect(HUMANIZER_DIALOGUE_RULES).not.toContain('不改变 JSON 结构');
+  });
+
+  it('完整接入不简写：RP 词表 + 完整 27 模式指南', () => {
+    expect(HUMANIZER_DIALOGUE_RULES).toContain(HUMANIZER_RP_WARNLIST);
+    expect(HUMANIZER_DIALOGUE_RULES).toContain(HUMANIZER_FULL_GUIDE);
+    // 代表性内容抽查（防蒸馏退化的双保险，27 模式编号在 FULL_GUIDE 测试组全覆盖）
+    expect(HUMANIZER_DIALOGUE_RULES).toContain('冰冷的');
+    expect(HUMANIZER_DIALOGUE_RULES).toContain('#27 ');
+  });
+
+  it('规模下限断言（≥3500 字符，防蒸馏退化——v1/v2 蒸馏版两次被打回的教训）', () => {
+    expect(HUMANIZER_DIALOGUE_RULES.length).toBeGreaterThanOrEqual(3500);
+  });
+
+  it('注入后尾部拼接格式正确（换行分隔，原 prompt 无尾部空格泄漏）', () => {
+    const padded = DIALOGUE_PROMPT + '   \n';
+    const result = withHumanizerDialogueRules(padded, true);
+    // 尾部空白被 trimEnd 后拼接规则块
+    expect(result).toContain(DIALOGUE_PROMPT.trimEnd() + '\n' + HUMANIZER_DIALOGUE_RULES);
   });
 });
 

@@ -315,6 +315,20 @@ export const AppSetting = {
           note: 'Instead of labeling these emotions, describe the physical manifestations and behavioral reactions to convey the intensity (Show, Don\'t Tell).',
         },
       ],
+      // Spec: enforce-forbidden-words-and-dialogue-naturalness — 硬执行层默认值
+      //（存量配置缺这些字段时 checkCompliance 侧取同款默认，这里显式写出便于新装用户在
+      // settings.json 中可见；enforcement 默认 retry-and-replace 保证 100% 合规）
+      enforcement: 'retry-and-replace',
+      replacementText: '***',
+      maxRetries: 2,
+    },
+
+    // Spec: enforce-forbidden-words-and-dialogue-naturalness / Task 2
+    // 对话自然度配置：deAiEnabled 默认开（对话去AI味词表注入），
+    // samplingPresetEnabled 默认关（采样预设按需启用，避免静默改变用户引擎行为）
+    dialogueNaturalness: {
+      deAiEnabled: true,
+      samplingPresetEnabled: false,
     }
   }
 };

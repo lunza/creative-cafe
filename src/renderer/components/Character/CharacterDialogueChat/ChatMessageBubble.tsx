@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Tooltip, Modal, Tag } from 'antd';
-import { CopyOutlined, CheckOutlined, ReloadOutlined, DoubleRightOutlined, RetweetOutlined, LoadingOutlined, EditOutlined, TableOutlined, WarningOutlined, RollbackOutlined, PictureOutlined, DeleteOutlined, LeftOutlined, RightOutlined, DownOutlined, CheckCircleOutlined } from '@ant-design/icons';
+import { Tooltip, Modal, Tag, Collapse } from 'antd';
+import { CopyOutlined, CheckOutlined, ReloadOutlined, DoubleRightOutlined, RetweetOutlined, LoadingOutlined, EditOutlined, TableOutlined, WarningOutlined, RollbackOutlined, PictureOutlined, DeleteOutlined, LeftOutlined, RightOutlined, DownOutlined, CheckCircleOutlined, BulbOutlined } from '@ant-design/icons';
 import { MessageRenderer } from './MessageRenderer';
 import { ChatMessage, ChatMessageVersionInfo } from './CharacterDialogueChat.types';
 import { EMOTION_PRESETS } from './PromptBuilder';
@@ -487,6 +487,29 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
               </div>
             ) : (
               <>
+                {/* 思考过程折叠块（Spec: reasoning-content-display-for-llamacpp / Task 3）。
+                    渲染独立通道 message.reasoning（推理后端 delta.reasoning_content 累积，
+                    与 content 内 <think> 标签路径互斥）。仅 think_tag_mode='fold' 显示
+                    （showThinking），strip 模式不 dispatch、strip_render 模式仅存储。 */}
+                {!isUser && message.reasoning && showThinking && (
+                  <Collapse
+                    size="small"
+                    className="chat-msg-reasoning-collapse"
+                    items={[{
+                      key: 'reasoning',
+                      label: (
+                        <span className="chat-msg-reasoning-label">
+                          {isStreaming ? <LoadingOutlined spin /> : <BulbOutlined />}
+                          <span>{isStreaming ? '思考中…' : '思考过程'}</span>
+                          <span className="chat-msg-reasoning-chars">{message.reasoning.length} 字</span>
+                        </span>
+                      ),
+                      children: (
+                        <pre className="chat-msg-reasoning-body">{message.reasoning}</pre>
+                      ),
+                    }]}
+                  />
+                )}
                 <MessageRenderer
                   content={String(message.content)}
                   charName={characterName}

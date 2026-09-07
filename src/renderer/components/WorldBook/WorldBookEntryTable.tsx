@@ -1,17 +1,20 @@
-import React, { memo, useMemo, useCallback, useState } from 'react';
-import { Modal, Input, Button, Space, Tag, Card, Pagination, Select, message } from 'antd';
+import React, { memo, useMemo, useCallback, useState, useRef, useEffect } from 'react';
+import { Modal, Input, Button, Tag, Card, Pagination, Select, message, Tooltip, Checkbox } from 'antd';
 import {
   PlusOutlined,
   EditOutlined,
   DeleteOutlined,
   TranslationOutlined,
   TagOutlined,
+  TagsOutlined,
   SaveOutlined,
   SortAscendingOutlined,
   StopOutlined,
-  SafetyCertificateOutlined
+  SafetyCertificateOutlined,
+  VerticalAlignTopOutlined
 } from '@ant-design/icons';
 import type { UseWorldBookFormStateReturn } from './hooks/useWorldBookFormState';
+import './WorldBookEntryTable.css';
 
 /**
  * 世界书条目列表 + 排序 + 批量操作（Task 8 拆分产物 SubTask 8.4）。
@@ -116,6 +119,44 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
   // 实际使用的 viewingItem：优先使用 prop，回退到 formState 中的（兼容性）
   const actualViewingItem = viewingItem ?? fsViewingItem;
 
+  // ==================== 滚动区 / 回到顶部 / 内容展开（spec: redesign-worldbook-detail-ui） ====================
+
+  /** 自定义滚动容器 ref（Modal body 不再滚动，由 .wbet-scroll-area 承担） */
+  const scrollAreaRef = useRef<HTMLDivElement | null>(null);
+  /** 是否显示「回到顶部」悬浮按钮 */
+  const [showBackTop, setShowBackTop] = useState(false);
+
+  // 监听滚动区滚动，超过一屏距离后显示回到顶部按钮
+  useEffect(() => {
+    const el = scrollAreaRef.current;
+    if (!el) return;
+    const onScroll = () => setShowBackTop(el.scrollTop > 300);
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [isViewModalOpen]);
+
+  const handleScrollToTop = useCallback(() => {
+    scrollAreaRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
+
+  /** 内容预览「展开全部/收起」状态（按条目 uid） */
+  const [expandedContents, setExpandedContents] = useState<Set<number | string>>(new Set());
+
+  const toggleContentExpand = useCallback((uid: number | string) => {
+    setExpandedContents(prev => {
+      const next = new Set(prev);
+      if (next.has(uid)) {
+        next.delete(uid);
+      } else {
+        next.add(uid);
+      }
+      return next;
+    });
+  }, []);
+
+  /** 内容超过该长度时显示「展开全部/收起」切换（约等于 200px 预览高度） */
+  const CONTENT_LONG_THRESHOLD = 400;
+
   // 名称 / 主题编辑回调
   const handleNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setWorldBookContent((prev: any) => prev ? { ...prev, name: e.target.value } : null);
@@ -143,6 +184,8 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
     setViewingItem(null);
     setWorldBookContent(null);
     setSelectedEntries(new Set());
+    setExpandedContents(new Set());
+    setShowBackTop(false);
     onClose?.();
   }, [setIsViewModalOpen, setViewingItem, setWorldBookContent, setSelectedEntries, onClose]);
 
@@ -192,118 +235,6 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
       onOpenSortModal();
     }
   }, [isAISorting, onCancelAIRequest, onOpenSortModal]);
-
-  // modalFooter
-  const modalFooter = useMemo(() => (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center', justifyContent: 'flex-end' }}>
-      <Space>
-        <Button
-          key="save"
-          type="primary"
-          icon={<SaveOutlined />}
-          onClick={handleSave}
-        >
-          保存
-        </Button>
-        <Button
-          key="addEntry"
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={onOpenAddEntryModal}
-        >
-          添加条目
-        </Button>
-        <Button
-          key="deleteSelected"
-          type="primary"
-          danger
-          icon={<DeleteOutlined />}
-          onClick={handleDeleteSelectedClick}
-          disabled={selectedEntries.size === 0}
-          style={{ marginRight: 8 }}
-        >
-          批量删除
-        </Button>
-      </Space>
-      <Space>
-        <Button
-          key="generateKeywordsAll"
-          type="primary"
-          icon={isGeneratingKeywordsAll ? <StopOutlined /> : <TagOutlined />}
-          danger={isGeneratingKeywordsAll}
-          onClick={isGeneratingKeywordsAll ? onCancelAIRequest : onGenerateKeywordsAll}
-          disabled={!isGeneratingKeywordsAll && (isTranslatingAll || isPolishingAll || isAuditingAll)}
-          style={{ marginRight: 8 }}
-        >
-          {isGeneratingKeywordsAll ? '中断生成' : 'AI生成关键词'}
-        </Button>
-        <Button
-          key="translateAll"
-          type="primary"
-          icon={isTranslatingAll ? <StopOutlined /> : <TranslationOutlined />}
-          danger={isTranslatingAll}
-          onClick={isTranslatingAll ? onCancelAIRequest : onTranslateAll}
-          disabled={!isTranslatingAll && (isPolishingAll || isGeneratingKeywordsAll || isAuditingAll || selectedEntries.size === 0)}
-          style={{ marginRight: 8 }}
-        >
-          {isTranslatingAll ? '中断翻译' : `一键翻译选中条目 (${selectedEntries.size})`}
-        </Button>
-        <Button
-          key="polishAll"
-          type="primary"
-          icon={isPolishingAll ? <StopOutlined /> : <EditOutlined />}
-          danger={isPolishingAll}
-          onClick={isPolishingAll ? onCancelAIRequest : onPolishAll}
-          disabled={!isPolishingAll && (isTranslatingAll || isGeneratingKeywordsAll || isAuditingAll || selectedEntries.size === 0)}
-          style={{ marginRight: 8 }}
-        >
-          {isPolishingAll ? '中断润色' : `一键润色选中条目 (${selectedEntries.size})`}
-        </Button>
-        <Button
-          key="auditAll"
-          type="primary"
-          icon={isAuditingAll ? <StopOutlined /> : <SafetyCertificateOutlined />}
-          danger={isAuditingAll}
-          onClick={isAuditingAll ? onCancelAIRequest : onAuditAll}
-          disabled={!isAuditingAll && (isTranslatingAll || isPolishingAll || isGeneratingKeywordsAll || selectedEntries.size === 0)}
-          style={{ marginRight: 8 }}
-        >
-          {isAuditingAll ? '中断审核' : `一键审核选中条目 (${selectedEntries.size})`}
-        </Button>
-      </Space>
-      <Space>
-        <Button
-          key="organizeEntries"
-          type="primary"
-          icon={isAISorting ? <StopOutlined /> : <SortAscendingOutlined />}
-          danger={isAISorting}
-          onClick={handleOrganizeClick}
-          style={{ marginRight: 8 }}
-        >
-          {isAISorting ? '中断排序' : '整理条目'}
-        </Button>
-        <Button
-          key="tagManager"
-          type="primary"
-          icon={<TagOutlined />}
-          onClick={onOpenTagManager}
-          style={{ marginRight: 8 }}
-        >
-          标签管理
-        </Button>
-      </Space>
-      <Button key="close" onClick={handleClose}>
-        关闭
-      </Button>
-    </div>
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  ), [
-    worldBookContent, actualViewingItem, selectedEntries,
-    isTranslatingAll, isPolishingAll, isAISorting, isGeneratingKeywordsAll, isAuditingAll,
-    addLog, handleSave, handleDeleteSelectedClick, handleOrganizeClick,
-    handleClose, onOpenAddEntryModal, onOpenTagManager, onCancelAIRequest,
-    onGenerateKeywordsAll, onTranslateAll, onPolishAll, onAuditAll,
-  ]);
 
   // ==================== 标签筛选（按标签多选筛选条目） ====================
   /** "无标签"伪标签值（与真实 tag.id 字符串空间隔离） */
@@ -463,13 +394,36 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
       .trim();
   }, [propertyNames]);
 
-  // 全选 checkbox indeterminate 状态由 ref 在渲染期间设置（基于可见条目，随筛选联动）
-  const selectAllCheckboxRef = useCallback((el: HTMLInputElement | null) => {
-    if (el && entryList) {
-      el.indeterminate = selectedEntries.size > 0 && !allVisibleSelected &&
-        entryList.filteredUids.some(uid => selectedEntries.has(uid));
-    }
-  }, [entryList, selectedEntries, allVisibleSelected]);
+  // 全选 checkbox 半选态（基于可见条目，随筛选联动；antd Checkbox 原生 indeterminate prop）
+  const selectAllIndeterminate = !!entryList &&
+    selectedEntries.size > 0 && !allVisibleSelected &&
+    entryList.filteredUids.some(uid => selectedEntries.has(uid));
+
+  // modalFooter：精简为 保存（唯一 primary）+ 关闭 + 状态摘要（spec: redesign-worldbook-detail-ui）
+  const modalFooter = useMemo(() => {
+    const totalAll = worldBookContent?.entries ? Object.keys(worldBookContent.entries).length : 0;
+    const totalFiltered = entryList?.totalEntries ?? totalAll;
+    return (
+      <div className="wbet-footer">
+        <span className="wbet-footer-summary">
+          共 <strong>{totalAll}</strong> 条
+          {totalFiltered !== totalAll && (<> · 筛选后 <strong>{totalFiltered}</strong> 条</>)}
+          {' '}· 已选 <strong>{selectedEntries.size}</strong>
+        </span>
+        <Button key="close" onClick={handleClose}>
+          关闭
+        </Button>
+        <Button
+          key="save"
+          type="primary"
+          icon={<SaveOutlined />}
+          onClick={handleSave}
+        >
+          保存
+        </Button>
+      </div>
+    );
+  }, [worldBookContent, entryList, selectedEntries, handleSave, handleClose]);
 
   return (
     <Modal
@@ -478,7 +432,7 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
       onCancel={handleClose}
       width="90vw"
       destroyOnClose={true}
-      styles={{ body: { padding: '16px 24px', maxHeight: '75vh', overflowY: 'auto' } }}
+      styles={{ body: { padding: 0 } }}
       footer={modalFooter}
       style={{
         maxWidth: '1400px',
@@ -487,36 +441,151 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
       }}
       className={appTheme === 'dark' ? 'dark' : ''}
     >
-      {/* 名称和主题编辑区域 */}
-      <div style={{ marginBottom: 16 }}>
-        <Input
-          value={worldBookContent?.name || actualViewingItem?.name || ''}
-          onChange={handleNameChange}
-          style={{ marginBottom: 8, width: '100%' }}
-          placeholder="世界书名称"
-        />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontWeight: 500, minWidth: 50 }}>主题：</span>
-          <div style={{ flex: 1, padding: '8px 12px', background: 'var(--bg-elevated, #2a2a2a)', border: '1px solid var(--border-base, #333)', borderRadius: 4, minHeight: 40 }}>
-            <span style={{ fontSize: 12, color: 'var(--text-secondary, #8c8c8c)' }}>
-              {worldBookContent?.description || '暂无描述，点击编辑添加'}
-            </span>
+      {/* 自定义滚动区：承载全部内容与粘性工具栏/分页；body 自身不滚动 */}
+      <div className="wbet-scroll-area" ref={scrollAreaRef}>
+        {/* ===== 顶部粘性工具栏（滚动时始终可见）===== */}
+        <div className="wbet-toolbar">
+          {/* 左区：全选 + 已选计数 */}
+          <div className="wbet-toolbar-left">
+            <label
+              className="wbet-select-all"
+              onClick={() => handleSelectAll(!allVisibleSelected)}
+            >
+              <Checkbox
+                checked={allVisibleSelected}
+                indeterminate={selectAllIndeterminate}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => handleSelectAll(e.target.checked)}
+              />
+              全选
+            </label>
+            <span className="wbet-select-count">已选 <strong>{selectedEntries.size}</strong> 个条目</span>
           </div>
-          <Button
-            icon={<EditOutlined />}
-            size="small"
-            onClick={handleEditTopic}
-          >
-            编辑主题
-          </Button>
+
+          <div className="wbet-toolbar-divider" />
+
+          {/* 中区：批量操作组 */}
+          <div className="wbet-toolbar-group">
+            <Tooltip title={`翻译选中的 ${selectedEntries.size} 个条目（注释、关键词与内容）`}>
+              <span>
+                <Button
+                  icon={isTranslatingAll ? <StopOutlined /> : <TranslationOutlined />}
+                  danger={isTranslatingAll}
+                  onClick={isTranslatingAll ? onCancelAIRequest : onTranslateAll}
+                  disabled={!isTranslatingAll && (isPolishingAll || isGeneratingKeywordsAll || isAuditingAll || selectedEntries.size === 0)}
+                >
+                  {isTranslatingAll ? '中断翻译' : '翻译'}
+                </Button>
+              </span>
+            </Tooltip>
+            <Tooltip title={`润色选中的 ${selectedEntries.size} 个条目的内容`}>
+              <span>
+                <Button
+                  icon={isPolishingAll ? <StopOutlined /> : <EditOutlined />}
+                  danger={isPolishingAll}
+                  onClick={isPolishingAll ? onCancelAIRequest : onPolishAll}
+                  disabled={!isPolishingAll && (isTranslatingAll || isGeneratingKeywordsAll || isAuditingAll || selectedEntries.size === 0)}
+                >
+                  {isPolishingAll ? '中断润色' : '润色'}
+                </Button>
+              </span>
+            </Tooltip>
+            <Tooltip title={`审核选中的 ${selectedEntries.size} 个条目的内容`}>
+              <span>
+                <Button
+                  icon={isAuditingAll ? <StopOutlined /> : <SafetyCertificateOutlined />}
+                  danger={isAuditingAll}
+                  onClick={isAuditingAll ? onCancelAIRequest : onAuditAll}
+                  disabled={!isAuditingAll && (isTranslatingAll || isPolishingAll || isGeneratingKeywordsAll || selectedEntries.size === 0)}
+                >
+                  {isAuditingAll ? '中断审核' : '审核'}
+                </Button>
+              </span>
+            </Tooltip>
+            <Tooltip title={`删除选中的 ${selectedEntries.size} 个条目（不可恢复）`}>
+              <span>
+                <Button
+                  danger
+                  icon={<DeleteOutlined />}
+                  onClick={handleDeleteSelectedClick}
+                  disabled={selectedEntries.size === 0}
+                >
+                  删除
+                </Button>
+              </span>
+            </Tooltip>
+          </div>
+
+          <div className="wbet-toolbar-divider" />
+
+          {/* 右区：管理组 */}
+          <div className="wbet-toolbar-group wbet-toolbar-right">
+            <Tooltip title="为全部条目 AI 生成关键词">
+              <span>
+                <Button
+                  icon={isGeneratingKeywordsAll ? <StopOutlined /> : <TagOutlined />}
+                  danger={isGeneratingKeywordsAll}
+                  onClick={isGeneratingKeywordsAll ? onCancelAIRequest : onGenerateKeywordsAll}
+                  disabled={!isGeneratingKeywordsAll && (isTranslatingAll || isPolishingAll || isAuditingAll)}
+                >
+                  {isGeneratingKeywordsAll ? '中断' : 'AI关键词'}
+                </Button>
+              </span>
+            </Tooltip>
+            <Tooltip title="整理 / 排序条目（AI 排序进行中可中断）">
+              <span>
+                <Button
+                  icon={isAISorting ? <StopOutlined /> : <SortAscendingOutlined />}
+                  danger={isAISorting}
+                  onClick={handleOrganizeClick}
+                >
+                  {isAISorting ? '中断' : '整理'}
+                </Button>
+              </span>
+            </Tooltip>
+            <Tooltip title="管理世界书标签">
+              <span>
+                <Button icon={<TagsOutlined />} onClick={onOpenTagManager}>
+                  标签
+                </Button>
+              </span>
+            </Tooltip>
+            <Tooltip title="添加新条目">
+              <span>
+                <Button icon={<PlusOutlined />} onClick={onOpenAddEntryModal}>
+                  添加
+                </Button>
+              </span>
+            </Tooltip>
+          </div>
         </div>
-      </div>
+
+        {/* 名称和主题编辑区域（非粘性） */}
+        <div className="wbet-header">
+          <Input
+            value={worldBookContent?.name || actualViewingItem?.name || ''}
+            onChange={handleNameChange}
+            placeholder="世界书名称"
+          />
+          <div className="wbet-header-topic">
+            <span className="wbet-header-topic-label">主题：</span>
+            <div className="wbet-header-topic-text">
+              {worldBookContent?.description || '暂无描述，点击编辑添加'}
+            </div>
+            <Button
+              icon={<EditOutlined />}
+              onClick={handleEditTopic}
+            >
+              编辑主题
+            </Button>
+          </div>
+        </div>
 
       {worldBookContent && worldBookContent.entries && (
-        <div style={{ backgroundColor: 'var(--bg-container, #1f1f1f)', color: 'var(--text-primary, #ffffff)' }}>
+        <div>
           {/* 标签筛选（多选，OR 语义；筛选发生在分页之前，分页计数随之联动） */}
-          <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontWeight: 500, flexShrink: 0 }}>按标签筛选：</span>
+          <div className="wbet-filter-bar">
+            <span className="wbet-filter-bar-label">按标签筛选：</span>
             <Select
               mode="multiple"
               allowClear
@@ -535,21 +604,10 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
               size="middle"
             />
             {selectedTagFilters.length > 0 && (
-              <span style={{ color: 'var(--text-secondary, #8c8c8c)', fontSize: 13, flexShrink: 0 }}>
+              <span className="wbet-filter-count">
                 筛选后 {entryList?.totalEntries ?? 0} / {Object.keys(worldBookContent.entries).length} 条
               </span>
             )}
-          </div>
-          <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-start', alignItems: 'center', gap: 8 }}>
-            <input
-              type="checkbox"
-              checked={allVisibleSelected}
-              ref={selectAllCheckboxRef}
-              onChange={(e) => handleSelectAll(e.target.checked)}
-              style={{ transform: 'scale(1.2)' }}
-            />
-            <span style={{ fontWeight: 'bold' }}>全选</span>
-            <span style={{ color: 'var(--text-primary, #ffffff)' }}>已选择 {selectedEntries.size} 个条目</span>
           </div>
           {entryList && entryList.sortedTagIds.map(tagId => {
             const tag = tags.find((t: any) => t.id === tagId);
@@ -558,20 +616,16 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
             const groupEntries = entryList.groupedEntries[tagId];
 
             return (
-              <div key={tagId} style={{ marginBottom: 24 }}>
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  marginBottom: 12,
-                  paddingBottom: 8,
-                  borderBottom: '2px solid var(--border-base, #333)'
-                }}>
-                  <Tag color={tagColor} style={{ fontSize: 16, padding: '4px 12px', marginRight: 8 }}>{tagName}</Tag>
-                  <span style={{ color: 'var(--text-secondary, #8c8c8c)', fontSize: 14 }}>共 {groupEntries.length} 个条目</span>
+              <div key={tagId} className="wbet-group">
+                <div className="wbet-group-header">
+                  <Tag color={tagColor}>{tagName}</Tag>
+                  <span className="wbet-group-count">共 {groupEntries.length} 个条目</span>
                 </div>
                 {groupEntries.map((entry: any) => {
                   const uid = entry.uid;
                   const isExpanded = expandedEntries.has(uid);
+                  const contentExpanded = expandedContents.has(uid);
+                  const contentIsLong = (entry.content || '').length > CONTENT_LONG_THRESHOLD;
 
                   // 定义已显示的属性，排除这些属性后显示剩余的属性
                   const displayedProps = ['uid', 'key', 'keysecondary', 'comment', 'content', 'constant', 'selective', 'order', 'position', 'disable', 'displayIndex', 'addMemo', 'group', 'groupOverride', 'groupWeight', 'sticky', 'cooldown', 'delay', 'probability', 'depth', 'useProbability', 'role', 'excludeRecursion', 'preventRecursion', 'delayUntilRecursion', 'scanDepth', 'caseSensitive', 'matchWholeWords', 'useGroupScoring', 'automationId'];
@@ -580,65 +634,91 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
                   const additionalProps = Object.entries(entry).filter(([key]) => !displayedProps.includes(key));
 
                   return (
-                    <Card key={uid} style={{ marginBottom: 16, border: '1px solid var(--border-base, #333)', backgroundColor: 'var(--bg-elevated, #2a2a2a)', color: 'var(--text-primary, #ffffff)' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <input
-                            type="checkbox"
+                    <Card key={uid} className="wbet-card">
+                      {/* 卡片头：复选框（点击区含标题）+ 右上角统一操作行 */}
+                      <div className="wbet-card-header">
+                        <label
+                          className="wbet-card-title"
+                          onClick={() => handleToggleSelect(uid, !selectedEntries.has(uid))}
+                        >
+                          <Checkbox
                             checked={selectedEntries.has(uid)}
+                            onClick={(e) => e.stopPropagation()}
                             onChange={(e) => handleToggleSelect(uid, e.target.checked)}
-                            style={{ transform: 'scale(1.2)' }}
                           />
-                          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 'bold' }}>条目 {entry.uid}: {entry.comment || '无注释'}</h3>
+                          <h3>条目 {entry.uid}: {entry.comment || '无注释'}</h3>
+                        </label>
+                        <div className="wbet-card-actions">
+                          <Tooltip title="编辑条目">
+                            <Button
+                              type="text"
+                              icon={<EditOutlined />}
+                              onClick={() => onEditEntry(entry, uid)}
+                            />
+                          </Tooltip>
+                          {generatingKeywordsUid === uid ? (
+                            <Tooltip title="中断关键词生成">
+                              <Button
+                                type="text"
+                                className="wbet-btn-running"
+                                icon={<StopOutlined />}
+                                onClick={onCancelAIRequest}
+                              />
+                            </Tooltip>
+                          ) : (
+                            <Tooltip title="AI 生成关键词">
+                              <Button
+                                type="text"
+                                icon={<TagOutlined />}
+                                onClick={() => onGenerateKeywordsForEntry(uid)}
+                              />
+                            </Tooltip>
+                          )}
+                          <Tooltip title="编辑标签">
+                            <Button
+                              type="text"
+                              icon={<TagsOutlined />}
+                              onClick={() => onEditEntryTags(uid)}
+                            />
+                          </Tooltip>
+                          <Tooltip title="删除条目">
+                            <Button
+                              type="text"
+                              className="wbet-btn-danger"
+                              icon={<DeleteOutlined />}
+                              onClick={() => handleDeleteEntryClick(uid)}
+                            />
+                          </Tooltip>
                         </div>
                       </div>
-                      <div style={{ color: 'var(--text-primary, #ffffff)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                          <div>
-                            <strong>关键词:</strong> <span style={{ color: 'var(--primary-color, #1890ff)' }}>{entry.key?.join(', ') || '无'}</span>
+                      <div className="wbet-card-body">
+                        <div className="wbet-card-field">
+                          <div className="wbet-card-field-key">
+                            <strong>关键词:</strong> <span className="wbet-key-text">{entry.key?.join(', ') || '无'}</span>
                           </div>
-                          {generatingKeywordsUid === uid ? (
-                            <Button
-                              type="link"
-                              size="small"
-                              danger
-                              icon={<StopOutlined />}
-                              onClick={onCancelAIRequest}
-                            >
-                              中断
-                            </Button>
-                          ) : (
-                            <Button
-                              type="link"
-                              size="small"
-                              icon={<TagOutlined />}
-                              onClick={() => onGenerateKeywordsForEntry(uid)}
-                            >
-                              AI生成关键词
-                            </Button>
-                          )}
                         </div>
                         {entry.keysecondary && entry.keysecondary.length > 0 && (
-                          <p style={{ marginBottom: 8 }}>
-                            <strong>次要关键词:</strong> <span style={{ color: 'var(--primary-color, #1890ff)' }}>{entry.keysecondary.join(', ')}</span>
+                          <p className="wbet-card-field-secondary">
+                            <strong>次要关键词:</strong> <span className="wbet-key-text">{entry.keysecondary.join(', ')}</span>
                           </p>
                         )}
                         <p style={{ marginBottom: 8 }}>
                           <strong>内容:</strong>
                         </p>
-                        <div style={{
-                          padding: 12,
-                          backgroundColor: 'var(--bg-elevated, #2a2a2a)',
-                          color: 'var(--text-primary, #ffffff)',
-                          borderRadius: 4,
-                          whiteSpace: 'pre-wrap',
-                          fontFamily: 'monospace',
-                          maxHeight: '200px',
-                          overflowY: 'auto'
-                        }}>
+                        <div className={`wbet-content-box${contentExpanded ? ' wbet-content-expanded' : ''}`}>
                           {entry.content || '无'}
                         </div>
-                        <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                        {contentIsLong && (
+                          <Button
+                            type="link"
+                            size="small"
+                            className="wbet-content-toggle"
+                            onClick={() => toggleContentExpand(uid)}
+                          >
+                            {contentExpanded ? '收起 ▲' : '展开全部 ▼'}
+                          </Button>
+                        )}
+                        <div className="wbet-props-row">
                           <Tag color="blue">顺序: {entry.order}</Tag>
                           <Tag color="green">概率: {entry.probability}%</Tag>
                           <Tag color="orange">深度: {entry.depth}</Tag>
@@ -648,19 +728,11 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
                           {entry.disable && <Tag color="gray">禁用</Tag>}
                           {entry.addMemo && <Tag color="geekblue">添加到记忆</Tag>}
                         </div>
-                        <div style={{ marginTop: 8, marginBottom: 12 }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                        <div className="wbet-tags-row">
+                          <div className="wbet-tags-header">
                             <span style={{ fontWeight: 'bold' }}>标签:</span>
-                            <Button
-                              type="link"
-                              size="small"
-                              icon={<EditOutlined />}
-                              onClick={() => onEditEntryTags(uid)}
-                            >
-                              编辑标签
-                            </Button>
                           </div>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                          <div className="wbet-tags-list">
                             {entry.tags && entry.tags.length > 0 ? (
                               entry.tags.map((tag: any) => (
                                 <Tag key={tag.id} color={tag.color}>{tag.name}</Tag>
@@ -671,50 +743,24 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
                           </div>
                         </div>
                         {additionalProps.length > 0 && (
-                          <div style={{ marginTop: 12, borderTop: '1px solid var(--border-base, #333)', paddingTop: 12 }}>
+                          <div className="wbet-more-props">
                             <Button
                               type="link"
                               onClick={() => onToggleExpand(uid)}
-                              style={{ padding: 0, height: 'auto' }}
+                              className="wbet-more-props-toggle"
                             >
                               {isExpanded ? '收起 ▲' : '更多 ▼'}
                             </Button>
                             {isExpanded && (
-                              <div style={{
-                                marginTop: 12,
-                                padding: 16,
-                                backgroundColor: 'var(--bg-elevated, #2a2a2a)',
-                                color: 'var(--text-primary, #ffffff)',
-                                borderRadius: 4,
-                                border: '1px solid var(--border-base, #333)'
-                              }}>
-                                <p style={{ marginBottom: 12, fontWeight: 'bold', color: 'var(--text-primary, #ffffff)', fontSize: 14 }}>更多属性:</p>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                              <div className="wbet-more-props-panel">
+                                <p className="wbet-more-props-title">更多属性:</p>
+                                <div className="wbet-more-props-list">
                                   {additionalProps.map(([key, value]) => {
                                     const displayName = getDisplayName(key);
                                     return (
-                                      <div key={key} style={{
-                                        display: 'flex',
-                                        alignItems: 'flex-start',
-                                        padding: '8px 12px',
-                                        backgroundColor: 'var(--bg-elevated, #2a2a2a)',
-                                        color: 'var(--text-primary, #ffffff)',
-                                        borderRadius: 4,
-                                        border: '1px solid var(--border-base, #333)'
-                                      }}>
-                                        <span style={{
-                                          fontWeight: 'bold',
-                                          color: 'var(--primary-color, #1890ff)',
-                                          minWidth: 120,
-                                          marginRight: 12,
-                                          flexShrink: 0
-                                        }}>{displayName}:</span>
-                                        <span style={{
-                                          color: 'var(--text-secondary, #8c8c8c)',
-                                          wordBreak: 'break-all',
-                                          fontFamily: 'monospace',
-                                          fontSize: 13
-                                        }}>{JSON.stringify(value)}</span>
+                                      <div key={key} className="wbet-more-prop-item">
+                                        <span className="wbet-more-prop-key">{displayName}:</span>
+                                        <span className="wbet-more-prop-value">{JSON.stringify(value)}</span>
                                       </div>
                                     );
                                   })}
@@ -723,25 +769,6 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
                             )}
                           </div>
                         )}
-                        <div style={{ marginTop: 12, textAlign: 'right', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                          <Button
-                            type="primary"
-                            danger
-                            icon={<DeleteOutlined />}
-                            onClick={() => handleDeleteEntryClick(uid)}
-                            size="small"
-                          >
-                            删除条目
-                          </Button>
-                          <Button
-                            type="primary"
-                            icon={<EditOutlined />}
-                            onClick={() => onEditEntry(entry, uid)}
-                            size="small"
-                          >
-                            编辑条目
-                          </Button>
-                        </div>
                       </div>
                     </Card>
                   );
@@ -750,8 +777,8 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
             );
           })}
 
-          {/* 分页控件（total 用筛选后的数量，与列表渲染一致） */}
-          <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--border-base, #333)' }}>
+          {/* 分页控件（total 用筛选后的数量，与列表渲染一致；粘性固定于滚动区底部） */}
+          <div className="wbet-pagination-bar">
             <Pagination
               current={currentPage}
               pageSize={pageSize}
@@ -765,11 +792,22 @@ const WorldBookEntryTable: React.FC<WorldBookEntryTableProps> = ({
                   setPageSize(size);
                 }
               }}
-              style={{ color: 'var(--text-primary, #ffffff)' }}
             />
           </div>
         </div>
       )}
+      </div>
+
+      {/* 回到顶部悬浮按钮（absolute 定位于 Modal content 右下方，滚动超过一屏后出现） */}
+      <div
+        className={`wbet-back-top${showBackTop ? ' wbet-back-top-visible' : ''}`}
+        onClick={handleScrollToTop}
+        role="button"
+        aria-label="回到顶部"
+        title="回到顶部"
+      >
+        <VerticalAlignTopOutlined />
+      </div>
     </Modal>
   );
 };
