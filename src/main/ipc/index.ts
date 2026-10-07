@@ -12,7 +12,10 @@ import { registerMemoryHandlers } from './handlers/memoryHandlers';
 import { registerCreativeHandlers } from './handlers/creativeHandlers';
 import { registerCharacterChatHandlers } from './handlers/characterChatHandlers';
 import { registerWritingHandlers } from './handlers/writingHandlers';
-import { registerGameHandlers } from './handlers/gameHandlers';
+import { registerWritingV2Handlers } from './handlers/writingV2Handlers';
+import { registerWritingPipelineHandlers } from './handlers/writingPipelineHandlers';
+import { registerMangaHandlers } from './handlers/mangaHandlers';
+
 import { registerPromptHandlers } from './handlers/promptHandlers';
 import { registerTokenHandlers } from './handlers/tokenHandlers';
 import { registerExpressionHandlers } from './handlers/expressionHandlers';
@@ -69,7 +72,13 @@ export function setupIpcHandlers() {
   registerCreativeHandlers();
   registerCharacterChatHandlers();
   registerWritingHandlers();
-  registerGameHandlers();
+  // 写作模式 2.0 专用通道（parseOutline / exportWithChapters）
+  registerWritingV2Handlers();
+  registerWritingPipelineHandlers();
+  // 漫画解析 IPC（Spec: integrate-comic-parsing-mode）
+  // 暴露 manga:scanFolder / analyzePage / buildContextTable / generateOutline / exportAnalysis 共 5 个通道
+  registerMangaHandlers();
+
   registerPromptHandlers();
   registerTokenHandlers();
   // 表情管理系统 IPC（Spec: add-character-expression-system / Task 1）

@@ -347,6 +347,118 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
     }
   };
 
+  // Spec: add-entry-tag-ai-selection — 「编辑条目标签」弹窗用：
+  // 将条目完整内容 + 世界书现有标签库发送给 AI，AI 优先复用已有标签，
+  // 必要时提出新标签。返回标签名称数组（调用方负责区分已有/新标签并入库）。
+  const aiSelectTagsForEntry = async (entry: any, existingTagNames: string[]): Promise<string[]> => {
+    try {
+      const engine = getActiveEngineConfig();
+      if (!engine || !engine.api_url) {
+        throw new Error('未找到活跃的AI引擎或API地址未配置');
+      }
+
+      const { api_url, api_key, api_mode, model_name, api_key_transmission, max_tokens, temperature, top_p } = engine;
+      void api_mode; // 与 generateTagsForEntry 保持一致：apiMode 未在请求体中使用
+
+      addLog(`[WorldBook] aiSelectTagsForEntry: 开始AI选标签, 条目=${entry?.comment || '无注释'}, 已有标签数=${existingTagNames.length}, Model=${model_name}`);
+
+      // 通过提示词模板构建系统提示词和用户提示词
+      const promptResult = await window.electronAPI.prompt.build('world-book.generate-entry-tags', {
+        entry_comment: entry?.comment || '无',
+        entry_content: (entry?.content || '无').substring(0, 6000) + ((entry?.content || '').length > 6000 ? '...' : ''),
+        entry_keys: entry?.key?.join(', ') || '无',
+        existing_tags: existingTagNames.length > 0 ? existingTagNames.join(', ') : '（暂无标签）'
+      });
+      if (!promptResult.success || !promptResult.data) {
+        throw new Error('获取提示词模板失败: ' + (promptResult.error || '未知错误'));
+      }
+      let systemPrompt = promptResult.data.systemPrompt;
+      const userPrompt = promptResult.data.userPrompt;
+
+      // 拼接全局system_prompt
+      if (engine.system_prompt && engine.system_prompt.trim()) {
+        systemPrompt = engine.system_prompt.trim() + '\n\n' + systemPrompt;
+      }
+
+      // 根据 API 模式构建请求 URL
+      let requestUrl: string;
+      if (api_url.endsWith('/v1/chat/completions')) {
+        requestUrl = api_url;
+      } else {
+        const baseUrl = api_url.endsWith('/') ? api_url : api_url + '/';
+        requestUrl = baseUrl + 'v1/chat/completions';
+      }
+
+      const requestBody: any = {
+        model: model_name,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        max_tokens: (typeof max_tokens === 'number' && max_tokens > 0) ? max_tokens : 2048,
+        temperature: (typeof temperature === 'number' && temperature >= 0 && temperature <= 2) ? temperature : 0.7,
+        top_p: (typeof top_p === 'number' && top_p >= 0 && top_p <= 1) ? top_p : 0.95,
+        stream: false
+      };
+
+      const requestHeaders: Record<string, string> = {
+        'Content-Type': 'application/json'
+      };
+      if (api_key) {
+        if (api_key_transmission === 'header') {
+          const trimmedApiKey = api_key.trim();
+          requestHeaders['Authorization'] = trimmedApiKey.startsWith('Bearer ') ? trimmedApiKey : `Bearer ${trimmedApiKey}`;
+        } else {
+          requestBody.api_key = api_key;
+        }
+      }
+
+      const result = await window.electronAPI.ai.request({
+        url: requestUrl,
+        method: 'POST',
+        headers: requestHeaders,
+        body: requestBody,
+        timeout: 0 // 无超时限制（与项目其他 AI 请求一致）
+      });
+
+      if (!result.success) {
+        throw new Error(`API请求失败: ${result.error}`);
+      }
+
+      const data = result.data;
+      let aiResponse = (data.choices?.[0]?.message?.content || '').trim();
+
+      // 提取 JSON（与 generateKeywords 相同的清理策略）
+      const firstBrace = aiResponse.indexOf('{');
+      const lastBrace = aiResponse.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        aiResponse = aiResponse.substring(firstBrace, lastBrace + 1);
+      } else {
+        aiResponse = aiResponse.replace(/^```(json)?\s*/g, '').replace(/\s*```$/g, '');
+      }
+
+      let tagNames: string[] = [];
+      try {
+        const parsed = JSON.parse(aiResponse);
+        if (Array.isArray(parsed?.tags)) {
+          tagNames = parsed.tags.map((t: any) => String(t).trim()).filter((t: string) => t.length > 0);
+        }
+      } catch {
+        // 兜底：若 AI 未按 JSON 返回，则按逗号分隔解析
+        tagNames = aiResponse.split(/[,，\n]/).map((t: string) => t.trim().replace(/^["'\[\]]+|["'\[\]]+$/g, '')).filter((t: string) => t.length > 0);
+      }
+
+      // 去重
+      tagNames = Array.from(new Set(tagNames));
+
+      addLog(`[WorldBook] aiSelectTagsForEntry: AI返回标签 ${tagNames.join(', ')}`);
+      return tagNames;
+    } catch (error) {
+      addLog(`[WorldBook] aiSelectTagsForEntry 失败: ${error instanceof Error ? error.message : '未知错误'}`, 'error');
+      throw error;
+    }
+  };
+
   // 辅助函数：润色单个文本
   const polishText = async (text: string, apiUrl: string, apiKey: string, apiMode: string, modelName: string, apiKeyTransmission: string, requirements: string = '', worldBookDescription: string = '', textType: 'keyword' | 'content' | 'comment' = 'content', maxTokens: number = 10240, temperature: number = 0.7, topP: number = 0.95, globalSystemPrompt: string = '', deAiFlavor: boolean = true): Promise<string> => {
     if (!text || text.trim() === '') {
@@ -3606,6 +3718,8 @@ export function useWorldBookAIOperations(params: UseWorldBookAIOperationsParams)
     polishDeAiFlavor,
     setPolishDeAiFlavor,
     generateTagsForEntry,
+    // Spec: add-entry-tag-ai-selection — 「编辑条目标签」弹窗 AI 选标签
+    aiSelectTagsForEntry,
     generateKeywords,
     extractExistingKeywords,
     // handlers

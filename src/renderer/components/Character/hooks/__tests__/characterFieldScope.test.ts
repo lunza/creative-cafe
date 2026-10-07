@@ -1,9 +1,10 @@
 /**
  * Spec: fix-character-card-field-scope-flash-models — 输出越界防御单测
  * 覆盖四类用例：多字段提取 / 无法提取回退 / 标签清理 / 正常透传
+ * Spec: unify-character-card-full-field-context — 短字段标签防御 + buildCharacterContext 全字段上下文
  */
 import { describe, it, expect } from 'vitest';
-import { extractTargetFieldContent } from '../characterFieldScope';
+import { extractTargetFieldContent, buildCharacterContext } from '../characterFieldScope';
 
 describe('extractTargetFieldContent（Spec: fix-character-card-field-scope-flash-models）', () => {
   it('防御1：多字段结构输出 → 提取目标字段段落', () => {
@@ -91,5 +92,86 @@ describe('extractTargetFieldContent（Spec: fix-character-card-field-scope-flash
     extractTargetFieldContent('个性：冷静\n场景：森林', 'description', addLog);
     expect(logs.length).toBe(1);
     expect(logs[0]).toContain('越界');
+  });
+});
+
+describe('extractTargetFieldContent 短字段标签（Spec: unify-character-card-full-field-context）', () => {
+  it('防御2：输出含"角色名称/标签"等多个短字段段落且无目标字段段落 → 判定越界', () => {
+    const raw = `角色名称：Lynne
+标签：奇幻、傲娇
+描述：银发精灵弓手。`;
+    // 目标为"个性"：输出含 3 个其他字段段落（角色名称/标签/描述）且无目标段落 → 越界
+    const result = extractTargetFieldContent(raw, 'personality');
+    expect(result.overflow).toBe(true);
+  });
+
+  it('防御1：目标为 name，输出"角色名称：Lynne" → 提取标签后内容', () => {
+    const raw = '角色名称：Lynne';
+    const result = extractTargetFieldContent(raw, 'name');
+    expect(result.overflow).toBe(false);
+    expect(result.content).toBe('Lynne');
+  });
+
+  it('防御1：目标为 tags，输出"【标签】奇幻、傲娇"（括号形式） → 提取标签后内容', () => {
+    const raw = '【标签】奇幻、傲娇';
+    const result = extractTargetFieldContent(raw, 'tags');
+    expect(result.overflow).toBe(false);
+    expect(result.content).toBe('奇幻、傲娇');
+  });
+});
+
+describe('buildCharacterContext（Spec: unify-character-card-full-field-context）', () => {
+  const fullFormValues: Record<string, any> = {
+    name: 'Lynne',
+    nickname: '小银',
+    source: '原创',
+    creator: 'Master',
+    character_version: '1.0',
+    tags: ['奇幻', '傲娇'],
+    post_history_instructions: '保持简洁',
+    system_prompt: '你是 Lynne。',
+    first_mes: '你好，旅行者。',
+    mes_example: '示例对话',
+    description: '银发精灵弓手。',
+    personality: '冷静',
+    scenario: '北境森林',
+    alternate_greetings: ['早上好！', '晚上好！'],
+    creator_notes: '原创角色'
+  };
+
+  it('全 15 字段已填 → 排除目标字段后输出其余 14 个字段行（含 6 个短字段）', () => {
+    const result = buildCharacterContext(fullFormValues, 'description');
+    // alternate_greetings 数组值内嵌换行，故按 "- " 前缀计字段行数
+    const fieldLines = result.split('\n').filter(l => l.startsWith('- '));
+    expect(fieldLines).toHaveLength(14);
+    expect(result).not.toContain('- 描述：');
+    expect(result).toContain('- 角色名称：Lynne');
+    expect(result).toContain('- 昵称：小银');
+    expect(result).toContain('- 来源：原创');
+    expect(result).toContain('- 创建者：Master');
+    expect(result).toContain('- 版本信息：1.0');
+    expect(result).toContain('- 标签：奇幻、傲娇');
+    expect(result).toContain('- 系统提示：你是 Lynne。');
+    expect(result).toContain('- 历史记录后指令：保持简洁');
+    expect(result).toContain('- 创建者笔记：原创角色');
+  });
+
+  it('目标为短字段（name）→ 角色名称行被排除，其余字段保留', () => {
+    const result = buildCharacterContext(fullFormValues, 'name');
+    expect(result).not.toContain('- 角色名称：');
+    expect(result).toContain('- 描述：银发精灵弓手。');
+    expect(result).toContain('- 标签：奇幻、傲娇');
+  });
+
+  it('tags 数组用顿号连接为单行；alternate_greetings 数组仍用换行连接', () => {
+    const result = buildCharacterContext(fullFormValues, 'description');
+    expect(result).toContain('- 标签：奇幻、傲娇');
+    expect(result).toMatch(/- 替代问候：早上好！\n晚上好！/);
+  });
+
+  it('空值字段跳过；全部为空 → 返回空字符串', () => {
+    expect(buildCharacterContext({ name: 'Lynne', description: '' }, 'description')).toBe('- 角色名称：Lynne');
+    expect(buildCharacterContext({}, 'description')).toBe('');
+    expect(buildCharacterContext({ description: '只有目标字段' }, 'description')).toBe('');
   });
 });

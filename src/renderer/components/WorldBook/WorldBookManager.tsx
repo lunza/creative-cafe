@@ -710,6 +710,93 @@ const WorldBookManager: React.FC = () => {
     setCurrentEditEntryUid(uid);
   }, [setIsEditEntryTagsModalOpen, setCurrentEditEntryUid]);
 
+  // ===== Spec: add-entry-tag-ai-selection — 「编辑条目标签」弹窗 AI 生成标签 =====
+  // 将当前条目完整内容 + 世界书全部现有标签发送给 AI，AI 选择应使用的标签
+  // （优先复用已有标签）或提出新标签；新标签自动保存到本世界书标签库。
+  const TAG_COLOR_PALETTE = ['blue', 'green', 'orange', 'red', 'purple', 'cyan', 'geekblue', 'magenta', 'volcano', 'gold', 'lime'];
+  const [isGeneratingEntryTagsAI, setIsGeneratingEntryTagsAI] = useState(false);
+
+  const handleAIGenerateEntryTags = useCallback(async () => {
+    if (!viewingItem || !worldBookContent || currentEditEntryUid === null) return;
+
+    const entry: any = Object.values(worldBookContent.entries).find(
+      (e: any) => e.uid === currentEditEntryUid || String(e.uid) === String(currentEditEntryUid)
+    );
+    if (!entry) {
+      message.error('条目未找到');
+      return;
+    }
+
+    setIsGeneratingEntryTagsAI(true);
+    try {
+      const existingTagNames = tags.map((t: any) => t.name);
+      const aiTagNames: string[] = await aiOps.aiSelectTagsForEntry(entry, existingTagNames);
+      if (aiTagNames.length === 0) {
+        message.warning('AI未返回任何标签');
+        return;
+      }
+
+      // 区分：AI 返回的标签名 → 已有标签（复用） vs 新标签（需入库）
+      const matchedTagIds: string[] = [];
+      const newTagNames: string[] = [];
+      const lowerNameToId = new Map<string, string>(tags.map((t: any) => [t.name.toLowerCase(), t.id]));
+      aiTagNames.forEach((name) => {
+        const existingId = lowerNameToId.get(name.toLowerCase());
+        if (existingId) {
+          matchedTagIds.push(existingId);
+        } else {
+          newTagNames.push(name);
+        }
+      });
+
+      // 读取磁盘最新标签数据后合并写入，避免覆盖其他并发变更
+      const tagData = await window.electronAPI.worldBook.readTags(viewingItem.path);
+      const finalTags: any[] = [...(tagData?.tags || [])];
+      const finalAssociations: any[] = [...(tagData?.associations || [])];
+
+      // 新标签自动保存到本世界书标签库
+      newTagNames.forEach((name) => {
+        // 二次防重：磁盘上可能已有同名标签
+        const dup = finalTags.find((t: any) => t.name.toLowerCase() === name.toLowerCase());
+        if (dup) {
+          matchedTagIds.push(dup.id);
+          return;
+        }
+        const newTag = {
+          id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          name,
+          color: TAG_COLOR_PALETTE[Math.floor(Math.random() * TAG_COLOR_PALETTE.length)]
+        };
+        finalTags.push(newTag);
+        matchedTagIds.push(newTag.id);
+      });
+
+      // 为条目建立标签关联（去重）
+      matchedTagIds.forEach((tagId) => {
+        const exists = finalAssociations.some(
+          (assoc: any) => assoc.entryUid === currentEditEntryUid && assoc.tagId === tagId
+        );
+        if (!exists) {
+          finalAssociations.push({ tagId, entryUid: currentEditEntryUid });
+        }
+      });
+
+      await window.electronAPI.worldBook.writeTags(viewingItem.path, {
+        tags: finalTags,
+        associations: finalAssociations
+      });
+      await loadTags(viewingItem.path);
+
+      const reuseCount = matchedTagIds.length - newTagNames.length;
+      message.success(`AI标签生成成功：复用 ${reuseCount} 个已有标签，新增 ${newTagNames.length} 个标签${newTagNames.length > 0 ? '（已自动入库）' : ''}`);
+      addLog(`[WorldBook] AI选标签完成: 条目=${entry.comment || '无注释'}, 新增标签=${newTagNames.join(', ') || '无'}`, 'info');
+    } catch (error) {
+      message.error(`AI生成标签失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    } finally {
+      setIsGeneratingEntryTagsAI(false);
+    }
+  }, [viewingItem, worldBookContent, currentEditEntryUid, tags, aiOps, loadTags, addLog]);
+
   // 打开添加条目 Modal
   const handleOpenAddEntryModal = useCallback(() => {
     setIsAddEntryModalOpen(true);
@@ -1050,7 +1137,19 @@ const WorldBookManager: React.FC = () => {
                     </div>
 
                     <div style={{ marginBottom: 16 }}>
-                      <div style={{ marginBottom: 8, fontWeight: 'bold' }}>当前标签:</div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                        <span style={{ fontWeight: 'bold' }}>当前标签:</span>
+                        {/* Spec: add-entry-tag-ai-selection — AI 结合条目内容与现有标签库生成标签 */}
+                        <Button
+                          type="link"
+                          size="small"
+                          icon={<RobotOutlined />}
+                          loading={isGeneratingEntryTagsAI}
+                          onClick={handleAIGenerateEntryTags}
+                        >
+                          {isGeneratingEntryTagsAI ? 'AI生成中...' : 'AI生成标签'}
+                        </Button>
+                      </div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
                         {entryTags.length > 0 ? (
                           entryTags.map(tag => (

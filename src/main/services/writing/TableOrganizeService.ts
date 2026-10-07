@@ -10,7 +10,8 @@ import {
 import { TableEditCommandExecutor } from './TableEditCommandExecutor';
 import { AIConfigProvider } from '../ai/AIConfigProvider';
 import { callAIAPIWithFetch, AIAPIConfig, AIAPIParams } from '../ai/aiHttpClient';
-import { tableTemplateService, TableTemplate, TableSheet } from '../memory/tableTemplateService';
+import { TableTemplate, TableSheet } from '../memory/tableTemplateService';
+import { resolveWritingTableTemplate } from './writingTemplateRegistry';
 import { tableEditParser } from '../memory/tableEditParser';
 import { addLog } from '../memory/chatLogService';
 
@@ -44,7 +45,58 @@ export class TableOrganizeService {
     private readonly editExecutor: TableEditCommandExecutor
   ) {}
 
+  // ==================== 取消控制 ====================
+
+  /** 整理任务取消标志（按项目，章节级/分片级检查） */
+  private readonly cancelFlags = new Map<string, boolean>();
+
+  /** 请求取消进行中的整理任务（当前分片 AI 调用完成后生效，已处理结果保留） */
+  cancelOrganize(projectId: string): void {
+    this.cancelFlags.set(projectId, true);
+    addLog(`[WritingOrganize] 取消请求: ${projectId}`, 'info');
+  }
+
+  private isCancelRequested(projectId: string): boolean {
+    return this.cancelFlags.get(projectId) === true;
+  }
+
   // ==================== 公共入口 ====================
+
+  /**
+   * 确保表格数据文件存在且含模板结构，缺失时按已绑定模板重建空表并落盘。
+   * 背景：「清空」按钮会删除整个 table-data.json（含 sheets/headers 结构），但模板绑定配置仍在，
+   * 此前整理入口会误报「表格数据不存在，请先绑定模板」——这里自愈重建，让「AI 整理全部」可直接重跑。
+   */
+  private async ensureTableDataFromTemplate(projectId: string): Promise<WritingTableData> {
+    const existing = loadTableData(projectId);
+    if (existing && existing.sheets && existing.sheets.length > 0) {
+      return existing;
+    }
+
+    const tableConfig = await this.tableRepo.getTableConfig(projectId);
+    if (!tableConfig || !tableConfig.associatedTemplateId) {
+      throw new Error('未关联表格模板，请先绑定模板');
+    }
+    const template = resolveWritingTableTemplate(tableConfig.associatedTemplateId);
+    if (!template) {
+      throw new Error(`模板 ${tableConfig.associatedTemplateId} 不存在`);
+    }
+
+    const rebuilt: WritingTableData = {
+      sheets: (template.sheets || []).map(s => s.name),
+      headers: {},
+      data: {},
+      sheetDescriptions: {}
+    };
+    for (const sheet of template.sheets || []) {
+      rebuilt.headers[sheet.name] = sheet.headers;
+      rebuilt.data[sheet.name] = [];
+      rebuilt.sheetDescriptions[sheet.name] = sheet.description || '';
+    }
+    saveTableDataFile(projectId, rebuilt);
+    addLog(`[WritingOrganize] 表格数据文件缺失（可能已被清空），已按模板重建空表结构: ${tableConfig.associatedTemplateName || tableConfig.associatedTemplateId}`, 'info');
+    return rebuilt;
+  }
 
   async organizeTable(
     projectId: string,
@@ -53,8 +105,8 @@ export class TableOrganizeService {
     onProgress?: (current: number, total: number, message: string, percent?: number, currentChunk?: number, totalChunks?: number) => void,
     requirements?: string,
     skipOrganized?: boolean
-  ): Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[] }> {
-    const result = { success: false, processedCount: 0, errorCount: 0, errors: [] as string[] };
+  ): Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[]; cancelled?: boolean }> {
+    const result = { success: false, processedCount: 0, errorCount: 0, errors: [] as string[], cancelled: false };
     const startTime = Date.now();
 
     addLog(`[WritingOrganize] 开始整理表格: ${projectId}, chapterIndex: ${chapterIndex}`, 'info');
@@ -70,15 +122,14 @@ export class TableOrganizeService {
         throw new Error('未关联表格模板，请先绑定模板');
       }
 
-      const tableData = loadTableData(projectId);
-      if (!tableData || !tableData.sheets || tableData.sheets.length === 0) {
-        throw new Error('表格数据不存在，请先绑定模板');
-      }
+      // 数据文件可能被「清空」整删，模板已绑定时按模板重建空表结构（自愈）
+      const tableData = await this.ensureTableDataFromTemplate(projectId);
 
       // 保存原始数据快照（深拷贝）
       const originalDataSnapshot: WritingTableData = JSON.parse(JSON.stringify(tableData));
 
-      const template = tableTemplateService.getTemplate(tableConfig.associatedTemplateId);
+      // 写作内置模板优先，记忆模块模板兜底（存量绑定兼容）
+      const template = resolveWritingTableTemplate(tableConfig.associatedTemplateId);
       if (!template) {
         throw new Error(`模板 ${tableConfig.associatedTemplateId} 不存在`);
       }
@@ -87,9 +138,13 @@ export class TableOrganizeService {
       let chaptersToProcess: Chapter[];
       if (chapterIndex !== undefined) {
         // 单章节模式：仅处理指定章节
-        const targetChapter = project.outline!.chapters.find(ch => ch.index === chapterIndex);
+        // ⚠️ chapterIndex 语义是「章节在数组中的位置」（渲染层 selectedIndex / 智能体 startIdx+i，均 0 基），
+        // 而漫画导入项目的 chapter.index 可能是 1 基（validateOutline 缺省 idx+1），
+        // 仅按 index 值查找会报「章节 0 不存在」或错位一章——按位置优先，index 值兜底
+        const allChapters = project.outline!.chapters;
+        const targetChapter = allChapters[chapterIndex] ?? allChapters.find(ch => ch.index === chapterIndex);
         if (!targetChapter) {
-          throw new Error(`章节 ${chapterIndex} 不存在`);
+          throw new Error(`章节 ${chapterIndex + 1} 不存在`);
         }
         if (!targetChapter.content || targetChapter.content.trim().length === 0) {
           throw new Error(`章节 ${targetChapter.title} 没有内容`);
@@ -126,9 +181,8 @@ export class TableOrganizeService {
 
       const apiEndpoint = this.aiConfig.buildApiEndpoint(modelConfig);
 
-      if (!apiEndpoint.apiKey) {
-        throw new Error('未配置 API Key，请在设置中配置');
-      }
+      // 仅强制 apiUrl 与 modelName；apiKey 允许为空（无 Key 的本地 LLM 引擎），
+      // 与内容生成 / 剧情检查 / 单条修正链路（getAIConfig，不强制 apiKey）对齐。
       if (!apiEndpoint.apiUrl) {
         throw new Error('未配置 AI 服务地址，请在设置中配置');
       }
@@ -138,8 +192,14 @@ export class TableOrganizeService {
 
       // 累计已处理的分片数，用于精确进度计算
       let processedChunks = 0;
+      this.cancelFlags.delete(projectId);
 
       for (let i = 0; i < chaptersToProcess.length; i++) {
+        // 取消检查（章节级）
+        if (this.isCancelRequested(projectId)) {
+          addLog(`[WritingOrganize] 已取消，停止整理（已完成 ${i}/${totalChapters} 章）`, 'info');
+          break;
+        }
         const chapter = chaptersToProcess[i];
         progress.currentChapter = chapter.index;
         this.tableRepo.saveOrganizeProgress(projectId, progress);
@@ -220,6 +280,13 @@ export class TableOrganizeService {
         this.tableRepo.saveOrganizeProgress(projectId, progress);
       }
 
+      // 取消收尾：已处理结果保留（仍走去重/快照流程）
+      if (this.isCancelRequested(projectId)) {
+        result.cancelled = true;
+        addLog('[WritingOrganize] 整理因取消结束，已处理部分保留', 'info');
+      }
+      this.cancelFlags.delete(projectId);
+
       // 持久化章节状态变更
       await this.projectRepo.saveProject(project);
 
@@ -282,9 +349,9 @@ export class TableOrganizeService {
     chapterIndex?: number,
     onProgress?: (current: number, total: number, status: string, percent: number, currentChunk?: number, totalChunks?: number) => void,
     requirements?: string
-  ): Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[] }> {
+  ): Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[]; cancelled?: boolean }> {
     const startTime = new Date().toISOString();
-    const result = { success: false, processedCount: 0, errorCount: 0, errors: [] as string[] };
+    const result = { success: false, processedCount: 0, errorCount: 0, errors: [] as string[], cancelled: false };
 
     try {
       addLog(`[WritingOrganize] 开始整理单个表格: ${projectId}, sheet=${sheetName}`, 'info');
@@ -303,23 +370,21 @@ export class TableOrganizeService {
         throw new Error('未关联表格模板，请先绑定模板');
       }
 
-      const tableData = loadTableData(projectId);
-      if (!tableData || !tableData.sheets || tableData.sheets.length === 0) {
-        throw new Error('表格数据不存在，请先绑定模板');
-      }
+      // 与 organizeTable 一致：数据文件缺失时按模板重建（自愈），再校验目标 sheet
+      const tableData = await this.ensureTableDataFromTemplate(projectId);
 
       // 验证指定的 sheet 是否存在
       if (!tableData.sheets.includes(sheetName)) {
         throw new Error(`表格 "${sheetName}" 不存在`);
       }
 
-      const template = tableTemplateService.getTemplate(tableConfig.associatedTemplateId);
+      const template = resolveWritingTableTemplate(tableConfig.associatedTemplateId);
       if (!template) {
         throw new Error(`模板 ${tableConfig.associatedTemplateId} 不存在`);
       }
 
       // 验证模板中包含该 sheet
-      const targetSheetTemplate = template.sheets?.find((s: TableSheet) => s.name === sheetName);
+      const targetSheetTemplate = template.sheets?.find((s) => s.name === sheetName);
       if (!targetSheetTemplate) {
         throw new Error(`模板中不存在表格 "${sheetName}"`);
       }
@@ -335,9 +400,11 @@ export class TableOrganizeService {
       // 确定要处理的章节列表
       let chaptersToProcess: Chapter[];
       if (chapterIndex !== undefined) {
-        const targetChapter = project.outline!.chapters.find(ch => ch.index === chapterIndex);
+        // 与 organizeTable 相同：位置优先（渲染层传 0 基数组位置），index 值兜底
+        const allChapters = project.outline!.chapters;
+        const targetChapter = allChapters[chapterIndex] ?? allChapters.find(ch => ch.index === chapterIndex);
         if (!targetChapter) {
-          throw new Error(`章节 ${chapterIndex} 不存在`);
+          throw new Error(`章节 ${chapterIndex + 1} 不存在`);
         }
         if (!targetChapter.content || targetChapter.content.trim().length === 0) {
           throw new Error(`章节 ${targetChapter.title} 没有内容`);
@@ -372,9 +439,7 @@ export class TableOrganizeService {
       this.tableRepo.saveOrganizeProgress(projectId, progress);
 
       const apiEndpoint = this.aiConfig.buildApiEndpoint(modelConfig);
-      if (!apiEndpoint.apiKey) {
-        throw new Error('未配置 API Key，请在设置中配置');
-      }
+      // 仅强制 apiUrl 与 modelName；apiKey 允许为空（无 Key 的本地 LLM 引擎）。
       if (!apiEndpoint.apiUrl) {
         throw new Error('未配置 AI 服务地址，请在设置中配置');
       }
@@ -382,8 +447,14 @@ export class TableOrganizeService {
         throw new Error('未配置模型名称，请在设置中配置');
       }
       let processedChunks = 0;
+      this.cancelFlags.delete(projectId);
 
       for (let i = 0; i < chaptersToProcess.length; i++) {
+        // 取消检查（章节级）
+        if (this.isCancelRequested(projectId)) {
+          addLog(`[WritingOrganize] 单表整理已取消，停止（已完成 ${i}/${totalChapters} 章）`, 'info');
+          break;
+        }
         const chapter = chaptersToProcess[i];
         progress.currentChapter = chapter.index;
         this.tableRepo.saveOrganizeProgress(projectId, progress);
@@ -450,6 +521,13 @@ export class TableOrganizeService {
         this.tableRepo.saveOrganizeProgress(projectId, progress);
       }
 
+      // 取消收尾：已处理结果保留
+      if (this.isCancelRequested(projectId)) {
+        result.cancelled = true;
+        addLog('[WritingOrganize] 单表整理因取消结束，已处理部分保留', 'info');
+      }
+      this.cancelFlags.delete(projectId);
+
       // 持久化章节状态变更
       await this.projectRepo.saveProject(project);
 
@@ -514,13 +592,13 @@ export class TableOrganizeService {
         throw new Error('未关联表格模板');
       }
 
-      const template = tableTemplateService.getTemplate(tableConfig.associatedTemplateId);
+      const template = resolveWritingTableTemplate(tableConfig.associatedTemplateId);
       if (!template) {
         throw new Error(`模板 ${tableConfig.associatedTemplateId} 不存在`);
       }
 
       // 找到当前 sheet 的模板定义
-      const sheetTemplate = template.sheets?.find((s: TableSheet) => s.name === sheet);
+      const sheetTemplate = template.sheets?.find((s) => s.name === sheet);
       if (!sheetTemplate) {
         throw new Error(`模板中不存在 sheet "${sheet}"`);
       }
@@ -528,9 +606,7 @@ export class TableOrganizeService {
       // 使用与 organizeTable 一致的 AI 调用链路
       const apiEndpoint = this.aiConfig.buildApiEndpoint(modelConfig);
 
-      if (!apiEndpoint.apiKey) {
-        throw new Error('未配置 API Key，请在设置中配置');
-      }
+      // 仅强制 apiUrl 与 modelName；apiKey 允许为空（无 Key 的本地 LLM 引擎）。
       if (!apiEndpoint.apiUrl) {
         throw new Error('未配置 AI 服务地址，请在设置中配置');
       }
@@ -587,7 +663,8 @@ export class TableOrganizeService {
       const dedupedRows: Record<string, unknown>[] = [];
 
       for (const row of rows) {
-        const uniqueId = row['1']; // "1" 对应唯一 ID 字段（索引1）
+        // 存储约定：key "1" = 唯一id（解析器把 AI 字段2 转换而来），作为实体去重键
+        const uniqueId = row['1'];
 
         if (uniqueId) {
           if (seenIds.has(uniqueId as string)) {
@@ -635,6 +712,11 @@ export class TableOrganizeService {
     addLog(`[WritingOrganize] 单表格处理章节: ${chapter.title}, sheet=${targetSheetName}, 分块数: ${chunks.length}`, 'info');
 
     for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+      // 取消检查（分片级：当前分片 AI 调用完成后停止）
+      if (this.isCancelRequested(projectId)) {
+        addLog(`[WritingOrganize] 已取消：章节 ${chapter.title} 剩余分片停止处理（单表整理）`, 'info');
+        break;
+      }
       const chunkContent = chunks[chunkIndex];
 
       // 每批分片处理前重新加载最新的表格数据
@@ -648,7 +730,7 @@ export class TableOrganizeService {
 
       // 构建单表格整理的提示词（只包含目标 sheet 的信息）
       const tableContext = this.buildSingleSheetTableContextForPrompt(projectId, template, targetSheetName);
-      const prompt = this.buildSingleSheetOrganizePrompt(chunkContent, template, tableContext, requirements);
+      const prompt = this.buildSingleSheetOrganizePrompt(chunkContent, template, tableContext, requirements, chapter);
 
       const aiResponse = await this.callAIAPI(prompt, modelConfig, apiEndpoint);
 
@@ -753,7 +835,8 @@ export class TableOrganizeService {
     content: string,
     template: TableTemplate,
     tableContext: string,
-    requirements?: string
+    requirements?: string,
+    chapter?: { index?: number; title?: string }
   ): string {
     const targetSheet = template.sheets[0]; // 单表格模板只有一个 sheet
 
@@ -764,6 +847,15 @@ export class TableOrganizeService {
     return `【角色设定】
 你是一个专业的小说内容分析专家，擅长从小说章节中提取关键信息并整理到结构化表格中。
 
+${
+      chapter?.index
+        ? `【当前章节】
+以下内容来自「第${chapter.index}章${chapter.title ? `（${chapter.title}）` : ''}」。
+章节类字段必须填写绝对章号（如"第${chapter.index}章"），禁止填写"本章"等相对值。
+
+`
+        : ''
+    }
 【任务目标】
 请阅读以下小说章节内容，提取关键信息并整理到指定的表格中。
 
@@ -880,14 +972,8 @@ ${requirementsSection}
 主题: ${project.outline?.theme || '未指定'}
 风格: ${project.outline?.style || '未指定'}`;
 
-    // 将行数据格式化为可读文本
-    const currentDataStr = Object.entries(currentRowData)
-      .filter(([key]) => key !== '0')
-      .map(([key, value]) => {
-        const idx = parseInt(key, 10);
-        const headerName = sheetTemplate.headers[idx - 1] || `字段${idx}`;
-        return `${headerName}: ${value}`;
-      }).join('\n');
+    // 存储约定：key "1"=唯一id（保持不变）、key k(k≥2)=表头第 k-1 列
+    const originalUniqueId = typeof currentRowData['1'] === 'string' ? currentRowData['1'] : '';
 
     return `【角色设定】
 你是一个专业的信息整理专家，擅长根据用户的要求优化和整理表格中的数据行。
@@ -898,11 +984,10 @@ ${projectContext}
 ${tableContext}
 【当前待整理行数据】
 Sheet: ${sheetTemplate.name}
-字段定义（索引 → 字段名）：${sheetTemplate.headers.map((h: string, i: number) => `[${i}]${h}`).join(', ')}
-当前行值：${Object.entries(currentRowData).filter(([key]) => key !== '0').map(([key, value]) => {
-      const idx = parseInt(key, 10);
-      const headerName = sheetTemplate.headers[idx] || `字段${idx}`;
-      return `[${idx}]${headerName}=${value}`;
+字段定义（键名 → 字段名）：${sheetTemplate.headers.map((h: string, i: number) => `[${i + 2}]${h}`).join(', ')}
+${originalUniqueId ? `该行唯一id：${originalUniqueId}（系统字段，保持不变，不要输出）\n` : ''}当前行值：${sheetTemplate.headers.map((h: string, i: number) => {
+      const value = currentRowData[String(i + 2)];
+      return `[${i + 2}]${h}=${value ?? ''}`;
     }).join(', ')}
 
 【用户整理要求】
@@ -910,25 +995,22 @@ ${requirements}
 
 【任务要求】
 1. 根据用户的整理要求，结合项目上下文和表格上下文，优化当前行的所有字段数据
-2. 保持"[0]"索引（流水号）字段的值不变
-3. 保持"[1]"索引（唯一id）字段的值不变
-4. 其他字段根据用户要求进行优化和补充
-5. 返回完整的行数据，格式为 JSON 对象
+2. 返回完整的行数据，格式为 JSON 对象
 
 【返回格式】
-请仅返回 JSON 对象，键名为字段索引字符串，值为对应的字段内容：
-{"0": "流水号的值（保持不变）", "1": "唯一id的值（保持不变）", "2": "字段2的值", "3": "字段3的值", ...}
+请仅返回 JSON 对象，键名为字段键名字符串，值为对应的字段内容：
+{"2": "第1个字段的值", "3": "第2个字段的值", ...}
 
 重要：
-- 键名必须是数字字符串（"0", "1", "2", ...），必须与上方字段定义的索引一一对应
-- "0" 对应第一个字段（流水号），"1" 对应第二个字段（唯一id），依此类推
+- 键名必须是数字字符串，从 "2" 开始，与上方字段定义的键名一一对应
+- 不要返回唯一id和流水号（系统字段由程序保留）
 - 必须返回所有字段的键值对，数量与字段定义中的字段数相同
 - 不要返回任何其他内容，仅返回 JSON`;
   }
 
   /**
    * 解析 AI 返回的行数据
-   * 保持唯一 ID 和流水号不变
+   * 按存储约定键控：key "0"=流水号、"1"=唯一id 原样保留，key k(k≥2)=表头第 k-1 列
    */
   private parseAIRowResponse(
     aiResponse: string,
@@ -955,19 +1037,15 @@ ${requirements}
       throw new Error(`AI 返回的数据格式不正确: ${jsonStr.substring(0, 200)}`);
     }
 
-    // 构建新的行数据
+    // 构建新的行数据（存储约定：key "0"=流水号、"1"=唯一id 原样保留；
+    // key k(k≥2)=表头第 k-1 列，AI 未返回的字段回填原值）
     const newRow: Record<string, unknown> = {};
+    if (originalRowData['0'] !== undefined) newRow['0'] = originalRowData['0'];
+    if (originalRowData['1'] !== undefined) newRow['1'] = originalRowData['1'];
 
     for (let i = 0; i < headers.length; i++) {
-      const key = i.toString();
-      const header = headers[i];
-
-      // 保持唯一 ID 和流水号不变
-      if (header === '唯一id' || header === '流水号') {
-        newRow[key] = originalRowData[key] || parsed[key] || '';
-      } else {
-        newRow[key] = parsed[key] !== undefined ? parsed[key] : (originalRowData[key] || '');
-      }
+      const key = String(i + 2);
+      newRow[key] = parsed[key] !== undefined ? parsed[key] : (originalRowData[key] || '');
     }
 
     return newRow;
@@ -1015,6 +1093,11 @@ ${requirements}
     addLog(`[WritingOrganize] 处理章节: ${chapter.title}, 分块数: ${chunks.length}`, 'info');
 
     for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+      // 取消检查（分片级：当前分片 AI 调用完成后停止）
+      if (this.isCancelRequested(projectId)) {
+        addLog(`[WritingOrganize] 已取消：章节 ${chapter.title} 剩余分片停止处理`, 'info');
+        break;
+      }
       const chunkContent = chunks[chunkIndex];
       addLog(`[WritingOrganize] 处理分块 ${chunkIndex + 1}/${chunks.length}, 长度: ${chunkContent.length} 字符`, 'debug');
 
@@ -1030,7 +1113,7 @@ ${requirements}
       }
 
       const tableContext = this.buildTableContextForPrompt(projectId, template);
-      const prompt = this.buildWritingTableOrganizePrompt(chunkContent, template, tableContext, requirements);
+      const prompt = this.buildWritingTableOrganizePrompt(chunkContent, template, tableContext, requirements, chapter);
 
       addLog(`[WritingOrganize] 开始调用AI API (分块 ${chunkIndex + 1})`, 'debug');
 
@@ -1091,21 +1174,34 @@ ${requirements}
     template.sheets.forEach((sheet: TableSheet, sheetIndex: number) => {
       const rows = tableData.data[sheet.name] || [];
       const tableIndex = sheetIndex + 1;
+      const headers = tableData.headers?.[sheet.name] || sheet.headers || [];
 
       if (rows.length > 0) {
         context += `\n【${sheet.name}】(表格索引: ${tableIndex})\n`;
         rows.forEach((row: Record<string, unknown>, rowIndex: number) => {
           const rowIdx = rowIndex + 1;
-          context += `行${rowIdx}: `;
+          // 按存储约定渲染：key "0"=流水号（系统内部，不展示）、key "1"=唯一id、
+          // key k(k≥2)=表头第 k-1 列（模板字段）
           const parts: string[] = [];
-          for (const [key, value] of Object.entries(row)) {
-            if (key !== '流水号') {
-              parts.push(`${key}=${value}`);
+          const uniqueId = row['1'];
+          if (uniqueId) {
+            parts.push(`唯一id=${uniqueId}`);
+          }
+          for (let i = 0; i < headers.length; i++) {
+            const value = row[String(i + 2)];
+            if (value !== undefined && value !== null && String(value) !== '') {
+              parts.push(`${headers[i]}=${value}`);
             }
           }
-          context += parts.join(', ') + '\n';
+          // 兜底：行内存在约定之外的键（历史数据/命名键），原样附加以免信息丢失
+          for (const [key, value] of Object.entries(row)) {
+            const idx = Number(key);
+            if (!Number.isInteger(idx) || idx < 1 || idx - 2 >= headers.length) {
+              if (key !== '0' && key !== '1') parts.push(`${key}=${value}`);
+            }
+          }
+          context += `行${rowIdx}: ${parts.join(', ')}\n`;
 
-          const uniqueId = row['唯一id'];
           if (uniqueId) {
             quickIndex += `- ${uniqueId} → ${sheet.name}, 行${rowIdx}\n`;
           }
@@ -1146,11 +1242,14 @@ ${requirements}
     chapterContent: string,
     template: TableTemplate,
     tableContext: string,
-    requirements?: string
+    requirements?: string,
+    chapter?: { index?: number; title?: string }
   ): string {
     const templateDescription = template.sheets.map((sheet: TableSheet, index: number) => {
-      return `- [索引${index + 1}] ${sheet.name}：字段包括 [${sheet.headers.map((h: string, i: number) => `${i + 1}:${h}`).join(', ')}]
-  表格用途：${sheet.description || '暂无描述'}`;
+      // 字段编号从 3 开始：字段1=流水号（系统自动）、字段2=唯一id（AI 生成），
+      // 与【tableEdit命令格式】参数说明的字段结构约定保持一致，避免两处描述冲突导致 AI 错位
+      return `- [索引${index + 1}] ${sheet.name}：表格字段为 [${sheet.headers.map((h: string, i: number) => `${i + 3}:${h}`).join(', ')}]
+  表格用途：${sheet.description || '暂无描述'}（每个表格的字段结构固定为 [1:流水号, 2:唯一id, 3+:模板字段]，字段1由系统自动生成无需填写）`;
     }).join('\n');
 
     const extractionRules = template.sheets.map((sheet: TableSheet, index: number) => {
@@ -1166,6 +1265,13 @@ ${requirements}
     return `【角色设定】
 你是一个专业的信息提取和表格整理专家，擅长从文本中提取关键信息并生成精确的tableEdit命令。你特别擅长识别不同称呼（appellations）的同一元素，并通过唯一ID策略确保实体识别的一致性。
 
+${
+      chapter?.index
+        ? `【当前章节】
+以下内容来自「第${chapter.index}章${chapter.title ? `（${chapter.title}）` : ''}」。
+章节类字段（发生章节/首次登场章节/埋设章节/回收章节等相关事件等）必须填写绝对章号（如"第${chapter.index}章"，N 为事件实际发生的章节序号），禁止填写"本章""上一章"等相对值。`
+        : ''
+    }
 【当前消息】
 ${chapterContent}
 
@@ -1187,6 +1293,7 @@ ${uniqueIdGuide}
    - 唯一ID是识别同一实体的关键标识，必须在整个对话中保持一致
    - 即使同一实体在对话中被不同称呼指代，也必须使用相同的唯一ID
    - 唯一ID应该具有语义化，但又足够唯一，避免与其他实体混淆
+   - 【重要】唯一ID写入字段2，禁止写入其他字段索引，禁止省略字段2
 
 2. **变体称呼识别与链接**（重点！）：
    - **同一实体的不同称呼必须共用同一个唯一ID**。请根据上下文和语义情景判断：
@@ -1216,7 +1323,7 @@ ${uniqueIdGuide}
 
 1. **强制重复性检查**：在生成任何insertRow命令前，必须执行以下检查流程：
    - 步骤1：查看当前消息中的实体（物品名、角色名、地点等）
-   - 步骤2：在"当前已有数据"中搜索相同或高度相似的实体
+   - 步骤2：在"现有表格数据"中搜索相同或高度相似的实体
    - 步骤3：使用"唯一ID快速查找索引"确认该实体的唯一ID是否已存在
    - 步骤4：如果已存在 → 使用updateRow；如果不存在 → 使用insertRow
 
@@ -1236,16 +1343,16 @@ ${uniqueIdGuide}
 1. 从当前消息中识别实体（角色、物品、地点、事件等）
 2. 检查表格中是否已有该实体（通过唯一ID或关键特征匹配）
    a. 首先在"唯一ID快速查找索引"中查找
-   b. 如果没找到，在"当前已有数据"中通过名称相似度查找
+   b. 如果没找到，在"现有表格数据"中通过名称相似度查找
 3. 如果存在 → 使用updateRow(表格索引, 行索引, {变化的字段})更新该实体信息
 4. 如果不存在 → 使用insertRow(表格索引, {新实体字段})创建新记录
 5. 如果实体不再相关 → 使用deleteRow(表格索引, 行索引)删除（谨慎使用）
 
 正确示例：
-- 现有数据：行1: 唯一ID=zhudi_001, 角色名=朱迪·霍普斯, 身份=警官
+- 现有数据：行1: 唯一id=zhudi_001, 姓名=朱迪, 身份=警官（角色表是表格1）
 - 当前消息："朱迪说她今天升官了"
-- 正确操作：updateRow(2, 1, {"4":"警长"})  ← 只更新身份字段（假设角色表格是表格2，身份是字段4）
-- 错误操作：insertRow(2, {"2":"zhudi_001","3":"朱迪·霍普斯","4":"警长"})  ← 重复插入，绝对禁止！
+- 正确操作：updateRow(1, 1, {"4":"警长"})  ← 表格1第1行，只更新字段4（身份，字段3=姓名、字段2=唯一id不变）
+- 错误操作：insertRow(1, {"2":"zhudi_001","3":"朱迪","4":"警长"})  ← 唯一id已存在，重复插入，绝对禁止！
 
 重复检测特殊场景处理：
 - 场景1：消息中提到"电子面罩"，但表格中已有"电子面罩"(mask_001)和"电子面罩"(electronic_mask_001)
@@ -1264,7 +1371,7 @@ ${uniqueIdGuide}
 6. 识别变体称呼，使用唯一ID保持一致性
 7. 只提取当前消息中明确提到的信息，不要臆造
 8. 【最重要】增量更新：已存在的实体必须使用updateRow，禁止使用insertRow重复插入！
-9. 重复检测：在生成insertRow前，必须先在"唯一ID快速查找索引"中查找，并在"当前已有数据"中通过名称相似度查找
+9. 重复检测：在生成insertRow前，必须先在"唯一ID快速查找索引"中查找，并在"现有表格数据"中通过名称相似度查找
 10. 合并重复记录：如果发现表格中存在多个相同或高度相似的记录，应使用updateRow更新其中一条，并使用deleteRow删除其他重复记录
 11. 操作结果确认：在生成tableEdit命令后，简要说明每个操作的目的
 12. 【绝对禁止】对于唯一ID已存在的实体，绝对不要使用insertRow！这是最严重的错误，会导致数据重复！
@@ -1282,55 +1389,47 @@ deleteRow(表格索引, 行索引)
 
 参数说明:
 - 表格索引: 从1开始,对应模板中页签的顺序
-- 行索引: 从1开始,对应该表格中的数据行索引
-- 字段索引: 从1开始,对应该表格表头的字段索引
-- 每个表格的字段结构固定为: [1:流水号, 2:唯一id, 3+:自定义字段]
-- 流水号(字段1)由系统自动递增,通常不需要手动填写
+- 行索引: 从1开始,对应"现有表格数据"中列出的行号
+- 字段索引: 从1开始,对应该表格的字段索引
+- 每个表格的字段结构固定为: [1:流水号, 2:唯一id, 3+:模板字段]
+- 流水号(字段1)由系统自动递增,无需填写
 - 唯一id(字段2)由AI根据实体名称生成,需具有语义且保持一致性
+- 模板字段从字段3开始(字段3=表头第1列,字段4=表头第2列...),与【表格模板结构】中列出的编号一一对应
 
 【示例输出 - 精确格式约束】
 
-假设当前对话场景如下：
-- 消息："朱迪说她昨天在中央公园遇到了尼克，尼克给她展示了一枚金色徽章。另外，之前提到的电子面罩已经被典狱长收回了。"
-- 现有表格数据：
-  【角色表格】(表格索引: 2)
-  行1: 唯一id=zhudi_001, 角色名=朱迪·霍普斯, 身份=警官, 关系=主角
-  行2: 唯一id=nick_001, 角色名=尼克·王尔德, 身份=狐狸, 关系=配角
-  【物品表格】(表格索引: 4)
-  行1: 唯一id=mask_001, 物品名=电子面罩, 类型=装备, 状态=使用中, 备注/持有人=典狱长
-  行3: 唯一id=card_001, 物品名=万能房卡, 类型=钥匙, 状态=可用, 备注/持有人=朱迪
+假设表格模板包含：
+- [索引1] 角色表：模板字段为 [3:姓名, 4:身份, 5:性格, 6:特征, 7:关键关系, 8:首次登场章节]
+- [索引2] 物品表：模板字段为 [3:名称, 4:类型, 5:持有者, 6:作用, 7:相关事件]
+（字段1=流水号由系统自动生成无需填写，字段2=唯一id由你生成）
+
+现有表格数据：
+  【角色表】(表格索引: 1)
+  行1: 唯一id=zhudi_001, 姓名=朱迪, 身份=警官, 性格=勇敢正直, 特征=兔子、灰色毛发、警服, 关键关系=尼克的搭档, 首次登场章节=第1章
+  【物品表】(表格索引: 2)
+  行1: 唯一id=mask_001, 名称=电子面罩, 类型=装备, 持有者=典狱长, 作用=监控囚犯, 相关事件=第2章没收
+
+当前消息："朱迪说她今天升官成了警长。她在中央公园捡到一枚金色徽章。"
 
 正确输出格式：
 
 <tableEdit>
-<!-- 
-=== 新增操作 ===
-insertRow(2, {"2":"badge_001","3":"金色徽章","4":"物品","5":"尼克展示给朱迪的金色徽章","6":"已发现","7":"尼克"})
-说明：在角色表格(索引2)中新增一行，添加"金色徽章"物品记录
-  字段2(唯一id): badge_001 - 语义化命名，badge表示徽章，001表示序号
-  字段3(物品名): 金色徽章
-  字段4(类型): 物品
-  字段5(描述): 尼克展示给朱迪的金色徽章
-  字段6(状态): 已发现
-  字段7(备注/持有人): 尼克
-
+<!--
 === 更新操作 ===
-updateRow(2, 2, {"6":"已见面","7":"狐狸骗子"})
-说明：更新角色表格(索引2)中第2行(尼克·王尔德)的信息
-  行2对应的是唯一id=nick_001的记录
-  只更新变化的字段：字段6(关系)从"配角"改为"已见面"，字段7(特征)更新为"狐狸骗子"
-  不要重复填写未变化的字段(唯一id、角色名、身份)
+updateRow(1, 1, {"4":"警长"})
+说明：更新角色表(索引1)中第1行(唯一id=zhudi_001的朱迪)
+  只更新变化的字段：字段4(身份)从"警官"改为"警长"
+  不要重复填写未变化的字段(唯一id、姓名、性格、特征等)
 
-updateRow(4, 1, {"6":"已收回"})
-说明：更新物品表格(索引4)中第1行(电子面罩)的状态
-  行1对应的是唯一id=mask_001的记录
-  只更新字段6(状态)从"使用中"改为"已收回"
-
-=== 删除操作 ===
-deleteRow(4, 1)
-说明：删除物品表格(索引4)中第1行(电子面罩)
-  行1对应的是唯一id=mask_001的记录
-  仅在确认该物品已不再相关时使用删除操作
+=== 新增操作 ===
+insertRow(2, {"2":"badge_001","3":"金色徽章","4":"饰品","5":"朱迪","6":"朱迪在中央公园捡到的金色徽章","7":"朱迪捡到徽章"})
+说明：在物品表(索引2)中新增一行"金色徽章"
+  字段2(唯一id): badge_001 - 语义化命名，badge表示徽章，001表示序号
+  字段3(名称): 金色徽章
+  字段4(类型): 饰品
+  字段5(持有者): 朱迪
+  字段6(作用): 朱迪在中央公园捡到的金色徽章
+  字段7(相关事件): 朱迪捡到徽章
 -->
 </tableEdit>
 
@@ -1339,32 +1438,35 @@ deleteRow(4, 1)
 1. insertRow(表格索引, {字段数据对象})
    - 表格索引：数字，从1开始，对应模板页签顺序
    - 字段数据对象：JSON格式，键为字段索引(字符串)，值为字段内容(字符串)
-   - 示例：insertRow(2, {"2":"zhudi_001","3":"朱迪·霍普斯","4":"警官"})
+   - 示例：insertRow(1, {"2":"zhudi_001","3":"朱迪","4":"警官"})
    - 注意：字段索引2(唯一id)必须填写，字段1(流水号)由系统自动生成无需填写
    - 注意：所有值必须是字符串类型，用双引号包裹
 
 2. updateRow(表格索引, 行索引, {字段数据对象})
    - 表格索引：数字，从1开始
-   - 行索引：数字，从1开始，对应当前表格中的数据行号
+   - 行索引：数字，从1开始，对应"现有表格数据"中列出的行号
    - 字段数据对象：JSON格式，只包含需要更新的字段
-   - 示例：updateRow(2, 1, {"4":"警长"})
+   - 示例：updateRow(1, 1, {"4":"警长"})
    - 注意：只更新变化的字段，不要重复填写未变化的字段
    - 注意：行索引必须在当前表格数据范围内(参考"唯一ID快速查找索引")
 
 3. deleteRow(表格索引, 行索引)
    - 表格索引：数字，从1开始
    - 行索引：数字，从1开始
-   - 示例：deleteRow(4, 1)
+   - 示例：deleteRow(2, 1)
    - 注意：删除操作需谨慎，仅在确认记录不再相关时使用
    - 注意：合并重复记录时，应先updateRow保留的记录，再deleteRow删除重复的记录
 
 【错误格式示例 - 绝对禁止】
 
-✗ insertRow(2, {"2":"zhudi_001","3":"朱迪·霍普斯","4":"警长"}) 
-  错误原因：如果唯一id=zhudi_001已存在，应使用updateRow而非insertRow
+✗ insertRow(1, {"3":"朱迪","4":"警官"})
+  错误原因：缺少字段2(唯一id)，insertRow 必须填写唯一id
 
-✗ updateRow(2, 1, {"2":"zhudi_001","3":"朱迪·霍普斯","4":"警长","5":"兔子"})
-  错误原因：重复填写了未变化的字段(唯一id、角色名)，只更新变化的字段即可
+✗ insertRow(1, {"1":"001","2":"zhudi_001","3":"朱迪","4":"警官"})
+  错误原因：字段1(流水号)由系统自动生成，禁止手动填写
+
+✗ updateRow(1, 1, {"2":"new_id_002","4":"警长"})
+  错误原因：updateRow 禁止修改唯一id(字段2)，只更新变化的模板字段
 
 ✗ insertRow("2", {"2":"badge_001","3":"金色徽章"})
   错误原因：表格索引必须是数字，不是字符串

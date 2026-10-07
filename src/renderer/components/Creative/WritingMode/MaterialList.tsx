@@ -1,8 +1,8 @@
 import React, { useCallback, useMemo } from 'react';
 import { List, Avatar, Checkbox, Tag, Tooltip, Empty, Typography } from 'antd';
-import { CheckOutlined, GlobalOutlined, IdcardOutlined, UserOutlined, BookOutlined } from '@ant-design/icons';
+import { CheckOutlined, GlobalOutlined, IdcardOutlined, UserOutlined, BookOutlined, FontColorsOutlined } from '@ant-design/icons';
 import { theme } from 'antd';
-import { MaterialItem, MaterialType } from '../../../shared/types/writing.types';
+import { MaterialItem, MaterialType } from '../../../../shared/types/writing.types';
 
 const { Text } = Typography;
 
@@ -11,6 +11,7 @@ const MATERIAL_ICONS: Record<MaterialType, React.ReactNode> = {
   character: <IdcardOutlined />,
   persona: <UserOutlined />,
   knowledge: <BookOutlined />,
+  'writing-style': <FontColorsOutlined />,
 };
 
 const MATERIAL_TAG_COLORS: Record<MaterialType, string> = {
@@ -18,6 +19,7 @@ const MATERIAL_TAG_COLORS: Record<MaterialType, string> = {
   character: 'green',
   persona: 'purple',
   knowledge: 'orange',
+  'writing-style': 'cyan',
 };
 
 const MATERIAL_TYPE_LABELS: Record<MaterialType, string> = {
@@ -25,6 +27,7 @@ const MATERIAL_TYPE_LABELS: Record<MaterialType, string> = {
   character: '角色卡',
   persona: '用户人设',
   knowledge: '知识库',
+  'writing-style': '写作风格',
 };
 
 interface MaterialListProps {

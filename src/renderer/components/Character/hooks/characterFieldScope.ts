@@ -1,10 +1,17 @@
 /**
  * Spec: fix-character-card-field-scope-flash-models — 角色卡字段作用域工具
+ * Spec: unify-character-card-full-field-context — FIELD_DESCRIPTIONS 扩展为全 15 字段统一上下文源
  *
  * 背景：Flash 类模型（glm5.3-flash / qwen3.8-flash 等 100B+ MoE）在角色卡编辑器
  * 字段级生成/翻译/润色时，会忽略"仅处理目标字段"的要求，返回包含所有字段的完整
  * 角色卡内容（Gemma4-31B 无此问题）。根因是提示词作用域缺失：目标文本与全量字段
  * 上下文无边界标识平铺混排，且系统提示不知道目标字段是什么。
+ *
+ * FIELD_DESCRIPTIONS 现为角色卡编辑器生成/翻译/润色三个 AI 操作的统一全字段
+ * 上下文来源（角色卡全部 15 个可编辑字段：6 个短字段 + 9 个长文本字段）：
+ * - 翻译/润色经 useCharacterAIOperations.buildCharacterContext 收进 <context_reference>
+ * - 生成经 useCharacterAIOperations.performGenerate 的 existing_fields_info 传入模板
+ * - extractTargetFieldContent 以本清单的 label 集做输出越界防御的段落标签识别
  *
  * 本模块提供字段元数据与输出越界防御（三重防御），供 useCharacterAIOperations
  * 在结果写回表单前净化：
@@ -17,6 +24,34 @@
  */
 
 export const FIELD_DESCRIPTIONS: Record<string, { label: string; guide: string }> = {
+  // ===== 短字段（Spec: unify-character-card-full-field-context）=====
+  // label 与 CharacterEditModal 编辑器一致；此前翻译/润色上下文缺失这 6 个字段，
+  // 生成缺 source。短字段不是生成目标（无生成按钮），仅作统一参考上下文与越界防御标签。
+  name: {
+    label: '角色名称',
+    guide: '角色的名称，角色卡最基础的标识信息。'
+  },
+  nickname: {
+    label: '昵称',
+    guide: '角色的昵称或别名。'
+  },
+  source: {
+    label: '来源',
+    guide: '角色出处的作品或设定。'
+  },
+  creator: {
+    label: '创建者',
+    guide: '角色卡创建者名称。'
+  },
+  character_version: {
+    label: '版本信息',
+    guide: '角色卡版本信息。'
+  },
+  tags: {
+    label: '标签',
+    guide: '角色属性标签列表，逗号分隔。'
+  },
+  // ===== 长文本字段 =====
   post_history_instructions: {
     label: '历史记录后指令',
     guide: '一段在对话历史后追加给AI的额外指令，用于控制AI在长对话中的行为倾向。'
@@ -54,6 +89,29 @@ export const FIELD_DESCRIPTIONS: Record<string, { label: string; guide: string }
     guide: '角色创建者对该角色的额外说明或使用建议，可以是创作思路或注意事项。'
   }
 };
+
+/**
+ * Spec: unify-character-card-full-field-context — 构建角色卡其他字段的上下文信息，
+ * 供翻译（<context_reference>）与润色操作参考，与 generate 的 existingFieldsInfo
+ * 同源同构：遍历 FIELD_DESCRIPTIONS（全 15 个可编辑字段）中除目标字段外的
+ * 已填字段，完整传递每个字段的值；所有其他字段为空时返回空字符串。
+ * tags 为数组时用顿号连接保持单行紧凑，其他数组字段（如 alternate_greetings）
+ * 仍用换行连接。导出供单元测试（本文件为无依赖纯模块）。
+ */
+export function buildCharacterContext(formValues: Record<string, any>, excludeField: string): string {
+  return Object.entries(FIELD_DESCRIPTIONS)
+    .filter(([key]) => key !== excludeField)
+    .map(([key, info]) => {
+      const value = formValues[key];
+      const displayValue = Array.isArray(value)
+        ? (key === 'tags' ? value.join('、') : value.join('\n'))
+        : (value || '');
+      if (!displayValue) return null;
+      return `- ${info.label}：${displayValue}`;
+    })
+    .filter(Boolean)
+    .join('\n');
+}
 
 /**
  * 输出越界防御：检测并净化 Flash 模型全字段泛化输出。

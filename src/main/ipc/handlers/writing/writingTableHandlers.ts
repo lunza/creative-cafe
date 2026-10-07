@@ -14,8 +14,13 @@
 import { ipcMain } from 'electron';
 import { writingStorageService } from '../../../services/WritingStorageService';
 import type { WritingTableConfig } from '../../../services/WritingStorageService';
-import { tableTemplateService } from '../../../services/memory/tableTemplateService';
+import {
+  getWritingTableTemplates,
+  saveCustomTemplate,
+  deleteCustomTemplate,
+} from '../../../services/writing/writingTemplateRegistry';
 import { ModelConfig } from '../../../../shared/types/writing.types';
+import type { WritingTableTemplate } from '../../../../shared/constants/writingTableTemplates';
 
 export function registerWritingTableHandlers(): void {
   // ========== 表格数据 CRUD ==========
@@ -116,7 +121,8 @@ export function registerWritingTableHandlers(): void {
 
   ipcMain.handle('writing:table:getAllTemplates', async () => {
     try {
-      const templates = tableTemplateService.getAllTemplates();
+      // 写作与对话模板分离：返回写作域模板（内置 + 自定义，带 custom 标记）
+      const templates = getWritingTableTemplates();
       return { success: true, templates };
     } catch (error) {
       return {
@@ -124,6 +130,24 @@ export function registerWritingTableHandlers(): void {
         templates: [],
         error: error instanceof Error ? error.message : '获取模板列表失败'
       };
+    }
+  });
+
+  // ========== 自定义模板 CRUD ==========
+
+  ipcMain.handle('writing:table:saveTableTemplate', async (_event, template: unknown) => {
+    try {
+      return saveCustomTemplate(template as WritingTableTemplate);
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : '保存模板失败' };
+    }
+  });
+
+  ipcMain.handle('writing:table:deleteTableTemplate', async (_event, id: string) => {
+    try {
+      return deleteCustomTemplate(id);
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : '删除模板失败' };
     }
   });
 
@@ -217,6 +241,18 @@ export function registerWritingTableHandlers(): void {
       return {
         success: false,
         error: error instanceof Error ? error.message : '重新整理失败'
+      };
+    }
+  });
+
+  ipcMain.handle('writing:table:cancelOrganize', async (_event, projectId: string) => {
+    try {
+      writingStorageService.cancelOrganize(projectId);
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '取消整理失败'
       };
     }
   });

@@ -52,7 +52,9 @@ export class TableEditCommandExecutor {
 
         if (type === 'insertRow') {
           const rowData = data || {};
-          const uniqueId = rowData['1']; // "1" 对应唯一 ID 字段（索引1）
+          // 解析器已把 AI 字段索引 1 基转 0 基：字段结构 [1:流水号, 2:唯一id, 3+:模板字段]
+          // → 存储 key "0"=流水号、"1"=唯一id、"2+"=模板字段；唯一id 作为实体去重键
+          const uniqueId = rowData['1'];
 
           if (uniqueId) {
             // 检查是否已存在相同唯一 ID 的行

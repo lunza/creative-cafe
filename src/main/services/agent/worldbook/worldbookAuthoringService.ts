@@ -137,6 +137,16 @@ export interface IAuthoringTools {
  * 默认实现 `createDefaultEntryGenerator` 使用 AIService.callChatAPI。
  */
 export interface IEntryGenerator {
+  /**
+   * 根据当前维度和现有标签数据集，识别需要参考的相关标签名称列表。
+   */
+  identifyReferenceLabels(
+    dimension: AuthoringDimension,
+    userPrompt: string,
+    allLabels: string[],
+    signal?: AbortSignal
+  ): Promise<string[]>;
+
   generateEntriesForDimension(
     dimension: AuthoringDimension,
     plan: AuthoringPlan,
@@ -155,7 +165,16 @@ export interface IEntryGenerator {
       query: string;
       /** 搜索结果数组 */
       results: Array<{ title: string; snippet: string; url: string }>;
-    }
+    },
+    /**
+     * 内部相似标签参考资料（可选）
+     * 包含与当前生成维度语义相关的已有条目完整内容。
+     */
+    internalReferenceContext?: Array<{
+      name: string;
+      content: string;
+      keys: string[];
+    }>
   ): Promise<Array<{
     name: string;
     content: string;
@@ -929,8 +948,52 @@ export class WorldBookAuthoringService {
       }
 
       try {
-        // 读取已有条目（供 LLM 避免重复）
+        // 1. 读取已有条目
         const existingEntries = await this.readExistingEntries(session);
+
+        // 2. 相似标签参考流程 (Spec: add-worldbook-ai-gen-similar-label-reference)
+        let internalReferenceContext: Array<{ name: string; content: string; keys: string[] }> = [];
+        try {
+          // 提取所有唯一标签
+          const allLabels = Array.from(
+            new Set(
+              existingEntries.flatMap((e) => {
+                const k = Array.isArray(e.key) ? e.key : [];
+                const sk = Array.isArray(e.secondaryKeys) ? e.secondaryKeys : [];
+                return [...k, ...sk].map(String).filter(Boolean);
+              })
+            )
+          );
+
+          if (allLabels.length > 0) {
+            // 识别相关标签
+            const relevantLabels = await this.deps.entryGenerator.identifyReferenceLabels(
+              dimension,
+              session.userPrompt ?? '',
+              allLabels,
+              session.abortController?.signal
+            );
+
+            if (relevantLabels.length > 0) {
+              // 收集包含这些标签的条目
+              internalReferenceContext = existingEntries
+                .filter((e) => {
+                  const keys = Array.isArray(e.key) ? e.key : [];
+                  const secondary = Array.isArray(e.secondaryKeys) ? e.secondaryKeys : [];
+                  const allEntryKeys = [...keys, ...secondary].map(String);
+                  return relevantLabels.some((rl) => allEntryKeys.includes(rl));
+                })
+                .map((e) => ({
+                  name: String(e.name ?? ''),
+                  content: String(e.content ?? ''),
+                  keys: Array.isArray(e.key) ? e.key.map(String) : [],
+                }));
+            }
+          }
+        } catch (err) {
+          console.warn(`${LOG_PREFIX} Similar label reference flow failed:`, err);
+          // 流程失败不阻塞生成，降级为空参考
+        }
 
         // LLM 生成条目（重试 3 次）
         const genStartTime = Date.now();
@@ -941,7 +1004,8 @@ export class WorldBookAuthoringService {
             existingEntries,
             targetCount - generatedForDim,
             session.abortController?.signal,
-            authoringResearchContext
+            authoringResearchContext,
+            internalReferenceContext
           ),
           { label: `generateEntriesForDimension(${dimension.name})` }
         );
@@ -2040,6 +2104,61 @@ export function createDefaultEntryGenerator(
   model?: string
 ): IEntryGenerator {
   return {
+    async identifyReferenceLabels(
+      dimension: AuthoringDimension,
+      userPrompt: string,
+      allLabels: string[],
+      signal?: AbortSignal
+    ): Promise<string[]> {
+      // 动态导入避免循环依赖
+      const { aiService: defaultAiService } = await import('../../AIService');
+      const ai = aiService ?? defaultAiService;
+
+      const systemPrompt = `你是一个世界书标签分析专家。你的任务是从提供的已有标签集中，挑选出与当前生成需求最相关的标签。
+
+【维度信息】
+- 名称：${dimension.name}
+- 分类：${dimension.category}
+
+【生成需求】
+${userPrompt}
+
+【已有标签集】
+${allLabels.join(', ') || '（暂无）'}
+
+【输出格式强制要求】
+- 你的响应必须且只能是一个合法的 JSON 对象
+- 格式为 { "relevantLabels": ["label1", "label2", ...] }
+- 不要输出任何分析文字
+- 标签必须来自提供的【已有标签集】`;
+
+      try {
+        const aiConfig = await ai.getConfig();
+        const modelName = model ?? aiConfig.model ?? 'gpt-4o-mini';
+
+        const content = await ai.callChatAPI(
+          [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: `请分析并返回与维度「${dimension.name}」及需求相关的参考标签列表。` },
+          ],
+          {
+            model: modelName,
+            temperature: 0.3,
+            maxTokens: 1024,
+            timeoutMs: 30_000,
+            abortSignal: signal,
+          }
+        );
+
+        const { parseJsonLoose } = await import('./worldbookPlanningService');
+        const parsed = parseJsonLoose<{ relevantLabels?: string[] }>(content);
+        return parsed?.relevantLabels ?? [];
+      } catch (err) {
+        console.warn('[WorldBookAuthoringService] identifyReferenceLabels failed:', err);
+        return [];
+      }
+    },
+
     async generateEntriesForDimension(
       dimension: AuthoringDimension,
       plan: AuthoringPlan,
@@ -2050,7 +2169,13 @@ export function createDefaultEntryGenerator(
       researchContext?: {
         query: string;
         results: Array<{ title: string; snippet: string; url: string }>;
-      }
+      },
+      // Spec: add-worldbook-ai-gen-similar-label-reference — 内部相似标签参考资料（可选）
+      internalReferenceContext?: Array<{
+        name: string;
+        content: string;
+        keys: string[];
+      }>
     ): Promise<Array<{ name: string; content: string; keys: string[]; secondaryKeys?: string[]; comment?: string }>> {
       // 动态导入避免循环依赖
       const { aiService: defaultAiService } = await import('../../AIService');
@@ -2072,6 +2197,16 @@ export function createDefaultEntryGenerator(
             '\n\n请参考上述资料提升内容事实准确性，但保持世界书文风一致，不要直接复制粘贴。'
           : '';
 
+      // Spec: add-worldbook-ai-gen-similar-label-reference — 若提供 internalReferenceContext，将其格式化后注入系统提示词
+      const internalRefSection =
+        internalReferenceContext && internalReferenceContext.length > 0
+          ? `\n【内部相似标签参考条目】\n` +
+            internalReferenceContext
+              .map((r, i) => `${i + 1}. 名称: ${r.name}\n   关键词: ${r.keys.join(', ')}\n   内容: ${r.content}`)
+              .join('\n\n') +
+            '\n\n请参考上述已有条目的设定、文风和信息密度，确保新生成内容与之高度一致，并形成自然的延续。'
+          : '';
+
       // 去AI味规则注入（Spec: polish-deai-humanizer 扩展）：智能体生成的条目同样
       // 供 RP 检索注入，JSON-aware 规则只约束 name/content/comment 文本字段行文
       const systemPrompt = withHumanizerGenerationRules(`你是一个世界书条目生成器。根据维度描述与已有条目，生成 ${targetCount} 个不重复的新条目。
@@ -2087,7 +2222,7 @@ export function createDefaultEntryGenerator(
   "entries": [
     {
       "name": "string，条目名称（10-30 字）",
-      "content": "string，条目内容（50-200 字，描述该设定的详细信息）",
+      "content": "string，条目内容（默认至少 200 字以上，详细描述该设定的背景、细节、影响等，禁止敷衍，确保信息量充沛）",
       "keys": ["string", ...]，触发关键词数组（3-5 个），
       "secondaryKeys": ["string", ...]，次要关键词数组（可选，0-3 个），
       "comment": "string，可选，简短注释"
@@ -2106,6 +2241,7 @@ ${existingNames.length > 0 ? existingNames.join('、') : '（暂无）'}
 【世界书主题】
 ${plan.goal.theme}
 ${researchSection}
+${internalRefSection}
 请生成 ${targetCount} 个新条目。只输出 JSON。`);
 
       try {

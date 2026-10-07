@@ -12,6 +12,7 @@ export type PromptModuleId =
   | 'world-book.polish-content'
   | 'world-book.generate-keywords'
   | 'world-book.generate-tags'
+  | 'world-book.generate-entry-tags'
   | 'world-book.sort-entries'
   | 'world-book.generate-entries'
   | 'world-book.generate-from-template'

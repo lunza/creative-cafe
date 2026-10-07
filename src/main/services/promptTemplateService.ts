@@ -960,6 +960,7 @@ ${frameworkList}
       'world-book.polish-content': '润色',
       'world-book.generate-keywords': '关键词',
       'world-book.generate-tags': '标签',
+      'world-book.generate-entry-tags': '标签',
       'world-book.sort-entries': '排序',
       'world-book.generate-entries': '世界书',
       'world-book.generate-from-template': '世界书',
@@ -1791,6 +1792,103 @@ ${frameworkList}
       metadata: { ...metadata }
     };
     map.set('world-book.generate-tags', wbGenTagsTemplate);
+
+    // ===== 世界书条目标签AI选择模板 (world-book.generate-entry-tags) =====
+    // 用于「编辑条目标签」弹窗：AI 结合条目完整内容与世界书现有标签库，
+    // 优先从现有标签中选择，必要时提出新标签（新标签由系统自动入库）。
+    const wbGenEntryTagsSystemContent = `你是一个专业的世界书（Lorebook）标签管理助手。系统会提供某个条目的完整内容，以及该世界书当前已有的全部标签列表。你的任务是为该条目选择最合适的标签。
+
+【选择规则 - 必须严格遵守】
+1. 优先从【已有标签列表】中选择与条目内容最匹配的标签，不要重复选择含义相近的标签
+2. 仅当已有标签确实无法准确描述该条目时，才提出新标签
+3. 新标签必须简洁明了（不超过6个字符）、具有分类意义，且与条目内容或世界书背景强相关
+4. 标签总数控制在 2-6 个，避免过多或过少
+5. 标签使用中文
+
+【返回格式要求】
+请只返回 JSON 格式数据，不要任何解释性文字或 Markdown 标记，格式如下：
+{
+  "tags": ["标签1", "标签2", "标签3"]
+}
+其中可以是已有标签，也可以是新标签。直接输出 JSON，从 { 开始，到 } 结束。`;
+
+    const wbGenEntryTagsUserContent = `【条目信息】
+注释：{{entry_comment}}
+关键词：{{entry_keys}}
+内容：
+{{entry_content}}
+
+【已有标签列表】
+{{existing_tags}}
+
+请为该条目选择最合适的标签（优先复用已有标签，必要时提出新标签），只返回 JSON。`;
+
+    const wbGenEntryTagsVariables: PromptVariable[] = [
+      {
+        name: 'entry_comment',
+        description: '条目注释',
+        source: 'entry.comment',
+        required: false,
+        defaultValue: '无'
+      },
+      {
+        name: 'entry_content',
+        description: '条目完整内容',
+        source: 'entry.content',
+        required: false,
+        defaultValue: '无'
+      },
+      {
+        name: 'entry_keys',
+        description: '条目关键词列表',
+        source: 'entry.key',
+        required: false,
+        defaultValue: '无'
+      },
+      {
+        name: 'existing_tags',
+        description: '世界书当前已有标签名称列表（逗号分隔）',
+        source: 'tags.map(t => t.name).join(", ")',
+        required: false,
+        defaultValue: '（暂无标签）'
+      }
+    ];
+
+    const wbGenEntryTagsParts: PromptPart[] = [
+      {
+        id: 'wb-gen-entry-tags-system',
+        type: 'editable',
+        label: '系统提示词',
+        content: wbGenEntryTagsSystemContent,
+        source: '用户可编辑',
+        order: 0,
+        role: 'system',
+        variables: []
+      },
+      {
+        id: 'wb-gen-entry-tags-user',
+        type: 'fixed',
+        label: '用户提示词',
+        content: wbGenEntryTagsUserContent,
+        source: '系统固定结构',
+        order: 1,
+        role: 'user',
+        variables: ['entry_comment', 'entry_content', 'entry_keys', 'existing_tags']
+      }
+    ];
+
+    const wbGenEntryTagsTemplate: PromptTemplate = {
+      id: 'world-book.generate-entry-tags',
+      moduleId: 'world-book.generate-entry-tags',
+      name: '条目标签AI选择',
+      description: '在编辑条目标签弹窗中，AI 结合条目完整内容与世界书现有标签库为条目选择标签（新标签自动入库）',
+      framework: 'CHAT',
+      parts: wbGenEntryTagsParts,
+      assemblyOrder: [0, 1],
+      variables: wbGenEntryTagsVariables,
+      metadata: { ...metadata }
+    };
+    map.set('world-book.generate-entry-tags', wbGenEntryTagsTemplate);
 
     // ===== 世界书AI排序模板 (world-book.sort-entries) =====
     const wbSortSystemContent = `你是一个专业的世界书条目排序助手。请仔细分析并根据以下条目信息进行智能排序。

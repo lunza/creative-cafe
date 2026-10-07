@@ -19,6 +19,9 @@ import {
   CustomWritingStyleTemplate
 } from '../../../shared/types/writing.types';
 import { promptBuilder } from './PromptBuilder';
+import { fixChineseQuotes, tryParseJsonWithRepair } from './jsonRepair';
+import { HUMANIZER_POLISH_RULES, withHumanizerNovelRules } from '../../../shared/prompts/humanizerPolish';
+import { withCustomPrompt } from '../../../shared/prompts/customPrompt';
 import { writingResourceManager } from '../WritingResourceManager';
 import { aiConfigProvider } from '../ai/AIConfigProvider';
 import { addLog, generateNewRequestId } from '../memory/chatLogService';
@@ -46,14 +49,31 @@ export class ContentGenerator {
    */
   private readonly streamParser: SSEStreamParser = new SSEStreamParser();
 
+  /** 进行中的章节 AI 味审核（Spec: add-ai-custom-prompt-and-interrupt，writing:cancelDeAiCheck 可中止） */
+  private activeDeAiCheckController: AbortController | null = null;
+
+  /** 中止进行中的章节 AI 味审核；返回是否有请求被中止 */
+  cancelDeAiCheck(): boolean {
+    if (this.activeDeAiCheckController) {
+      this.activeDeAiCheckController.abort();
+      this.activeDeAiCheckController = null;
+      addLog('[章节AI味审核] 用户中止请求', 'warn');
+      return true;
+    }
+    return false;
+  }
+
   buildPrompt(request: ContentGenerationRequest, customNovelTypeTemplate?: CustomNovelTypeTemplate, customWritingStyleTemplate?: CustomWritingStyleTemplate): ChatMessage[] {
-    const systemPrompt = promptBuilder.buildSystemPrompt(
-      this.getNovelTypeFromRequest(request),
-      this.getStyleFromRequest(request),
-      this.getPerspectiveFromRequest(request),
-      request.generationParams?.writingStyleContext,
-      customNovelTypeTemplate,
-      customWritingStyleTemplate
+    // 去AI味：约束正文行文（默认开启无开关，引擎全局提示词仍由 enrichSystemPrompt 前置拼接）
+    const systemPrompt = withHumanizerNovelRules(
+      promptBuilder.buildSystemPrompt(
+        this.getNovelTypeFromRequest(request),
+        this.getStyleFromRequest(request),
+        this.getPerspectiveFromRequest(request),
+        request.generationParams?.writingStyleContext,
+        customNovelTypeTemplate,
+        customWritingStyleTemplate
+      )
     );
 
     const resourceContext = this.buildResourceContext(request);
@@ -325,7 +345,8 @@ export class ContentGenerator {
     headers: Record<string, string>,
     requestBody: Record<string, any>,
     abortSignal: AbortSignal,
-    onStream: (chunk: string) => void
+    onStream: (chunk: string) => void,
+    onReasoning?: (chunk: string) => void
   ): Promise<{ content: string; generationTime: number }> {
     const response = await fetch(`${baseUrl}/v1/chat/completions`, {
       method: 'POST',
@@ -344,8 +365,8 @@ export class ContentGenerator {
     }
 
     // SSE 行解析、buffer 拼接、`[DONE]` 跳过、容错回退等逻辑全部委托给 SSEStreamParser
-    // 本方法仅负责 fetch + 错误转换 + 将 onStream 桥接到 parser 的 onChunk 回调
-    const result = await this.streamParser.parseStream(response, onStream, abortSignal);
+    // 本方法仅负责 fetch + 错误转换 + 将 onStream/onReasoning 桥接到 parser 回调
+    const result = await this.streamParser.parseStream(response, onStream, abortSignal, onReasoning);
 
     console.log('[ContentGenerator] Stream complete:', {
       totalContentLength: result.content.length,
@@ -507,25 +528,29 @@ export class ContentGenerator {
 
       context += `当前已有数据（共${sheetData.length}条）：\n`;
 
+      const headers = writingTableData.headers?.[sheetName] || [];
       const uniqueIdIndex: Map<string, number> = new Map();
 
       sheetData.forEach((row: Record<string, unknown>, rowIndex: number) => {
         const rowDisplay = rowIndex + 1;
-        const uniqueId = row['唯一id'] as string | undefined;
+        // 存储约定：key "1" = 唯一id，key k(k≥2) = 表头第 k-1 列，key "0" = 流水号（不展示）
+        const uniqueId = row['1'] as string | undefined;
 
         if (uniqueId) {
           uniqueIdIndex.set(uniqueId, rowDisplay);
         }
 
-        const fields = Object.entries(row)
-          .filter(([key]) => key !== '0')
-          .map(([key, value]) => {
-            const headerIndex = parseInt(key) + 1;
-            const headerName = writingTableData.headers?.[sheetName]?.[parseInt(key) - 2] || `字段${headerIndex}`;
-            return `${headerName}=${value}`;
-          })
-          .join(', ');
-        context += `  行${rowDisplay}: ${fields}\n`;
+        const fields: string[] = [];
+        if (uniqueId) {
+          fields.push(`唯一id=${uniqueId}`);
+        }
+        for (let i = 0; i < headers.length; i++) {
+          const value = row[String(i + 2)];
+          if (value !== undefined && value !== null && String(value) !== '') {
+            fields.push(`${headers[i]}=${value}`);
+          }
+        }
+        context += `  行${rowDisplay}: ${fields.join(', ')}\n`;
       });
 
       if (uniqueIdIndex.size > 0) {
@@ -839,18 +864,9 @@ export class ContentGenerator {
   }
 
   /**
-   * 修复 AI 返回的中文引号问题（与 OutlineGenerator.fixChineseQuotes 保持一致）
-   */
-  private fixChineseQuotes(jsonStr: string): string {
-    let result = jsonStr;
-    result = result.replace(/\u201c/g, '"');
-    result = result.replace(/\u201d/g, '"');
-    return result;
-  }
-
-  /**
-   * 解析分片大纲响应：剥离 think 标签 → 提取 ```json 代码块 → 修复中文引号 → JSON.parse
-   * 复用 OutlineGenerator.parseOutlineResponse 的提取模式，适配 ShardOutline[] 结构。
+   * 解析分片大纲响应：剥离 think 标签 → 提取 ```json 代码块 → 修复中文引号 →
+   * 鲁棒 JSON 解析（直接 parse + 6 种本地 LLM 输出修复策略，见 jsonRepair.ts）。
+   * 本地模型输出的 JSON 常带未转义换行/引号/尾逗号，直接 parse 频繁失败，必须走修复链。
    */
   private parseShardOutlines(rawContent: string): ShardOutline[] {
     let jsonStr = this.stripThinkTags(rawContent).trim();
@@ -871,13 +887,11 @@ export class ContentGenerator {
       jsonStr = jsonStr.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
     }
 
-    jsonStr = this.fixChineseQuotes(jsonStr);
+    jsonStr = fixChineseQuotes(jsonStr);
 
-    let parsed: any;
-    try {
-      parsed = JSON.parse(jsonStr);
-    } catch (parseError) {
-      throw new Error(`分片大纲JSON解析失败: ${parseError instanceof Error ? parseError.message : String(parseError)}`);
+    const parsed = tryParseJsonWithRepair(jsonStr);
+    if (parsed === null) {
+      throw new Error('分片大纲JSON解析失败：AI 返回格式不正确（已尝试 6 种修复策略），请重试');
     }
 
     if (!Array.isArray(parsed)) {
@@ -911,14 +925,24 @@ export class ContentGenerator {
     try {
       const { resourceContext } = await this.loadResourceContext(request.resources, true);
       const tableContext = this.buildTableContextForPrompt(request);
-      const fullResourceContext = tableContext
-        ? (resourceContext ? resourceContext + '\n\n' + tableContext : tableContext)
-        : resourceContext;
+      // 漫画源素材（与角色卡/世界书同级）并入资源上下文
+      const fullResourceContext = [
+        tableContext
+          ? (resourceContext ? resourceContext + '\n\n' + tableContext : tableContext)
+          : resourceContext,
+        request.mangaReferenceContext,
+      ]
+        .filter(Boolean)
+        .join('\n\n');
 
-      const systemPrompt = promptBuilder.buildSystemPrompt(
-        this.getNovelTypeFromParams(request.generationParams),
-        this.getStyleFromParams(request.generationParams),
-        this.getPerspectiveFromParams(request.generationParams)
+      // 末尾追加用户自定义提示词（最高优先级；引擎全局提示词仍由 enrichSystemPrompt 前置拼接）
+      const systemPrompt = withCustomPrompt(
+        promptBuilder.buildSystemPrompt(
+          this.getNovelTypeFromParams(request.generationParams),
+          this.getStyleFromParams(request.generationParams),
+          this.getPerspectiveFromParams(request.generationParams)
+        ),
+        request.customPrompt
       );
       const userPrompt = promptBuilder.buildShardOutlinePrompt(
         request.chapterInfo,
@@ -1003,7 +1027,8 @@ export class ContentGenerator {
     request: ShardContentGenerationRequest,
     modelConfig: ModelConfig,
     onStream: (chunk: string) => void,
-    abortSignal: AbortSignal
+    abortSignal: AbortSignal,
+    onReasoning?: (chunk: string) => void
   ): Promise<{ content: string; metadata?: any }> {
     const startTime = Date.now();
     const chapterTitle = request.chapterInfo?.title || 'unknown';
@@ -1016,12 +1041,23 @@ export class ContentGenerator {
     try {
       const { resourceContext, writingStyleContext } = await this.loadResourceContext(request.resources, false);
       const tableContext = this.buildTableContextForPrompt(request);
+      // 漫画源素材（与角色卡/世界书同级）并入资源上下文
+      const resourceContextWithManga = request.mangaReferenceContext
+        ? (resourceContext ? resourceContext + '\n\n' + request.mangaReferenceContext : request.mangaReferenceContext)
+        : resourceContext;
 
-      const systemPrompt = promptBuilder.buildSystemPrompt(
-        this.getNovelTypeFromParams(request.generationParams),
-        this.getStyleFromParams(request.generationParams),
-        this.getPerspectiveFromParams(request.generationParams),
-        writingStyleContext
+      // 去AI味：约束分片正文行文（默认开启无开关，引擎全局提示词仍由 enrichSystemPrompt 前置拼接）
+      // 末尾追加用户自定义提示词（最高优先级）
+      const systemPrompt = withCustomPrompt(
+        withHumanizerNovelRules(
+          promptBuilder.buildSystemPrompt(
+            this.getNovelTypeFromParams(request.generationParams),
+            this.getStyleFromParams(request.generationParams),
+            this.getPerspectiveFromParams(request.generationParams),
+            writingStyleContext
+          )
+        ),
+        request.customPrompt
       );
 
       const previousShardContents = request.previousShardContents || '';
@@ -1038,7 +1074,7 @@ export class ContentGenerator {
           perspective: request.generationParams.perspective,
           writingStyleContext
         },
-        { resourceContext, tableContext },
+        { resourceContext: resourceContextWithManga, tableContext },
         request.userSuggestion,
         request.generationGuidance
       );
@@ -1088,7 +1124,7 @@ export class ContentGenerator {
       addLog(`[分片内容生成] AI调用 - 端点: ${baseUrl}/v1/chat/completions, 模型: ${modelName}`, 'debug');
 
       const { content: rawContent } = await this.executeStreamRequest(
-        baseUrl, headers, requestBody, abortSignal, onStream
+        baseUrl, headers, requestBody, abortSignal, onStream, onReasoning
       );
 
       const strippedContent = this.stripThinkTags(rawContent);
@@ -1123,6 +1159,162 @@ export class ContentGenerator {
         (error as Error).stack
       );
     }
+  }
+
+  /**
+   * 章节内容 AI 味审核（与世界书 AI 审核 / 漫画大纲 AI 审核同一交互模式）：
+   * 用 humanizer 完整规则集（27 种 AI 写作模式 + RP AI 腔词表）审读章节正文，
+   * 输出严格 JSON：是否通过 + 审核说明（引用原句定位）+ 问题清单 + 修订后全文。
+   */
+  async checkChapterDeAi(
+    params: {
+      chapterTitle: string;
+      content: string;
+      modelConfig: ModelConfig;
+      /** 用户自定义审核要求（可选），注入 system prompt 末尾（最高优先级） */
+      customPrompt?: string;
+    },
+    /** 过程流式增量（chunk=正文增量，reasoning=思考流增量），供前端弹窗实时展示 */
+    onProgress?: (chunk: string, reasoning: string) => void
+  ): Promise<{ passed: boolean; comment: string; issues: string[]; revisedContent: string }> {
+    const { chapterTitle, content, modelConfig, customPrompt } = params;
+
+    // 注册中止句柄（writing:cancelDeAiCheck 可中止，含空正文重试的两次请求）
+    const abortController = new AbortController();
+    this.activeDeAiCheckController = abortController;
+    const cleanupDeAiAbort = () => {
+      if (this.activeDeAiCheckController === abortController) {
+        this.activeDeAiCheckController = null;
+      }
+    };
+    const aiConfig = aiConfigProvider.getAIConfig();
+    const baseUrl = aiConfig.baseUrl;
+    const apiKey = aiConfig.apiKey;
+    const apiKeyTransmission = aiConfig.apiKeyTransmission;
+    const engineSystemPrompt = aiConfig.systemPrompt;
+    const modelName = aiConfig.modelName || modelConfig.model;
+
+    if (!baseUrl) {
+      throw this.createError(WritingErrorCode.AI_SERVICE_UNAVAILABLE, '未配置 AI 服务地址');
+    }
+
+    // 引擎全局提示词前置拼接（与所有 AI 功能一致的全局约定）
+    const systemPrompt = `${engineSystemPrompt ? engineSystemPrompt + '\n\n' : ''}你是一位资深中文网文编辑，擅长识别 AI 生成文本的痕迹并将其改写为自然的人味文字。请严格按照以下规则审读章节内容，并输出严格的 JSON 审核结果。
+${HUMANIZER_POLISH_RULES}
+
+## 审核维度
+1. AI 味（重点）：对照规则逐条扫描——公式化结构、三段式、浮夸空话、模板情绪、陈词滥调比喻、"X说"堆砌、散文化叙述等
+2. 小说性：是否以剧情/动作/对话驱动（而非散文式铺陈）
+3. 内容完整性：修订时不得丢失原有剧情信息与人物设定
+
+## 输出要求
+只返回如下 JSON（不要输出任何其他文字、不要代码块包裹）：
+{
+  "passed": true 或 false,
+  "comment": "审核说明：引用原文具体句子指出 AI 味位置与问题（通过时简要说明通过理由，不超过100字）",
+  "issues": ["问题1", "问题2"],
+  "revisedContent": "修订后完整文本（passed 为 true 时原样返回原文；为 false 时返回去 AI 味后的完整修订版，保持剧情信息不丢失）"
+}`;
+    // 末尾追加用户自定义审核要求（最高优先级）
+    const systemPromptFinal = withCustomPrompt(systemPrompt, customPrompt);
+
+    const userPrompt = `## 章节标题
+${chapterTitle}
+
+## 章节内容
+${content}
+
+请按审核维度逐条审读上述章节内容，输出 JSON 审核结果。`;
+
+    addLog(`[章节AI味审核] 开始 - 章节: ${chapterTitle}, 内容长度: ${content.length}`, 'debug');
+
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    // 不写 max_tokens（由服务端按模型上限取最大值）：思考模型的思考流 + 正文共享预算，
+    // 手动估算容易不够导致正文被截断为空
+    const requestBody: Record<string, any> = {
+      model: modelName,
+      messages: [
+        { role: 'system', content: systemPromptFinal },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.3,
+      stream: true,
+    };
+
+    if (apiKey) {
+      if (apiKeyTransmission === 'header') {
+        const authValue = apiKey.trim().startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
+        headers['Authorization'] = authValue;
+      } else {
+        requestBody.api_key = apiKey;
+      }
+    }
+
+    // 思考模型偶发把 max_tokens 全部耗在思考流上导致正文为空：最多重试 1 次
+    // 共享同一个 AbortController（writing:cancelDeAiCheck 可中止任意一次尝试）
+    let rawContent = '';
+    try {
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        const res = await this.executeStreamRequest(
+          baseUrl,
+          headers,
+          requestBody,
+          abortController.signal,
+          (chunk) => onProgress?.(chunk, ''),
+          (reasoning) => onProgress?.('', reasoning)
+        );
+        rawContent = res.content;
+        if (rawContent.trim()) break;
+        addLog(`[章节AI味审核] 正文为空（思考流占满输出长度），第 ${attempt}/2 次`, 'warn');
+        if (attempt === 1) {
+          await new Promise((r) => setTimeout(r, 1000));
+          continue;
+        }
+        throw this.createError(
+          WritingErrorCode.CONTENT_GENERATION_FAILED,
+          'AI 思考流占满了输出长度，审核正文为空，请重试'
+        );
+      }
+    } catch (error) {
+      // 用户中止：抛出带 cancelled 标记的错误，由 handler 转成 { success:false, cancelled:true }
+      if (abortController.signal.aborted) {
+        const cancelError = new Error('用户已停止');
+        (cancelError as any).cancelled = true;
+        throw cancelError;
+      }
+      throw error;
+    } finally {
+      cleanupDeAiAbort();
+    }
+
+    // 解析：剥离 think 标签 → 提取代码块 → 修复中文引号 → 鲁棒 JSON 解析
+    let jsonStr = this.stripThinkTags(rawContent).trim();
+    const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (codeBlockMatch && codeBlockMatch[1]) {
+      jsonStr = codeBlockMatch[1].trim();
+    }
+    jsonStr = fixChineseQuotes(jsonStr);
+
+    const parsed = tryParseJsonWithRepair(jsonStr);
+    if (parsed === null || typeof parsed !== 'object') {
+      throw this.createError(
+        WritingErrorCode.CONTENT_GENERATION_FAILED,
+        'AI 味审核结果解析失败，请重试'
+      );
+    }
+
+    const issues = Array.isArray(parsed.issues)
+      ? parsed.issues.map((i: any) => String(i)).filter(Boolean)
+      : [];
+    const result = {
+      passed: parsed.passed === true,
+      comment: String(parsed.comment || ''),
+      issues,
+      revisedContent: String(parsed.revisedContent || content),
+    };
+
+    addLog(`[章节AI味审核] 完成 - passed: ${result.passed}, issues: ${issues.length}`, 'debug');
+    return result;
   }
 }
 

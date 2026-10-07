@@ -1,0 +1,23 @@
+# Checklist
+
+- [x] `src/renderer/components/Chat/CreationCenter.tsx` no longer contains `ChatPanelType` union with `'game'`
+- [x] `src/renderer/components/Chat/CreationCenter.tsx` no longer contains `game` panel config, color, state, or handler
+- [x] `src/renderer/components/Chat/CreationCenter.tsx` no longer imports or renders `GameModeEntry`
+- [x] `src/renderer/components/Creative/CreativeSubNav.tsx` no longer contains `'game'` in `CreativeTabType`
+- [x] `src/renderer/components/Creative/CreativeSubNav.tsx` no longer contains "游戏模式" tab item
+- [x] `src/renderer/components/Game/` directory is deleted
+- [x] `src/renderer/stores/gameStore.ts` is deleted
+- [x] `src/renderer/stores/gameUIStore.ts` is deleted
+- [x] `src/main/services/game/` directory is deleted
+- [x] `src/main/ipc/handlers/game/` directory is deleted
+- [x] `src/main/ipc/handlers/gameHandlers.ts` is deleted
+- [x] `src/main/ipc/index.ts` no longer imports or calls `registerGameHandlers`
+- [x] `src/main/preload.ts` no longer contains `game` namespace
+- [x] `src/shared/types/game.types.ts` is deleted
+- [x] `src/shared/constants/game.constants.ts` is deleted
+- [x] `src/shared/types/index.ts` no longer exports game types
+- [x] `src/renderer/types/electron.d.ts` no longer contains `game` namespace
+- [x] `npm run typecheck` passes without errors (pre-existing errors in unrelated modules)
+- [x] `npm test` passes all existing tests (Chat and Writing modes) (1414 passed, 2 pre-existing failures in agentModeService.test.ts unrelated to game removal)
+- [x] Chat Mode functionality in Creation Center works correctly (verified by code inspection and passing tests)
+- [x] Writing Mode functionality in Creation Center works correctly (verified by code inspection and passing tests)

@@ -52,11 +52,7 @@ export * from './promptTemplate.types';
 // 智能体中心类型（AgentModeStatus / AgentModeOverride / AgentConfig 等）
 export * from './agent-center.types';
 
-// 游戏模式类型（单一真源）
-// GameTableData 与 WritingTableData 同构（type alias），无命名冲突。
-// GameTableConfig 与 WritingTableConfig 字段名不同（organizeMode 类型不同），
-// 由各模块自行 import 自身的 Config 类型，避免联合类型。
-export * from './game.types';
+
 
 // 角色特征管理类型（Spec: add-trait-category-grouping / Task 1）
 // CharacterTraitManifestV2 / CharacterTraitItem / TraitCategory / TraitCombination

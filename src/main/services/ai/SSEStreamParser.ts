@@ -196,7 +196,8 @@ export class SSEStreamParser {
   async parseStream(
     response: Response,
     onChunk: StreamChunkCallback,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    onReasoning?: StreamChunkCallback
   ): Promise<StreamParseResult> {
     const reader = response.body?.getReader();
     if (!reader) {
@@ -276,8 +277,12 @@ export class SSEStreamParser {
               fullContent += detailed.content;
               onChunk(detailed.content);
             }
-            // 【协议规范 - §4.3/F5】reasoning_content 不再累积回退：思考内容与正文严格分离，
-            // 展示思维链需独立通道（避免 max_tokens 耗尽时思维链污染正文）
+            // 【协议规范 - §4.3/F5】reasoning_content 不累积进正文（思考内容与正文严格分离，
+            // 避免 max_tokens 耗尽时思维链污染正文）；此处通过独立回调透出思考流，
+            // 供 UI 展示"AI 思考中"实时进度（思考模型如 Qwen3 会先输出大量 reasoning_content）
+            if (detailed.reasoningContent && onReasoning) {
+              onReasoning(detailed.reasoningContent);
+            }
             if (detailed.toolCallsDelta) {
               this.mergeToolCallsDelta(toolCallsAccumulator, detailed.toolCallsDelta);
             }

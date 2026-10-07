@@ -10,6 +10,7 @@ import {
   CustomWritingStyleTemplate
 } from '../../../shared/types/writing.types';
 import { promptBuilder } from './PromptBuilder';
+import { fixChineseQuotes, tryParseJsonWithRepair } from './jsonRepair';
 import { writingResourceManager } from '../WritingResourceManager';
 import { aiConfigProvider } from '../ai/AIConfigProvider';
 import { SSEStreamParser } from '../ai/SSEStreamParser';
@@ -280,45 +281,28 @@ export class OutlineGenerator {
     }
 
     // 修复 AI 返回的中文引号问题
-    jsonStr = this.fixChineseQuotes(jsonStr);
+    jsonStr = fixChineseQuotes(jsonStr);
 
     console.log('[OutlineGenerator] Parsing JSON (length:', jsonStr.length, ')');
     console.log('[OutlineGenerator] JSON preview:', jsonStr.substring(0, 200));
 
-    // Try direct parse first
-    try {
-      const parsed = JSON.parse(jsonStr);
-      console.log('[OutlineGenerator] JSON parsed successfully');
+    // 直接 parse + 6 种本地 LLM 输出修复策略（共享模块 jsonRepair，与分片大纲解析复用同一套）
+    const parsed = tryParseJsonWithRepair(jsonStr);
+    if (parsed !== null) {
       this.normalizeChapters(parsed);
       return this.validateOutline(parsed);
-    } catch {
-      console.log('[OutlineGenerator] Initial parse failed, attempting fix...');
     }
 
-    // Try multiple fix strategies in order of robustness
-    const fixStrategies = [
-      { name: 'stripMarkdown', strategy: () => this.stripMarkdownFromValues(jsonStr) },
-      { name: 'unescapeControl', strategy: () => this.fixUnescapedCharacters(jsonStr) },
-      { name: 'truncateTrailing', strategy: () => this.fixTrailingGarbage(jsonStr) },
-      { name: 'errorPositionFix', strategy: () => this.fixByErrorPosition(jsonStr) },
-      { name: 'commonJsonFix', strategy: () => this.fixCommonJsonIssues(jsonStr) },
-      { name: 'validateAndBalanceBraces', strategy: () => this.validateAndBalanceBraces(jsonStr) },
-    ];
-
-    for (const { name, strategy } of fixStrategies) {
-      try {
-        const fixed = strategy();
-        if (!fixed || fixed.length < 50) {
-          console.log(`[OutlineGenerator] Fix ${name} produced too short output, skipping`);
-          continue;
-        }
-        const parsed = JSON.parse(fixed);
-        console.log(`[OutlineGenerator] Fix ${name} succeeded, length:`, fixed.length);
-        this.normalizeChapters(parsed);
-        return this.validateOutline(parsed);
-      } catch (fixError) {
-        console.log(`[OutlineGenerator] Fix ${name} failed:`, fixError instanceof Error ? fixError.message : String(fixError));
+    // 所有 JSON 修复策略失败：内容可能是非 JSON 的结构化大纲
+    //（如漫画解析模式的「生成故事大纲」产出 Markdown 大纲），回退按标题解析
+    try {
+      const mdData = this.parseMarkdownOutline(response);
+      if (mdData) {
+        console.log('[OutlineGenerator] Markdown fallback parse succeeded, chapters:', mdData.chapters.length);
+        return this.validateOutline(mdData);
       }
+    } catch (mdError) {
+      console.log('[OutlineGenerator] Markdown fallback parse failed:', mdError instanceof Error ? mdError.message : String(mdError));
     }
 
     // All fixes failed, throw with raw content attached
@@ -330,6 +314,132 @@ export class OutlineGenerator {
     );
     (error as any).rawContent = response;
     throw error;
+  }
+
+  /**
+   * Markdown 格式大纲的兜底解析（非 JSON 内容）
+   *
+   * 适用场景：漫画解析模式的「生成故事大纲」产出 Markdown 大纲，
+   * 而非 V2 管线的 JSON 大纲。
+   *
+   * ⚠️ 关键区分（v2 修复「章节解析出 33 个章节」）：AI 大纲常是结构化格式，
+   * 含「故事背景 / 主要角色 / 剧情发展」等元信息小节——这些不能当章节。
+   * 分类规则（按优先级）：
+   * 1. 首个单 # 标题 → 作品名（suggestedTitle）
+   * 2. 强章节模式（第X章/节/回/卷/集/幕、Chapter N、情节X）→ 剧情章节
+   * 3. 元信息关键词（背景/世界观/角色/人物/剧情/主题/梗概等）→ 元信息区，
+   *    其正文按「角色类」或「故事类」归桶（不丢内容，但不进章节列表）；
+   *    元信息区下的嵌套子标题（级别更深，如角色名）继承该区归类
+   * 4. 其余标题（编号项「1./一、」或语义化标题）→ 剧情章节
+   * 未识别出任何章节时返回 null（由调用方保留原错误）。
+   * 解析结果经 validateOutline 统一规范化后返回。
+   */
+  private parseMarkdownOutline(text: string): {
+    workInfo: Record<string, unknown>;
+    storyLine: Record<string, unknown>;
+    chapters: Array<Record<string, unknown>>;
+  } | null {
+    const lines = text.split(/\r?\n/);
+    const chapters: Array<{ title: string; summary: string }> = [];
+    let suggestedTitle = '';
+    const prefaceLines: string[] = [];
+    // 元信息区归桶：characters（角色/人物类）与 story（背景/主题/主线类）
+    const metaText: { characters: string[]; story: string[] } = { characters: [], story: [] };
+    let current: { title: string; body: string[] } | null = null;
+    // 当前元信息区上下文（遇到剧情章节或更高层级标题时重置）
+    let metaBucket: 'characters' | 'story' | null = null;
+    let metaLevel = 0;
+
+    const flush = () => {
+      if (current) {
+        chapters.push({ title: current.title, summary: current.body.join('\n').trim() });
+        current = null;
+      }
+    };
+
+    // 强章节模式：明确的章节编号样式（优先级高于元信息关键词，
+    // 避免「第二章：背景揭露」这类含元信息词的章节被误判）
+    const STRONG_CHAPTER = /第[0-9一二三四五六七八九十百千]+[章节回卷集幕]|chapter\s*[0-9一二三四五六七八九十]+|情节\s*[0-9一二三四五六七八九十百千]+/i;
+    // 元信息关键词：背景/设定/角色/剧情框架等非剧情章节的小节
+    const META_KEYWORDS = /背景|世界观|设定|主题|梗概|简介|概述|主线|基调|题材|风格|类型|角色|人物|主角|配角|资料|档案|总结|结语|说明|剧情|情节|大纲/;
+    const META_CHARACTERS = /角色|人物|主角|配角/;
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+
+      // 标题识别：Markdown 标题 / 「第X章」样式独立行（兼容加粗包裹）
+      let headingTitle: string | null = null;
+      let headingLevel = 0;
+      const mdHeading = line.match(/^(#{1,6})\s+(.+)$/);
+      if (mdHeading) {
+        headingTitle = mdHeading[2].trim();
+        headingLevel = mdHeading[1].length;
+      } else {
+        const bold = line.match(/^\*\*(.+?)\*\*$/);
+        const candidate = (bold ? bold[1] : line).trim();
+        if (/^第[0-9一二三四五六七八九十百千]+[章节回卷]/.test(candidate)) {
+          headingTitle = candidate;
+        }
+      }
+
+      if (headingTitle !== null) {
+        flush();
+        if (headingLevel === 1 && !suggestedTitle && chapters.length === 0) {
+          // 首个单 # 标题视为作品标题而非章节
+          suggestedTitle = headingTitle;
+          metaBucket = null;
+          metaLevel = 0;
+          continue;
+        }
+        const isStrongChapter = STRONG_CHAPTER.test(headingTitle);
+        const isMetaKeyword = !isStrongChapter && META_KEYWORDS.test(headingTitle);
+        // 元信息区下的嵌套子标题（级别更深）继承该区归类（如「## 主要角色」下的「### 角色名」）
+        const isMetaChild = metaBucket !== null && headingLevel > metaLevel;
+        if (isStrongChapter || (!isMetaKeyword && !isMetaChild)) {
+          // 剧情章节（强编号 / 弱编号 / 语义化标题）
+          current = { title: headingTitle, body: [] };
+          metaBucket = null;
+          metaLevel = 0;
+        } else {
+          // 元信息区：标题与后续正文归入对应桶
+          const bucket: 'characters' | 'story' = META_CHARACTERS.test(headingTitle)
+            ? 'characters'
+            : metaBucket ?? 'story';
+          if (isMetaKeyword && !isMetaChild) {
+            metaBucket = bucket;
+            metaLevel = headingLevel;
+          }
+          metaText[bucket].push(headingTitle);
+          current = null;
+        }
+      } else if (current) {
+        current.body.push(line);
+      } else if (metaBucket) {
+        metaText[metaBucket].push(line);
+      } else {
+        prefaceLines.push(line);
+      }
+    }
+    flush();
+
+    if (chapters.length === 0) return null;
+
+    const join = (arr: string[]) => arr.join('\n').trim();
+    const preface = join(prefaceLines);
+    const storyMeta = join(metaText.story);
+    const characterMeta = join(metaText.characters);
+    return {
+      workInfo: {
+        suggestedTitle: suggestedTitle || prefaceLines[0] || '',
+        chapterCount: chapters.length,
+      },
+      storyLine: {
+        // 前言 + 背景/主题/角色类元信息 → 故事主线说明（元信息保留不丢失，但不进章节列表）
+        coreConflict: [preface, storyMeta, characterMeta].filter(Boolean).join('\n'),
+      },
+      chapters: chapters.map((ch) => ({ title: ch.title, summary: ch.summary })),
+    };
   }
 
   /**
@@ -403,401 +513,6 @@ export class OutlineGenerator {
     return outline;
   }
 
-  private fixTrailingGarbage(jsonStr: string): string {
-    // Strategy: find the last complete JSON structure by tracking brace depth
-    // This handles the common case where the response was truncated at the end
-    let depth = 0;
-    let inString = false;
-    let escape = false;
-    let lastValidEnd = -1;
-
-    for (let i = 0; i < jsonStr.length; i++) {
-      const ch = jsonStr[i];
-      
-      if (escape) {
-        escape = false;
-        continue;
-      }
-      
-      if (ch === '\\' && inString) {
-        escape = true;
-        continue;
-      }
-      
-      if (ch === '"' && !escape) {
-        inString = !inString;
-        continue;
-      }
-      
-      if (inString) continue;
-      
-      if (ch === '{' || ch === '[') {
-        depth++;
-        lastValidEnd = i;
-      } else if (ch === '}' || ch === ']') {
-        depth--;
-        if (depth === 0) {
-          lastValidEnd = i;
-        }
-      }
-    }
-
-    if (lastValidEnd >= 0 && lastValidEnd < jsonStr.length - 1) {
-      const truncated = jsonStr.substring(0, lastValidEnd + 1);
-      console.log('[OutlineGenerator] Trailing garbage fix: truncating from', jsonStr.length, 'to', truncated.length);
-      return truncated;
-    }
-
-    return jsonStr;
-  }
-
-  private fixUnescapedCharacters(jsonStr: string): string {
-    // Strategy: parse JSON character by character, properly handling:
-    // 1. Unescaped newlines/tabs in string values
-    // 2. Unescaped quotes inside string values (the main cause of failure)
-    // 3. Control characters below 0x20
-    let result = '';
-    let inString = false;
-    let escape = false;
-    let i = 0;
-
-    while (i < jsonStr.length) {
-      const ch = jsonStr[i];
-      
-      if (escape) {
-        result += ch;
-        escape = false;
-        i++;
-        continue;
-      }
-      
-      if (ch === '\\') {
-        result += ch;
-        escape = true;
-        i++;
-        continue;
-      }
-      
-      if (ch === '"') {
-        // Check if this is an unescaped quote inside a string value
-        if (inString) {
-          // Check if the next non-whitespace character is a structural character
-          // that would indicate this is a real closing quote vs an unescaped internal quote
-          const nextChars = jsonStr.substring(i + 1).trimStart().substring(0, 3);
-          if (nextChars.startsWith(',') || nextChars.startsWith('}') || nextChars.startsWith(']') || nextChars.startsWith(':')) {
-            // This looks like a legitimate closing quote
-            inString = false;
-            result += ch;
-            i++;
-            continue;
-          }
-          // This is likely an unescaped internal quote - escape it
-          result += '\\"';
-          i++;
-          continue;
-        } else {
-          inString = true;
-          result += ch;
-          i++;
-          continue;
-        }
-      }
-      
-      if (inString) {
-        // Inside a string value, escape special characters
-        if (ch === '\n') {
-          result += '\\n';
-        } else if (ch === '\r') {
-          result += '\\r';
-        } else if (ch === '\t') {
-          result += '\\t';
-        } else if (ch.charCodeAt(0) < 0x20) {
-          result += '\\u' + ch.charCodeAt(0).toString(16).padStart(4, '0');
-        } else {
-          result += ch;
-        }
-      } else {
-        result += ch;
-      }
-      
-      i++;
-    }
-
-    return result;
-  }
-
-  private fixByErrorPosition(jsonStr: string): string {
-    // Strategy: handle truncated JSON by removing incomplete strings and closing braces
-    // This is the LAST resort - we work on the RAW jsonStr, not after unescape
-    let fixed = jsonStr;
-
-    // Remove trailing commas
-    fixed = fixed.replace(/,\s*([}\]])/g, '$1');
-
-    // Add quotes to unquoted keys
-    fixed = fixed.replace(/([{,])\s*([a-zA-Z_]\w*)\s*:/g, '$1"$2":');
-
-    // Replace single quotes with double quotes for string values
-    fixed = fixed.replace(/:\s*'([^']*)'/g, ':"$1"');
-
-    // Find and handle unclosed strings - truncate to BEFORE the incomplete string value
-    let inString = false;
-    let escape = false;
-    let lastStringStart = -1;
-
-    for (let i = 0; i < fixed.length; i++) {
-      const ch = fixed[i];
-      
-      if (escape) {
-        escape = false;
-        continue;
-      }
-      
-      if (ch === '\\' && inString) {
-        escape = true;
-        continue;
-      }
-      
-      if (ch === '"') {
-        if (inString) {
-          inString = false;
-        } else {
-          inString = true;
-          lastStringStart = i;
-        }
-      }
-    }
-
-    // If still in a string, truncate to just before the incomplete string starts
-    if (inString && lastStringStart >= 0) {
-      let cutPos = lastStringStart;
-      while (cutPos > 0) {
-        const ch = fixed[cutPos - 1];
-        if (ch === ':' || ch === ',' || ch === '{' || ch === '[') {
-          break;
-        }
-        cutPos--;
-      }
-      fixed = fixed.substring(0, cutPos);
-      
-      const trimmed = fixed.trimEnd();
-      if (trimmed.endsWith(':') || trimmed.endsWith(',')) {
-        let endPos = trimmed.length - 1;
-        while (endPos > 0 && (fixed[endPos - 1] === ' ' || fixed[endPos - 1] === '\n' || fixed[endPos - 1] === '\t')) {
-          endPos--;
-        }
-        if (endPos > 0 && (fixed[endPos - 1] === ':' || fixed[endPos - 1] === ',')) {
-          fixed = fixed.substring(0, endPos - 1);
-        }
-      }
-    }
-
-    // Now close any remaining open braces/brackets
-    let depth = 0;
-    let lastStructuralChar = -1;
-    let openBrackets: ('{' | '[')[] = [];
-    inString = false;
-    escape = false;
-
-    for (let i = 0; i < fixed.length; i++) {
-      const ch = fixed[i];
-      
-      if (escape) {
-        escape = false;
-        continue;
-      }
-      
-      if (ch === '\\' && inString) {
-        escape = true;
-        continue;
-      }
-      
-      if (ch === '"' && !escape) {
-        inString = !inString;
-        continue;
-      }
-      
-      if (inString) continue;
-      
-      if (ch === '{' || ch === '[') {
-        openBrackets.push(ch);
-        depth++;
-        lastStructuralChar = i;
-      } else if (ch === '}' || ch === ']') {
-        if (openBrackets.length > 0) openBrackets.pop();
-        depth--;
-        if (depth === 0) {
-          lastStructuralChar = i;
-        }
-      }
-    }
-
-    // If depth > 0, we have unclosed braces/brackets - truncate and close
-    if (depth > 0 && lastStructuralChar >= 0) {
-      fixed = fixed.substring(0, lastStructuralChar + 1);
-      // Close any remaining open braces/brackets in reverse order
-      while (openBrackets.length > 0) {
-        const open = openBrackets.pop()!;
-        fixed += open === '{' ? '}' : ']';
-        depth--;
-      }
-      console.log('[OutlineGenerator] fixByErrorPosition: closed remaining braces/brackets');
-    }
-
-    return fixed;
-  }
-
-  private fixCommonJsonIssues(jsonStr: string): string {
-    let fixed = jsonStr;
-
-    // Remove trailing commas before } or ]
-    fixed = fixed.replace(/,\s*([}\]])/g, '$1');
-
-    // Add quotes to unquoted keys
-    fixed = fixed.replace(/([{,])\s*([a-zA-Z_]\w*)\s*:/g, '$1"$2":');
-
-    // Replace single quotes with double quotes for string values
-    fixed = fixed.replace(/:\s*'([^']*)'/g, ':"$1"');
-
-    return fixed;
-  }
-
-  // 将 JSON 字符串中的中文引号替换为英文引号
-  private fixChineseQuotes(jsonStr: string): string {
-    let result = jsonStr;
-    result = result.replace(/"/g, '"');
-    result = result.replace(/"/g, '"');
-    return result;
-  }
-
-  // 移除 JSON 字符串值中的 Markdown 格式标记（如 **bold**, *italic*, __bold__ 等）
-  private stripMarkdownFromValues(jsonStr: string): string {
-    let result = jsonStr;
-    // 移除字符串值内部的 **bold** 或 __bold__
-    result = result.replace(/\*\*(.+?)\*\*/g, '$1');
-    result = result.replace(/__(.+?)__/g, '$1');
-    // 移除 *italic* 或 _italic_
-    result = result.replace(/\*(.+?)\*/g, '$1');
-    result = result.replace(/_(.+?)_/g, '$1');
-    // 移除 ~~strikethrough~~
-    result = result.replace(/~~(.+?)~~/g, '$1');
-    return result;
-  }
-  
-  // Validates and balances braces/brackets in JSON to ensure proper structure
-  private validateAndBalanceBraces(jsonStr: string): string {
-    let result = jsonStr;
-    
-    // First, try to find the complete JSON structure by counting braces
-    let braceDepth = 0;
-    let bracketDepth = 0;
-    let inString = false;
-    let escape = false;
-    let lastValidEnd = -1;
-    let lastStructuralChar = -1;
-    
-    for (let i = 0; i < result.length; i++) {
-      const ch = result[i];
-      
-      if (escape) {
-        escape = false;
-        continue;
-      }
-      
-      if (ch === '\\' && inString) {
-        escape = true;
-        continue;
-      }
-      
-      if (ch === '"' && !escape) {
-        inString = !inString;
-        continue;
-      }
-      
-      if (inString) continue;
-      
-      if (ch === '{') {
-        braceDepth++;
-        lastStructuralChar = i;
-      } else if (ch === '}') {
-        braceDepth--;
-        if (braceDepth === 0) {
-          lastValidEnd = i;
-        }
-      } else if (ch === '[') {
-        bracketDepth++;
-        lastStructuralChar = i;
-      } else if (ch === ']') {
-        bracketDepth--;
-        if (bracketDepth === 0 && braceDepth === 0) {
-          lastValidEnd = i;
-        }
-      }
-    }
-    
-    // If we found a valid complete structure, truncate to that point
-    if (lastValidEnd > 0) {
-      result = result.substring(0, lastValidEnd + 1);
-    } else if (lastStructuralChar > 0) {
-      // If we have unclosed structures, try to close them
-      result = result.substring(0, lastStructuralChar + 1);
-      const openBraces: string[] = [];
-      
-      // Re-count to see what's open
-      braceDepth = 0;
-      bracketDepth = 0;
-      inString = false;
-      escape = false;
-      
-      for (let i = 0; i < result.length; i++) {
-        const ch = result[i];
-        
-        if (escape) {
-          escape = false;
-          continue;
-        }
-        
-        if (ch === '\\' && inString) {
-          escape = true;
-          continue;
-        }
-        
-        if (ch === '"' && !escape) {
-          inString = !inString;
-          continue;
-        }
-        
-        if (inString) continue;
-        
-        if (ch === '{') {
-          braceDepth++;
-          openBraces.push('{');
-        } else if (ch === '}') {
-          if (braceDepth > 0) {
-            braceDepth--;
-            openBraces.pop();
-          }
-        } else if (ch === '[') {
-          bracketDepth++;
-          openBraces.push('[');
-        } else if (ch === ']') {
-          if (bracketDepth > 0) {
-            bracketDepth--;
-            openBraces.pop();
-          }
-        }
-      }
-      
-      // Close any remaining open braces/brackets
-      while (openBraces.length > 0) {
-        const open = openBraces.pop()!;
-        result += open === '{' ? '}' : ']';
-      }
-    }
-    
-    return result;
-  }
-  
   // Validates JSON structure integrity before parsing
   private validateJsonStructure(jsonStr: string): boolean {
     // Check if the JSON has balanced braces and brackets
@@ -1036,7 +751,7 @@ ${instructions ? `\n## 额外指令\n${instructions}` : ''}
       jsonStr = jsonStr.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
     }
 
-    jsonStr = this.fixChineseQuotes(jsonStr);
+    jsonStr = fixChineseQuotes(jsonStr);
 
     try {
       const parsed = JSON.parse(jsonStr);

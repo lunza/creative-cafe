@@ -2,10 +2,9 @@ import React, { useState, useCallback, useRef, useEffect, lazy } from 'react';
 import {
   MessageOutlined,
   EditOutlined,
-  TrophyOutlined,
   HeartFilled
 } from '@ant-design/icons';
-import { Tooltip, message } from 'antd';
+import { Tooltip } from 'antd';
 import { SingleChatDialog } from './SingleChatDialog';
 import FullscreenDialog from './FullscreenDialog';
 import { useDataStore } from '../../stores/dataStore';
@@ -18,12 +17,13 @@ const WritingModeEntry = lazy(
   () => import('../Creative/WritingMode').then(m => ({ default: m.WritingModeEntry }))
 );
 
-// Lazy mount GameModeEntry：仅当用户打开游戏模式对话框时才加载其模块
-const GameModeEntry = lazy(
-  () => import('../Game').then(m => ({ default: m.GameModeEntry }))
+// Lazy mount WritingV2Entry：写作模式 2.0（Spec: refactor-writing-mode-v2）
+// 独立模块 WritingModeV2，与 V1 互不影响；仅当用户打开 V2 对话框时才加载
+const WritingV2Entry = lazy(
+  () => import('../Creative/WritingModeV2').then(m => ({ default: m.WritingV2Entry }))
 );
 
-type ChatPanelType = 'chat' | 'creative' | 'game';
+type ChatPanelType = 'chat' | 'creative' | 'creative-v2';
 
 interface PanelConfig {
   label: string;
@@ -33,6 +33,7 @@ interface PanelConfig {
   activeColor: string;
   comingSoon?: boolean;
   devBadge?: boolean;
+  versionBadge?: string;
 }
 
 const panelConfig: Record<ChatPanelType, PanelConfig> = {
@@ -51,19 +52,21 @@ const panelConfig: Record<ChatPanelType, PanelConfig> = {
     activeColor: '#fbbf24',
     devBadge: true,
   },
-  game: {
-    label: '游戏模式',
-    description: '互动式文字冒险游戏，由AI驱动剧情发展',
-    icon: <TrophyOutlined />,
-    color: '#10b981',
-    activeColor: '#34d399',
+  'creative-v2': {
+    label: '写作模式 2.0',
+    description: '全新架构的AI写作（分阶段上线，与经典版共用项目库）',
+    icon: <EditOutlined />,
+    color: '#06b6d4',
+    activeColor: '#22d3ee',
+    versionBadge: '2.0',
+    devBadge: true,
   },
 };
 
 const colorMap: Record<ChatPanelType, string> = {
   chat: '#6366f1',
   creative: '#f59e0b',
-  game: '#10b981',
+  'creative-v2': '#06b6d4',
 };
 
 interface Ripple {
@@ -136,13 +139,13 @@ export const CreationCenter: React.FC = () => {
   const [activePanel, setActivePanel] = useState<ChatPanelType>('chat');
   const [showChatDialog, setShowChatDialog] = useState(false);
   const [showWritingDialog, setShowWritingDialog] = useState(false);
-  const [showGameDialog, setShowGameDialog] = useState(false);
+  const [showWritingV2Dialog, setShowWritingV2Dialog] = useState(false);
   const [selectedCharacterPath, setSelectedCharacterPath] = useState<string | undefined>(undefined);
   const [flashingPanel, setFlashingPanel] = useState<ChatPanelType | null>(null);
   const [ripples, setRipples] = useState<Record<ChatPanelType, Ripple[]>>({
     chat: [],
     creative: [],
-    game: [],
+    'creative-v2': [],
   });
   const rippleCounter = useRef(0);
   const characters = useDataStore(s => s.characters);
@@ -183,7 +186,7 @@ export const CreationCenter: React.FC = () => {
           prev.every((p, i) => p.path === favCharacters[i].path && p.avatarUrl !== undefined)) {
         return prev;
       }
-      return favCharacters.map((fc, i) => {
+      return favCharacters.map((fc) => {
         const existing = prev.find((p) => p.path === fc.path);
         return existing ? { ...fc, avatarUrl: existing.avatarUrl } : fc;
       });
@@ -259,7 +262,6 @@ export const CreationCenter: React.FC = () => {
   }, [favoriteData, loadAvatar]);
 
   const hasFavorites = favoriteData.length > 0;
-  const isChatActive = activePanel === 'chat' && !panelConfig.chat.comingSoon;
 
   const handleCharacterClick = useCallback(
     (character: FavoriteCharacterData) => {
@@ -277,10 +279,6 @@ export const CreationCenter: React.FC = () => {
     if (config.comingSoon) {
       return;
     }
-
-    // Only do ripple/flash if clicking directly on panel (not avatar)
-    const target = e.target as HTMLElement;
-    const isAvatarClick = target.closest('.chat-panel-favorite-item');
 
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -308,8 +306,8 @@ export const CreationCenter: React.FC = () => {
       setShowChatDialog(true);
     } else if (panel === 'creative') {
       setShowWritingDialog(true);
-    } else if (panel === 'game') {
-      setShowGameDialog(true);
+    } else if (panel === 'creative-v2') {
+      setShowWritingV2Dialog(true);
     }
   }, []);
 
@@ -322,8 +320,8 @@ export const CreationCenter: React.FC = () => {
     setShowWritingDialog(false);
   }, []);
 
-  const handleCloseGame = useCallback(() => {
-    setShowGameDialog(false);
+  const handleCloseWritingV2 = useCallback(() => {
+    setShowWritingV2Dialog(false);
   }, []);
 
   return (
@@ -382,6 +380,14 @@ export const CreationCenter: React.FC = () => {
                     <span className="badge-text">DEV</span>
                   </div>
                 )}
+                {config.versionBadge && (
+                  <div
+                    className="chat-panel-badge"
+                    style={{ background: '#06b6d4' }}
+                  >
+                    <span className="badge-text">{config.versionBadge}</span>
+                  </div>
+                )}
 
                 {panel === 'chat' && !isDisabled && hasFavorites && (
                   <div className="chat-panel-favorites-section">
@@ -424,12 +430,15 @@ export const CreationCenter: React.FC = () => {
       </FullscreenDialog>
 
       <FullscreenDialog
-        visible={showGameDialog}
-        title="游戏模式"
-        onClose={handleCloseGame}
+        visible={showWritingV2Dialog}
+        title="写作模式 2.0"
+        onClose={handleCloseWritingV2}
       >
-        <GameModeEntry />
+        <React.Suspense fallback={<div style={{ padding: 24 }}>加载中...</div>}>
+          <WritingV2Entry />
+        </React.Suspense>
       </FullscreenDialog>
+
     </div>
   );
 };

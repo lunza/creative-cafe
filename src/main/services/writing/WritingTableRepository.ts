@@ -376,13 +376,16 @@ export class WritingTableRepository {
       const originalRows = originalData.data[sheetName] || [];
       const newRows = newData.data[sheetName] || [];
 
+      // 存储约定：key "1" = 唯一id，作为行唯一键
+      const getRowKey = (row: Record<string, unknown>): unknown => row['1'];
+
       // 找出新增的行
       for (let i = 0; i < newRows.length; i++) {
         const newRow = newRows[i];
-        const uniqueId = newRow['1'];
+        const uniqueId = getRowKey(newRow);
 
         // 检查是否在原始数据中存在
-        const existsInOriginal = originalRows.some(row => row['1'] === uniqueId);
+        const existsInOriginal = originalRows.some(row => getRowKey(row) === uniqueId);
 
         if (!existsInOriginal && uniqueId) {
           addedRows.push({ sheetName, rowIndex: i, rowData: newRow });
@@ -392,10 +395,10 @@ export class WritingTableRepository {
       // 找出删除的行
       for (let i = 0; i < originalRows.length; i++) {
         const originalRow = originalRows[i];
-        const uniqueId = originalRow['1'];
+        const uniqueId = getRowKey(originalRow);
 
         // 检查是否在新数据中存在
-        const existsInNew = newRows.some(row => row['1'] === uniqueId);
+        const existsInNew = newRows.some(row => getRowKey(row) === uniqueId);
 
         if (!existsInNew && uniqueId) {
           deletedRows.push({ sheetName, rowIndex: i, rowData: originalRow });
@@ -405,23 +408,24 @@ export class WritingTableRepository {
       // 找出修改的单元格
       for (let i = 0; i < newRows.length; i++) {
         const newRow = newRows[i];
-        const uniqueId = newRow['1'];
+        const uniqueId = getRowKey(newRow);
 
         // 找到对应的原始行
-        const originalRow = originalRows.find(row => row['1'] === uniqueId);
+        const originalRow = originalRows.find(row => getRowKey(row) === uniqueId);
 
         if (originalRow) {
-          // 比较每个字段
+          // 行数据按存储约定键控（key k≥2 = 表头第 k-1 列），逐列比较
           const headers = newData.headers[sheetName] || [];
-          for (const header of headers) {
-            const oldValue = originalRow[header];
-            const newValue = newRow[header];
+          for (let ci = 0; ci < headers.length; ci++) {
+            const key = String(ci + 2);
+            const oldValue = originalRow[key];
+            const newValue = newRow[key];
 
             if (JSON.stringify(oldValue) !== JSON.stringify(newValue)) {
               modifiedCells.push({
                 sheetName,
                 rowIndex: i,
-                columnName: header,
+                columnName: headers[ci],
                 oldValue,
                 newValue
               });

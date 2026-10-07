@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { MaterialItem, MaterialType, WritingStyleResource, WritingStyleProgress } from '../../../shared/types/writing.types';
+import { MaterialItem, MaterialType, WritingStyleResource, WritingStyleProgress } from '../../../../shared/types/writing.types';
 import { useWritingProjectStore } from '../../../stores/writingProjectStore';
 
 interface UseWritingMaterialsReturn {
@@ -80,19 +80,20 @@ export function useWritingMaterials(): UseWritingMaterialsReturn {
     const selectedIds = getSelectedIds();
 
     try {
-      const wbPromise = window.electronAPI?.worldBook?.list?.()
+      // 注意：判断方法存在性（不能调用 list() 判断，否则重复请求且 Promise 恒为真）
+      const wbPromise = window.electronAPI?.worldBook?.list
         ? window.electronAPI.worldBook.list()
         : Promise.resolve([]);
 
-      const charPromise = window.electronAPI?.character?.list?.()
+      const charPromise = window.electronAPI?.character?.list
         ? window.electronAPI.character.list()
         : Promise.resolve([]);
 
-      const personaPromise = window.electronAPI?.avatar?.list?.()
+      const personaPromise = window.electronAPI?.avatar?.list
         ? window.electronAPI.avatar.list()
         : Promise.resolve([]);
 
-      const kbPromise = window.electronAPI?.knowledge?.list?.()
+      const kbPromise = window.electronAPI?.knowledge?.list
         ? window.electronAPI.knowledge.list({}, 1, 1000)
         : Promise.resolve({ success: false, items: [] });
 

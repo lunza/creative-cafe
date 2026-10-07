@@ -5,7 +5,7 @@ import { sendAssistantAIStreamRequest } from '../../../utils/characterAIUtils';
 // Spec: polish-deai-humanizer（润色去AI味规则运行时注入）
 import { withHumanizerRules, withHumanizerTextgenRules } from '../../../../shared/prompts/humanizerPolish';
 // Spec: fix-character-card-field-scope-flash-models — 字段元数据与输出越界防御
-import { FIELD_DESCRIPTIONS, extractTargetFieldContent } from './characterFieldScope';
+import { FIELD_DESCRIPTIONS, extractTargetFieldContent, buildCharacterContext } from './characterFieldScope';
 
 /**
  * AI 操作（翻译 / 润色 / 生成）从 `CharacterManager` 迁出，集中在此 hook 中。
@@ -101,25 +101,8 @@ const THOUGHT_PATTERNS_POLISH = [
 // Spec: fix-character-card-field-scope-flash-models — FIELD_DESCRIPTIONS 与
 // extractTargetFieldContent 已抽到同目录纯模块 characterFieldScope.ts（便于单测，
 // 规避本 hook 依赖 antd/AIService 导致测试导入链路过重）
-
-/**
- * 构建角色卡其他字段的上下文信息，供翻译和润色操作参考。
- * 与 generate 操作的 existingFieldsInfo 构建逻辑一致：
- * 遍历 FIELD_DESCRIPTIONS 中除目标字段外的已填字段，完整传递每个字段的值。
- * 当所有其他字段都为空时返回空字符串。
- */
-function buildCharacterContext(formValues: Record<string, any>, excludeField: string): string {
-  return Object.entries(FIELD_DESCRIPTIONS)
-    .filter(([key]) => key !== excludeField)
-    .map(([key, info]) => {
-      const value = formValues[key];
-      const displayValue = Array.isArray(value) ? value.join('\n') : (value || '');
-      if (!displayValue) return null;
-      return `- ${info.label}：${displayValue}`;
-    })
-    .filter(Boolean)
-    .join('\n');
-}
+// Spec: unify-character-card-full-field-context — buildCharacterContext 同样移入
+// characterFieldScope.ts 纯模块（同上理由），本文件改为导入使用。
 
 /**
  * 处理标签字段中的顿号分隔：转换为逗号分隔。

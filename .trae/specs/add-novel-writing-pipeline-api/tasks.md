@@ -1,0 +1,47 @@
+# Tasks
+
+- [x] Task 1: 类型契约 `PipelineAPI`
+  - 描述：在 `src/shared/types/writing-v2.types.ts` 新增流水线类型：`PipelineInitParams`、`PipelineInitResult`、`PipelineOutlineResult`、`PipelineChapterResult`、`PipelineComposeResult`、`PipelineRunAllResult`（含 `stage/partial`）、`PipelineStatus`、`PipelineProgressEvent`、`PipelineE2EParams/Report/Result`、`PipelineErrorCode`（VALIDATION/RESOURCE/AI/EXPORT/INTERNAL）、`PipelineAPI` 接口（listResources/createCharacterCard/init/generateOutline/generateChapter/compose/runAll/status/cancel/onProgress/runE2E）
+  - 验证：typecheck 通过；V2 现有类型零改动
+- [x] Task 2: 纯函数 `pipelineUtils`（校验 + E2E 断言）
+  - 描述：新增 `src/shared/utils/pipelineUtils.ts`：`validatePipelineInit(params)`（chapterCount 1-50、targetWordCount 1000-200000、角色 ≥1 且不重复、世界书 ≥1、id 存在于候选）返回 `{ ok, errors }`；`assertE2EResult(input: { chapters: {index, title, content, targetWordCount}[], expected: { chapterCount, targetWordCount, characterNames: string[], worldbookKeywords: string[], exportedFileExists: boolean } })` 返回断言明细数组（章节数/每章字数≥50%/总字数≥80%/角色名注入/世界书词条注入/导出文件），全部纯函数可单测
+  - 验证：Task 6 单测覆盖
+- [x] Task 3: 主进程 `WritingPipelineService`
+  - 描述：新增 `src/main/services/writing/WritingPipelineService.ts`，编排既有服务（WritingProjectRepository / OutlineGenerator 或 writingAgentService 的大纲与分片生成 / 导出逻辑复用 writingV2Handlers 的 buildExportContent+文件写入，或调用既有仓储方法；实现时以"最小重复代码"为原则直接复用 handler 同款服务调用）：
+    - 状态机：`Map<projectId, { stage: 'IDLE'|'OUTLINE'|'CHAPTER'|'COMPOSE'|'DONE'|'ERROR'; chapterIndex; progress; cancelFlag }>`
+    - `init/listResources/createCharacterCard/generateOutline/generateChapter/compose/runAll/status/cancel`；每步捕获异常转统一信封 `{ success, data?, error, code }`
+    - 进度经回调（handler 层转发到 `writing:pipeline:progress` 事件）
+    - `createCharacterCard`：侦察 `characterHandlers`/`characterService` 的纯文本创建路径并复用；无则按角色卡文件标准结构写入（实现时侦察确认）
+  - 验证：Task 5 编译 + E2E 实际调用
+- [x] Task 4: IPC handlers + preload + 渲染层 service
+  - 描述：新增 `src/main/ipc/handlers/writingPipelineHandlers.ts`（`writing:pipeline:*` 9 方法 + runE2E，runE2E 非 dev 拒绝；注册进 `ipc/index.ts`）；`preload.ts` 新增 `writingV2.pipeline` 命名空间（类型化）；新增 `src/renderer/services/writingPipelineService.ts`（经 `getWritingV2API()`）
+  - 验证：typecheck；`window.electronAPI.writingV2.pipeline` 各方法存在（devtools 可见）
+- [x] Task 5: E2E 执行器（主进程）
+  - 描述：`WritingPipelineService.runE2E({ scale })`：素材保障（角色 <2 创建 2 张 `e2e-` 前缀卡、世界书 <1 创建 1 本）→ 选 2 角色 + 1 世界书 → `runAll`（3 章；smoke 6000 / full 20000）→ `assertE2EResult` 断言 → 写 `exports/e2e-report-<ts>.json`（各步耗时/断言明细/verdict）→ 返回报告
+  - 验证：smoke 运行 PASS（Task 9）
+- [x] Task 6: 单元测试
+  - 描述：`src/shared/utils/__tests__/pipelineUtils.test.ts`：validatePipelineInit（合法/各非法组合）+ assertE2EResult（全过/字数不足/角色未注入/世界书未注入/章节数错）
+  - 验证：全部通过；全量测试基线不回归（2 预存失败）
+- [x] Task 7: dev-only E2E 控制台 UI
+  - 描述：`WritingV2Entry.tsx` 在 `import.meta.env.DEV` 顶栏加「流水线自测」按钮 → Modal：规模 Segmented（冒烟 6000 / 全量 20000）+ 开始（调 runE2E，onProgress 订阅显示阶段/进度条）+ 取消 + 结果区（verdict 大标签/断言明细/报告文件路径/成书路径）
+  - 验证：dev 可见、按钮可执行、进度实时刷新；生产构建不渲染
+- [x] Task 8: API 文档 `docs/writing-pipeline-api.md`
+  - 描述：通道（端点）清单 + 每通道请求/响应 JSON 示例 + 进度事件字段 + 错误码表 + 鉴权说明（本地 IPC 无网络鉴权；AI 密钥来自应用设置）+ E2E 执行方式；同步在 CODE_WIKI.md 增量补一节
+  - 验证：文档覆盖全部 10 个通道
+- [x] Task 9: E2E 冒烟运行（3 章 × 2000 字）
+  - 描述：重启 dev server 后执行 `runE2E({ scale: 'smoke' })`，核对报告 verdict=PASS；失败则修复后重跑
+  - 验证：`exports/e2e-report-*.json` verdict=PASS；成书 .md 可打开、含 3 章
+- [x] Task 10: E2E 全量运行（3 章共 20000 字）+ 验收
+  - 描述：执行 `runE2E({ scale: 'full' })`（预计 30-90 分钟，期间保持 dev server 运行）；核对断言（总字数 ≥16000、角色/世界书注入、文件导出）；产出验收结论
+  - 验证：报告 verdict=PASS；向用户交付验收摘要（耗时/字数/注入情况/文件路径）
+
+# Task Dependencies
+- Task 2 依赖 Task 1（类型）
+- Task 3 依赖 Task 1、Task 2
+- Task 4 依赖 Task 1、Task 3
+- Task 5 依赖 Task 3、Task 4
+- Task 6 依赖 Task 2（可与 Task 3-5 并行）
+- Task 7 依赖 Task 4
+- Task 8 依赖 Task 4（文档描述以最终实现为准）
+- Task 9 依赖 Task 3-7 全部
+- Task 10 依赖 Task 9 PASS

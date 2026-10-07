@@ -1,21 +1,93 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { BatchFixRequest } from '../shared/types/writing.types';
-import type { CharacterTraitManifestV2 } from '../shared/types/characterTrait.types';
+import type { CrossCheckStreamEvent } from '../shared/types/cross-chapter-review.types';
 import type {
-  GameMeta,
-  GameSaveData,
-  GameTableData,
-  GameTableEditCommand,
-  GameNarrativeRequest,
-  GameNarrativeChunk,
-  GameNarrativeComplete,
-  GameNarrativeError,
-  GameTableUpdated,
-  GameLocalConfig
-} from '../shared/types/game.types';
+  WritingProject,
+  WritingConfig,
+  OutlineGenerationRequest,
+  ShardOutlineGenerationRequest,
+  ShardContentGenerationRequest,
+  V2LoadProjectsResult,
+  V2CreateProjectResult,
+  V2BoolResult,
+  V2GenerateOutlineResult,
+  V2ExportResult,
+  V2AISplitRequest,
+  V2AIMergeRequest,
+  V2SuggestionResult,
+  V2ParseOutlineResult,
+  AISplitSuggestion,
+  AIMergeSuggestion,
+  ShardOutlineGenerationResult,
+  V2OutlineStreamChunkEvent,
+  V2ShardStreamStartEvent,
+  V2ShardStreamProgressEvent,
+  V2ShardStreamReasoningEvent,
+  V2ShardStreamCompleteEvent,
+  V2ShardStreamErrorEvent,
+  V2PlotCheckResult,
+  V2ChapterDeAiCheckResult,
+  V2DeAiStreamEvent,
+  V2AutoFixRequest,
+  V2AutoFixResult,
+  V2LogicRecordsResult,
+  V2TableDataResult,
+  V2TableConfigResult,
+  V2TableTemplatesResult,
+  V2TableOrganizeResult,
+  V2ReorganizeRowResult,
+  V2TableTemplateInput,
+  V2TableTemplateOpResult,
+  V2ChapterOrganizeStatusResult,
+  V2VersionSnapshotResult,
+  V2TableOrganizeProgressEvent,
+  WritingTableConfig,
+  V2ResourceCandidate,
+  V2ResourceCandidateListResult,
+  V2StyleUploadResult,
+  V2StyleListResult,
+  V2StyleGetResult,
+  V2StyleActiveTasksResult,
+  V2StyleErrorEvent,
+  V2TemplateListResult,
+  V2TemplateSaveResult,
+  CustomNovelTypeTemplate,
+  CustomWritingStyleTemplate,
+  PipelineEnvelope,
+  PipelineResourcesData,
+  PipelineCreateCharacterParams,
+  PipelineCharacterResult,
+  PipelineInitParams,
+  PipelineInitData,
+  PipelineOutlineData,
+  PipelineChapterData,
+  PipelineComposeData,
+  PipelineRunAllData,
+  PipelineStatusData,
+  PipelineProgressEvent,
+  PipelineE2EParams,
+  PipelineE2EResult,
+  MangaReadingOrder,
+  MangaPageSummary,
+  MangaMetaInfo,
+  MangaAnalysisResult,
+  V2MangaScanResult,
+  V2MangaAnalyzeResult,
+  V2MangaContextResult,
+  V2MangaOutlineResult,
+  V2MangaAuditResult,
+  V2MangaProjectDraftResult,
+  V2MangaCharacterGenResult,
+  V2MangaExportResult,
+} from '../shared/types/writing-v2.types';
+import { ExportFormat } from '../shared/types/writing.types';
+import type { ModelConfig } from '../shared/types/writing.types';
+import type { CharacterTraitManifestV2 } from '../shared/types/characterTrait.types';
+
 
 // 存储 subscription 映射，以便 off 方法可以正确移除监听器
-const subscriptionMap = new Map<string, Map<Function, Function>>();
+type IpcSubscription = (event: unknown, ...args: unknown[]) => void;
+const subscriptionMap = new Map<string, Map<Function, IpcSubscription>>();
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // 通用 invoke 方法，用于直接调用 IPC handler
@@ -43,7 +115,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const channelMap = subscriptionMap.get(channel);
     if (channelMap && channelMap.has(callback)) {
       const subscription = channelMap.get(callback);
-      ipcRenderer.removeListener(channel, subscription);
+      if (subscription) {
+        ipcRenderer.removeListener(channel, subscription);
+      }
       channelMap.delete(callback);
     }
   },
@@ -319,7 +393,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   // AI 请求 API
   ai: {
-    request: (config: { url: string; method: string; headers: Record<string, string>; body: any; timeout?: number; streaming?: boolean }) =>
+    request: (config: { url: string; method: string; headers: Record<string, string>; body: any; timeout?: number; streaming?: boolean; requestId?: string }) =>
       ipcRenderer.invoke('ai:request', config),
     cancel: () => ipcRenderer.invoke('ai:cancel'),
     listModels: (params: { apiUrl?: string; apiKey?: string; apiKeyTransmission?: string }) =>
@@ -585,6 +659,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     batchFixIssues: (req: BatchFixRequest) => ipcRenderer.invoke('writing:batchFixIssues', req),
     getLogicCheckRecords: () => ipcRenderer.invoke('writing:getLogicCheckRecords'),
     clearLogicCheckRecords: () => ipcRenderer.invoke('writing:clearLogicCheckRecords'),
+    // 跨章节连贯性审查（Spec: add-cross-chapter-coherence-review）
+    crossCheckReview: (params: { projectId: string; params: any }) => ipcRenderer.invoke('writing:crossCheckReview', params),
+    crossCheckCancel: () => ipcRenderer.invoke('writing:crossCheckCancel'),
+    crossCheckSuggestFix: (params: { projectId: string; issue: any; checkedPositions: number[]; customPrompt?: string }) =>
+      ipcRenderer.invoke('writing:crossCheckSuggestFix', params),
     aiSuggestSplit: (request: any) => ipcRenderer.invoke('writing:aiSuggestSplit', request),
     aiSuggestMerge: (request: any) => ipcRenderer.invoke('writing:aiSuggestMerge', request),
     saveAIGenerationHistory: (params: { projectId: string; history: any }) => ipcRenderer.invoke('writing:saveAIGenerationHistory', params),
@@ -732,115 +811,473 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }
   },
   // ============================================================================
-  // 游戏模式 API（Spec: add-game-mode-framework / Task 5）
+  // 写作模式 2.0（V2）API（Spec: refactor-writing-mode-v2 / Phase 0）
   // ============================================================================
-  // 与 writing 命名空间结构对齐：invoke 方法 + 流式事件监听器
-  // 流式事件监听器模式参考 writing.onPolishChunk / onPolishComplete / onPolishError
+  // 全类型化契约（见 shared/types/writing-v2.types.ts 的 WritingV2API）。
+  // 复用现有 writing:* IPC 通道（主进程 handler 零改动）；
+  // V1 的 writing 命名空间保持原样，两者互不影响。
   //
-  // 流式事件通道：
-  //   - game:narrative:chunk      流式文本片段
-  //   - game:narrative:complete   生成完成
-  //   - game:narrative:error       生成错误
-  //   - game:table:updated         表格被 tableEdit 更新后推送
-  //
-  // 每个监听器返回 unsubscribe 函数（与 writing 模式一致）
-  game: {
-    // ========== 游戏元数据 CRUD ==========
-    list: () => ipcRenderer.invoke('game:list'),
-    getMeta: (gameId: string) => ipcRenderer.invoke('game:getMeta', gameId),
-    createGame: (meta: GameMeta) => ipcRenderer.invoke('game:createGame', meta),
-    updateGame: (gameId: string, updates: Partial<GameMeta>) =>
-      ipcRenderer.invoke('game:updateGame', gameId, updates),
-    deleteGame: (gameId: string) => ipcRenderer.invoke('game:deleteGame', gameId),
+  // 流式事件通道复用说明：
+  //   - 大纲流：writing:stream:chunk
+  //   - 分片流：writing:chunk:start / progress / complete / error（chunkIndex = shardIndex）
+  writingV2: {
+    // ---------- 项目 CRUD ----------
+    loadProjects: (): Promise<V2LoadProjectsResult> => ipcRenderer.invoke('writing:loadProjects'),
+    createProject: (config: WritingConfig): Promise<V2CreateProjectResult> =>
+      ipcRenderer.invoke('writing:createProject', config),
+    saveProject: (project: WritingProject): Promise<V2BoolResult> =>
+      ipcRenderer.invoke('writing:saveProject', project),
+    deleteProject: (projectId: string): Promise<V2BoolResult> =>
+      ipcRenderer.invoke('writing:deleteProject', projectId),
 
-    // ========== 存档 CRUD ==========
-    createSave: (params: {
-      gameId: string;
-      gameType: import('../shared/types/game.types').GameType;
-      name: string;
-      isAuto: boolean;
-      tableSchema: import('../shared/types/game.types').GameTableSchema;
-      initialState?: Record<string, any>;
-    }) => ipcRenderer.invoke('game:createSave', params),
-    loadSave: (saveId: string) => ipcRenderer.invoke('game:loadSave', saveId),
-    listSaves: (gameId: string) => ipcRenderer.invoke('game:listSaves', gameId),
-    deleteSave: (saveId: string) => ipcRenderer.invoke('game:deleteSave', saveId),
-    save: (
-      saveId: string,
-      updates: {
-        narrativeLog?: GameSaveData['narrativeLog'];
-        stateSnapshot?: Record<string, any>;
-        currentTurn?: number | null;
-        currentNodeId?: string | null;
-        nodeTitle?: string | null;
-        turnCount?: number;
+    // ---------- 大纲 ----------
+    generateOutline: (request: OutlineGenerationRequest): Promise<V2GenerateOutlineResult> =>
+      ipcRenderer.invoke('writing:generateOutline', request),
+    // 解析大纲原始文本（V2 专用通道：不创建项目）
+    parseOutline: (rawContent: string): Promise<V2ParseOutlineResult> =>
+      ipcRenderer.invoke('writingV2:parseOutline', rawContent),
+    cancelGeneration: (projectId: string): Promise<V2BoolResult> =>
+      ipcRenderer.invoke('writing:cancelGeneration', projectId),
+
+    // ---------- 章节内容持久化 ----------
+    autoSaveChapter: (params: {
+      projectId: string;
+      chapterIndex: number;
+      content: string;
+    }): Promise<V2BoolResult> => ipcRenderer.invoke('writing:autoSaveChapter', params),
+    saveVersion: (params: {
+      projectId: string;
+      chapterIndex: number;
+      content: string;
+      note?: string;
+    }): Promise<V2BoolResult> => ipcRenderer.invoke('writing:saveVersion', params),
+    restoreVersion: (params: {
+      projectId: string;
+      chapterIndex: number;
+      versionId: string;
+    }): Promise<V2BoolResult> => ipcRenderer.invoke('writing:restoreVersion', params),
+
+    // ---------- shard 分片生成流水线（V2 唯一流水线） ----------
+    generateShardOutline: (request: ShardOutlineGenerationRequest): Promise<
+      ShardOutlineGenerationResult & { success: boolean; error?: string }
+    > => ipcRenderer.invoke('writing:generateShardOutline', request),
+    generateShardContent: (request: ShardContentGenerationRequest): Promise<V2BoolResult> =>
+      ipcRenderer.invoke('writing:generateShardContent', request),
+
+    // ---------- AI 章节拆并建议 ----------
+    aiSuggestSplit: (request: V2AISplitRequest): Promise<V2SuggestionResult<AISplitSuggestion>> =>
+      ipcRenderer.invoke('writing:aiSuggestSplit', request),
+    aiSuggestMerge: (request: V2AIMergeRequest): Promise<V2SuggestionResult<AIMergeSuggestion>> =>
+      ipcRenderer.invoke('writing:aiSuggestMerge', request),
+
+    // ---------- 导出（替代 V1 EXPORT 空壳，V2 专用通道） ----------
+    exportWithChapters: (
+      projectId: string,
+      format: ExportFormat,
+      chapterIndices: number[]
+    ): Promise<V2ExportResult> =>
+      ipcRenderer.invoke('writingV2:exportWithChapters', projectId, format, chapterIndices),
+
+    // ---------- P2：剧情检查（复用 writing: 通道） ----------
+    checkChapter: (params: {
+      projectId: string;
+      chapterIndex: number;
+      content: string;
+      previousChapters?: { index: number; title: string; content: string }[];
+    }): Promise<V2PlotCheckResult> => ipcRenderer.invoke('writing:checkChapter', params),
+    checkChapterDeAi: (params: {
+      chapterTitle: string;
+      content: string;
+      modelConfig: import('../shared/types/writing.types').ModelConfig;
+      /** 用户自定义审核要求（可选，最高优先级） */
+      customPrompt?: string;
+    }): Promise<V2ChapterDeAiCheckResult> =>
+      ipcRenderer.invoke('writing:checkChapterDeAi', params),
+    /** 中止进行中的章节 AI 味审核 */
+    cancelDeAiCheck: (): Promise<{ success: boolean }> =>
+      ipcRenderer.invoke('writing:cancelDeAiCheck'),
+    autoFixIssue: (params: V2AutoFixRequest): Promise<V2AutoFixResult> =>
+      ipcRenderer.invoke('writing:autoFixIssue', params),
+    batchFixIssues: (req: BatchFixRequest): Promise<import('../shared/types/writing.types').BatchFixResult> =>
+      ipcRenderer.invoke('writing:batchFixIssues', req),
+    getLogicCheckRecords: (): Promise<V2LogicRecordsResult> =>
+      ipcRenderer.invoke('writing:getLogicCheckRecords'),
+    clearLogicCheckRecords: (): Promise<V2BoolResult> =>
+      ipcRenderer.invoke('writing:clearLogicCheckRecords'),
+
+    // ---------- 跨章节连贯性审查（Spec: add-cross-chapter-coherence-review，writing:crossCheck* 通道） ----------
+    crossCheckReview: (params: {
+      projectId: string;
+      params: import('../shared/types/cross-chapter-review.types').CrossCheckParams;
+    }): Promise<{
+      success: boolean;
+      report: import('../shared/types/cross-chapter-review.types').CrossCheckReport | null;
+      error: string | null;
+    }> => ipcRenderer.invoke('writing:crossCheckReview', params),
+    crossCheckCancel: (): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('writing:crossCheckCancel'),
+    crossCheckSuggestFix: (params: {
+      projectId: string;
+      issue: import('../shared/types/cross-chapter-review.types').CrossCheckIssue;
+      checkedPositions: number[];
+      customPrompt?: string;
+    }): Promise<{
+      success: boolean;
+      suggestion?: import('../shared/types/cross-chapter-review.types').CrossCheckFixSuggestion;
+      error?: string;
+    }> => ipcRenderer.invoke('writing:crossCheckSuggestFix', params),
+
+    // ---------- P2：表格整理子域（复用 writing:table:* 通道） ----------
+    table: {
+      getTableData: (projectId: string): Promise<V2TableDataResult> =>
+        ipcRenderer.invoke('writing:table:getTableData', projectId),
+      saveTableData: (
+        projectId: string,
+        sheetName: string,
+        sheetData: Record<string, unknown>[]
+      ): Promise<V2BoolResult> =>
+        ipcRenderer.invoke('writing:table:saveTableData', projectId, sheetName, sheetData),
+      clearTableData: (projectId: string): Promise<V2BoolResult> =>
+        ipcRenderer.invoke('writing:table:clearTableData', projectId),
+      updateRowInTable: (
+        projectId: string,
+        sheetName: string,
+        rowIndex: number,
+        rowData: Record<string, unknown>
+      ): Promise<V2BoolResult & { result?: boolean }> =>
+        ipcRenderer.invoke('writing:table:updateRowInTable', projectId, sheetName, rowIndex, rowData),
+      getTableConfig: (projectId: string): Promise<V2TableConfigResult> =>
+        ipcRenderer.invoke('writing:table:getTableConfig', projectId),
+      saveTableConfig: (projectId: string, config: WritingTableConfig): Promise<V2BoolResult> =>
+        ipcRenderer.invoke('writing:table:saveTableConfig', projectId, config),
+      associateTableTemplate: (
+        projectId: string,
+        templateId: string,
+        templateName: string,
+        templateSheets: Array<{ name: string; headers: string[]; description?: string }>
+      ): Promise<V2BoolResult> =>
+        ipcRenderer.invoke(
+          'writing:table:associateTableTemplate',
+          projectId,
+          templateId,
+          templateName,
+          templateSheets
+        ),
+      getAllTemplates: (): Promise<V2TableTemplatesResult> =>
+        ipcRenderer.invoke('writing:table:getAllTemplates'),
+      organizeTable: (
+        projectId: string,
+        modelConfig: ModelConfig,
+        chapterIndex?: number,
+        requirements?: string,
+        skipOrganized?: boolean
+      ): Promise<V2TableOrganizeResult> =>
+        ipcRenderer.invoke(
+          'writing:table:organizeTable',
+          projectId,
+          modelConfig,
+          chapterIndex,
+          requirements,
+          skipOrganized
+        ),
+      organizeSingleSheet: (
+        projectId: string,
+        sheetName: string,
+        modelConfig: ModelConfig,
+        chapterIndex?: number,
+        requirements?: string
+      ): Promise<V2TableOrganizeResult> =>
+        ipcRenderer.invoke(
+          'writing:table:organizeSingleSheet',
+          projectId,
+          sheetName,
+          modelConfig,
+          chapterIndex,
+          requirements
+        ),
+      reorganizeRow: (
+        projectId: string,
+        sheet: string,
+        rowIndex: number,
+        rowData: Record<string, unknown>,
+        requirements: string,
+        modelConfig: ModelConfig
+      ): Promise<V2ReorganizeRowResult> =>
+        ipcRenderer.invoke(
+          'writing:table:reorganizeRow',
+          projectId,
+          sheet,
+          rowIndex,
+          rowData,
+          requirements,
+          modelConfig
+        ),
+      saveTableTemplate: (template: V2TableTemplateInput): Promise<V2TableTemplateOpResult> =>
+        ipcRenderer.invoke('writing:table:saveTableTemplate', template),
+      deleteTableTemplate: (id: string): Promise<V2TableTemplateOpResult> =>
+        ipcRenderer.invoke('writing:table:deleteTableTemplate', id),
+      getChapterOrganizeStatus: (projectId: string): Promise<V2ChapterOrganizeStatusResult> =>
+        ipcRenderer.invoke('writing:table:getChapterOrganizeStatus', projectId),
+      cancelOrganize: (projectId: string): Promise<V2BoolResult> =>
+        ipcRenderer.invoke('writing:table:cancelOrganize', projectId),
+      getVersionSnapshot: (projectId: string): Promise<V2VersionSnapshotResult> =>
+        ipcRenderer.invoke('writing:table:getVersionSnapshot', projectId),
+      confirmVersion: (projectId: string): Promise<V2BoolResult> =>
+        ipcRenderer.invoke('writing:table:confirmVersion', projectId),
+      rollbackVersion: (projectId: string): Promise<V2BoolResult> =>
+        ipcRenderer.invoke('writing:table:rollbackVersion', projectId),
+      onOrganizeProgress: (callback: (data: V2TableOrganizeProgressEvent) => void) => {
+        const handler = (_event: unknown, projectId: string, payload: Omit<V2TableOrganizeProgressEvent, 'projectId'>) =>
+          callback({ projectId, ...payload });
+        ipcRenderer.on('writing:table:organizeProgress', handler);
+        return () => ipcRenderer.removeListener('writing:table:organizeProgress', handler);
       }
-    ) => ipcRenderer.invoke('game:save', saveId, updates),
-
-    // ========== 表格数据 CRUD + 版本快照 ==========
-    getTableData: (saveId: string) => ipcRenderer.invoke('game:getTableData', saveId),
-    saveTableData: (saveId: string, tableData: GameTableData) =>
-      ipcRenderer.invoke('game:saveTableData', saveId, tableData),
-    applyTableEdits: (saveId: string, commands: GameTableEditCommand[]) =>
-      ipcRenderer.invoke('game:applyTableEdits', saveId, commands),
-    getVersionSnapshot: (saveId: string) =>
-      ipcRenderer.invoke('game:getVersionSnapshot', saveId),
-    confirmVersion: (saveId: string) => ipcRenderer.invoke('game:confirmVersion', saveId),
-    rollbackVersion: (saveId: string) => ipcRenderer.invoke('game:rollbackVersion', saveId),
-
-    // ========== AI 叙事生成 ==========
-    generateNarrative: (request: GameNarrativeRequest) =>
-      ipcRenderer.invoke('game:generateNarrative', request),
-    cancelGeneration: (saveId: string) =>
-      ipcRenderer.invoke('game:cancelGeneration', saveId),
-
-    // ========== 游戏本地配置 ==========
-    getConfig: (gameId: string) => ipcRenderer.invoke('game:getConfig', gameId),
-    saveConfig: (gameId: string, config: GameLocalConfig) =>
-      ipcRenderer.invoke('game:saveConfig', gameId, config),
-
-    // ========== 流式事件监听器 ==========
-    /**
-     * 监听流式 chunk 事件
-     * @param callback 接收 { saveId, chunk, index }
-     * @returns unsubscribe 函数
-     */
-    onNarrativeChunk: (callback: (data: GameNarrativeChunk) => void) => {
-      const handler = (_event: any, data: GameNarrativeChunk) => callback(data);
-      ipcRenderer.on('game:narrative:chunk', handler);
-      return () => ipcRenderer.removeListener('game:narrative:chunk', handler);
     },
-    /**
-     * 监听生成完成事件
-     * @param callback 接收 GameNarrativeComplete
-     * @returns unsubscribe 函数
-     */
-    onNarrativeComplete: (callback: (data: GameNarrativeComplete) => void) => {
-      const handler = (_event: any, data: GameNarrativeComplete) => callback(data);
-      ipcRenderer.on('game:narrative:complete', handler);
-      return () => ipcRenderer.removeListener('game:narrative:complete', handler);
+
+    // ---------- P3：素材绑定子域（复用 V1 列表通道，preload 内归一化为 {id,name,path}） ----------
+    resources: {
+      listWorldBooks: async (): Promise<V2ResourceCandidateListResult> => {
+        try {
+          const result = (await ipcRenderer.invoke('worldBook:list')) as Array<{ path: string; name?: string }> | null;
+          if (!Array.isArray(result)) return { success: false, candidates: [], error: '世界书列表不可用' };
+          return {
+            success: true,
+            candidates: result.map((wb) => ({
+              id: wb.path,
+              name: (wb.name || wb.path).replace(/\.(json|json5)$/i, ''),
+              path: wb.path,
+            })),
+          };
+        } catch (error) {
+          return { success: false, candidates: [], error: error instanceof Error ? error.message : '获取世界书列表失败' };
+        }
+      },
+      listCharacters: async (): Promise<V2ResourceCandidateListResult> => {
+        try {
+          const result = (await ipcRenderer.invoke('character:list')) as Array<{ path: string; characterName?: string; name?: string }> | null;
+          if (!Array.isArray(result)) return { success: false, candidates: [], error: '角色卡列表不可用' };
+          return {
+            success: true,
+            candidates: result.map((ch) => ({
+              id: ch.path,
+              name: ch.characterName || (ch.name || ch.path).replace(/\.(png|jpg|jpeg|webp)$/i, ''),
+              path: ch.path,
+            })),
+          };
+        } catch (error) {
+          return { success: false, candidates: [], error: error instanceof Error ? error.message : '获取角色卡列表失败' };
+        }
+      },
+      listPersonas: async (): Promise<V2ResourceCandidateListResult> => {
+        try {
+          const result = (await ipcRenderer.invoke('avatar:list')) as Array<{ path: string }> | null;
+          if (!Array.isArray(result)) return { success: false, candidates: [], error: '人设列表不可用' };
+          const personaFiles = result.filter((p) => p.path.endsWith('.json') && !p.path.includes('user-profile.json'));
+          const candidates: V2ResourceCandidate[] = [];
+          for (const p of personaFiles) {
+            let name = p.path.replace(/\.json$/i, '');
+            let description = '';
+            try {
+              const content = (await ipcRenderer.invoke('avatar:read', p.path)) as { name?: string; description?: string } | null;
+              if (content) {
+                name = content.name || name;
+                description = content.description || '';
+              }
+            } catch {
+              // 单个文件读取失败不阻断整体列表
+            }
+            candidates.push({ id: p.path, name, path: p.path, description });
+          }
+          return { success: true, candidates };
+        } catch (error) {
+          return { success: false, candidates: [], error: error instanceof Error ? error.message : '获取人设列表失败' };
+        }
+      },
+      loadResources: async (params: {
+        worldBookIds?: string[];
+        characterCardIds?: string[];
+        userPersonaIds?: string[];
+      }): Promise<{ success: boolean; summary?: string; error?: string }> => {
+        const result = (await ipcRenderer.invoke('writing:loadResources', params)) as {
+          success: boolean;
+          summary?: string;
+          error?: string;
+        };
+        return { success: result.success, summary: result.summary, error: result.error };
+      },
     },
-    /**
-     * 监听生成错误事件
-     * @param callback 接收 { saveId, error, code }
-     * @returns unsubscribe 函数
-     */
-    onNarrativeError: (callback: (data: GameNarrativeError) => void) => {
-      const handler = (_event: any, data: GameNarrativeError) => callback(data);
-      ipcRenderer.on('game:narrative:error', handler);
-      return () => ipcRenderer.removeListener('game:narrative:error', handler);
+
+    // ---------- P3：风格学习子域（复用 writing:style:* 通道） ----------
+    style: {
+      upload: (req: { filePath: string; fileName: string; fileSize: number }): Promise<V2StyleUploadResult> =>
+        ipcRenderer.invoke('writing:style:upload', req),
+      list: (): Promise<V2StyleListResult> => ipcRenderer.invoke('writing:style:list'),
+      get: (resourceId: string): Promise<V2StyleGetResult> =>
+        ipcRenderer.invoke('writing:style:get', resourceId),
+      remove: (resourceId: string): Promise<V2BoolResult> =>
+        ipcRenderer.invoke('writing:style:delete', resourceId),
+      cancel: (taskId: string): Promise<V2BoolResult> =>
+        ipcRenderer.invoke('writing:style:cancel', taskId),
+      getActiveTasks: (): Promise<V2StyleActiveTasksResult> =>
+        ipcRenderer.invoke('writing:style:getActiveTasks'),
+      onError: (callback: (data: V2StyleErrorEvent) => void) => {
+        const handler = (_event: unknown, data: V2StyleErrorEvent) => callback(data);
+        ipcRenderer.on('writing:style:error', handler);
+        return () => ipcRenderer.removeListener('writing:style:error', handler);
+      },
     },
-    /**
-     * 监听表格更新事件（在 tableEdit 命令应用成功后推送）
-     * @param callback 接收 { saveId, changes }
-     * @returns unsubscribe 函数
-     */
-    onTableUpdated: (callback: (data: GameTableUpdated) => void) => {
-      const handler = (_event: any, data: GameTableUpdated) => callback(data);
-      ipcRenderer.on('game:table:updated', handler);
-      return () => ipcRenderer.removeListener('game:table:updated', handler);
-    }
+
+    // ---------- P3：模板管理子域（复用 writing:template:* 通道） ----------
+    templates: {
+      novelTypeList: (): Promise<V2TemplateListResult<CustomNovelTypeTemplate>> =>
+        ipcRenderer.invoke('writing:template:novelType:list'),
+      novelTypeSave: (template: CustomNovelTypeTemplate): Promise<V2TemplateSaveResult> =>
+        ipcRenderer.invoke('writing:template:novelType:save', template),
+      novelTypeDelete: (id: string): Promise<V2BoolResult> =>
+        ipcRenderer.invoke('writing:template:novelType:delete', id),
+      writingStyleList: (): Promise<V2TemplateListResult<CustomWritingStyleTemplate>> =>
+        ipcRenderer.invoke('writing:template:writingStyle:list'),
+      writingStyleSave: (template: CustomWritingStyleTemplate): Promise<V2TemplateSaveResult> =>
+        ipcRenderer.invoke('writing:template:writingStyle:save', template),
+      writingStyleDelete: (id: string): Promise<V2BoolResult> =>
+        ipcRenderer.invoke('writing:template:writingStyle:delete', id),
+    },
+
+    // ---------- 流式事件监听（每个返回 unsubscribe 函数） ----------
+    onOutlineChunk: (callback: (data: V2OutlineStreamChunkEvent) => void) => {
+      const handler = (_event: unknown, data: V2OutlineStreamChunkEvent) => callback(data);
+      ipcRenderer.on('writing:stream:chunk', handler);
+      return () => ipcRenderer.removeListener('writing:stream:chunk', handler);
+    },
+    onShardStreamStart: (callback: (data: V2ShardStreamStartEvent) => void) => {
+      const handler = (_event: unknown, data: V2ShardStreamStartEvent) => callback(data);
+      ipcRenderer.on('writing:chunk:start', handler);
+      return () => ipcRenderer.removeListener('writing:chunk:start', handler);
+    },
+    onShardStreamProgress: (callback: (data: V2ShardStreamProgressEvent) => void) => {
+      const handler = (_event: unknown, data: V2ShardStreamProgressEvent) => callback(data);
+      ipcRenderer.on('writing:chunk:progress', handler);
+      return () => ipcRenderer.removeListener('writing:chunk:progress', handler);
+    },
+    onShardStreamReasoning: (callback: (data: V2ShardStreamReasoningEvent) => void) => {
+      const handler = (_event: unknown, data: V2ShardStreamReasoningEvent) => callback(data);
+      ipcRenderer.on('writing:chunk:reasoning', handler);
+      return () => ipcRenderer.removeListener('writing:chunk:reasoning', handler);
+    },
+    onDeAiStream: (callback: (data: V2DeAiStreamEvent) => void) => {
+      const handler = (_event: unknown, data: V2DeAiStreamEvent) => callback(data);
+      ipcRenderer.on('writing:deai:stream', handler);
+      return () => ipcRenderer.removeListener('writing:deai:stream', handler);
+    },
+    onCrossCheckStream: (callback: (data: CrossCheckStreamEvent) => void) => {
+      const handler = (_event: unknown, data: CrossCheckStreamEvent) => callback(data);
+      ipcRenderer.on('writing:crossCheck:stream', handler);
+      return () => ipcRenderer.removeListener('writing:crossCheck:stream', handler);
+    },
+    onShardStreamComplete: (callback: (data: V2ShardStreamCompleteEvent) => void) => {
+      const handler = (_event: unknown, data: V2ShardStreamCompleteEvent) => callback(data);
+      ipcRenderer.on('writing:chunk:complete', handler);
+      return () => ipcRenderer.removeListener('writing:chunk:complete', handler);
+    },
+    onShardStreamError: (callback: (data: V2ShardStreamErrorEvent) => void) => {
+      const handler = (_event: unknown, data: V2ShardStreamErrorEvent) => callback(data);
+      ipcRenderer.on('writing:chunk:error', handler);
+      return () => ipcRenderer.removeListener('writing:chunk:error', handler);
+    },
+
+    // ========== 全流程创作流水线（writing:pipeline:* 通道） ==========
+    pipeline: {
+      listResources: (): Promise<PipelineEnvelope<PipelineResourcesData>> =>
+        ipcRenderer.invoke('writing:pipeline:listResources'),
+      createCharacterCard: (params: PipelineCreateCharacterParams): Promise<PipelineEnvelope<PipelineCharacterResult>> =>
+        ipcRenderer.invoke('writing:pipeline:createCharacterCard', params),
+      init: (params: PipelineInitParams): Promise<PipelineEnvelope<PipelineInitData>> =>
+        ipcRenderer.invoke('writing:pipeline:init', params),
+      generateOutline: (projectId: string): Promise<PipelineEnvelope<PipelineOutlineData>> =>
+        ipcRenderer.invoke('writing:pipeline:generateOutline', projectId),
+      generateChapter: (
+        projectId: string,
+        chapterIndex: number,
+        shardCount?: number
+      ): Promise<PipelineEnvelope<PipelineChapterData>> =>
+        ipcRenderer.invoke('writing:pipeline:generateChapter', projectId, chapterIndex, shardCount),
+      compose: (
+        projectId: string,
+        format: ExportFormat,
+        chapterIndices?: number[]
+      ): Promise<PipelineEnvelope<PipelineComposeData>> =>
+        ipcRenderer.invoke('writing:pipeline:compose', projectId, format, chapterIndices),
+      runAll: (params: PipelineInitParams): Promise<PipelineEnvelope<PipelineRunAllData>> =>
+        ipcRenderer.invoke('writing:pipeline:runAll', params),
+      status: (projectId: string): Promise<PipelineEnvelope<PipelineStatusData>> =>
+        ipcRenderer.invoke('writing:pipeline:status', projectId),
+      cancel: (projectId: string): Promise<PipelineEnvelope> =>
+        ipcRenderer.invoke('writing:pipeline:cancel', projectId),
+      runE2E: (params: PipelineE2EParams): Promise<PipelineEnvelope<PipelineE2EResult>> =>
+        ipcRenderer.invoke('writing:pipeline:runE2E', params),
+      onProgress: (callback: (event: PipelineProgressEvent) => void): (() => void) => {
+        const handler = (_event: unknown, data: PipelineProgressEvent) => callback(data);
+        ipcRenderer.on('writing:pipeline:progress', handler);
+        return () => ipcRenderer.removeListener('writing:pipeline:progress', handler);
+      },
+    },
+
+    // ---------- 漫画解析子域（manga:* 通道，Spec: integrate-comic-parsing-mode） ----------
+    manga: {
+      scanFolder: (folderPath: string): Promise<V2MangaScanResult> =>
+        ipcRenderer.invoke('manga:scanFolder', folderPath),
+      analyzePage: (params: {
+        imagePath: string;
+        readingOrder: MangaReadingOrder;
+        previousSummaries: MangaPageSummary[];
+        pageIndex: number;
+        userGuidance?: string;
+        mangaMeta?: MangaMetaInfo;
+      }): Promise<V2MangaAnalyzeResult> =>
+        ipcRenderer.invoke('manga:analyzePage', params),
+      buildContextTable: (summaries: MangaPageSummary[]): Promise<V2MangaContextResult> =>
+        ipcRenderer.invoke('manga:buildContextTable', summaries),
+      generateOutline: (
+        summaries: MangaPageSummary[],
+        mangaMeta?: MangaMetaInfo,
+        customPrompt?: string
+      ): Promise<V2MangaOutlineResult> =>
+        ipcRenderer.invoke('manga:generateOutline', summaries, mangaMeta, customPrompt),
+      auditOutline: (
+        outline: string,
+        mangaMeta?: MangaMetaInfo,
+        summaries?: MangaPageSummary[],
+        customPrompt?: string
+      ): Promise<V2MangaAuditResult> =>
+        ipcRenderer.invoke('manga:auditOutline', outline, mangaMeta, summaries, customPrompt),
+      generateProjectDraft: (
+        summaries: MangaPageSummary[],
+        outline: string,
+        mangaMeta?: MangaMetaInfo,
+        customPrompt?: string
+      ): Promise<V2MangaProjectDraftResult> =>
+        ipcRenderer.invoke('manga:generateProjectDraft', summaries, outline, mangaMeta, customPrompt),
+      generateCharacterInfo: (params: {
+        imagePath: string;
+        summaries?: MangaPageSummary[];
+        mangaMeta?: MangaMetaInfo;
+        currentCharacters?: string;
+        customPrompt?: string;
+      }): Promise<V2MangaCharacterGenResult> =>
+        ipcRenderer.invoke('manga:generateCharacterInfo', params),
+      cancel: (
+        key?: 'analyzePage' | 'generateOutline' | 'auditOutline' | 'generateProjectDraft' | 'generateCharacterInfo'
+      ): Promise<{ success: boolean; cancelledCount: number }> =>
+        ipcRenderer.invoke('manga:cancel', key),
+      exportAnalysis: (params: {
+        result: MangaAnalysisResult;
+        savePath: string;
+      }): Promise<V2MangaExportResult> =>
+        ipcRenderer.invoke('manga:exportAnalysis', params),
+    },
   },
+
+
   prompt: {
     getAll: () => ipcRenderer.invoke('prompt:getAll'),
     get: (moduleId: string) => ipcRenderer.invoke('prompt:get', moduleId),

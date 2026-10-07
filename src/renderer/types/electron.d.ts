@@ -11,27 +11,12 @@ import type {
   WritingAgentStatus,
   WritingAgentEvent
 } from '../../shared/types/writing-agent.types';
+import type { WritingV2API } from '../../shared/types/writing-v2.types';
 import type {
   PromptPolishRequest,
   PromptPolishResult
 } from '../../shared/types/promptTemplate.types';
-import type {
-  GameIndexEntry,
-  GameMeta,
-  GameSaveMeta,
-  GameSaveData,
-  GameNarrativeMessage,
-  GameTableData,
-  GameTableSchema,
-  GameTableEditCommand,
-  GameNarrativeRequest,
-  GameNarrativeChunk,
-  GameNarrativeComplete,
-  GameNarrativeError,
-  GameTableUpdated,
-  GameLocalConfig,
-  GameType
-} from '../../shared/types/game.types';
+
 import type { AIEngineCapabilities } from './setting';
 import type { AgentModeStatus, AgentModeOverride, AgentConfig } from '../../shared/types/agent-center.types';
 import type { CharacterTraitManifestV2, CategorizedTrait, GlobalTraitCategoryDictionary, TraitCategory } from '../../shared/types/characterTrait.types';
@@ -722,6 +707,10 @@ interface ElectronAPI {
     };
   };
 
+  // 写作模式 2.0（V2）API（Spec: refactor-writing-mode-v2 / Phase 0）
+  // 全类型化契约，复用现有 writing:* IPC 通道；与 V1 的 writing 命名空间互不影响
+  writingV2: WritingV2API;
+
   prompt: {
     getAll: () => Promise<{ success: boolean; data?: any[]; error?: string }>;
     get: (moduleId: string) => Promise<{ success: boolean; data?: any; error?: string }>;
@@ -965,62 +954,7 @@ interface ElectronAPI {
     removeProgressListeners: () => void;
   };
 
-  // 游戏模式 API（Spec: add-game-mode-framework / Task 5 preload 契约）
-  // 命名空间由 Task 5 在 preload.ts 中实现；此处类型声明由 Task 6 提前补全以解耦渲染进程开发
-  game: {
-    list: () => Promise<{ success: boolean; games?: GameIndexEntry[]; error?: string }>;
-    getMeta: (gameId: string) => Promise<{ success: boolean; meta?: GameMeta | null; error?: string }>;
-    createGame: (meta: GameMeta) => Promise<{ success: boolean }>;
-    updateGame: (gameId: string, updates: Partial<GameMeta>) => Promise<{ success: boolean }>;
-    deleteGame: (gameId: string) => Promise<{ success: boolean }>;
-    createSave: (params: {
-      gameId: string;
-      gameType: GameType;
-      name: string;
-      isAuto: boolean;
-      tableSchema: GameTableSchema;
-      initialState?: Record<string, any>;
-    }) => Promise<{ success: boolean; meta?: GameSaveMeta; error?: string }>;
-    loadSave: (saveId: string) => Promise<{ success: boolean; data?: GameSaveData | null; error?: string }>;
-    listSaves: (gameId: string) => Promise<{ success: boolean; saves?: GameSaveMeta[]; error?: string }>;
-    deleteSave: (saveId: string) => Promise<{ success: boolean }>;
-    save: (
-      saveId: string,
-      updates: {
-        narrativeLog?: GameSaveData['narrativeLog'];
-        stateSnapshot?: Record<string, any>;
-        currentTurn?: number | null;
-        currentNodeId?: string | null;
-        nodeTitle?: string | null;
-        turnCount?: number;
-      }
-    ) => Promise<{ success: boolean }>;
-    getTableData: (saveId: string) => Promise<{ success: boolean; data?: GameTableData | null; error?: string }>;
-    saveTableData: (saveId: string, tableData: GameTableData) => Promise<{ success: boolean }>;
-    applyTableEdits: (
-      saveId: string,
-      commands: GameTableEditCommand[]
-    ) => Promise<{
-      success: boolean;
-      changes: {
-        commandsExecuted: number;
-        affectedSheets: string[];
-        errors: string[];
-      };
-    }>;
-    getVersionSnapshot: (saveId: string) => Promise<{ success: boolean; snapshot?: any; error?: string }>;
-    confirmVersion: (saveId: string) => Promise<{ success: boolean }>;
-    rollbackVersion: (saveId: string) => Promise<{ success: boolean }>;
-    generateNarrative: (request: GameNarrativeRequest) => Promise<void>;
-    cancelGeneration: (saveId: string) => Promise<void>;
-    getConfig: (gameId: string) => Promise<{ success: boolean; config?: GameLocalConfig; error?: string }>;
-    saveConfig: (gameId: string, config: GameLocalConfig) => Promise<{ success: boolean }>;
-    // 事件监听器（每个返回 unsubscribe 函数）
-    onNarrativeChunk: (callback: (data: GameNarrativeChunk) => void) => () => void;
-    onNarrativeComplete: (callback: (data: GameNarrativeComplete) => void) => () => void;
-    onNarrativeError: (callback: (data: GameNarrativeError) => void) => () => void;
-    onTableUpdated: (callback: (data: GameTableUpdated) => void) => () => void;
-  };
+
 
   // LoRA 模型列表 API（Spec: add-lora-model-selection / Task 3）
   // 通过 SD WebUI API 获取可用 LoRA 模型列表，含预览图 URL 和 JSON 元数据

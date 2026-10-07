@@ -239,8 +239,13 @@ export class WritingStorageService {
     onProgress?: (current: number, total: number, message: string, percent?: number, currentChunk?: number, totalChunks?: number) => void,
     requirements?: string,
     skipOrganized?: boolean
-  ): Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[] }> {
+  ): Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[]; cancelled?: boolean }> {
     return this.organizeService.organizeTable(projectId, modelConfig, chapterIndex, onProgress, requirements, skipOrganized);
+  }
+
+  /** 请求取消进行中的整理任务（当前分片 AI 调用完成后生效） */
+  cancelOrganize(projectId: string): void {
+    this.organizeService.cancelOrganize(projectId);
   }
 
   async organizeSingleSheet(

@@ -1,6 +1,7 @@
 import { Suspense, useEffect } from 'react';
 import { Layout, Spin } from 'antd';
 import { useUIStore } from './stores/uiStore';
+import { useSettingStore } from './stores/settingStore';
 import Sidebar from './components/Layout/Sidebar';
 import Header from './components/Layout/Header';
 import { ThemeProvider } from './components/Common/ThemeProvider';
@@ -25,6 +26,14 @@ function App() {
   const activeTab = useUIStore(s => s.activeTab);
   const compactMode = useUIStore(s => s.compactMode);
   const animationEnabled = useUIStore(s => s.animationEnabled);
+
+  useEffect(() => {
+    // 应用启动时全局加载设置：settingStore 无初始值，此前依赖各页面组件自行 fetchSetting
+    // （Dashboard/Settings 等的挂载 effect）。uiStore.activeTab 会恢复上次所在页，
+    // 若恢复到的页面不触发 fetch（如创作中心），读取设置的功能（如漫画解析的
+    // supportsVision 判断）会拿到 null 而误报「AI 模型不支持图片识别」。
+    useSettingStore.getState().fetchSetting();
+  }, []);
 
   useEffect(() => {
     if (compactMode) {

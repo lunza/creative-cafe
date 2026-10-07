@@ -59,12 +59,17 @@ export interface PlotCheckRequestData {
 
 export class PlotCheckerService {
   private buildCheckPrompt(request: PlotCheckRequestData): string {
-    const chapterOutline = request.outline?.chapters?.find(ch => ch.index === request.chapterIndex);
-    
+    // 章节定位：chapterIndex 是渲染层传入的 0 基数组位置。漫画导入项目的 chapters[].index 字段
+    // 为 1 基（OutlineGenerator.validateOutline 缺省 idx+1），按 index 字段值查找会错位到前一章
+    // （曾导致拿第 N-1 章大纲检查第 N 章正文，报"遗漏前一章情节"）。与 TableOrganizeService 同一契约。
+    const allChapters = request.outline?.chapters ?? [];
+    const chapterOutline = allChapters[request.chapterIndex] ?? allChapters.find(ch => ch.index === request.chapterIndex);
+
     let contextParts = '';
-    
+
     if (chapterOutline) {
-      contextParts += `## 本章大纲\n- 标题: ${chapterOutline.title}\n- 摘要: ${chapterOutline.summary}\n`;
+      contextParts += '## 本章大纲（主要检查基准：这是当前正在检查的章节的规划，大纲一致性问题只以此为准，不要与任何其他章节的大纲混淆）\n';
+      contextParts += `- 标题: ${chapterOutline.title}\n- 摘要: ${chapterOutline.summary}\n`;
       if (chapterOutline.keyPlotPoints && chapterOutline.keyPlotPoints.length > 0) {
         contextParts += `- 关键情节: ${chapterOutline.keyPlotPoints.join('、')}\n`;
       }
@@ -72,7 +77,7 @@ export class PlotCheckerService {
     }
 
     if (request.previousChapters && request.previousChapters.length > 0) {
-      contextParts += '## 前文章节\n';
+      contextParts += '## 前文章节（次要参考：仅用于判断剧情连续性，其内容不是本章的大纲规划）\n';
       for (const prev of request.previousChapters.slice(-2)) {
         contextParts += `### ${prev.title}\n${prev.content}\n\n`;
       }
@@ -91,7 +96,7 @@ export class PlotCheckerService {
 
 ## 剧情多维度检测
 请从以下维度检查章节内容：
-1. 大纲一致性（outline_consistency）：章节内容是否与大纲规划一致，关键情节是否覆盖
+1. 大纲一致性（outline_consistency）：章节内容是否覆盖【本章大纲】规划的情节与关键情节点。**只以上方「本章大纲」为主要检查基准**，前文章节正文和历史章节的大纲都不是本章的规划，严禁把其他章节的情节当作本章应有内容来报"遗漏"
 2. 世界书合规性（worldbook_compliance）：是否遵循已建立的世界观设定和规则
 3. 角色一致性（character_consistency）：角色性格、行为、身份是否与设定一致
 4. 写作风格（writing_style）：文笔、节奏、表达是否符合要求的写作风格
@@ -334,6 +339,9 @@ ${contextParts}
           position: issue.position || undefined,
           originalText: origTextEntries.length > 0 ? origTextEntries : undefined,
           references: refs.length > 0 ? refs : undefined,
+          // AI 检查报告出的每个问题都可走批量修正管线（携带完整问题信息整章重写），
+          // 必须显式置 true——此前漏设导致 V2 批量修正恒提示"没有可批量修正的问题"
+          fixable: true,
           quickFixable: validatedSuggestion !== undefined,
           quickFixSuggestion: validatedSuggestion
         };
@@ -390,6 +398,8 @@ ${contextParts}
         position: issue.position || undefined,
         originalText: issue.originalText || undefined,
         references: issue.references || undefined,
+        // 同维度问题：AI 报告出的逻辑矛盾均可批量修正（漏设 fixable 会导致 V2 批量修正不可用）
+        fixable: true,
         quickFixable: validatedSuggestion !== undefined,
         quickFixSuggestion: validatedSuggestion,
         chapterIndex: chapterIndex
@@ -858,8 +868,8 @@ ${contextParts}
       return '';
     }
 
-    let context = `## 历史剧情表格数据（重要参考资料）\n`;
-    context += `以下表格记录了之前章节中已建立的角色、物品、事件、地点等关键信息，请在检查当前章节时作为参考，确保剧情走向和细节与前文一致。\n\n`;
+    let context = `## 历史剧情表格数据（次要参考）\n`;
+    context += `以下表格记录了之前章节中已建立的角色、物品、事件、地点等关键信息，仅用于核对当前章节与前文的一致性；本章的检查基准以上方「本章大纲」为准。\n\n`;
 
     sheets.forEach((sheetName: string, sheetIndex: number) => {
       const tableIndex = sheetIndex + 1;
@@ -874,25 +884,33 @@ ${contextParts}
 
       context += `当前已有数据（共${sheetData.length}条）：\n`;
 
+      const headers = writingTableData.headers?.[sheetName] || [];
       const uniqueIdIndex: Map<string, number> = new Map();
 
       sheetData.forEach((row: any, rowIndex: number) => {
         const rowDisplay = rowIndex + 1;
-        const uniqueId = row['唯一id'];
+        // 存储约定：key "0"=流水号（不展示）、"1"=唯一id、"2+"=模板字段（与 TableOrganizeService 同一契约）
+        const uniqueId = typeof row['1'] === 'string' || typeof row['1'] === 'number' ? String(row['1']) : '';
 
         if (uniqueId) {
           uniqueIdIndex.set(uniqueId, rowDisplay);
         }
 
-        const fields = Object.entries(row)
-          .filter(([key]) => key !== '0')
-          .map(([key, value]) => {
-            const headerIndex = parseInt(key) + 1;
-            const headerName = writingTableData.headers?.[sheetName]?.[parseInt(key) - 2] || `字段${headerIndex}`;
-            return `${headerName}=${value}`;
-          })
-          .join(', ');
-        context += `  行${rowDisplay}: ${fields}\n`;
+        const fields: string[] = [];
+        if (uniqueId) {
+          fields.push(`唯一id=${uniqueId}`);
+        }
+        for (let ci = 0; ci < headers.length; ci++) {
+          const value = row[String(ci + 2)];
+          if (value === undefined || value === null || String(value) === '') continue;
+          fields.push(`${headers[ci]}=${value}`);
+        }
+        // 兜底：约定之外的键（历史数据/命名键）原样附加，避免信息丢失
+        Object.entries(row).forEach(([key, value]) => {
+          if (/^\d+$/.test(key) || value === undefined || value === null || String(value) === '') return;
+          fields.push(`${key}=${value}`);
+        });
+        context += `  行${rowDisplay}: ${fields.join(', ')}\n`;
       });
 
       if (uniqueIdIndex.size > 0) {
@@ -942,6 +960,7 @@ ${contextParts}
             description: `角色"${entity}"可能存在状态矛盾：前文已确认死亡，但后续又出现复活相关描述`,
             analysis: `检测到"${entity}"与死亡关键词和复活关键词同时出现在文本中，需要确认是否为合理的情节发展（如复活设定、梦境、回忆等）`,
             suggestion: `如果"${entity}"确实已死亡且无复活设定，请移除或修改复活相关描述；如有复活设定，请确保在前文中明确说明`,
+            fixable: true,
             chapterIndex: 0,
             originalText: [{
               snippet: content.substring(snippetStart, snippetEnd),
@@ -984,6 +1003,7 @@ ${contextParts}
             description: `物品"${item}"可能存在状态矛盾：前文已被消耗/使用，但后续又出现`,
             analysis: `检测到"${item}"与消耗关键词和重现关键词同时出现在文本中，需要确认物品是否真的被完全消耗`,
             suggestion: `如果"${item}"确实已被消耗，请移除重现相关描述；如未完全消耗，请明确说明剩余量或状态`,
+            fixable: true,
             chapterIndex: 0,
             originalText: [{
               snippet: content.substring(snippetStart, snippetEnd),
@@ -1026,6 +1046,7 @@ ${contextParts}
           description: `实体"${entity}"的数量存在矛盾：前文为 ${counts[0]}，后文为 ${counts[counts.length - 1]}`,
           analysis: `同一实体在文本中被赋予了不同的数量值，可能存在数量关系矛盾`,
           suggestion: `请统一"${entity}"的数量描述，确保前后一致`,
+          fixable: true,
           chapterIndex: 0,
           originalText: [{
             snippet: content.substring(snippetStart, snippetEnd),

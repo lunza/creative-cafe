@@ -744,12 +744,24 @@ export function registerWritingChapterHandlers(): void {
         });
       };
 
+      // 思考模型（Qwen3 等）先输出 reasoning_content 再输出正文，思考期可能占生成时长的
+      // 大半——透出思考流事件让前端展示"AI 思考中"实时进度，避免用户长时间看不到任何输出
+      const onReasoning = (chunk: string) => {
+        event.sender.send('writing:chunk:reasoning', {
+          projectId,
+          chapterIndex,
+          chunkIndex: shardIndex,
+          chunk
+        });
+      };
+
       try {
         const result = await contentGenerator.generateShardContent(
           request,
           request.modelConfig,
           onStream,
-          abortController.signal
+          abortController.signal,
+          onReasoning
         );
 
         // 发送分片完成事件
@@ -803,6 +815,45 @@ export function registerWritingChapterHandlers(): void {
         error: error instanceof Error ? error.message : 'Unknown error'
       };
     }
+  });
+
+  // ========== 章节内容 AI 味审核（humanizer 规则审读 + 修订文本） ==========
+
+  ipcMain.handle('writing:checkChapterDeAi', async (event, request) => {
+    try {
+      addLog('===== 写作模式: 章节AI味审核请求 =====', 'debug');
+      // 过程流式增量透传（思考流/正文），前端弹窗实时展示审核过程
+      const result = await contentGenerator.checkChapterDeAi(request, (chunk, reasoning) => {
+        if (!event.sender.isDestroyed()) {
+          event.sender.send('writing:deai:stream', { chunk, reasoning });
+        }
+      });
+      return { success: true, ...result };
+    } catch (error) {
+      // 用户中止（writing:cancelDeAiCheck）：返回 cancelled 标记，前端提示"已停止"而非报错
+      if (error && typeof error === 'object' && (error as { cancelled?: unknown }).cancelled) {
+        addLog('[章节AI味审核] 用户已停止', 'warn');
+        return { success: false, cancelled: true, error: '用户已停止' };
+      }
+      // 注意：createError 返回的是普通 WritingError 对象（非 Error 实例），需按对象取 message，否则 String() 得 "[object Object]"
+      const errMsg =
+        error && typeof error === 'object' && 'message' in error && String((error as { message?: unknown }).message)
+          ? String((error as { message: unknown }).message)
+          : error instanceof Error
+            ? error.message
+            : String(error);
+      addLog(`[章节AI味审核] 失败: ${errMsg}`, 'error');
+      return {
+        success: false,
+        error: errMsg
+      };
+    }
+  });
+
+  // ========== 中止进行中的章节 AI 味审核 ==========
+  ipcMain.handle('writing:cancelDeAiCheck', async (): Promise<{ success: boolean }> => {
+    contentGenerator.cancelDeAiCheck();
+    return { success: true };
   });
 
   // ========== AI 章节拆并建议 ==========

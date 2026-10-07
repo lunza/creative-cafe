@@ -1,10 +1,8 @@
 import React from 'react';
 import { Tabs } from 'antd';
-import { FolderOutlined, UserOutlined, BookOutlined, EditOutlined } from '@ant-design/icons';
-import { useUIStore } from '../../stores/uiStore';
+import { FolderOutlined, UserOutlined, BookOutlined } from '@ant-design/icons';
+import { useUIStore, CreativeTabType } from '../../stores/uiStore';
 import './CreativeSubNav.css';
-
-export type CreativeTabType = 'creative' | 'character' | 'worldbook' | 'writing';
 
 const CreativeSubNav: React.FC = () => {
   const creativeTab = useUIStore(s => s.creativeTab);
@@ -38,15 +36,6 @@ const CreativeSubNav: React.FC = () => {
         </span>
       ),
     },
-    {
-      key: 'writing',
-      label: (
-        <span>
-          <EditOutlined />
-          写作模式
-        </span>
-      ),
-    },
   ];
 
   const handleChange = (activeKey: string) => {
@@ -59,7 +48,6 @@ const CreativeSubNav: React.FC = () => {
         activeKey={creativeTab}
         items={tabItems}
         onChange={handleChange}
-        size="default"
         className="creative-sub-tabs"
       />
     </div>

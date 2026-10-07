@@ -25,6 +25,7 @@ import { registerWritingChapterHandlers, abortAllActiveRequests } from './writin
 import { registerWritingTableHandlers } from './writing/writingTableHandlers';
 import { registerWritingStyleHandlers } from './writing/writingStyleHandlers';
 import { registerWritingPlotCheckHandlers } from './writing/writingPlotCheckHandlers';
+import { registerWritingCrossCheckHandlers } from './writing/writingCrossCheckHandlers';
 import { registerWritingTemplateHandlers } from './writing/writingTemplateHandlers';
 import { registerWritingAgentHandlers, abortActiveWritingAgent } from './writing/writingAgentHandlers';
 
@@ -39,6 +40,8 @@ export function registerWritingHandlers(): void {
   registerWritingTableHandlers();
   registerWritingStyleHandlers();
   registerWritingPlotCheckHandlers();
+  // 跨章节连贯性审查（Spec: add-cross-chapter-coherence-review）
+  registerWritingCrossCheckHandlers();
   registerWritingTemplateHandlers();
   // Task 15.2: 写作智能体编排 IPC（run/cancel/status/resume + progress 流）
   registerWritingAgentHandlers();

@@ -199,8 +199,12 @@ export class AIConfigProvider {
    *   则按 apiMode 自动追加对应后缀；已包含则直接使用（避免重复拼接）
    * - apiUrl 默认 'http://127.0.0.1:5000'
    *
-   * 注意：getApiKey/getModelName 在缺失配置时会抛错，
-   * 与原行为一致——调用方需在 try/catch 中处理。
+   * 注意：apiKey/modelName 采用与 getAIConfig 一致的非抛错语义——
+   * 缺失时返回空字符串，由调用方按需在缺少 apiUrl/modelName 时报错。
+   * 这样无 API Key 的本地 LLM 引擎（local-llm）也能走表格整理，
+   * 与内容生成 / 剧情检查 / 单条修正链路（均经 getAIConfig，不强制 apiKey）对齐。
+   * 【Bug 修复】此前 buildApiEndpoint 调用 getApiKey()/getModelName()，
+   * 在本地引擎无 api_key 时直接抛错，导致表格整理在本地引擎下不可用。
    */
   buildApiEndpoint(_modelConfig: ModelConfig): {
     apiUrl: string;
@@ -214,9 +218,10 @@ export class AIConfigProvider {
     const engines = settings?.aiEngines || [];
     const activeEngine = engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
 
-    const apiKey = this.getApiKey();
+    // 非抛错读取：无 API Key（如本地 LLM 引擎）时返回空字符串
+    const apiKey = activeEngine?.api_key || settings?.ai?.apiKey || settings?.ai?.apiToken || settings?.apiKey || '';
     const apiKeyTransmission = this.getApiKeyTransmission();
-    const modelName = this.getModelName();
+    const modelName = activeEngine?.model_name || '';
 
     let apiUrl = activeEngine?.api_url || 'http://127.0.0.1:5000';
     const apiMode = activeEngine?.api_mode || 'chat_completion';

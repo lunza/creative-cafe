@@ -111,9 +111,17 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
   body: any;
   timeout?: number;
   streaming?: boolean;
+  /**
+   * 【流式监听器泄漏与跨请求串扰修复】渲染进程生成的请求 ID。
+   * 背景：'ai:stream' / 'ai:stream:complete' 是按 webContents 广播的全局频道，
+   * 同一窗口内先后/并发的流式请求无法区分事件归属。渲染进程传入 requestId 后，
+   * 主进程在所有流式事件（chunk / complete / error）中原样回传，渲染进程据此过滤，
+   * 防止旧请求的监听器把新请求的内容写进旧字段（角色卡编辑器字段污染根因）。
+   */
+  requestId?: string;
 }) => {
-  // 生成请求 ID，贯穿本次调用的所有日志条目
-  const requestId = generateRequestId();
+  // 请求 ID 贯穿本次调用的所有日志条目与流式事件回传；优先使用渲染进程传入的 ID
+  const requestId = requestConfig?.requestId || generateRequestId();
   // 记录开始时间
   const startTime = new Date();
   const startTimeStr = startTime.toISOString();
@@ -428,7 +436,9 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
           }
           for (const item of items) {
             try {
-              event.sender.send('ai:stream', item);
+              // 【流式监听器泄漏与跨请求串扰修复】chunk 事件携带 requestId，
+              // 渲染进程按此过滤，只处理属于本请求的 chunk
+              event.sender.send('ai:stream', { ...item, requestId });
             } catch (sendError) {
               logger.error(
                 `[${requestId}] 发送流式数据到渲染进程失败 (chunk ${item.chunkIndex}, phase=${phase})`,
@@ -740,7 +750,8 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
           || data?.content?.length
           || 0;
         console.log(`[ai-handler] [${requestId}] Sending ai:stream:complete event to renderer (content length: ${completeContentLength} chars, data is null: ${data === null})`);
-        event.sender.send('ai:stream:complete', { data });
+        // 【流式监听器泄漏与跨请求串扰修复】complete 事件携带 requestId，渲染进程据此过滤
+        event.sender.send('ai:stream:complete', { data, requestId });
         console.log(`[ai-handler] [${requestId}] ai:stream:complete event sent`);
         
         // 清理 AbortController
@@ -941,7 +952,7 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
     const endTime = new Date();
     const endTimeStr = endTime.toISOString();
     const responseTime = endTime.getTime() - startTime.getTime();
-    
+
     logger.error(`[${requestId}] 请求异常: ${error instanceof Error ? error.message : '未知错误'}`, error instanceof Error ? error.stack || error.message : undefined, {
       requestId,
       errorType: error instanceof Error ? error.name : 'UnknownError',
@@ -955,7 +966,24 @@ ipcMain.handle('ai:request', async (event, requestConfig: {
         streaming: requestConfig.streaming
       }
     });
-    
+
+    // 【流式监听器泄漏与跨请求串扰修复】流式请求失败/中断时补发终止事件。
+    // 此前主进程从不发送 'ai:stream:error'（渲染进程的 error 监听是死代码），
+    // 中断/超时/网络异常路径只依赖 invoke 返回值触发清理；一旦渲染进程依赖
+    // 事件驱动清理（或事件时序异常），失败请求的 chunk 监听器将永久滞留，
+    // 把后续请求的流式内容累加进旧字段。此事件与 complete 一样携带 requestId。
+    if (requestConfig?.streaming && !event.sender.isDestroyed()) {
+      try {
+        event.sender.send('ai:stream:error', {
+          requestId,
+          message: error instanceof Error ? error.message : String(error),
+          errorType: error instanceof Error ? error.name : 'UnknownError'
+        });
+      } catch (sendError) {
+        logger.warn(`[${requestId}] 发送 ai:stream:error 事件失败`, sendError instanceof Error ? sendError.stack || sendError.message : undefined);
+      }
+    }
+
     // 检查是否为网络错误
     if (error instanceof Error) {
       if (error.message.includes('fetch failed')) {

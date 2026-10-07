@@ -5,6 +5,741 @@
 
 ---
 
+## 写作模式 2.0（Spec: refactor-writing-mode-v2，Phase 0 + Phase 1 完成，2026-09-29）
+
+### 概述
+
+在**完全保留 V1 写作模式**（`src/renderer/components/Creative/WritingMode/` 零改动）的前提下，平行新增写作模式 2.0（`src/renderer/components/Creative/WritingModeV2/`），V1/V2 共用同一项目库（零数据迁移）。入口：`CreationCenter.tsx` 创作面板区在 V1 入口右侧新增"写作模式 2.0"入口（青色 #06b6d4 主题 + `2.0` 徽章），点击打开独立 FullscreenDialog。
+
+### 关键架构规则（spec.md G 节）
+
+1. **单一真相源**：项目实体（DB）是唯一真相源，`useV2ProjectStore` 只是内存投影；写操作 = 更新投影 + 模块级防抖落盘（`AUTO_SAVE_DELAY=500ms`）。
+2. **单一流水线**：V2 只保留 shard 分片生成（舍弃 V1 chunk 体系），状态机 `IDLE → PLANNING → STREAMING → INTEGRATING → DONE/ERROR`（`useV2GenerationStore`）。
+3. **全类型化**：V2 渲染层禁止裸调 `window.electronAPI`，必须经 `services/writingV2Service.ts` 封装；类型契约见 `src/shared/types/writing-v2.types.ts`（`WritingV2API` 22 方法 + 5 事件监听，禁止 any 穿透）。
+
+### IPC 通道策略
+
+- **复用**现有 `writing:*` 通道（主进程零改动）：项目 CRUD、大纲流式（`writing:stream:chunk`）、分片流（`writing:chunk:start/progress/complete/error`，`chunkIndex = shardIndex`）、autoSaveChapter、分片大纲/内容生成、AI 拆并建议。
+- **新增** 2 个 V2 专用通道（`src/main/ipc/handlers/writingV2Handlers.ts`）：
+  - `writingV2:parseOutline`：解析大纲原始文本为结构化大纲，**不创建项目**（V1 的 `writing:saveOutline` 会新建项目，与 V2"先建项目后生成大纲"流程冲突）；
+  - `writingV2:exportWithChapters`：按章节多选导出 TXT/Markdown 到 `projects/exports/`（`chapterIndices` 空数组 = 全量）。V1 preload 声明过 `writing:exportProjectWithChapters` 但主进程从未实现，V2 不走该空壳。
+
+### 前端结构（WritingModeV2/）
+
+| 目录 | 文件 | 职责 |
+| --- | --- | --- |
+| 根 | `WritingV2Entry.tsx` | 4 阶段路由（`useV2UIStore.stage`）：projects/outline/writing/export，左 Menu 按前置条件禁用；顶部"返回项目列表"导航；全局挂载向导与导出对话框 |
+| stores | `useV2ProjectStore.ts` | 项目列表投影 + `patchProject`（防抖落盘）；`useV2GenerationStore.ts` 分片流水线状态机；`useV2UIStore.ts` 阶段/弹窗/选中章节/`chapterStructureVersion`（AI 拆并后工作台重载正文） |
+| projects | `V2ProjectList.tsx` / `V2NewProjectWizard.tsx` | 搜索/打开/删除（兼容 V1 项目）；3 步新建向导（创意参数 → AI 引擎/温度/maxTokens → 确认） |
+| outline | `V2OutlineWorkbench.tsx` / `V2OutlineChapterList.tsx` | AI 流式生成（订阅 `onOutlineChunk` → `parseOutline` → 章节对齐）/ 手动大纲双模式，章节增删/排序/编辑 |
+| writing | `V2ChapterWorkbench.tsx` / `V2ShardPipelinePanel.tsx` / `useV2ShardGeneration.ts` / `V2SplitMergeActions.tsx` | 三栏工作台：章节列表 + 正文编辑（2s 防抖 autoSave）+ 分片流水线（分片大纲→逐片生成→确认→合并落盘）；AI 拆/并建议（接受时重建 chapters 并重排 index，原正文保留不丢数据） |
+| export | `V2ExportDialog.tsx` | TXT/Markdown + 章节多选（默认全选）导出，成功后展示文件路径 |
+| shared | `v2Labels.ts` | 本地标签表 + `buildModelConfigFromEngine`（取值规则与 V1 一致）+ `buildV2WritingConfig`（资源绑定 P2 补） |
+
+### ⚠️ 重点标记（开发中踩坑与规避的存量缺陷）
+
+1. **`writingV2Handlers.ts` 相对路径深度**：该文件位于 `src/main/ipc/handlers/`（比 `handlers/writing/` 浅一层），service 导入须用 `../../services/*`、shared 类型须用 `../../../shared/*`。首次实现时误按 `writing/` 子目录深度写成 `../../../services/*`，导致 5 处 TS2307，已修正。**后续在 `handlers/` 根目录新建 handler 时注意此差异。**
+2. **`writing-v2.types.ts` 枚举重导出方式**：`ShardStatus`/`ProjectStatus` 等运行时枚举必须走**值导入 + 值导出**（`import {} from` + `export {}`），放入 `import type {}` 或 `export type {}` 块会与其他导出块产生 TS2300 重复标识符，或导致按值使用时运行时 undefined。
+3. **V1 存量缺陷（V2 已规避，V1 零改动策略下不修）**：
+   - `src/shared/constants/writing.constants.ts` 的 `PROJECT_STATUS_LABELS` 引用了 `ProjectStatus` 中不存在的 `IN_PROGRESS/REVIEWING/ARCHIVED`（TS 报错为存量）；V2 自行维护 `V2_PROJECT_STATUS_LABELS`（仅 4 个真实状态）。
+   - V1 preload 声明的 `writing:exportProjectWithChapters` 主进程无 handler（空壳）；V2 用专用通道替代。
+   - 分片流式内容**不做前端 chunk 拼接**，以 `onShardStreamComplete` 全量事件落定，避免增量拼接错乱。
+
+### 单元测试（2026-09-29 新增）
+
+- `WritingModeV2/shared/__tests__/v2Labels.test.ts`（11 用例）：`buildModelConfigFromEngine` 取值规则（model_name 优先/回退 model/null 引擎默认 0.7/4096/overrides 覆盖）+ `V2_PROJECT_STATUS_LABELS` 与 `ProjectStatus` 枚举严格一一对应（回归 V1 `PROJECT_STATUS_LABELS` 引用不存在枚举值的缺陷）+ 三组 options 与 labels 一致性。
+
+### 验证结果（2026-09-29）
+
+- typecheck：V2 新增/修改文件**零错误**（其余报错均为 V1/其他模块存量）。
+- 测试基线：**1425 passed / 2 failed**（含新增 11 个 V2 单测；`skills.test.ts`、`agentModeService.test.ts` 预存失败，与本次无关）。
+- dev server 已按 AGENTS.md 自动重启（vite 端口 5174 + Electron 正常启动）。
+
+### Phase 2（P1 质量与结构化，已完成，2026-09-29）
+
+章节工作台右栏升级为**多 Tab 面板**（生成流水线 / 剧情检查 / 表格整理），并支持**拖拽分隔条调整右栏宽度**（360-760px）。
+
+| 目录 | 文件 | 职责 |
+| --- | --- | --- |
+| plotcheck/ | `V2PlotCheckPanel.tsx` | 剧情检查：checkChapter（总分 + 5 维度评分条）→ 问题列表 → 单条 autoFixIssue（diff 确认）/ batchFixIssues（批量确认）；修正经 `onContentUpdated` 回写编辑器并立即落盘 |
+| plotcheck/ | `V2PlotIssueList.tsx` / `V2PlotCheckModals.tsx` | 问题卡片列表（维度+逻辑统一归一化）；单条/批量修正确认弹窗 + 逻辑矛盾记录查询/清空弹窗（面板 ≤400 行拆分） |
+| table/ | `V2TablePanel.tsx` | 表格整理子域：模板绑定（getAllTemplates → associateTableTemplate）→ AI 整理（organizeTable，`writing:table:organizeProgress` 事件驱动进度条）→ sheet 表格预览 → 版本快照条（变更统计 + 确认/回滚） |
+
+IPC 契约：`writingV2` 新增 5 个剧情检查方法（checkChapter/autoFixIssue/batchFixIssues/getLogicCheckRecords/clearLogicCheckRecords）+ 嵌套 `writingV2.table`（15 方法 + onOrganizeProgress 事件），全部复用现有 `writing:*` / `writing:table:*` 通道（主进程零改动），类型见 `writing-v2.types.ts` 的 P2 区段（V2PlotCheckResult / V2TableAPI 等）。
+
+⚠️ **重点标记**：
+1. **React hooks 顺序缺陷（存量，Phase 2 修复）**：`V2ChapterWorkbench` 原先在 `useV2ShardGeneration` hook **之前**有空态早退 return，项目无章节时 hook 数量不一致会触发 React "Rendered more hooks" 崩溃。Phase 2 新增右栏 hooks 后将其移到所有 hooks 之后，并将 `useV2ShardGeneration` 的 `chapter` 参数改为可选（回调内空值守卫）。
+2. **逻辑记录为跨项目全局表**：`writing:getLogicCheckRecords` 返回的是 `userData/data/writing-projects/plot_logic_contradictions.json`（非按项目隔离），V2 弹窗已注明"全局"，清空影响所有项目。
+
+验证：typecheck V2 文件零错误；测试 1414 passed / 2 failed（基线不变）；dev server 已自动重启（端口 5174）。
+
+### Phase 3（P2 扩展能力，已完成，2026-09-29）
+
+左栏新增第 5 阶段「素材与风格」（`V2Stage = ... | 'assets'`），容器 `assets/V2AssetsStage.tsx` 含三个子面板：
+
+| 目录 | 文件 | 职责 |
+| --- | --- | --- |
+| assets/ | `V2ResourceBindingPanel.tsx` | 项目级素材绑定：世界书/角色卡/人设/写作风格四组多选 → `patchProject(config.resources)` 防抖落盘；主进程生成（分片请求透传 resources）与剧情检查（读 `project.config?.resources`）自动注入 |
+| assets/ | `V2StyleLearningPanel.tsx` | 风格学习：上传 txt（≤50MB，Electron `file.path`）→ `writing:style:upload` 后台学习 → 3s 轮询 `list`/`getActiveTasks`（状态 Tag + 进度条）→ 报告查看/删除/取消；失败经 `style.onError` 事件提示 |
+| assets/ | `V2TemplatePanel.tsx` | 模板管理：小说类型/写作风格两子页，预置只读、自定义可新建/编辑/删除（`writing:template:*`） |
+| assets/ | `v2ResourceUtils.ts` + `__tests__/v2ResourceUtils.test.ts` | 纯函数（toggleResourceId / buildResourcesPatch 保留 knowledgeItemIds、referenceMaterials）+ 9 用例单测 |
+
+IPC 契约：`writingV2` 新增 `resources`（listWorldBooks/listCharacters/listPersonas/loadResources，preload 内将 V1 列表通道归一化为 `{id,name,path}`）/ `style`（7 方法 + onError 事件）/ `templates`（6 方法）三命名空间，全部复用现有通道（主进程零改动，仅 `writingProjectHandlers` 加了边界防护，见下）。
+
+### ⚠️ 重点标记：新建项目"创建失败"bug（2026-09-29，经用户多次反馈才定位）
+
+- **现象**：V2 新建项目向导第 3 步创建 → toast 笼统提示"创建失败，请重试"，无详情
+- **根因**：`V2NewProjectWizard` 的 `<Form>` 随 Steps 步骤切换**卸载**，第 3 步 `paramsForm.getFieldsValue()` 取不到第 0 步字段值 → `parameters.creativeDescription` 为 undefined → 主进程 `writingProjectHandlers.ts` 对其调 `.substring()` 抛 TypeError。**antd 多步表单中，跨步骤读取字段值必须在步骤切换时捕获（或保持 Form 常驻挂载），不能依赖已卸载 Form 的 getFieldsValue。**
+- **修复**（三层）：
+  1. 渲染层：step 0 校验通过即 `setParamsValues(validateFields())` 捕获，创建/确认页均用捕获值；
+  2. 主进程：`writing:createProject` 加 IPC 边界防护（空描述返回明确错误"创意描述不能为空"，替代不透明 TypeError）；
+  3. 可观测性：`useV2ProjectStore` 新增 `lastCreateError`（三个失败路径均记录），wizard toast 展示真实错误 —— 本次正是靠它拿到主进程错误原文定位根因。
+- **调试过程备注**（TRAE-debugger 会话 v2-p3-features，产物已清理）：应用 CSP `connect-src 'self' data: blob:` 会**拦截渲染进程对本地 Debug Server（127.0.0.1:7777）的 fetch**，渲染层插桩上报静默失败、日志恒空；渲染层取证应优先"UI 错误透出 + 用户可见症状"路径，或经主进程 `addLog` 落盘。
+
+### 素材注入可见性优化（2026-09-29 用户反馈后补充）
+
+**背景**：用户在大纲/创作界面看不到已绑定素材，会误以为素材未带入生成。
+**方案**：`shared/V2BoundResourceBar.tsx`（内联指示条，置于 `WritingV2Entry` 顶栏右侧，仅大纲/创作阶段显示）：
+- 已绑定：`上下文` 标签 + 每组青色 Tag（图标+标签+数量，hover Tooltip 显示具体名称，超 3 项折叠为"等 N 项"）+ 右侧 AI 模型 Tag（model · T 温度）
+- 未绑定：明确提示"未绑定素材（生成不含素材上下文）· 左栏「素材与风格」可绑定"，消除"绑定未生效"的误解
+- 名称映射模块级缓存（60s TTL），阶段切换不重复请求；项目标题改 flex+ellipsis 保证窄屏下 Tag 可见
+- 注入链路（均消费 `project.config.resources`，展示与行为一致）：大纲生成（generateOutline 透传）/ 分片生成（请求透传）/ 剧情检查（主进程读 project.config）
+
+验证：typecheck V2 零错误；测试 1434/2 基线不变（纯渲染改动，HMR 生效）。
+
+### Phase 4（版本快照 UI + JSON 导出，已完成，2026-09-29）
+
+**章节版本快照**（`writing/V2VersionHistoryModal.tsx`）：
+- 工作台章节头新增「历史版本 (N)」按钮 → 对话框：备注输入 + 「保存当前版本」（`writing:saveVersion`）
+- 版本列表（新→旧）：时间/字数/备注/自动生成 Tag/内容预览（80 字截断）+ 「恢复」（Popconfirm，`writing:restoreVersion`）
+- 版本来源：手动快照 + **autoSaveChapter 自动存档**（主进程内容变更时自动保留旧版本，note="自动保存"）
+- 版本数据存于 `chapter.versions[]`（单一真相源=项目实体，无新 IPC）；操作后 `loadProjects()` 刷新投影（不动 currentProjectId）
+- 恢复时工作台**先取消未落盘防抖**再 setText，避免旧文本回写覆盖恢复结果（主进程已落盘，不重复持久化）
+
+**JSON 导出**：
+- 导出内容构建器提取为纯函数 `src/shared/utils/v2ExportContent.ts`（主进程 `writingV2:exportWithChapters` 与单测共用）
+- JSON 契约：`{ title, exportedAt(ISO), format:'json', chapterCount, chapters:[{index,title,wordCount,content}] }`；wordCount 优先已有值、缺失回退 trim 后长度；文件扩展名 `.json`
+- 导出对话框新增 JSON 单选项（TXT/Markdown/JSON）
+- 单测 `v2ExportContent.test.ts` 12 用例（TXT/MD 结构 + JSON 契约/顺序/字数回退/子集/空标题兜底）——⚠️ 首版测试抓到 wordCount 回退用未 trim 长度的真实缺陷，已修
+
+验证：typecheck V2 零错误；全量 **1446 passed / 2 failed**（预存基线 1434 + 新增 12）；主进程改动已重启 dev server。
+
+### Phase 5（审阅增强 + 写作/对话模板分离，已完成，2026-09-29）
+
+**⚠️ 重点标记：写作表格模板误用对话模板（用户反馈）**
+- 现象：写作模式表格整理的模板下拉里全是"记忆增强插件默认模板"等**对话功能**模板
+- 根因：`writing:table:getAllTemplates` 直接返回记忆模块 `tableTemplateService` 的模板库；V1/V2 绑定面板共用该通道
+- 修复（写作与对话分离）：
+  - `shared/constants/writingTableTemplates.ts`：写作域内置 3 套模板（⭐小说设定总表：角色/物品/事件/场景/伏笔五表；轻量设定模板；时间线模板），sheet 结构与 TableSheet 完全对齐
+  - `main/services/writing/writingTemplateRegistry.ts`：`getWritingTableTemplates()`（列表只返回写作模板）+ `resolveWritingTableTemplate(id)`（**写作内置优先 → 记忆库兜底**，兼容存量已绑定对话模板的项目，整理流程不再报"模板不存在"）
+  - `writing:table:getAllTemplates` 与 `TableOrganizeService` 三处模板解析全部切换到注册器
+  - V2TablePanel：未绑定时预选 ⭐默认模板
+  - V1 的 TableTemplateBinder 走同一通道，现在同样只看到写作模板（其 DEFAULT_TEMPLATE_ID 指向旧对话模板 id，⭐/预选自然失效，功能不受影响）
+- 闭环：主进程 `writing:plotcheck:checkChapter` 本来就自动注入项目表格数据（历史剧情上下文），修好模板源后"审查结合表格整理"即生效
+
+**剧情检查增强**（`V2PlotCheckPanel.tsx`）：
+- **检查历史 + 评分趋势**：每次检查（单章/全书）追加 `plotCheckHistory[]` 到章节实体（timestamp/overallScore/totalIssues，保留最近 20 条，随项目落盘）；面板展示"评分趋势"条（最近 5 次 + 涨跌箭头）
+- **全书批量检查**：「全书检查」按钮串行遍历全部有内容章节（控制 AI 并发，每章传前一章截断 4000 字作上下文，深层历史由大纲+表格承载）；进度条 + 可取消；结果汇总表（平均分/总问题/成功章数 + 每章分数/问题数/「查看」跳转——跳转时携带该章报告经 `pendingReportRef` 恢复，避免被切章重置逻辑清掉）
+- 类型：`writing.types.ts` 新增 `PlotCheckHistoryEntry`，`ChapterOutline.plotCheckHistory?` 可选字段（V1 零影响）
+
+验证：新增 `writingTableTemplates.test.ts` 6 用例（id 唯一/结构完整/order 递增/默认模板核心表）全过；全量 **1452 passed / 2 failed**（预存基线 1446 + 新增 6）；typecheck V2 零错误（TableOrganizeService/MaterialList 报错均为预存）；主进程改动已重启 dev server。
+
+### Phase 6（表格面板全面升级：对齐/超越 V1 与对话模式能力，已完成，2026-09-29）
+
+**背景**：用户反馈"写作模式的表格是否过于简单"。侦察结论：主进程 16 个 `writing:table:*` 通道 + V2 preload 基本就绪，是 **V2 面板只暴露了 ~40% 能力**（仅绑定/整表整理/只读预览/一键回滚）。本轮把面板补齐到与 V1（TableOrganizeMainPanel + FullTableEditorModal + useVersionManagement）及对话模式模板能力对齐：
+
+| 能力块 | 实现 |
+| --- | --- |
+| 数据编辑 | `table/V2TableView.tsx`：单元格行内编辑 / 添加行 / 删行（Popconfirm）/ 保存修改（saveTableData）/ 清空本表 / 导出 CSV（带 BOM，Excel 中文兼容） |
+| 细粒度整理 | 整表整理（+「跳过已整理章节」checkbox → skipOrganized）/ 整理当前表（organizeSingleSheet）/ 章节整理状态弹窗（getChapterOrganizeStatus）/ 单行 AI 重整理（reorganizeRow，本次补 V2 preload） |
+| 版本管理 | 待确认快照条增强为显式状态（有：变更摘要+确认/回滚；无："无待确认的整理变更"） |
+| 模板 CRUD | `table/V2TemplateManager.tsx`：内置 ⭐ 只读 + 自定义模板新建/编辑/删除（表/列可视化编辑）；主进程 `writing:table:saveTableTemplate/deleteTableTemplate`（新通道），自定义模板存 `<writingRoot>/table-templates.json`，内置 id 受保护 |
+
+**主进程改动**（`writingTemplateRegistry.ts` 扩展）：
+- `getWritingTableTemplates()` 返回**内置 + 自定义**（`mergeWritingTemplates` 带 custom 标记，内置 id 不可被自定义覆盖）
+- `saveCustomTemplate/deleteCustomTemplate`：结构校验走 shared `validateWritingTemplate`
+- `resolveWritingTableTemplate(id)` 解析链：**写作内置 → 写作自定义 → 记忆模块（存量兼容）**
+
+**纯函数与单测**（`shared/utils/v2TableUtils.ts` + `__tests__/v2TableUtils.test.ts` 11 用例）：
+- `buildTableCsv`（转义/BOM/额外键兜底）、`mergeWritingTemplates`（内置优先/去重/custom 标记）、`validateWritingTemplate`（各非法结构拦截）、`summarizeTableChanges`
+- ⚠️ 本轮自纠错：初版用了不存在的 `MagicOutlined` 图标（TS2724 捕获，换 `ThunderboltOutlined`）；行号显示 `?? 与 +` 优先级 bug 自纠
+
+**类型/preload**：`V2TableTemplate.custom?`、`V2TableTemplateInput/OpResult/ReorganizeRowResult` 新增；`V2TableAPI` 补 `reorganizeRow/saveTableTemplate/deleteTableTemplate`
+
+验证：typecheck V2 零错误（TableOrganizeService/MaterialList 报错为预存）；全量 **1463 passed / 2 failed**（预存基线 1452 + 新增 11）；主进程改动已重启 dev server。
+
+**模板字段调整（2026-10-07 用户要求）**：角色表「性格特征」拆为「性格」「特征」两列（特征含外貌/身体特征）。改动点：① 内置模板 `writingTableTemplates.ts`（默认+轻量两套 headers+description，特征描述注明"含外貌/身体特征"）；② 整理提示词硬编码示例 `TableOrganizeService`（示例输出三处：模板字段编号/现有表格数据行/未变化字段列表——⚠️ 该示例是硬编码非模板派生，改模板字段数时必须同步，否则字段编号示例与真实模板漂移）；③ 自定义模板新建默认草稿 `V2TemplateManager`；④ 用户当前项目数据文件表头直接同步（数据为空安全）。⚠️ 已绑定旧模板且有数据的存量项目：列数变化会使旧行按 key 错位，需「清空」后重新「AI 整理全部」（自愈重建会用新模板结构）。
+
+### Phase 7（全书检查报告导出 + 表格整理真实中断，已完成，2026-09-29）
+
+**全书检查报告导出**：
+- 纯函数 `buildBookCheckMarkdown`（`shared/utils/v2TableUtils.ts`）：总览表（章节/评分/高中低问题分布）+ 逐章明细（维度标签/严重度/描述/建议）+ 失败章节原因标注
+- 剧情检查面板「全书检查结果」区新增「导出报告」按钮 → 本地下载 `{作品名}-全书检查报告.md`（渲染层 Blob，无需主进程）
+- 单测 3 用例（结构/明细/边界：无问题章节、全部失败）
+
+**表格整理真实中断**（补齐"与 V1 一致不可中途取消"短板）：
+- 主进程 `TableOrganizeService`：`cancelFlags: Map<projectId, boolean>` + `cancelOrganize()`；**章节级**（循环顶）与**分片级**（chunk 循环顶，两个 AI 处理方法各一处）检查点，当前分片 AI 调用完成后停止
+- 取消收尾：`result.cancelled = true`，**已处理部分保留**（仍走章节状态持久化/去重/版本快照流程，取消后表格同样产生待确认快照）
+- 新通道 `writing:table:cancelOrganize`（Facade 透传 + handler）；V2 类型/preload 同步（`V2TableOrganizeResult.cancelled?`）
+- UI：整理进度区新增「取消整理」按钮（危险描边）；取消结果 toast 区分"整理已取消：已处理 N 章，结果已保留"
+
+验证：typecheck V2 零错误（TableOrganizeService 11 处报错均为预存，行号因新增代码平移）；全量 **1466 passed / 2 failed**（预存基线 1463 + 新增 3）；主进程改动已重启 dev server。
+
+### Phase 8（小说全流程创作流水线 API，Spec: add-novel-writing-pipeline-api，2026-09-29）
+
+以**应用内 IPC**（非 HTTP）封装创作全流程，主进程编排既有服务，零 V1 改动：
+
+- 新增 `WritingPipelineService`（`main/services/writing/`，单例）：`listResources / createCharacterCard / init / generateOutline / generateChapter / compose / runAll / status / cancel / runE2E`；统一信封 `PipelineEnvelope<T> = { success, data?, error?, code?, stage?, partial? }`；错误码 VALIDATION/RESOURCE/AI/EXPORT/CANCELLED/INTERNAL；进度经回调（handler 层 `BrowserWindow.getAllWindows()` 广播 `writing:pipeline:progress`，渲染层按 projectId 过滤）
+- 取消为软取消：`cancelFlags` 在分片级/章节级检查，当前分片 AI 调用完成后停止，已完成内容保留；`runAll` 中途失败返回 `partial: { projectId, completedChapters }` 支持断点续跑
+- `createCharacterCard`：1x1 占位 PNG + 内嵌卡数据（`characterService.createCharacterFromImage`），id = 角色卡 PNG 绝对路径；世界书 id = JSON 路径（与既有资源绑定语义一致）
+- 新增 10 个通道 `writing:pipeline:*`（`main/ipc/handlers/writingPipelineHandlers.ts`，runE2E 有 `app.isPackaged` dev 门禁）；preload `writingV2.pipeline` 命名空间；渲染层 `getPipelineAPI()`（`renderer/services/writingPipelineService.ts`）
+- 纯函数 `shared/utils/pipelineUtils.ts`：`validatePipelineInit`（章节数 1-50、字数 1000-200000、资源 id 存在性）/ `assertE2EResult`（章节数、每章字数 ≥50%、总字数 ≥80%、角色名注入、世界书词条注入、导出文件）/ `verdictOf` / `suggestedShardCount`（每片约 2500 字，1-5 片）
+- `runE2E({ scale })`：素材保障（e2e- 前缀角色卡/世界书）→ 激活引擎 modelConfig → runAll（3 章；smoke 6000 / full 20000）→ 断言 → 报告写 `projects/exports/e2e-report-*.json`
+- dev-only UI：`V2PipelineSelfTest.tsx`（写作 2.0 侧栏「流水线自测」按钮 + Modal，`IS_DEV` 门控；⚠️ 项目未引 vite/client 类型，`import.meta.env` 需 `as { env?: … }` 访问，同 LazyImage 模式）
+- API 文档：`docs/writing-pipeline-api.md`（10 通道请求/响应、进度事件字段、错误码表、鉴权说明、E2E 方式）
+- 单测 27 用例（`pipelineUtils.test.ts`）；全量 **1493 passed / 2 failed**（预存 2 失败：skills、agentModeService）
+
+**⚠️ 重点标记：E2E 首跑崩溃 bug（novelType 枚举不匹配，经 E2E 自动暴露并修复）**
+- 现象：smoke 首跑 320ms 即 FAIL，`[大纲] Cannot read properties of undefined (reading 'systemPrompt')`
+- 根因：E2E 传中文 `novelType: '玄幻'`，而 `NovelTypeTemplates` 以 `NovelType` 枚举值（`'fantasy'` 等 snake_case）为键 → `template` 为 undefined → `PromptBuilder.buildSystemPrompt` 读 `template.systemPrompt` 崩溃
+- 修复：① `runE2E` 改用 `NovelType.FANTASY` / `NarrativePerspective.THIRD_PERSON` 枚举值；② `init` 增加归一化兜底——novelType 非法回退 `NovelType.OTHER`、视角非法回退 `third_person`，防止外部调用同样崩溃
+- 附带修复：世界书词条提取兼容 SillyTavern 格式（`key`/`keysecondary` 数组，此前只读 `keywords`，导致真实世界书 0 词条）；`creativeDescription` 显式要求正文出现世界书首个词条，提高注入断言确定性
+
+**E2E 验证结果（本地引擎 qwen3.8 @ 127.0.0.1:5000，dev-only env 触发 `PIPELINE_E2E_SCALE`）**
+- smoke（3 章 × 2000 字）：**PASS**，26.5 分钟，3 章共 16163 字（第 1/2/3 章 3026/7936/5201 字），角色 Ceroba/Espeon 均注入，世界书词条「赤音」命中，成书 md 落盘；报告 `exports/e2e-report-2026-09-29-15-01-44.json`
+- full（3 章共 20000 字）：**PASS**，70 分钟，3 章共 42246 字（第 1/2/3 章 15160/12923/14163 字，目标 6667/章），每章 3 分片（9 次分片内容生成 + 3 次分片大纲，分片大纲带 1 次失败重试——本地小模型偶发非法 JSON），全部 11 项断言通过；成书 `exports/Ceroba与Espeon在Lomadi-pipeline-2026-09-29-16-53-19.md`（42k 字，标题+3 章+连贯正文），报告 `exports/e2e-report-2026-09-29-16-53-19.json`
+- 无头触发方式：主进程 `index.ts` 读取 `process.env.PIPELINE_E2E_SCALE`（smoke|full，仅 dev 生效），app ready 后 6s 自动执行 runE2E 并打日志；UI 侧可用「流水线自测」按钮
+
+### Phase 9（写作模式 2.0 整合 E2E：表格整理 + 剧情审核整合验证，Spec: test-writing-v2-integrated-e2e，2026-09-30）
+
+**背景**：用户反馈"写作模式 2.0 测试结果未达预期，表格整理功能与剧情审核流程未被正确整合到测试环节"。本轮新增主进程 `runV2IntegratedE2E` 编排方法，验证**表格整理**与**剧情审核（含单条修正）**是否被正确纳入章节创作循环，并验证**已整理表格作为上下文注入下一章节生成管线**。
+
+**实现**：
+- `WritingPipelineService.runV2IntegratedE2E(onProgress?)`：完整 6 阶段（环境准备 → 项目创建 → 模型基准 → 素材选择 → 大纲 → 4 章循环[AI 生成 → 剧情检查 → 单条修正 → 表格整理 → 表格验证 → 上下文注入 → 阶段保存] → 断言 → 报告落盘）；每步 `[V2E2E]` 日志（`addLog` + `console.log`）
+- `main/index.ts` env 门禁扩展：`PIPELINE_E2E_SCALE` 支持 `v2-integrated`（dev-only，app ready 后 6s 自动执行）
+- 类型扩展（`writing-v2.types.ts`）：`PipelineE2EReport.modelBaseline`（ModelConfig）、`resources`、`chapters[].fixes`（单条修正记录 PipelineV2IssueFixRecord）、`chapters[].table.verify`（fieldComplete/rowMatches/contentMatches）
+
+**⚠️ 重点标记：表格整理在无 API Key 本地 LLM 引擎下抛错 bug（经 E2E 暴露并修复）**
+- 现象：首轮 E2E 第 1 章表格整理报"未配置 API Key"失败；而内容生成/剧情检查/单条修正（走 `getAIConfig()` 非抛错）正常
+- 根因：`AIConfigProvider.buildApiEndpoint()` 内部调用 `getApiKey()` / `getModelName()`（缺失时 throw），本地 LLM 引擎无 `api_key` → 仅表格整理（经 buildApiEndpoint）受影响
+- 修复：① `buildApiEndpoint` 改非抛错语义——apiKey 缺失返回空字符串、modelName 缺失返回空字符串；② `TableOrganizeService` 3 处（L144/L404/L569）去掉 `if (!apiEndpoint.apiKey) throw`，仅保留 apiUrl + modelName 校验；下游 `callAIAPIWithFetch` / `buildAuthHeaders` 已有 `&& apiKey` 守卫，空 key 安全
+- 验证：重跑两轮，第 1-3 章表格整理全部成功 ✅
+
+**E2E 验证结果（本地引擎 qwen3.8 @ 127.0.0.1:5000，env 触发 `PIPELINE_E2E_SCALE=v2-integrated`，两轮完整执行）**
+- 第 1-3 章闭环 100% 通过（两轮 6 章）：AI 生成（6475/5614/7100 字）→ 剧情检查（评分 88/65/72）→ 单条修正（各 2 条成功，diff 完整）→ 表格整理（5 sheet / 16/25/32 行）→ 表格验证（三项全 true）→ 上下文注入（行数 0→16→25→32 递增）→ 阶段保存
+- **整合目标达成**：表格整理 + 剧情审核 + 单条修正 + 上下文注入全链路通过（用户原始诉求已解决）
+- 第 4 章两轮均因**本地 LLM 分片大纲 JSON 解析失败**（pos 93/109，2 次重试耗尽）未完成（预存 flaky，非整合缺陷）；已列改进项 S1（分片大纲 JSON 加固：重试 2→3 / 容错解析 / 降低温度）
+- 报告：`docs/writing-v2-integrated-e2e-test-report.md`；E2E 报告 JSON `exports/v2-integrated-report-*.json`（两轮 1465471ms / 1434527ms，≈24 分钟/轮）
+- 教训：MODULE_DIR_MAP 的 key 与目录名不同（`avatar` → `avatars` 目录），`pathService.getCustomPath('avatar')` 而非 `'avatars'`
+
+**⚠️ 重点标记：暗色模式主题兼容修复（2026-09-30）**
+- 现象：暗色模式下写作 2.0 文章字体与底色全为黑色，正文不可见
+- 根因：① 3 处 `Layout.Sider theme="light"` 写死亮色主题（暗色下侧边栏强制白底黑字，正文 textarea 继承黑字）；② 章节工作台 textarea 未显式设 `color`（继承 Sider 黑色文字）；③ 少数功能色硬编码 hex
+- 修复：① 3 处 Sider 去掉 `theme="light"`，改 `style.background: token.colorBgContainer`（跟随 antd 主题）；② textarea 显式 `color: token.colorText`；③ 功能色 hex（`#52c41a`/`#faad14`/`#1677ff`/`#1890ff`）替换为 antd token（`colorSuccess`/`colorWarning`/`colorPrimary`），`V2NewProjectWizard` 补 `theme.useToken()`
+- 涉及文件：`WritingV2Entry.tsx`（入口 Sider）/ `V2ChapterWorkbench.tsx`（左右 Sider + textarea）/ `V2ProjectList.tsx`（状态图标）/ `V2NewProjectWizard.tsx`（连接状态）/ `V2OutlineWorkbench.tsx`（CoT 图标）
+- 结论：V2 组件主体已用 antd token + ant 组件（暗色自动适配），仅 Layout.Sider 写死 theme + 原生 textarea 未设 color 是暗色不可见的根因
+- 教训：antd `Layout.Sider` 的 `theme="light"/"dark"` 会覆盖 ConfigProvider 算法写死背景色，跨主题场景应省略 theme 改用 `token.colorBgContainer`；原生 `<textarea>`/`<input>` 不消费 antd token，需显式设 `color` + `background`
+
+**⚠️ 重点标记：表格整理 UI 单元格全空 bug（数据 key 与 UI 列名不匹配，2026-09-30）**
+- 现象：用户反馈"表格整理中怎么都是空的"——V2TablePanel 表格行有数据（16/25/32 行）但每个单元格显示空
+- 根因：① 数据层 `TableEditCommandExecutor` 按数字索引存行（AI prompt 约定 `data:{"0":"值1","1":"值2",...}`），`table-data.json` 实际为 `{"1":"lucky_seal_001","2":"海獭兽人..."}`；② UI `V2TableView` 用 header 字符串作列 `dataIndex`（`row["姓名"]` 取值）→ `row["姓名"]` 是 undefined → 全空；③ E2E verify 只查行数/字段存在（contentMatches），未验证 key 与 header 对齐 → 假阳性通过
+- 修复：① `V2TablePanel` 加载时 `remapRowToHeaderKeys`（数字 key→header 名），保存时 `remapRowToIndexKeys`（header 名→数字 key），单行重整理 row 同理映射；② E2E `WritingPipelineService` 表格验证加 `keyAlignment` 检查（验证行 key 能定位到有效 header 列且值非空），`PipelineE2EChapterRecord.table.verify` 类型加 `keyAlignment` 字段
+- 涉及文件：`V2TablePanel.tsx`（新增 2 个映射函数 + 3 处调用）/ `WritingPipelineService.ts`（keyAlignment 检查）/ `writing-v2.types.ts`（verify 类型）
+- 教训：数据层 key 格式（数字索引 vs 列名）是跨层契约，UI 读取必须与存储格式对齐；E2E 验证不能只查"行数>0/字段存在"，必须验证"UI 实际能取到值"（key 对齐），否则假阳性
+
+### Phase 10（漫画解析模式，Spec: integrate-comic-parsing-mode，2026-10-05）
+
+**背景**：用户需要从本地漫画文件夹导入漫画图片，借助 AI 多模态模型逐页识别（角色/场景/剧情/情感 + 文本提取），并将分析结果整理为结构化文字描述，支撑故事大纲/章节编写。入口为 V2 assets 阶段第 4 个 Tab「漫画解析」（`V2AssetsStage`）。
+
+**架构**（复用现有基础设施，不新造轮子）：
+- 类型契约：`writing-v2.types.ts` 新增 `MangaPage`/`MangaPageAnalysis`/`MangaPageSummary`/`MangaAnalysisResult`/`V2MangaAPI` 等，`WritingV2API` 挂 `manga` 子命名空间（preload 全类型化，无 any）
+- 主进程：`src/main/services/manga/MangaParsingService.ts`（单例）
+  - `scanFolder`：过滤图片扩展名（JPG/PNG/WebP/BMP/TIFF）→ 按文件名数字前缀升序（无数字排最后按字母序）→ 1-based 连续编号
+  - `analyzePage`：读图 → base64 data URI → OpenAI Vision 多模态请求（非流式，同 `recognizeImageTraits` 链路）→ 容错 JSON 解析（直接 parse → 首尾大括号提取 → ```json 代码块提取）
+  - **跨页上下文**：第 2 页起 system prompt 注入前 10 页摘要 Markdown 表格（页码/角色/场景/关键剧情/情感/重要对话），保证剧情连贯性
+  - **阅读顺序**：`leftToRight`/`rightToLeft` 注入 prompt，影响格子编号方向（日漫从右到左）
+  - `generateStoryOutline`：全部页面摘要 → AI 生成结构化大纲
+  - `exportAnalysis`：全书结果写 Markdown（大纲 + 角色汇总表 + 逐页分析）
+- IPC：`manga:scanFolder`/`analyzePage`/`buildContextTable`/`generateOutline`/`exportAnalysis` 共 5 通道（`mangaHandlers.ts`，注册于 `ipc/index.ts`）
+- 前端：`WritingModeV2/manga/`
+  - `V2MangaStage.tsx`（容器：导入/浏览/分析/批量/大纲状态管理；批量分析用 `useRef` 防重入 + 取消标志）
+  - `V2MangaViewer.tsx`（data URI 展示 + 前后翻页 + 缩略图导航，rightToLeft 时缩略图反转）
+  - `V2MangaReadingOrderToggle.tsx`（阅读顺序 Radio）
+  - `V2MangaAnalysisPanel.tsx`（分析按钮（`supportsVision` 检测）+ 结果分区 + 全字段手动修正 + 「已修正」标记）
+  - `V2MangaContextPreview.tsx`（跨页上下文表格预览 + 重新生成）
+  - `V2MangaOutlinePanel.tsx`（大纲生成/复制/导入写作编辑器（parseOutline → patchProject → setStage('outline)）/导出 Markdown）
+  - `mangaSummaryUtils.ts`（渲染层 `analysisToSummary`，与主进程摘要逻辑一致，修正后摘要同步更新）
+
+**验证**：
+- `MangaParsingService.test.ts` 6 单测通过（过滤/排序/index/路径/空目录/不存在目录）
+- typecheck 本次文件零错误；`npm test` 1491 通过无回归（4 个预存失败在无关模块）
+- Electron 应用启动成功，manga IPC 注册无异常；实际 AI 分析依赖用户配置的多模态模型（`supportsVision=true`），未配置时 UI 给出明确提示
+
+**约束提醒**：单页图片 >8MB 时主进程返回明确错误提示（压缩后再导入）；批量分析串行执行（防 AI 引擎过载），单页失败不中断批量。
+
+**用户引导辅助识别（2026-10-05 用户反馈后补充）**
+- 背景：用户反馈 AI 分析漫画页面时可能有偏差，希望能在分析/重新分析时提供页面内容引导
+- 实现：
+  - `MangaParsingService.analyzePage` 新增 `userGuidance?: string` 参数
+  - `buildSystemPrompt` 末尾注入「用户引导」段落（优先级最高，冲突时优先采信用户引导）
+  - user message 中追加「用户提示（请优先参考）：...」
+  - `V2MangaAnalysisPanel` 分析按钮下方新增「页面内容引导」TextArea（可选，分析时携带，编辑态禁用）
+  - `V2MangaStage.handleAnalyzePage` 接收 `userGuidance` 并透传给 IPC
+  - 类型契约：`V2MangaAPI.analyzePage` / `preload` / `mangaHandlers` 均增加 `userGuidance?: string`
+- 影响文件：`MangaParsingService.ts` / `mangaHandlers.ts` / `preload.ts` / `writing-v2.types.ts` / `V2MangaAnalysisPanel.tsx` / `V2MangaStage.tsx`
+- 批量分析不携带用户引导（批量为自动流程，用户引导仅用于单页分析/重新分析）
+
+**漫画背景信息字段 + 新建漫画解析入口（2026-10-05 用户反馈后补充）**
+- 背景：原入口仅有「导入漫画文件夹」，AI 对漫画内容缺乏先验认知（角色名/题材/世界观全靠看图猜）；用户要求添加书级字段（漫画名称、主要角色、漫画主题等）辅助 AI 理解，并新增「新建漫画解析」按钮
+- 实现：
+  - 类型：`writing-v2.types.ts` 新增 `MangaMetaInfo { title?; characters?; theme?; background? }`（全可选）；`V2MangaAPI.analyzePage` 参数与 `generateOutline` 第二参、`MangaAnalysisResult.mangaMeta` 均扩展
+  - 新组件 `manga/V2MangaMetaModal.tsx`：antd Modal + Form，4 个可选字段（名称/主要角色/主题/故事背景），`destroyOnHidden` + `preserve={false}` 每次打开按 `initial` 重挂载回填
+  - `V2MangaStage`：
+    - 空态新增主按钮「新建漫画解析」→ 填表确认后继续选文件夹导入（原按钮改名「直接导入文件夹」保留无信息直入路径）
+    - 导入后工具栏新增「漫画信息」按钮（编辑回填）+ 已填名称以 Tag 展示
+    - `mangaMeta` 为 Stage 内存态（与 analysisMap 同级，刷新即失，无持久化）；单页/批量 `analyzePage` 均透传 `mangaMeta ?? undefined`
+  - `MangaParsingService`：
+    - `buildMetaLines` 私有辅助：仅输出非空字段的 Markdown 行
+    - `buildSystemPrompt` 在「分析维度」后注入「漫画背景信息」段：角色识别优先匹配用户提供的主要角色；主题/背景辅助理解；画面与背景冲突时以画面为准
+    - `generateStoryOutline(summaries, mangaMeta?)`：system prompt 注入背景信息（约束角色命名一致 + 题材定位），user prompt 标题带《漫画名称》
+    - `buildMarkdown` 导出顶部新增「漫画信息」段
+  - IPC：`manga:analyzePage` / `manga:generateOutline` 透传 `mangaMeta`（preload 全类型化）
+- 行为约定：字段全空时不注入任何 prompt 段落，对既有流程零影响；批量分析同样携带（书级上下文，区别于页面级 userGuidance）
+- 影响文件：`writing-v2.types.ts` / `MangaParsingService.ts` / `mangaHandlers.ts` / `preload.ts` / `V2MangaStage.tsx` / `V2MangaOutlinePanel.tsx` / `V2MangaMetaModal.tsx`（新增）
+- 验证：manga 单测 6/6 通过；typecheck 本次文件零错误（项目其余为预存错误）；主进程文件改动已重启 dev server 生效
+- 小插曲：实现时曾将阅读顺序文案误写为「从左到左」，同轮自查发现并改回「从左到右」（未流入用户端）
+
+**漫画信息表单扩展：源语言 + 色彩字段（2026-10-05 用户反馈后补充）**
+- 背景：用户要求在漫画背景信息中再增加「源语言」（英文、日文等）和「色彩」（黑白/彩色）两个字段，辅助 AI 文本提取与场景分析
+- 实现：
+  - 类型：新增 `MangaSourceLanguage`（japanese/chinese/english/korean/french/spanish/german/russian/other）与 `MangaColorMode`（bw/color）；`MangaMetaInfo` 增加 `sourceLanguage?` / `colorMode?`（全可选，不填则 AI 自动识别）
+  - `V2MangaMetaModal`：新增「源语言」Select（allowClear，placeholder「自动识别（可不选）」）+「色彩」Radio.Group（黑白/彩色）；`handleOk` 透传两字段
+  - `MangaParsingService`：`MANGA_LANGUAGE_LABELS` 中文标签映射；`buildMetaLines` 增加「源语言：X（请按该语言识别并提取文本，保留原文）」「色彩：黑白/彩色漫画」两行；`buildSystemPrompt` 背景信息使用指引同步补充（文本按源语言提取、场景结合色彩模式）
+  - 单页/批量 `analyzePage` 与 `generateStoryOutline` 均自动携带（复用既有 `mangaMeta` 透传链路，无需改 IPC/preload 签名）
+- 影响文件：`writing-v2.types.ts` / `V2MangaMetaModal.tsx` / `MangaParsingService.ts`
+- 验证：typecheck 本次文件零错误；dev server 已重启生效（未触碰 5000 端口）
+
+**提示词优化：分镜逐格解析 + 成人内容保留 + 全局提示词拼接统一（2026-10-05 用户反馈后补充）**
+- 背景（用户实测发现）：
+  1. 多分镜单页漫画被 AI 生成整页总结性描述，未按分镜顺序逐个识别，缺细节和完整性
+  2. AI 自动忽略页面内的成人元素（用户所用为消融版模型，允许成人内容输入输出）
+  3. 全局提示词拼接与其他功能模式不一致（用户选择「验证并统一模式」）
+- 实现（均在 `MangaParsingService.ts`）：
+  - `buildSystemPrompt` 新增「**分镜解析规则（必须严格遵守）**」6 条强约束：先清点全部分镜总数、按自然阅读顺序逐格独立完整解析、每格仅对应一条 panels 记录、禁止合并/遗漏/整页总结、panelIndex 从 1 连续递增且条数等于分镜总数、单分镜页也须完整解析
+  - `buildSystemPrompt` 新增「**成人内容处理**」节：声明模型为消融版（abliterated）允许成人内容输入输出；要求 plot/emotion 如实客观描述成人元素（裸露/亲吻/性暗示/血腥等），不忽略、不模糊、不自我审查；文本提取不改写成人台词；输出用客观中性语言
+  - 新增模块级 `prependEnginePrompt(engineSystemPrompt, body)` 统一拼接函数（`${全局提示词}\n\n${正文}`，与 `characterTraitAIService.recognizeImageTraits` L1402 同款）；`buildSystemPrompt` 与 `generateStoryOutline` 两条路径统一改用（行为保持全局提示词在最前），并修正 buildSystemPrompt 中「置于分析维度之后」的过时注释
+  - 「分析维度」第 3/4/5 条同步强化为逐分镜表述（不合并、不遗漏 / 各分镜及整页情感 / 标注所在分镜与位置）
+- 不做的事：不改 IPC/preload/类型契约/前端；成人内容说明仅注入页面分析 prompt（大纲由页面分析摘要派生自然继承）
+- 验证：typecheck manga 文件零错误；manga 单测通过（exit 0）；静态核对 `prependEnginePrompt` 在 L58 定义、L398（大纲）/L646（页面分析）两处调用、两新节存在；dev server 已重启生效（未触碰 5000 端口）
+
+**⚠️ 重点标记 - 漫画解析误报「AI 模型不支持图片识别」根因与修复（2026-10-05 用户反馈）**
+- 现象：首次进入漫画解析显示「当前 AI 模型不支持图片识别，请切换到多模态模型」，但设置中引擎 supportsVision=True；点一下设置菜单即恢复（无需测试模型）
+- 根因（设置 store 懒加载缺陷，非模型/能力数据问题）：
+  1. `settingStore` 无初始值，**应用启动时没有全局 fetchSetting**——只有 Dashboard/Settings/CharacterManager 等特定组件挂载时才各自触发 `fetchSetting()`
+  2. `uiStore.activeTab` 通过 zustand persist 恢复上次所在页；若恢复到**创作中心（chat，WritingModeV2 所在）**等不触发 fetch 的页面，`setting` 保持 `null`
+  3. `V2MangaStage` 直接读 `setting?.aiEngines?.find(...)` → `activeEngine` undefined → `supportsVision=false` → 误报
+  4. 打开设置菜单 → `Settings.tsx` 挂载 effect 调 `fetchSetting()` → store 填充（settings.json 数据一直正确）→ 漫画功能恢复。与「测试模型」无关
+- 修复：
+  - `App.tsx`：启动时全局 `useSettingStore.getState().fetchSetting()`（根因修复，所有读设置的功能受益）
+  - `V2MangaStage`：新增 `visionUnsupported = setting !== null && !supportsVision`，区分「设置未加载（未确定）」与「确认不支持」；单页/批量分析守卫、分析面板 `supportsVision` prop 均改用该值，加载窗口期不再误报、不阻塞按钮
+- 排查路径备忘：`supportsVision` 链路 = settings.json → setting:load IPC（每次磁盘新鲜读）→ settingStore → 组件。数据层无缓存问题；问题在渲染层 store 加载时序
+- 验证：typecheck 本次文件零错误；dev server 重启后日志见 `setting:load` 请求正常发出
+
+**漫画信息持久化到项目（2026-10-05 用户反馈后补充）**
+- 背景：用户反馈「新建漫画解析」的下一步按钮应为「保存并选择漫画文件夹」，提交数据要先持久化
+- 实现：
+  - `writing.types.ts`：`WritingProject` 新增可选字段 `mangaMeta?: MangaMetaInfo`（类型从 writing-v2.types 仅类型导入，运行时零依赖）；主进程 `WritingProjectRepository.saveProject` 整体 JSON 序列化，新字段自动落盘
+  - `V2MangaStage`：`handleMetaOk` 先 `patchProject(currentProject.id, { mangaMeta })` 持久化（走项目 store 防抖落盘，单一真相源=项目实体）再继续选文件夹；无当前项目时提示「仅本次会话生效」；项目切换时 useEffect 从项目实体恢复 mangaMeta；`hasContent` 判断纳入 sourceLanguage/colorMode 字段（此前只填源语言/色彩会被丢弃）
+  - 按钮文案：「下一步：选择漫画文件夹」→「保存并选择漫画文件夹」
+- ⚠️ 顺手修复的预存 bug（typecheck 暴露）：
+  - `MaterialList.tsx` / `useWritingMaterials.ts`（V1 写作模式）：writing.types 导入路径层级错误（3 级应为 4 级），TS2307 掩盖了下游错误——`MATERIAL_ICONS/TAG_COLORS/TYPE_LABELS` 缺 `writing-style` 项（已补）；`useWritingMaterials.loadAllMaterials` 用 `list?.()` 调用结果做存在性判断（Promise 恒真 + 重复请求 4 次 list()，已改为方法存在性判断）
+- 影响文件：`writing.types.ts` / `V2MangaStage.tsx` / `MaterialList.tsx` / `useWritingMaterials.ts`
+- 验证：typecheck 本次文件零错误；dev server 重启生效（未触碰 5000 端口）
+
+**⚠️ 重点标记 - 漫画分析两个 bug 修复（2026-10-05 用户实测 5 页后反馈）**
+- Bug 1：右侧页分析面板不可滚动，剧情理解及后续内容被遮挡
+  - 根因：面板内部滚动容器（`flex:1 minHeight:0 overflowY:auto`）本身正确，但其父级 antd Tabs 的 tabpane 无高度（`height:100%` 对 auto 高度父级无效）→ 内容撑开溢出视口
+  - 修复：`V2MangaStage` Tabs 加 `className="v2-manga-stage-tabs"` + `style={{flex:1,minHeight:0}}`；`App.css` 追加规则链：Tabs 根 flex column → `.ant-tabs-content-holder` flex:1 min-height:0 → `.ant-tabs-content`/`.ant-tabs-tabpane` height:100% → `.ant-tabs-tabpane-active` overflow-y:auto
+- Bug 2：显示「分析完成」但最后一页内容为空白
+  - 根因（主进程日志实锤）：第 5 页有 analyzePage 请求记录但无 complete/failed 记录 → 走了**静默失败路径**（AI 返回空内容或 JSON 解析失败 → success=false），批量循环对失败页**静默跳过**（仅主进程 console 有日志），UI 只见「批量分析结束：成功 X / 5 页」→ 失败页无分析数据 = 空白
+  - 修复三层：
+    1. 主进程 `analyzePage`：① 检测 `finish_reason==='length'` → 错误提示「AI 输出被 max_tokens 截断，请增大引擎 max_tokens 后重试」（最后一页上下文最长，最易截断）；② 空结果守卫（panels/characters/overallEmotion 全空 → success=false「AI 返回了空分析结果」）；③ 三条静默失败路径补 console.error 日志（含 content 前 200 字符便于排查）
+    2. 批量循环：逐页失败 `message.warning('第 N 页分析失败：原因（可点击该页重试）')`
+    3. 结束消息：有失败时改为 warning「成功 X 页，失败 Y 页 / 共 N 页」
+- 影响文件：`V2MangaStage.tsx` / `App.css` / `MangaParsingService.ts`
+- 验证：typecheck 本次文件零错误；manga 单测 6/6 通过；dev server 重启生效（未触碰 5000 端口）
+- 排查备忘：主进程日志关键字 `[MangaParsing]`；「有请求无 complete」= 静默失败路径（空内容/JSON 解析失败），「有 complete 但 panels:0」= 空结果（现已守卫）
+
+**漫画信息表单扩展：漫画类型字段（10 类，类型专属 prompt）（2026-10-05 用户要求后补充）**
+- 需求：新增「漫画类型」下拉字段（10 选项：Doujinshi 同人志 / Manga 漫画 / Artist CG 画师原创 / Game CG 游戏 CG / Western 欧美向 / Non-H 非成人向 / Image Set 图片合集 / Cosplay 角色扮演 / Asian Porn 亚洲成人影像 / Misc 杂项），每种类型注入不同 prompt 辅助 AI 理解图片
+- 实现（沿用源语言/色彩的 mangaMeta 链路，零 IPC 改动）：
+  - `writing-v2.types.ts`：新增 `MangaComicType`（10 值联合类型）；`MangaMetaInfo` 增加 `comicType?`
+  - `V2MangaMetaModal.tsx`：`COMIC_TYPE_OPTIONS`（中文+英文名）+ Select（allowClear，tooltip 说明类型影响解析策略）
+  - `MangaParsingService.ts`：`MANGA_COMIC_TYPE_LABELS`（中文标签）+ `MANGA_COMIC_TYPE_PROMPTS`（每类型专属解析指引，如 Game CG「对话框文字按对话提取、菜单/状态 UI 文字忽略」、Artist CG「单幅插画整页视为一个分镜不虚构分镜」、Cosplay「实拍照片重点识别扮演角色/服装/姿势」、Image Set「各页独立不强行串联」、Asian Porn「按成人内容处理一节客观详述」）；`buildMetaLines` 注入「漫画类型：X（类型指引）」行；背景信息参考指引段补充「按漫画类型特点调整解析策略」
+  - 注入链路自动覆盖：单页分析 / 批量分析 / 大纲生成（三处均经 buildMetaLines）；随项目持久化（mangaMeta 整体存 WritingProject）
+- 影响文件：`writing-v2.types.ts` / `V2MangaMetaModal.tsx` / `MangaParsingService.ts`
+- 验证：typecheck 本次文件零错误；manga 单测 6/6 通过；dev server 重启生效（未触碰 5000 端口）
+
+**已解析漫画列表展示（2026-10-05 用户反馈：已解析的漫画在漫画解析页签看不到）**
+- 背景：漫画导入与逐页分析此前只存在组件内存态（analysisMap/pages），离开页签或重启应用后丢失，重新进入只剩空态
+- 实现（数据随 V2 项目持久化，单一真相源=项目实体）：
+  - `writing-v2.types.ts`：新增 `MangaComicRecord`（id/folderPath/folderName/pages/readingOrder/analyses[{pageIndex,analysis}]/createdAt/updatedAt）
+  - `writing.types.ts`：`WritingProject` 新增 `mangaComics?: MangaComicRecord[]`（主进程整体 JSON 序列化自动落盘）
+  - `V2MangaStage`：
+    - upsert effect：当前漫画变化（导入/单页分析/批量逐页/手动修正/阅读顺序）时按 folderPath 去重 upsert 到项目 mangaComics（patchProject 防抖落盘）
+    - 空态列表：无漫画打开时展示「已解析漫画（N）」列表（按 updatedAt 倒序），每项显示文件夹名、总页数/已解析页数、「含分析结果」标签、打开/删除按钮
+    - `handleOpenRecord`：重扫来源文件夹刷新页面列表（文件夹丢失时按保存的页面列表恢复并 warning），按页码恢复逐页分析（含用户修正）
+    - `handleDeleteRecord`：Modal.confirm 确认后删除（删的是记录，不删源文件夹/图片）；若删的是当前打开的漫画则返回列表
+    - 工具栏新增「漫画列表」按钮：关闭当前漫画返回列表（批量分析/单页分析中禁用）
+- 影响文件：`writing-v2.types.ts` / `writing.types.ts` / `V2MangaStage.tsx`
+- 验证：typecheck 本次文件零错误；dev server 重启生效（未触碰 5000 端口）
+- 注意：历史漫画（本次改动前解析的）无记录，需重新导入一次即自动生成列表项
+
+**⚠️ 重点标记 - 漫画解析三个问题修复 + 上下文扩充（Spec: fix-manga-scroll-persistence-expand-context，2026-10-05 用户二次反馈后重做）**
+- 问题 1（滚动，上轮修复未生效）根因：**antd 6 Tabs DOM 类名与 antd 5 不同**。项目 antd 6.5.3 底层是 `@rc-component/tabs`，实际 DOM 为 `.ant-tabs > .ant-tabs-nav + .ant-tabs-body-holder > .ant-tabs-body > .ant-tabs-content`（每页签一个，active 带 `-active`，非激活带 `-hidden`）；上轮 CSS 写的 antd 5 类名（`.ant-tabs-content-holder`/`.ant-tabs-tabpane`）在 antd 6 不存在，CSS 静默落空。
+  - **教训**：给 antd 组件写外部 CSS 前，必须对照 `node_modules/@rc-component/*`（antd 6 组件底层）源码确认实际类名，不能凭 antd 5 经验
+  - 修复：`App.css` `.v2-manga-stage-tabs` 系列规则全部改为 antd 6 类名（body-holder flex:1 min-height:0 → body/content height:100% → active 面板 overflow-y:auto），并在 CSS 注释中标明陷阱
+- 问题 2（持久化，上轮修复未生效）根因：**漫画解析页签无需项目即可进入**（`WritingV2Entry.stageDisabled('assets')` 返回 false），上轮持久化挂在 `WritingProject.mangaComics` 上、upsert effect 依赖 `currentProjectId`——未选项目时静默跳过，数据只在内存。
+  - **教训**：给「可选项目依赖」的页面做持久化时，先确认该页面是否允许无项目访问；不允许的项目级存储会在无项目场景静默丢数据
+  - 修复：新增 `useMangaComicStore`（zustand + persist/localStorage，key `creative-cafe-manga-comics-v1`），记录自包含（`MangaComicRecord` 增加 `mangaMeta?` 快照，打开记录时还原到工作区）；`V2MangaStage` upsert/列表/删除全部改接全局 store；`WritingProject.mangaComics` 字段移除（无存量数据，零迁移）
+- 新需求（上下文表格扩充）：
+  - `MangaPageSummary` 增加 `panelCount/panelPlots/actions/texts/continuity` 5 字段；主进程 `buildPageSummary` 与渲染层 `analysisToSummary` 同步扩充（此前只取 `panels[0].plot`，其余分镜剧情全丢——现已保留逐分镜剧情「分镜1: …；分镜2: …」）
+  - `buildContextTable` 改为 8 列富信息格式（页码含分镜数 / 角色表情 / 角色动作 / 场景 / 逐分镜剧情 / 关键文本(带类型标注) / 情感 / 叙事衔接），单元格软截断 300 字
+  - `MAX_CONTEXT_PAGES` 10 → 100（每页约 100-300 字，100 页约 1-3 万字，百万级上下文无压力）
+  - 分析提示词分镜解析规则第 7 条：每分镜 plot ≥40 字（画面细节+动作+表情+关键信息），从源头保证每页上下文 ≥100 字
+  - 「上下文预览」Tab 直接渲染主进程 table 字符串，自动显示新格式
+- 影响文件：`App.css` / `useMangaComicStore.ts`（新增）/ `V2MangaStage.tsx` / `writing-v2.types.ts` / `writing.types.ts` / `MangaParsingService.ts` / `mangaSummaryUtils.ts` / `MangaParsingService.test.ts`（+5 用例）
+- 验证：typecheck 本次文件零错误；manga 单测 11/11 通过（含「每页信息量 ≥100 字」「8 列格式」「全分镜剧情保留」「软截断不破坏表格结构」）；dev server 重启生效（未触碰 5000 端口）
+
+**「已自动保存」指示器（2026-10-05 用户问"没看到保存按钮，是自动保存吗"）**
+- 背景：漫画数据为**全自动保存**（无保存按钮）——`V2MangaStage` 的 upsert effect 在 `folderPath/pages/analysisMap/readingOrder/mangaMeta` 任一变化时立即写入全局 `useMangaComicStore`（localStorage），但行为对用户不可见，易产生困惑
+- 修复：工具栏文件夹路径前新增绿色 `Tag`（CheckCircleOutlined「已自动保存」+ Tooltip 说明保存范围与恢复方式），使自动保存行为可见
+- 影响文件：`V2MangaStage.tsx`；typecheck 零错误；dev server 重启生效（未触碰 5000 端口）
+
+**⚠️ 重点标记 - 「漫画信息」弹窗回显空白修复（2026-10-05 用户反馈）**
+- 现象：打开已完成/未完成解析的漫画，点「漫画信息」按钮，之前填写的内容全部空白
+- 根因 1（主因，双重数据源冲突）：迁移到全局 store 后残留的**项目级恢复 effect**（`V2MangaStage` 中 `currentProjectId` 变化时 `setMangaMeta(proj?.mangaMeta)`）会在切换项目时用项目的 mangaMeta（通常 null）**覆盖当前打开漫画的信息**，随后 upsert effect 把 null 写回记录——既造成回显空白，又丢失记录里的快照
+  - **教训**：同一状态字段存在两个写入源（项目实体 vs 漫画记录）时，必须明确单一真相源的作用域边界；本项目中「打开的漫画」的 mangaMeta 只能来自记录快照或表单提交，项目级仅作为无漫画打开时的初始值
+- 根因 2（antd Form 回填机制）：`V2MangaMetaModal` 的 form 实例（`Form.useForm`）在弹窗开关之间存活，`initialValues` 仅在 `<Form>` 首次挂载时写入 store（已核实 `@rc-component/form` 源码：`Form.js` `setInitialValues(initialValues, !mountRef.current)` + `useForm.js` `prevWithoutPreserves` 回填路径），二次打开依赖内部机制不可靠
+  - **教训**：Modal 内嵌 Form 且 form 实例外置于 Modal 时，**每次打开必须显式 `form.setFieldsValue(initial)`**，不要只依赖 `initialValues`
+- 附带修复：`hasContent` 判断漏掉 `comicType`（只填漫画类型会被静默丢弃）；`handleImport` 切换到不同文件夹时改为以目标文件夹已有记录的 mangaMeta 为准（避免上一本的信息串到新漫画，「新建漫画解析」刚提交的信息在无记录时保留）
+- 影响文件：`V2MangaMetaModal.tsx` / `V2MangaStage.tsx`；typecheck 本次文件零错误；dev server 重启生效（未触碰 5000 端口）
+
+**⚠️ 重点标记 - 「漫画信息」回显空白二次修复：双层兜底 + 自愈（2026-10-05 用户二次反馈"仍旧为空"）**
+- 现象：上轮修复后弹窗仍全空。截图关键线索：工具栏无蓝色标题标签（`mangaMeta?.title` 为空才不显示）→ 打开漫画时状态本身为空 → 记录里的 mangaMeta 大概率在**历史 bug 期**（切换项目覆盖 + 空值 upsert）已被清空
+- 修复（三层加固，`V2MangaStage.tsx`）：
+  1. `effectiveMangaMeta = mangaMeta ?? currentRecord?.mangaMeta ?? null`：状态为空时回退到**记录快照**（持久化层），标题标签/「未填写信息」提示/编辑弹窗 `initial` 全部改用兜底值——即使状态丢失，只要记录还有数据就能回显
+  2. 打开「漫画信息」弹窗时**自愈**：状态为空但记录有快照 → `setMangaMeta(快照)` 恢复状态，防止后续 upsert 又把空值写回
+  3. upsert 防覆盖：`mangaMeta: mangaMeta ?? existing?.mangaMeta ?? undefined`——状态为空时保留记录已有快照
+- 诊断手段：工具栏新增「未填写信息」灰色 Tag（悬停提示填写入口）；点「漫画信息」时 `console.info('[MangaInfo]…')` 输出状态层/记录层各自有无数据，可在 DevTools 确认数据实际位置（确认问题关闭后可移除）
+- **教训**：状态层与持久化层可能不同步（历史 bug 会留下"状态空、记录有"或"记录空"的脏数据），UI 读取展示数据时应以持久化层为兜底真相源，并做自愈；同类"用户报数据丢失"问题先加诊断输出定位数据在哪一层，再定修复
+- 影响文件：`V2MangaStage.tsx`；typecheck 零错误；dev server 重启生效（未触碰 5000 端口）
+
+**阅读顺序提示词增强（2026-10-05 用户确认"阅读顺序是否已插入提示词"后加强）**
+- 背景：用户确认「从左到右/从右到左」开关指的是**单页内分镜的阅读顺序**。原提示词已注入方向声明（`## 阅读顺序：从右到左（日漫/韩漫风格）` + panelIndex 按阅读顺序递增，共 3 处引用），但仅声明方向、未给空间扫描路径，视觉模型不一定真正按正确顺序扫描
+- 修复：`MangaParsingService.buildSystemPrompt` 的「阅读顺序」节改为显式空间路径描述——右到左：「从页面右上角开始，每一行从右向左依次读取；到达行左端后换到下一行的右端继续，直至页面左下角」；左到右镜像对称；并补充「同一水平高度上位置更接近阅读起始侧的分镜编号在前」
+- 顺手清理：`MangaParsingService.test.ts` 预存的 TS6133（makeAnalysis 未使用参数）
+- 影响文件：`MangaParsingService.ts` / `MangaParsingService.test.ts`；manga 单测 11/11；typecheck 本次文件零错误；dev server 重启生效（未触碰 5000 端口）
+
+**「分析全部页面」重新分析确认框（2026-10-05 用户需求：改漫画信息后可删旧结果重跑）**
+- 背景：批量分析原逻辑**静默跳过**已有结果的页——用户修改漫画信息后点「分析全部页面」看似在重跑，实际所有页都被跳过，新信息未生效
+- 实现（`V2MangaStage.tsx`）：`handleBatchAnalyze`（按钮）与 `runBatchAnalyze`（执行循环）分离——
+  - 无分析结果：直接开始
+  - 已有分析结果：`Modal.confirm`「当前已有 N/M 页分析结果。确认后将删除全部分析结果与上下文预览，并按当前漫画信息与图片重新分析」（确认=删除并重新分析 / 取消=保留当前结果）
+  - 确认后 `setAnalysisMap(new Map())` 清空（上下文预览表格由分析结果派生，随之清空；自动保存同步更新记录）+ `runBatchAnalyze(new Map())` 以**显式空工作集**重跑
+- ⚠️ 陷阱：重跑必须显式传空 Map 给 `runBatchAnalyze(initialMap)`——若依赖闭包里的 `analysisMap`，`setAnalysisMap(new Map())` 的更新不会反映到已创建的闭包，跳过逻辑会用旧数据
+- 影响文件：`V2MangaStage.tsx`；typecheck 零错误；dev server 重启生效（未触碰 5000 端口）
+
+**「导入到写作编辑器」无项目时 AI 自动建项目（2026-10-05 用户需求：不再要求先选项目）**
+- 原行为：未选项目时点「导入到写作编辑器」只提示"请先在项目列表选择或新建项目"
+- 新行为（`V2MangaOutlinePanel.tsx`）：
+  - **已有项目**：保持原逻辑直接导入（parseOutline → patchProject outline/outlineRaw/mangaMeta → 跳大纲阶段）
+  - **无项目**：调 `api.manga.generateProjectDraft(summaries, outline, mangaMeta)` → AI 基于全部解析摘要 + 已生成大纲 + 漫画信息补全项目字段（项目名称/创意描述/小说类型/叙事视角/写作风格/目标字数/章节数/附加要求）→ 弹窗（Spin 加载 + 显式 `setFieldsValue` 回填，AI 失败时提示可手动填）→ 用户确认后 `createProject` + 导入大纲 + 用确认的标题覆盖项目名
+- 主进程（`MangaParsingService.generateProjectDraft`）：复用上下文表格 + `prependEnginePrompt` 全局提示词 + `buildMetaLines` 漫画背景约束；提示词限定严格 JSON 输出并给出三个枚举的完整候选值；`extractJsonBlock` 兼容 ```json 代码块/前后杂文；`normalizeProjectDraft` 归一化（枚举非法回退默认 web_novel/third_person/detailed，数字越界收敛，title/creativeDescription 必填缺失返回 null）
+- 链路：types（`V2MangaProjectDraft(Result)` + `V2MangaAPI.generateProjectDraft`）→ 服务 → `mangaHandlers`（`manga:generateProjectDraft`）→ preload `writingV2.manga.generateProjectDraft`
+- 影响文件：`writing-v2.types.ts` / `MangaParsingService.ts` / `mangaHandlers.ts` / `preload.ts` / `V2MangaOutlinePanel.tsx`；manga 单测 11/11；typecheck 本次文件零错误；dev server 重启生效（未触碰 5000 端口）
+
+**⚠️ 重点标记 - 导入写作编辑器报「大纲解析失败」：Markdown 大纲无 JSON 解析器（2026-10-05 用户反馈）**
+- 现象：漫画大纲生成后点「导入到写作编辑器」报「大纲解析失败」。dev server 日志实锤：`[OutlineGenerator] JSON preview: # 《欢迎来到爱之岛》完整故事大纲` → 6 种 JSON 修复策略全部失败
+- 根因：**大纲格式契约不一致**——V2 管线的 `OutlineGenerator.parseOutlineResponse` 只认 JSON 大纲（workInfo/storyLine/chapters 结构），但漫画解析的 `generateStoryOutline` 按提示词产出的是 **Markdown 大纲**（`# 标题 / ## 章节 + 正文`），导入时必然解析失败
+- 修复（`OutlineGenerator.ts`）：所有 JSON 策略失败后新增 **Markdown 兜底解析** `parseMarkdownOutline`——首个单 `#` 标题→作品名；`##`/`###` 标题或「第X章/节/回/卷」独立行（兼容加粗）→章节标题；标题下正文→章节摘要；首个章节前内容→前言（creativeDescription + coreConflict）；结果统一走 `validateOutline` 规范化；无章节可识别时返回 null 保留原错误
+- ⚠️ 教训：**跨模块复用解析/生成接口时，必须先核对"输出格式契约"**——漫画大纲生成时（提示词写"结构化大纲"）没有和导入侧的 `parseOutline` 格式对齐，导致功能闭环在最后一环断裂；新增产出方时应优先消费方已有的解析器格式
+- 验证：新增 `OutlineGenerator.test.ts` 4 用例（标准 Markdown 大纲/第X章独立行/JSON 不受影响/纯文本仍报错），15/15 通过；typecheck 本次改动零新错误（OutlineGenerator 预存 5 个 unused 告警未动）；dev server 重启生效（未触碰 5000 端口）
+
+**大纲持久化：生成的大纲随漫画记录自动保存（2026-10-05 用户反馈"漫画生成的大纲没有保存"）**
+- 根因：`outline` 只是 `V2MangaStage` 的组件内存 state，未写入 `MangaComicRecord`——重开漫画/重启应用/重新导入后大纲丢失（分析结果、漫画信息都在自动保存里，唯独大纲漏了）
+- 修复：
+  1. `MangaComicRecord` 新增 `outline?: string` 字段（`writing-v2.types.ts`）
+  2. 自动保存 upsert effect 写入 `outline`（防御性合并：`outline || existing?.outline || undefined`，空状态不覆盖已有快照），deps 补 `outline`
+  3. `handleOpenRecord` 打开记录时 `setOutline(record.outline ?? '')` 还原
+  4. `handleImport` 切换到不同文件夹时从目标记录还原大纲（同 mangaMeta 处理，重导入同一漫画不丢大纲）
+- ⚠️ 教训：**新增"AI 生成产物"类 state 时，要同步检查它是否属于该实体的持久化快照**——本例漫画记录持久化了 analyses/mangaMeta/pages，但后加的大纲只存了内存；排查"X 没保存"类问题先确认该字段在不在持久化记录的类型定义里
+- 影响文件：`writing-v2.types.ts` / `V2MangaStage.tsx`；typecheck 本次文件零错误；dev server 重启生效（未触碰 5000 端口）
+
+**大纲 AI 审核：生成的大纲自动经 AI 味审核（2026-10-05 用户需求：和世界书的 AI 审核功能一样）**
+- 机制（复用世界书 AI 审核的三件套）：
+  1. **同款 JSON 契约**：`{passed, suggestions, revisedText, optimizationSuggestions, optimizedText}`（passed=true 时填优化建议/优化文本，false 时填修订全文）
+  2. **同款去AI味规则注入**：`withHumanizerGenerationRules`（shared/prompts/humanizerPolish，Spec: polish-deai-humanizer v3 完整 27 模式词表）约束审核产出的修订/优化文本本身不带 AI 味
+  3. **同款结果弹窗交互**：通过/不通过 Tag + 审核说明 + 优化建议/优化后文本（通过）或修改后文本（不通过），按钮「采用审核文本 / 重新审核 / 关闭」
+- 实现链路：
+  - 主进程 `MangaParsingService.auditOutline(outline, mangaMeta)`：审核维度 = AI 味（重点，引用原句定位）+ 内容完整性 + 与漫画背景一致性（buildMetaLines 参照）；`prependEnginePrompt` 全局提示词；`extractJsonBlock` 解析 + 字段归一化（passed 缺失报错，文本字段空值回退原文）；max_tokens 预留 8192+（输出≈大纲全文）
+  - IPC `manga:auditOutline` + preload `writingV2.manga.auditOutline` + 类型 `V2MangaAudit(Result)`
+  - 渲染层 `V2MangaOutlinePanel`：「生成故事大纲」→ 生成成功 → **自动** `runAudit`（按钮变「AI 审核中…」+ 区域提示）→ 弹审核结果弹窗；「采用审核文本」→ `onOutlineGenerated(adopted)` 替换大纲（随记录自动保存）；「重新审核」→ 对当前大纲重跑
+- 注意：审核失败不阻塞大纲展示（warning 提示，大纲已生成并保存）
+- 影响文件：`writing-v2.types.ts` / `MangaParsingService.ts` / `mangaHandlers.ts` / `preload.ts` / `V2MangaOutlinePanel.tsx`；manga+writing 单测 15/15；typecheck 本次文件零错误；dev server 重启生效（未触碰 5000 端口）
+
+**⚠️ 重点标记 - 导入后章节解析出 33 个章节：Markdown 兜底解析器误判元信息小节为章节（2026-10-05 用户反馈"生成的大纲章节不对"）**
+- 现象：5 页漫画导入写作编辑器后章节列表出现 33 个"章节"。dev server 日志实锤：`[OutlineGenerator] Markdown fallback parse succeeded, chapters: 33`
+- 根因（双端）：
+  1. **解析器**（主因，v1 兜底解析器缺陷）：AI 大纲是结构化格式（`## 一、故事背景 / ## 二、主要角色（### 角色名）/ ## 三、剧情发展（### 第X章）`），v1 把**所有** `#` 标题都当章节 → 背景、角色档案、小节标题全混进章节列表
+  2. **生成提示词**：`generateStoryOutline` 只说"格式为结构化大纲（章节标题+内容摘要）"，无章节划分规则，AI 自由发挥输出了元信息小节
+- 修复（双端）：
+  1. **`parseMarkdownOutline` v2 分类规则**（优先级）：① 首个单 `#` → 作品名；② 强章节模式（第X章/节/回/卷/集/幕、Chapter N、情节X）→ 章节（优先于元信息词，避免"第二章：背景揭露"误判）；③ 元信息关键词（背景/世界观/角色/人物/剧情/主题/梗概等）→ 元信息区，正文按角色类/故事类归桶**不丢失**（合并进 storyLine.coreConflict），其**嵌套子标题（级别更深，如角色名）继承该区归类**；④ 其余标题（编号项/语义化标题）→ 章节；另 `chapterCount` 同步真实章节数（原 `|| 10` 默认值会虚报）
+  2. **生成提示词约束**：章节标题统一「## 第X章：章节名」、每章标注页码范围、严禁虚构未提供页面剧情、不为凑数拆章、不单列背景/角色档案等元信息小节
+- ⚠️ 教训：① **兜底解析器的职责是"识别章节"而非"识别所有标题"**——AI 产出的结构化文档中，元信息小节（背景/角色/设定）与剧情章节是两类实体，必须先分类再提取；② 分类规则中**强模式（明确编号）优先于关键词**，否则"第X章：背景揭露"这类章节会被元信息词误吞；③ 层级信息（heading level）是判断"嵌套子标题归属"的关键（角色名 ### 从属于 ## 主要角色）
+- 验证：新增 2 用例（元信息混排 33 章节场景 / 含元信息词的章节仍识别），writing+manga 单测 17/17；typecheck 本次文件零错误；dev server 重启生效（未触碰 5000 端口）
+
+**漫画解析全文作为写作素材：章节生成时注入全文分析（2026-10-05 用户需求"和角色卡/世界书一样的素材"）**
+- 背景：导入后章节写作只参考大纲摘要（漫画内容的浓缩版），拿不到分镜级细节与具体台词。用户要求漫画解析全文视为与角色卡/世界书同级的素材
+- 实现链路：
+  1. **类型**（`writing.types.ts`）：`MangaReferenceMaterial { folderName, mangaMeta?, analyses }`（逐页完整分析，结构与漫画记录一致）；`WritingProject.mangaReference?`；`ShardOutlineGenerationRequest/ShardContentGenerationRequest.mangaReferenceContext?`
+  2. **素材构建**（`MangaParsingService.buildMangaReferenceContext`，public）：「## 漫画源素材（源漫画全文解析）」+ 漫画背景信息（buildMetaLines）+ 逐页详情（分镜N 剧情/情绪/台词·音效·旁白提取、页面角色含表情动作、场景地点/时间/氛围、整体情感、叙事衔接）；与大纲上下文表格不同此处保留全文细节（分镜 500 字/台词 200 字软截断），页上限 150
+  3. **注入点**（`WritingPipelineService.generateChapter`）：项目携带 `mangaReference` 时构建上下文 → 传入 `generateShardOutline` + `generateShardContent` 请求 → `ContentGenerator` 并入 resourceContext（与角色卡/世界书/人设/表格数据同一上下文通道，两条分片链路都覆盖）
+  4. **写入点**（`V2MangaOutlinePanel.doImportToProject`）：导入时从 `useMangaComicStore` 按 folderPath 取漫画记录（含用户修正的最新分析）→ `patchProject({ mangaReference })` 随项目整体持久化（saveProject 全量序列化，新字段自动落盘）；两条导入路径（已有项目/新建项目）都走 doImportToProject
+- ⚠️ 注意：素材在**导入时快照**进项目——导入后在漫画页签删除/修改分析不会同步到已导入项目，需重新导入覆盖（mangaReference 为 undefined 时会清掉旧素材）
+- 影响文件：`writing.types.ts` / `MangaParsingService.ts` / `ContentGenerator.ts` / `WritingPipelineService.ts` / `V2MangaOutlinePanel.tsx`；writing+manga 单测 17/17；typecheck 本次文件零新错误；dev server 重启生效（未触碰 5000 端口）
+
+**章节工作台「AI 生成本章」一键按钮（2026-10-05 用户反馈"内容创作页面没看到生成的按钮"）**
+- 根因：V2 内容创作页的生成入口在右侧「生成流水线」面板，且是三步手动流程（生成分片大纲 → 逐分片点生成 → 合并到章节）——对漫画导入后首次写作的用户，入口不显眼且流程不直观，中间大编辑区没有生成按钮
+- 修复（`V2ChapterWorkbench.tsx`）：章节标题旁新增主按钮「⚡ AI 生成本章」，一键编排完整流程：
+  1. 按 `targetWordCount/1000`（1-10 收敛）自动规划分片大纲
+  2. 逐分片顺序生成（顶部 message.loading 进度提示：分片大纲 → 分片 i/N → 合并）
+  3. 自动合并到正文并落盘（复用 doMerge 的 setText + persistContent 链路）
+  - 已有正文时弹确认框（合并将覆盖现有正文）；部分分片失败时合并成功分片并提示数量；全部失败提示查看右侧流水线
+  - 细粒度操作（编辑分片大纲/重生成单片/逐片确认）仍走右侧「生成流水线」，两者共存
+- ⚠️ 教训：**核心操作的入口要对"刚进入该页面的用户"可见**——三栏布局中把主操作藏在右栏 Tab 内，用户视线在中间编辑区时完全看不到；高频主操作应放在内容区头部
+- 影响文件：`V2ChapterWorkbench.tsx`；typecheck 本次文件零错误；dev server 重启生效（未触碰 5000 端口）
+
+**⚠️ 重点标记 - V2 分片大纲"成功也报失败"：IPC 返回字段名与类型声明不一致（2026-10-05 用户反馈"点击AI生成本章，显示分片大纲生成失败"）**
+- 现象：点「AI 生成本章」报"分片大纲生成失败"，但主进程日志明确 `成功: true, 分片数: 3`——**主进程成功、渲染层判失败**
+- 根因：`writing:generateShardOutline` IPC handler 返回 `{ success: true, data: shards }`（V1/V2 共用通道，V1 hook 读 `result.data` 正确），但 V2 的类型 `ShardOutlineGenerationResult` 声明的是 `shards` 字段，V2 `planShards` 按类型读 `result.shards` → 永远 undefined → 成功也走失败分支。**V2 右侧「生成流水线」的生成分片大纲按钮从 V2 建立起就一直坏的**（只是此前用户走 V1 或没用到）
+- 修复：① 类型加 `data?: ShardOutline[]`（标注 IPC 边界实际形状，shards 保留为服务层字段名）；② V2 `planShards` 改 `const shards = result.data ?? result.shards` 兼容两种形状
+- 验证：分片内容流式链路（main 发 `writing:chunk:start/progress/complete/error` → preload `onShardStream*` 订阅 → store 更新）逐段核对一致，无同类问题；typecheck 本次文件零错误；dev server 重启生效（未触碰 5000 端口）
+- ⚠️ 教训：① **IPC 边界的返回形状以 handler 实际 return 为准，类型声明可能是"理想形状"**——ipcRenderer.invoke 返回 any，类型断言不会帮你校验运行时形状；跨版本（V1/V2）共用 IPC 通道时，新消费方必须核对 handler 实际返回 + 既有消费方的读法，而不是只看类型；② "主进程日志成功但 UI 报错"这类问题的第一怀疑对象就是**IPC 返回结构与消费方字段名不匹配**
+
+**分片内容流式实时预览 + 小说正文去AI味（2026-10-05 用户需求"生成内容时需要流式响应，否则一直转圈；内容也需要去AI味"）**
+- 流式预览：
+  - 原设计 store 注释明确"内容以 complete 事件全量落定，不做前端拼接"——生成过程中 UI 只有"生成中"转圈，用户看不到文本无法及时评价
+  - 修复：`useV2GenerationStore` 新增 `appendShardChunk(index, chunk)`（实时拼接 content + 更新 actualWordCount）；`beginStreamingShard` 改为同时清空旧内容（重新生成从空白开始）；`useV2ShardGeneration` 新增订阅 `onShardStreamProgress`（`writing:chunk:progress`，按 projectId+章节过滤）→ 追加 chunk。主进程本来就在发 progress 事件（V1 在用），只是 V2 hook 没订阅——**基础设施齐全，差一层订阅**
+  - 效果：右侧「生成流水线」分片内容框实时滚动出文本；complete 事件仍全量覆盖落定（最终内容为 stripThinkTags 后的干净文本）
+- 去AI味（小说正文）：
+  - `humanizerPolish.ts` 新增**小说场景变体** `HUMANIZER_NOVEL_RULES` + `withHumanizerNovelRules()`：文体总则"叙述具体可感（动作/感官/事实）+ 对话像真人说话 + 避免公式化范文腔"，复用 RP 域 AI 腔词表（冰冷的/淡淡地/一丝/嘴角勾起一抹/空气仿佛凝固——网文体重灾区）+ 27 种 AI 写作模式完整指南
+  - 注入点（`ContentGenerator.ts`，默认开启无开关，与世界书生成策略一致；引擎全局提示词仍由 enrichSystemPrompt 前置拼接不受影响）：
+    - `generateShardContent` 的 systemPrompt（V1/V2 分片正文共用，都覆盖）
+    - `buildPrompt`（generateStream 整章流式路径）
+    - 分片大纲不注入（结构化规划数据，非正文）
+- 影响文件：`humanizerPolish.ts` / `ContentGenerator.ts` / `useV2GenerationStore.ts` / `useV2ShardGeneration.ts`；typecheck 本次文件零新错误；dev server 重启生效（未触碰 5000 端口）
+- ⚠️ 教训：**"流式"不等于"只显示最终结果"**——主进程流式事件（chunk progress）是既有能力，前端是否订阅决定了用户看到的是实时文本还是漫长转圈；长耗时生成类功能默认应做实时预览
+
+**⚠️ 重点标记 - 分片大纲 JSON 解析失败：本地 LLM 脏 JSON 无修复链（2026-10-05 用户报错"分片大纲JSON解析失败: Expected ',' or '}' after property value in JSON at position 699"）**
+- 现象：点「AI 生成本章」→ 分片大纲阶段报 JSON 解析失败。本地模型（abliterated）输出的 JSON 带未转义换行/引号、尾逗号等脏格式，而 `ContentGenerator.parseShardOutlines` 只有**直接 JSON.parse**，一次失败即抛错
+- 根因：OutlineGenerator（大纲生成）此前有 6 种修复策略（stripMarkdown/unescapeControl/truncateTrailing/errorPositionFix/commonJsonFix/balanceBraces），但分片大纲解析器是独立实现，没带修复链——同一模型、同样的脏 JSON，大纲能过、分片大纲过不了
+- 修复：
+  1. **新建共享模块 `src/main/services/writing/jsonRepair.ts`**：6 种修复策略 + fixChineseQuotes 从 OutlineGenerator 私有方法抽取为导出函数，提供 `tryParseJsonWithRepair(jsonStr)`（直接 parse → 按序尝试 6 策略 → 全败返回 null）
+  2. `ContentGenerator.parseShardOutlines` 改用 `tryParseJsonWithRepair`（删除本地 fixChineseQuotes 副本）
+  3. `OutlineGenerator.parseOutlineResponse` 同步改用共享模块，删除 7 个私有方法（消除两处"保持一致"注释的漂移风险）
+- 验证：新增 `jsonRepair.test.ts` 9 用例（干净 JSON/未转义换行/未转义引号/尾逗号/截断补齐/全败返 null/弯引号/裸key），writing+manga 共 26/26 通过；typecheck 零新错误（OutlineGenerator 剩余 TS6133/TS2304 经 git 比对 HEAD 确认全部预存）；dev server 重启生效（未触碰 5000 端口）
+- ⚠️ 教训：① **同一模型服务多个 JSON 解析点时，容错能力必须对齐**——最弱的那个解析点决定了用户体感；② 本地 LLM 的 JSON 输出永远按"脏"的对待，直接 parse 只配当快速路径，修复链是标配；③ 修复策略这类工具逻辑天然适合共享模块，"保持与 X 一致"注释是漂移预警信号
+
+**⚠️ 重点标记 - 前端"依旧没有流式输出"的实锤根因：思考模型先吐 reasoning_content，正文 content 长时间为 0（2026-10-05 用户反馈"前端依旧没有流式输出内容"）**
+- 现象：上一轮已接通 chunk progress 订阅，但用户实测生成期间前端仍"一直转圈看不到输出"
+- 实锤：用 PowerShell 轻量 POST 直测 5000 端口（qwen3.8-27b-abliterated，vLLM）**未停进程**——max_tokens=600 跑 21.9s，`delta.reasoning_content` 累计 155,916 字符、`delta.content` **0 字符**；dev server 日志显示实际分片生成 193s/片，绝大部分时间模型在输出思考流。**模型是思考模型，SSEStreamParser 按协议规范只透传 content、丢弃 reasoning → 用户视角 = 全程无输出**
+- 修复（思考流全链路透出，不改变正文落定逻辑）：
+  1. `SSEStreamParser.parseStream` 加第 4 参 `onReasoning?`，主循环遇 `delta.reasoning_content` 回调透出（不累积进正文）
+  2. `ContentGenerator.executeStreamRequest` / `generateShardContent` 转发 `onReasoning`；`writing:generateShardContent` IPC handler 发 `writing:chunk:reasoning` 事件
+  3. preload 新增 `onShardStreamReasoning` 订阅；`ShardDetail` 加 `reasoning` 字段；store 加 `appendShardReasoning`（begin 清空、complete 清空）
+  4. `V2ShardPipelinePanel`：GENERATING 且无正文有思考流 → 金色 Tag「AI 思考中」+ 思考文本实时滚动（文字色 #b3791a），正文出现后转蓝色「生成中」
+  5. **一键生成时中间编辑器实时预览**：`V2ChapterWorkbench` 订阅 STREAMING 阶段的当前分片 `content || reasoning` 映射到正文编辑区（readOnly + 预览期抑制防抖落盘，合并后以最终内容为准）
+- ⚠️ 教训：① **思考模型（reasoning_content 协议）下"流式"必须包含思考流**——只透传 content 等于把最耗时的阶段藏起来；② 判断"前端没流式"时先直测模型端口看真实 chunk 结构（reasoning vs content 比例），再查链路，避免在链路里空转
+
+**分片正文提示词加"写小说不是写散文"硬约束（2026-10-05 用户反馈"生成内容 AI 味太重，特别偏向散文"）**
+- 诊断（按 humanizer-zh-enhanced 指南审读用户截图的生成章节）：「林晓雨看着X」句式 ×3、"X说"对话标签 ×6、"她的心有些紧张，有些期待"模板情绪、"声音像一首摇篮曲"陈词滥调比喻、整章"走→问→答"循环无剧情推进、「酥麻感」钩子出现 2 次未展开——典型散文腔：抒情铺陈多、事件推进少
+- 根因：`buildShardContentPrompt` 只有字数/视角/风格三行约束，无叙事技法要求；模型默认走向"环境描写+日常问答"的散文安全区
+- 修复：`buildShardContentPrompt` 生成要求后新增「叙事要求（写小说，不是写散文）」5 条：剧情推进是核心（无剧情发展的分片=失败分片）、动作与对话驱动（环境描写每处≤2句且必须承载氛围/伏笔）、对话推动情节（标签多样化、口语感、潜台词）、描写具体（禁抽象形容词堆砌和"声音像一首XX"陈词滥调）、段落节奏变化（禁"一段叙述+一句对话"模板循环）
+
+**章节「检查 AI 味」按钮 + 审核结果弹窗（2026-10-05 用户需求"需要一个检查AI味的按钮"，交互对齐世界书 AI 审核）**
+- 主进程 `ContentGenerator.checkChapterDeAi({ chapterTitle, content, modelConfig })`：引擎全局提示词前置 + 编辑角色 + `HUMANIZER_POLISH_RULES`（27 种 AI 模式 + RP AI 腔词表）+ 审核维度（AI味/小说性/完整性）+ 严格 JSON 契约 `{passed, comment, issues[], revisedContent}`；temperature 0.3、stream:true（思考模型耗时正常）、解析走 stripThinkTags → 代码块提取 → fixChineseQuotes → `tryParseJsonWithRepair`
+- IPC `writing:checkChapterDeAi` → preload `checkChapterDeAi` → `V2ChapterWorkbench` 标题栏「检查 AI 味」按钮（`AuditOutlined`，生成中/正文为空禁用）
+- 结果弹窗（模式参照 `WorldBookAuditModal` 审核结果 Modal）：通过/不通过 Tag + 审核说明 + 问题清单列表 + 修订文本只读预览，footer「关闭 / 重新审核 / 采用审核文本」（采用 = setText + persistContent 落盘）
+- 验证：typecheck 本次 11 个文件零新错误（ContentGenerator 的 `requestId` TS6133、PromptBuilder 的 4 处 TS6133 经 git diff 比对 HEAD 确认全部预存）；dev server 重启生效（未触碰 5000 端口）
+
+**⚠️ 重点标记 - 「检查 AI 味」首次实跑失败：思考流占满 max_tokens 致正文为空 + 错误日志 "[object Object]"（2026-10-05 用户报错）**
+- 现象：11044 字章节点「检查 AI 味」→ 日志 `Stream complete: { totalContentLength: 0, generationTime: 206598 }` → jsonRepair 6 策略全败 → `[章节AI味审核] 失败: [object Object]`
+- 根因 1：思考模型的 `max_tokens` 预算 = reasoning_content + content 共享。原公式 `min(16384, max(4096, len*2))` 对 11k 字内容只有 16384，模型思考流吃满整个预算 → 正文 0 字符 → 空串 JSON 解析必败。且审核输出本身（revisedContent 全文 + comment）就需 ≈ len*1.5 tokens，16384 先天不足
+- 根因 2：`ContentGenerator.createError` 返回**普通 WritingError 对象**（非 Error 实例），handler 用 `error instanceof Error ? error.message : String(error)` 兜底 → `String(对象)` = `"[object Object]"`，日志与前端都丢了真实错误信息
+- 修复：
+  1. **checkChapterDeAi 不写 max_tokens**（用户拍板：不写或给 1M 上限）——由服务端按模型上限取最大，彻底避免手算预算不够；其他写作调用保留用户配置的 `modelConfig.maxTokens` 不动
+  2. 正文为空自动重试 1 次（间隔 1s）；两次皆空才报错"AI 思考流占满了输出长度，审核正文为空，请重试"
+  3. handler catch 按对象取 `message`（`'message' in error` 分支优先），日志与返回值都是真实文案
+- ⚠️ 教训：① **思考模型（reasoning_content）的调用，max_tokens 手算预算不可靠**——思考流长度不可预测，与其估算不如不写（交给服务端按模型上限）；② 代码库里"错误对象"（普通对象 + message 字段）和 `Error` 实例混用时，`instanceof Error` 判断是坑，统一用 `message in err` 取文案
+
+**humanizer 规则统一：HUMANIZER_RULES_CORE 单一规则源（2026-10-05 用户需求"让 HUMANIZER_NOVEL_RULES 继承 HUMANIZER_POLISH_RULES，而不是简单缩写"）**
+- 背景：用户发现小说生成用的 `HUMANIZER_NOVEL_RULES` 看起来比 `HUMANIZER_POLISH_RULES` 弱，要求统一/继承。核查后发现两者其实已包含同一批组件（RP 词表 + 27 模式完整指南），差异只有锚点和 intro——但**各自独立拼接**，改一处漏一处是漂移隐患，且"看似缩写"的观感说明结构没表达清楚
+- 重构（[humanizerPolish.ts](file:///g:/AI/creative-cafe/src/shared/prompts/humanizerPolish.ts)）：
+  1. 新增 `HUMANIZER_RULES_CORE`（L170）= `HUMANIZER_RP_WARNLIST` + `HUMANIZER_FULL_GUIDE`，作为**唯一规则源**
+  2. 5 个场景变体全部改为从核心组合：POLISH（润色/审核）、GENERATION（世界书）、TEXTGEN（角色卡）、NOVEL（小说生成）、DIALOGUE（RP 对话）——输出字符串逐字节不变（36/36 测试通过证明），今后新增规则只改 CORE 一处，全场景同步生效
+  3. `HUMANIZER_NOVEL_RULES` 的 intro 补上风格例外条款（"除非项目写作设置明确指定了其他文风"，与润色条款对齐）+ "规则很多，逐条对照执行"
+- ⚠️ 教训：**多场景共享的规则集必须收敛到单一常量组合**——"复制同一批组件到每个变体"即使当前内容一致，结构上就宣告了未来漂移；用户从"看起来短"推断"是缩写"，说明代码结构本身要能自证规则强度
+
+**大纲审核管线升级 + 手动「AI 大纲审核」按钮（2026-10-06 用户要求"检查 AI 味审核是否应用到所有校验类功能（含漫画大纲），并在大纲生成旁加手动审核按钮"）**
+- 校验类功能 humanizer 覆盖排查结果：章节「检查 AI 味」✓（POLISH）/ 世界书条目审核 ✓（GENERATION）/ 大纲审核 ⚠️（原用 GENERATION 变体，JSON 措辞不合 Markdown 大纲）/ **大纲生成 ✗（未接规则）**
+- 修复（[MangaParsingService.ts](file:///g:/AI/creative-cafe/src/main/services/manga/MangaParsingService.ts)）：
+  1. `generateStoryOutline` 注入 `withHumanizerGenerationRules`（设定集/摘要文体，从源上压制 AI 味）
+  2. `auditOutline` 升级：注入 `withHumanizerRules`（审核型 HUMANIZER_POLISH_RULES，与章节「检查 AI 味」同款，含 #28-#37）+ **新增 summaries 参数**——`buildContextTable` 上下文表格作为"漫画解析内容（源素材参照）"注入审核提示词，审核时对照检查完整性（是否遗漏素材情节）/一致性（是否虚构素材外情节）/修订不引入新情节
+  3. IPC `manga:auditOutline` / preload / V2 类型签名同步加 `summaries?` 第三参
+- 前端（[V2MangaOutlinePanel.tsx](file:///g:/AI/creative-cafe/src/renderer/components/Creative/WritingModeV2/manga/V2MangaOutlinePanel.tsx)）：「生成故事大纲」旁新增 **「AI 大纲审核」按钮**（AuditOutlined，有大纲即可用，复用 runAudit + 审核结果弹窗）；runAudit 全程传 summaries；生成/审核按钮 loading 状态分离（生成中 vs 审核中各显示各的）
+- ⚠️ 教训：**变体函数名不统一是坑**——polish 变体的注入函数叫 `withHumanizerRules(prompt, enabled)`（带开关参数），不是按规则名直觉命名的 `withHumanizerPolishRules`，首次引用直接 typecheck 报错；其余变体均按规则名命名（withHumanizer{Generation,Textgen,Novel,Dialogue}Rules）
+- 验证：5 个改动文件 typecheck 零错误；dev server 重启生效（未触碰 5000 端口）
+
+**用户定制自然中文写作规则 #28-#37 入规则核心（2026-10-06 用户编写 10 条规则+案例，要求整理后加入审核/生成规则）**
+- 用户在"爱之岛"章节实测后亲自编写 10 条规则（每条带 ✗/✓ 案例），编号续接指南 27 模式，新增常量 `HUMANIZER_NATURAL_ZH_RULES`（[humanizerPolish.ts](file:///g:/AI/creative-cafe/src/shared/prompts/humanizerPolish.ts) L171 起）并入 `HUMANIZER_RULES_CORE`——全场景（小说生成/章节审核/世界书/角色卡/RP 对话）同步生效：
+  - #28 多用口语助词（的/了/着/把/的话/一样/就好），拒绝"电报体"压缩句
+  - #29 去掉无意义缩写，光杆动词写清操作对象、单字压缩词写全（印→勒痕、肉→乳肉）
+  - #30 对话必须绑定说话人当下动作/神态/环境，禁裸标签，对话间隙自然带新场景信息
+  - #31 一段连贯剧情禁止碎片化拆段（禁单句成段，引文用冒号接叙述后）
+  - #32 禁"故作深意"句（"不像X，更像Y"谜语式感悟），不硬造伏笔
+  - #33 人物对话多用语气词（呢/嘛/吧/啊），假设问句补"的话"；附约束：语气词须符角色身份与情境，自然点缀非满句添加
+  - #34 适当添加主语/领属词（她/他/她的/它的），不因省事忽略基本语法；与 #29 一体两面（#29 管宾语、#34 管主语）
+  - #35 严禁"X得Y""X得(有些)发Y""X发Y"三类压缩描写（AI味过重，一律不用）：顶得紧/晒得亮/高得过分/绷得更紧/发紧/发亮/发暗/发酸/发白/发黑/发毛全禁，改用直接描述或"X变得更Y""X越来越Y"——即"细得发白/蓝得发黑"句式问题的最终规则化（用户先要求"段内限1次"，后升级为全禁）
+  - #36 严禁因精简写出人类不会写的文字（"精简癖"）：禁"动词+数量+形容词"压缩词组（顶出两点硬）和过度压缩口语（太阳毒/走热了），拿不准就展开（补主语/过程/程度/说明从句）；与 #29 联动（#29 管指代、#36 管整句自然度）
+  - #37 语气词必须与当下情绪匹配（语气词是情绪的外显）：先读动作判断情绪再配语气词——开心→"嘿嘿/哈哈"、迟疑→"唔.../嗯？"、惊讶→"诶/啊？"；与 #33 联动（#33 管有没有、#37 管对不对）
+  - #35 全禁后联动修正：#29"画得非常清楚"→"看得清清楚楚"、#30"颤动得更剧烈了"→"剧烈地颤动起来"、#31"磨得起毛"→"都磨毛了"、#32"拉得笔直"→"拉直了，绷在两棵椰子树干之间"、#35 自身"绷得更紧了"→"绷紧了"（✓ 示范自身不得违反规则）
+- 规则张力显式处理：#28 助词 vs 指南#25 填充短语（语法功能词≠英文腔赘述）；#31 长段落 vs 指南#3/#10 节奏（只针对叙事拆段，对话仍各自成段）；#35 全禁"得/发"后替代手段指定为"X变得更Y""X越来越Y"/直接描述；冲突时用户定制优先
+- ⚠️ 教训：**规则升级会牵连既有示范**——#35 从"限 1 次"升级为"全禁"后，5 处其他规则的 ✓ 示范（含用户自己写的案例）出现"得+形容词"自相矛盾，逐一修正；规则集要能自洽，示范必须过自己定的规则
+- 背景：这 10 条覆盖的是 27 模式指南未触及的**中文语感盲区**——指南偏"删什么"（AI 腔词/结构），用户规则偏"加什么"（助词/语气词/主语/动作/完整指代）+ "禁什么"（得/发压缩句式/精简癖）+ "配什么"（语气词与情绪匹配），三类互补才是完整的人味标准
+- 验证：humanizerPolish 36/36 测试通过；typecheck 零新错误；dev server 重启生效（未触碰 5000 端口）
+
+**用户定制规则 #38 极端词禁用（2026-10-07 用户笔记"十一"续接，要求添加 AI 味审核规则）**
+- 用户追加第 11 条定制规则，编号续接为 #38，追加进 `HUMANIZER_NATURAL_ZH_RULES`（常量标题与注释块范围同步 #28-#38）——经 `HUMANIZER_RULES_CORE` 全场景（润色/小说/世界书/角色卡/RP 对话）自动生效
+- 规则：禁止滥用"极端词"——疯狂/极端/狂笑/破碎/病态/残酷/神圣/祭品等人类一般不会用的词，发现即换符合语境的常用词（狂笑→大笑/淫笑、疯狂→用力/非常、极端→特殊/极度、病态→淫荡/变态）
+- 附例外条款：剧情本身涉及神圣仪式/祭祀/宗教题材时"神圣""祭品"可按剧情需要使用，但不得作为修辞滥用
+- 验证：typecheck humanizerPolish 零新错误；dev server 重启生效（未触碰 5000 端口）
+
+**AI 味审核过程弹窗流式可视化（2026-10-05 用户需求"等待时间太久，审核过程要弹窗可视化并流式输出"）**
+- 思考模型审核 11k 字章节要 3-5 分钟，此前只有按钮 loading 转圈，用户无任何反馈
+- 实现（复用分片思考流透出的同一套链路模式）：
+  1. `ContentGenerator.checkChapterDeAi` 加第 2 参 `onProgress?(chunk, reasoning)`，转发到 `executeStreamRequest` 的 onStream/onReasoning
+  2. IPC handler 经 `event.sender.send('writing:deai:stream', { chunk, reasoning })` 透传（isDestroyed 防护）；preload `onDeAiStream` 订阅；类型 `V2DeAiStreamEvent`
+  3. `V2ChapterWorkbench` 审核弹窗整合为**过程+结果一体**：审核中 = 标题栏状态 Tag（金色「AI 思考中」→ 蓝色「正在生成审核结果」）+ 400px 流式文本框（思考流金色 #b3791a、正文转正常色，自动滚底）；完成 = 切换为结果视图（通过/不通过 + 说明 + 问题清单 + 修订文本，footer 关闭/重新审核/采用审核文本）。审核中不可关窗（closable=false），重新审核直接复用同一弹窗
+- ⚠️ 教训：**长耗时 AI 操作（>1min）的等待体验取决于过程可见性**——思考模型时代尤其如此，"转圈"必须替换为"实时滚动思考流"，这是本项目第三次做同类改造（分片大纲流式/分片正文流式/审核流式），链路模板已固化：service onProgress → handler sender.send → preload on* 订阅 → 组件 state 累积 + 自动滚底
+
+**AI 功能自定义提示词 + 停止按钮 + 大纲审核问题列表（2026-10-06，Spec: add-ai-custom-prompt-and-interrupt）**
+
+用户要求：① 所有审核功能加自定义提示词输入框（大纲审核/大纲生成/项目草稿/检查AI味/生成本章/页面分析 6 入口）② 大纲审核与章节/世界书审核一样显示问题列表由用户确认 ③ 约定写入全局记忆 ④ 所有 AI 交互按钮加停止/中断。
+
+- **自定义提示词统一注入**（`src/shared/prompts/customPrompt.ts` 新建）：
+  - `withCustomPrompt(systemPrompt, customPrompt?)`：空值逐字节不变；非空在 system prompt **最末尾**（引擎全局提示词 + 功能正文 + humanizer 规则块之后）追加「## 用户自定义要求（最高优先级，与上述默认要求冲突时以本节约束为准）」+ 用户原文——保证用户要求可覆盖默认规则
+  - 主进程接入点：`MangaParsingService` analyzePage/generateStoryOutline/auditOutline/generateProjectDraft 四方法、`ContentGenerator.checkChapterDeAi`/`generateShardOutline`/`generateShardContent`；IPC/preload 各通道透传 `customPrompt?`
+  - UI：`CustomPromptPopover`（`WritingModeV2/shared/CustomPromptPopover.tsx` 新建）——FormOutlined 图标 Popover + TextArea（2000 字），按 storageKey 持久化 localStorage（6 入口各自独立 key，互不串扰，重开应用回填）；父组件触发请求时 `readCustomPrompt(key) || undefined` 读取透传
+  - 一键生成本章的 customPrompt 同时注入分片大纲与分片内容两条链（useV2ShardGeneration planShards/generateShard 加参）
+- **⚠️ 重点标记：中止必须返回 `cancelled` 标记**（本 spec 核心契约，后续 AI 功能必须沿用）：
+  - 主进程 AbortController 注册：`MangaParsingService.cancelControllers: Map<功能key, AbortController>`（analyzePage/generateOutline/auditOutline/generateProjectDraft，fetch 传 signal，finally 清理）；`ContentGenerator.activeDeAiCheckController` 实例字段（两次重试共享）
+  - 新 IPC 通道：`manga:cancel(key?)`（缺省取消全部漫画类请求）、`writing:cancelDeAiCheck`
+  - **中止与失败必须可区分**：catch 首判 AbortError/`error.cancelled`，返回 `{ success:false, cancelled:true, error:'用户已停止' }`；前端据此 `message.info('已停止…')` 而非 `message.error`。⚠️ 若不区分，用户点停止会看到红色报错，误以为失败
+  - 4 个 manga 结果类型 + `V2ChapterDeAiCheckResult` 均加 `cancelled?: boolean`
+- **UI 停止态**：大纲生成/审核按钮运行中切 danger「停止生成/停止审核」（onClick 切 cancel 通道）；项目草稿弹窗内 danger 停止按钮；章节 AI 味审核弹窗 footer danger「停止审核」（中止后弹窗切「已停止」Tag，**保留已流式内容**，可关闭/重新审核）；「分析全部页面」既有停止按钮补接 `manga:cancel('analyzePage')`（批量循环收到 res.cancelled 即 break，已分析页保留）；单页分析加载视图加「停止分析」按钮（V2MangaAnalysisPanel onStopAnalyzing，批量运行中则停止整个批量）
+- **大纲审核 issues 契约**：`V2MangaAudit` 加 `issues: string[]`；auditOutline JSON 契约要求模型逐条列出问题（每项一句话指明问题类型与位置，无问题为空数组 []，数组校验缺省 []），原 5 字段不变；审核弹窗展示编号问题列表（样式对齐章节 AI 味审核弹窗）+「采用修订文本」/「保持原文」由用户确认
+- 全局记忆：`.learnings/LEARNINGS.md` LRN-20261006-009 永久约定（三件套：自定义提示词 + 停止按钮 + 审核 issues 列表）
+- 既有中断机制不动（无回归）：`ai:cancel`（世界书批量）、`writing:cancelGeneration`（一键生成）、批量分析前端循环
+- 验证：本次改动文件 typecheck 零新错误（ContentGenerator L166 requestId 为存量未用变量，非本次引入）；dev server 重启生效（未触碰 5000 端口）
+
+**⚠️ 重点标记 Bug 修复：V2 剧情检查「批量修正」恒提示"没有可批量修正的问题"（2026-10-06）**
+- 现象：章节剧情检查出多个问题后，点「批量修正」被过滤为空
+- 根因：**生产者/消费者字段契约断裂**——V2 面板用 `issue.fixable` 做批量修正与单条「自动修正」按钮的门槛（`normalizedIssues.filter((i) => i.fixable && !fixedKeys.has(i.key))`），但主进程 `PlotCheckerService.parseCheckResponse` 构造 issue 时从未设置 `fixable`（AI JSON 契约也只要求 `quickFixSuggestion`，不要求 `fixable`），`!!undefined` 恒为 false → 全部问题被过滤。V1 批量修正靠用户勾选（无 fixable 门槛）所以 V1 无此问题
+- 修复：`PlotCheckerService` 三处 issue 产出点（AI 维度问题/AI 逻辑问题/规则校验逻辑问题）统一补 `fixable: true`——批量修正管线携带完整问题信息（description/analysis/suggestion/position/originalText/references）整章重写，任何报告出的问题均可修，与 V1 语义一致
+- ⚠️ 教训：**渲染层用可选布尔字段做功能门槛时，必须确认主进程所有 issue 产出路径都显式设置该字段**（含 AI 解析与规则兜底两条路）；可选字段缺省 false 语义会让"功能静默不可用"而非报错，用户侧表现是"点了没反应/提示没有可修问题"
+- 注意：修复前已生成的检查报告存在渲染层 state，需重新跑一次「剧情检查」才能看到批量修正恢复
+- 验证：PlotCheckerService 25/25 单测通过；typecheck 无新错误；dev server 重启生效
+
+**⚠️ 重点标记 Bug 修复：V2 表格整理「AI 整理全部」报"章节 0 不存在"（2026-10-06）**
+- 现象：漫画解析导入的项目（章节 index 为 1 基）中，表格整理页点「AI 整理全部」/「整理当前表」报"章节 0 不存在"；即使侥幸匹配也会错位整理上一章
+- 根因：**chapterIndex 语义不一致**——渲染层 V2TablePanel 与智能体编排传给 `TableOrganizeService` 的 `chapterIndex` 都是「章节在数组中的 0 基位置」（selectedIndex / startIdx+i），但服务内按 `ch.index === chapterIndex`（index 值）查找。漫画大纲经 `OutlineGenerator.validateOutline` 解析时章节无 index 字段则赋 `idx + 1`（1 基），普通建项目/管线是 0 基（`index: i`）→ 1 基项目按位置 0 查 index=0 找不到
+- 修复：`TableOrganizeService.organizeTable` / `organizeSingleSheet` 目标章节定位改为**按数组位置优先 + index 值兜底**（`allChapters[chapterIndex] ?? find(ch => ch.index === chapterIndex)`），错误提示改为用户可读的"章节 N 不存在"（1 基）
+- ⚠️ 教训：**章节定位统一用"数组位置"而非 `index` 字段值**——`chapter.index` 的基随项目创建路径不同（普通/管线 0 基，漫画导入 1 基），跨路径复用章节查找逻辑时必须先确认语义；同类的 `autoSaveChapter`/`saveVersion`/`restoreVersion` 仍是 index 值查找（渲染层有整项目 patch 兜底所以未爆雷），后续如需修复应统一为位置语义
+- 验证：typecheck 无新错误（TableOrganizeService 存量错误未动）；TableRestore 8/8 单测通过；dev server 重启生效
+
+**⚠️ 重点标记 Bug 修复：V2 表格整理字段错位（唯一id 列约定断裂）+ 单行重整理丢唯一id（2026-10-07）**
+- 现象：AI 整理后表格所有字段右移一列（唯一id 值出现在"身份"列、姓名列空），用户看到"字段保存不正确"
+- 根因：**提示词内部两处字段定义互相冲突**——【tableEdit命令格式】参数说明约定 `[1:流水号, 2:唯一id, 3+:模板字段]`，而【表格模板结构】把模板字段编号成 `[1:姓名, 2:身份...]`。AI 跟随了参数说明/示例（字段2=唯一id、模板字段从3起），输出 6 键行；解析器（memory 适配层 tableEditParserBase，字段键统一减1）→ 存储 `{1:唯一id, 2:姓名, ...}`。**存储本身是对的**（ContentGenerator 注入 headers[key-2]、执行器 dedup row['1']、全局去重 row['1'] 都按此约定工作）——**唯一错位的消费者是渲染层 V2TablePanel 的 remapRowToHeaderKeys（key→headers[key] 直映，没跳过前两个系统键）**
+- 修复（保留唯一id 机制，用户明确要求：同一角色/道具禁止反复新增）：
+  1. 提示词消解冲突：【表格模板结构】模板字段编号改为从 3 开始（`${i+3}`）并注明字段结构固定 [1:流水号, 2:唯一id, 3+:模板字段]；示例输出同步改编号；新增错误格式示例（缺字段2/手填流水号/updateRow 改唯一id）
+  2. 渲染层 remap 对齐存储约定：key "0"(流水号)/"1"(唯一id) 原样保留不显示（antd 按 dataIndex 渲染自动忽略，保存时透传带回，编辑不丢唯一id）；key k≥2 → headers[k-2]；逆映射表头名 → String(idx+2)；CSV 导出剔除系统键
+  3. buildTableContextForPrompt（整理上下文）：渲染 `唯一id=...` + 表头名=值；快速索引修复为从 row['1'] 构建（原读 row['唯一id'] 恒空，索引从未生效过）
+  4. ContentGenerator 注入同步：显式展示唯一id + 表头名按 key-2 映射 + 重建唯一ID快速查找索引（原 row['唯一id'] 死代码）
+  5. 单行重整理修复：原实现按 0 基表头约定生成行（丢唯一id/流水号且错位）→ prompt 键名从"2"起 + parseAIRowResponse 保留原行 key 0/1、按 key c+2 对齐
+- ⚠️ 存储约定（务必全链路一致，改任何一处先全局 grep `row['1']`）：行对象 key "0"=流水号（系统内部不展示）、"1"=唯一id（实体去重键）、k≥2=表头第 k-1 列；AI prompt 字段索引 1 基 [1:流水号,2:唯一id,3+:模板字段]，memory 解析层统一减1落盘。消费者：V2TablePanel remap、TableEditCommandExecutor dedup、deduplicateTableData、compareTableData（单元格比较 key=ci+2）、ContentGenerator/构建上下文注入
+- 注意：既有错位数据（修复前生成）形状恰好与存储约定一致（key1=唯一id），UI 修复后显示即正确，**无需清空重整理**
+- 关于"调用了向量化模型"的疑问：写作表格整理/注入从未调用向量化——日志证实整理直接调 chat/completions（本地模型秒回导致进度条闪一下即消失，非向量化）；表格注入后续提示词 = 原文直拼（buildTableContextForPrompt/ContentGenerator 均拼接表格原文）
+- 验证：typecheck 无新错误（存量 TS6133/TS2352 未动）；TableRestore 8/8；dev server 重启生效
+
+**⚠️ 重点标记 Bug 修复：V2 表格「清空」后「AI 整理全部」误报"表格数据不存在，请先绑定模板"（2026-10-07）**
+- 现象：点「清空」后 UI 正常显示空态"暂无表格数据，点击「AI 整理全部」基于章节内容生成"，但点「AI 整理全部」却报"表格数据不存在，请先绑定模板"——UI 引导与实际能力矛盾
+- 根因：`clearTableData` 删除的是**整个 table-data.json**（含 sheets/headers 结构，不只行数据），而模板绑定配置 table-config.json 仍在（associatedTemplateId 存在）→ 渲染层按"已绑定模板"渲染出整理按钮，主进程 organizeTable 却因数据文件缺失直接抛错。**"清空"语义与落盘实现不一致：UI 语义是"清空行数据"，实现是"连模板结构一起删"**
+- 修复（TableOrganizeService 自愈而非改清空语义）：新增 `ensureTableDataFromTemplate(projectId)`——数据文件存在且含 sheets 时直接返回；缺失时按已绑定模板重建空表结构（sheets/headers/data/sheetDescriptions，与 associateTableTemplate 落盘形状一致）并落盘 + 记日志。organizeTable 与 organizeSingleSheet 两处入口的"表格数据不存在"检查统一替换为该方法；模板未绑定时仍正确报"未关联表格模板"。reorganizeRow 无需自愈（由行操作触发，行存在则数据文件必在）
+- ⚠️ 教训：**"清空/重置"类操作删掉的文件范围必须与其 UI 语义对齐**——table-data.json 承载"模板结构 + 行数据"两种职责，只删行数据还是整删文件要在 UI 层有明确对应；当无法立即对齐时，消费入口做自愈（按绑定关系重建结构）比让用户重新绑模板体验好；同类隐患：任何"删文件式清空"都要检查下游是否有按"结构仍在"假设编写的入口
+
+**⚠️ 重点标记 Bug 修复：剧情检查拿前一章大纲检查本章正文（2026-10-07 用户反馈）**
+- 现象：第三章剧情检查后 AI 报"本章正文完全遗漏了大纲中提到的'浴室场景'"——但那是**第二章**大纲的内容，本章大纲根本没有浴室场景
+- 根因：`PlotCheckerService.buildCheckPrompt` 用 `chapters.find(ch => ch.index === request.chapterIndex)` 按 **index 字段值**定位本章大纲，而渲染层传的是 **0 基数组位置**；漫画导入项目 `chapters[].index` 为 1 基 → 检查第 N 章命中第 N-1 章大纲。**与此前"章节 0 不存在"（表格整理）、章节保存同源的第三个消费者**——index 字段值 vs 数组位置的基制断裂是漫画导入路径的系统性契约问题
+- 同批修复的连锁点：① 渲染层单章检查 `previousChapters` 用 `c.index < chapterIndex` 过滤前文（同样基制错位，漫画项目漏掉紧邻上一章）→ 改按位置 `slice(0, chapterIndex)`；② 渲染层全书检查 `chapterIndex: c.index` 传字段值（主进程改为位置查找后会错到下一章）→ targets 带原位置传 pos；③ PlotCheckerService 表格上下文 `row['唯一id']` 死代码（与 ContentGenerator 同一错误，唯一ID索引从未生效）+ key'1' 被误渲染为"字段2" → 改按存储约定（"0"=流水号不展示、"1"=唯一id 显式展示、"2+"=表头映射 + 兜底）
+- 提示词主次结构（用户要求）：本章大纲标注"**主要检查基准**，大纲一致性问题只以此为准，不要与任何其他章节的大纲混淆"；前文章节/历史表格标注"次要参考，仅用于连续性核对"；维度1指令加粗强调"严禁把其他章节的情节当作本章应有内容来报遗漏"
+- ⚠️ 教训：**章节定位契约必须全局唯一**——"chapterIndex=0 基数组位置"是渲染层→主进程的统一契约，任何 `chapters[].index` 字段值只作展示/兜底。已修复消费者：organizeTable/organizeSingleSheet/PlotCheckerService 大纲定位/previousChapters/全书检查。**仍按 index 值查找的遗留**：autoSaveChapter/saveVersion/restoreVersion（有渲染层整项目 patch 兜底未爆雷）。新增任何"按章号找章节"代码时先 grep `chapters.find` 和 `chapters[`，用位置优先+index 兜底模式
+
+**⚠️ 重点标记 Bug 修复：V2 表格整理"只闪一下无任何进行中提示"——进度事件被误当完成信号（2026-10-07 用户二次反馈）**
+- 现象：点「AI 整理全部」按钮 UI 闪一下即恢复，无进行中状态；日志证实整理成功完成。首次反馈时误判为"本地模型秒回导致进度一闪而过"，二次反馈后定位到真 bug
+- 根因（两个叠加）：① **进度事件订阅里用 `event.current >= event.total` 判定完成并 setOrganizing(false)+卸载进度区——但事件 current 语义是"正在处理的章节序号"**，单章整理时首个进度事件就满足 current>=total，organizing 状态在 AI 请求还在飞行时就被提前终止，进度区刚渲染即卸载；② organizing 状态由两处（订阅 + handler 返回）竞争收尾，语义不单一
+- 修复（V2TablePanel）：① 订阅只更新进度显示、**禁止判定完成**（注释写明 current 语义陷阱），organizing 状态与 reload 一律由 IPC invoke 返回收尾（finally 收尾保证异常路径也复位）；② 新增 lastResult 常驻结果卡片（成功绿/失败红，含成功章数/异常数/耗时，下次整理前清除）——本地模型秒回时 toast 与进度区会消失，常驻卡片保证结果可见；③ 整理中无进度事件时显示"正在整理中，请稍候…"；④ toast 文案"处理 X 行"→"成功 X 章"（processedCount 语义实为成功章节数，原文案错误）
+- ⚠️ 教训：① **用进度事件判定"完成"必须核对 current 的真实语义**——"正在处理第 N 项"（1 基序号）与"已完成 N 项"（计数）差一，"最后一项开始"≠"全部完成"；完成信号应唯一来源（本次收敛为 invoke 返回）；② **快模型（本地 vLLM 秒回）场景下，短暂 toast/进度区等于没有反馈**——结果类 UI 要有常驻落点（卡片/状态条），不能只依赖转瞬即逝的元素；首次反馈时把"UI 竞态 bug"误诊为"模型太快"，用户二次反馈才深挖，应第一次就核对事件流时序
+
+### 跨章节连贯性审查（Spec: add-cross-chapter-coherence-review，2026-10-07 新增功能）
+
+针对表格整理只把控剧情概要、单章剧情检查缺跨章视角的问题，新增「跨章审查」能力（工作台右侧新 tab，既有三 tab 零改动）：
+
+- **混合路线**：
+  - 文本重复（text_repetition）= 本地确定性扫描（[CrossChapterTextScanner.ts](file:///g:/AI/creative-cafe/src/main/services/writing/CrossChapterTextScanner.ts)，纯函数零 token，位置精确到句）
+  - 重复剧情（plot_repetition）+ 情节矛盾（plot_contradiction）= AI 语义审查（[CrossChapterReviewService.ts](file:///g:/AI/creative-cafe/src/main/services/writing/CrossChapterReviewService.ts)，流式 + AbortController 中止 cancelled 契约 + withCustomPrompt）
+- **⚠️ 扫描算法关键决策（勿改回整句相似度）**：五章实测证明中文网文跨章重复的形态是"同一短语在不同句中复现"（"那张宽大的双人床上"、"像是一台不知疲倦的打桩机"），整句 Jaccard 对部分重叠重复严重低估（同场景重写两句整句 Jaccard 仅 ~0.2，默认阈值 0.75 永远命中不了用户点名的案例）。实际实现 = **5-gram 倒排索引 + 公共子串扩展**，命中判据：最长公共片段 ≥ round(8×阈值) 字，或 ≥2 个互不重叠短片段（各 ≥ round(5×阈值) 字，捕获"层层叠叠的+粗暴地抚平"拆散复现）；短句对（≤15 字）要求匹配占比 ≥0.85（近似整句复制，防常见短语误报）。similarityThreshold（0.50-0.95 默认 0.75）映射到最小片段长度，不是直接相似度
+- **章节定位契约沿用全局约定**：审查参数 startPos/checkedPositions/issue.chapterA.index 全是 **0 基数组位置**；AI 提示词按位置编号章节（"编号 N"=数组下标）并要求 JSON 回传同一编号；引文 includes 逐字校验，失败标 `located:false`（不静默丢弃）
+- **写回口径（修复建议应用）**：`patchProject`（实体=单一真相源，store 防抖落盘）+ `autoSaveChapter` 传 **`chapters[pos].index` 字段值**（repo 按 index 值查找并命名章节文件，这是少数仍按 index 值语义的通道，与"章节 0 不存在"条目记录的遗留一致；新代码传字段值可正确落文件+版本记录，工作台 persistContent 传位置是历史遗留口径）
+- **细粒度参数**（按项目持久化 localStorage `v2-crosscheck-params:{projectId}`）：章节比对距离（1-10 默认2，本地扫描+AI 判据）、相似度阈值（Slider）、AI 严格度（strict/standard/lenient 映射提示词判据文案）；自定义提示词 key `v2-crosscheck-prompt:{projectId}`
+- **IPC**：`writing:crossCheckReview`（流式 `writing:crossCheck:stream`，phase=local/ai）/ `crossCheckCancel` / `crossCheckSuggestFix`；模型配置读取复用 writingPlotCheckHandlers 的 activeEngine 模式
+- **表格整理章节字段绝对化（同批小优化）**：整理提示词（批量+单表两个 builder）新增【当前章节】段——告知 AI 实际章号并要求"发生章节/首次登场章节/埋设章节/回收章节"填绝对章号（"第N章"），禁止"本章"等相对值（此前 AI 不知道自己在整理第几章 → 全部写"本章"，跨章无法定位）。存量"本章"数据需清空重整理
+- **五章实测问题清单（功能验收基准，实现后审查应命中绝大多数）**：
+  - A 重复剧情："掼到双人床上"×3（2章末/3章首/4章首）；2章末已完卧室戏+高潮+沦陷，3章重演"无润滑初插+处女般紧致"；高潮节拍 2/3/4/5 章重复
+  - B 情节矛盾：2章岛主赤裸 vs 3章"撸开裤子"；3章"处女紧致/无润滑" vs 2章前两轮性事（4章"早被操得红肿外翻"才对）；2章"彻底沦陷" vs 3章"惊慌反抗"
+  - C 文本重复："腰部像是一台不知疲倦的打桩机"（3章=4章逐字）、"岛主的声音变得低沉而沙哑"（3章=4章逐字）、"层层叠叠的肉褶被粗暴地抚平"（2/3/4/5 章 4 次）等 7+ 组
+  - D 表格：章节字段全为"本章"相对值；伏笔表"每日训练"状态过时（5章已执行仍标未回收）；事件表缺 3-5 章关键事件
+- 验证：typecheck 新文件零错误（TableOrganizeService 存量 TS6133/TS2352 未动）；dev server 重启生效；端到端实测由用户在五章项目执行（本地扫描命中 C 类 / AI 命中 A+B 类 / 修复建议写回落盘）
+
+**「AI 生成角色信息」：编辑漫画信息弹窗角色字段图片识别生成（Spec: add-ai-character-gen-to-manga-meta，2026-10-07 新增功能）**
+
+针对「漫画信息」弹窗主要角色字段手填繁琐的问题，新增图片识别生成能力（保留全部既有手动编辑功能）：
+
+- **永久约定三件套全覆盖**（对齐 add-ai-custom-prompt-and-interrupt 约定）：① `CustomPromptPopover` 自定义提示词（storageKey `v2manga_meta_character_custom_prompt`，`withCustomPrompt` 末尾注入）；② 停止按钮（loading 时按钮切 danger「停止生成」→ `manga:cancel('generateCharacterInfo')`）；③ `cancelled: true` 标记区分用户停止（message.info「已停止生成」）与失败（message.error 真实错误文本）
+- **类型契约**（`writing-v2.types.ts`）：`V2MangaCharacterGenResult { success; charactersText?; cancelled?; error? }`；`V2MangaAPI.generateCharacterInfo({ imagePath, summaries?, mangaMeta?, currentCharacters?, customPrompt? })`；`manga:cancel` key 联合类型扩展
+- **主进程**（`MangaParsingService.generateCharacterInfo`，IPC `manga:generateCharacterInfo`）：AbortController 注册 + **120s 超时**（`timedOut` 标记分流超时/用户取消）；图片校验（存在 + 8MB 上限）→ data URI（mime 映射）→ 五段式 system prompt（角色视觉特征识别任务 + buildMetaLines 漫画背景 + summaries 非空时 buildContextTable 整体分析 + currentCharacters 整合保留段 + JSON 契约 `{ characters: [{ name, role, appearance, personality }] }`）+ `prependEnginePrompt` 全局提示词；OpenAI Vision 多模态 messages（非流式）；`parseJsonFromContent` 容错解析 + `finish_reason=length` 截断提示；格式化为每角色一行「姓名（定位）：外貌；性格」（定位缺省省括号，全空条目跳过），空结果守卫
+- **弹窗 UI**（`V2MangaMetaModal.tsx`）：主要角色 TextArea（maxLength 500→2000、rows 3→4）下方新增图片上传区——`file.selectFile` 过滤 jpg/jpeg/png/webp/bmp → 扩展名白名单 + 8MB 校验（data URI base64 段 ×3/4 估算）→ `file.readAsBase64` data URI 缩略图预览（antd Image h=64）+ 重新选择/移除；「⚡ AI 生成角色信息」按钮 `disabled={!imagePreview || !visionEnabled || loading}`（Tooltip 提示禁用原因），成功 `form.setFieldValue('characters', charactersText)` 可继续手动调整；`charGenLoadingRef`（useRef）防重入
+- **父组件接入**（`V2MangaStage.tsx`）：两处 `<V2MangaMetaModal>`（新建/编辑）传 `supportsVision={!visionUnsupported}`（visionUnsupported 已区分「设置未加载」不误报）与 `comicSummaries={summaries}`（复用组件顶层既有派生数据，新建模式无分析结果时 summaries 为空、prompt 自动省略上下文段）
+- ⚠️ 设计决策：弹窗 `buildCurrentMeta()` **不含 characters 字段**——已有角色文本经 `currentCharacters` 独立透传（主进程 prompt 作为「整合保留」段要求不盲目丢弃），避免与 mangaMeta 重复注入
+- 影响文件：`writing-v2.types.ts` / `preload.ts` / `mangaHandlers.ts` / `MangaParsingService.ts` / `V2MangaMetaModal.tsx` / `V2MangaStage.tsx`
+- 验证：typecheck 本次 6 文件零错误（项目其余为预存错误）；主进程代码改动已重启 Electron 生效（Vite 保留未动，未触碰 5000 端口）；UI 端到端（上传→生成→回填→手动修改→保存→重开回显 / 停止按钮 / 无 vision 禁用态）待用户实测
+
+### 后续（见 spec.md 范围外）
+
+暂无硬性待办；写作 2.0 计划内能力（Phase 0-10）全部交付。
+
+---
+
 ## 安卓 LAN 对话客户端与服务端 LAN API（Spec: add-android-chat-client，2026-08-19）
 
 ### 概述

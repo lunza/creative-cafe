@@ -45,6 +45,12 @@ export function registerWritingProjectHandlers(): void {
 
   ipcMain.handle('writing:createProject', async (_event, config: WritingConfig) => {
     try {
+      // IPC 边界防护：渲染层曾出现 parameters 字段缺失（Form 卸载后取值失败），
+      // 缺失时返回明确错误而非 TypeError
+      const desc = (config.parameters?.creativeDescription || '').trim();
+      if (!desc) {
+        return { success: false, projectId: '', error: '创意描述不能为空' };
+      }
       const projectId = `writing_project_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       const outlineChapters = config.parameters.chapterCount > 0
         ? Array.from({ length: config.parameters.chapterCount }, (_, i) => ({
@@ -60,12 +66,12 @@ export function registerWritingProjectHandlers(): void {
 
       const project: WritingProject = {
         id: projectId,
-        title: config.parameters.creativeDescription.substring(0, 20) || '新作品',
+        title: desc.substring(0, 20),
         status: ProjectStatus.OUTLINING,
         config,
         outline: {
           workInfo: {
-            suggestedTitle: config.parameters.creativeDescription.substring(0, 20) || '新作品',
+            suggestedTitle: desc.substring(0, 20),
             genre: config.parameters.novelType || '',
             targetWordCount: config.parameters.targetWordCount,
             writingStyle: config.parameters.writingStyle || ''

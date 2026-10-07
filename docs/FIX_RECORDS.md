@@ -6787,3 +6787,67 @@ tsc 五个修改文件零新增错误（其余为 hooks.new.ts/ChatStorageServic
 
 **用户数据恢复指引：**
 女性通用世界书原内容（约 70 条）应用内已无副本（无备份机制是本次教训）。恢复途径：从原始下载源重新获取；或若在其他设备/导入源留有副本，重新导入。当前被污染文件如需留证可先重命名备份。
+
+## §7.70 ⚠️ 重点 — 角色卡 AI 生成/翻译/润色跨字段内容串写（2026-09-27，用户报告：点"生成描述"其他属性也一同更新）
+
+**现象：**
+1. 角色卡编辑页点"生成描述"，其他属性字段内容也一同更新（跨字段串写）
+2. 翻译/润色同样复现：对 A 字段操作，B/C/D 字段被同步污染更新
+3. 用户误以为是缓存问题，实为 Electron 流式 IPC 监听器泄漏 + 全局频道串扰（与缓存无关）
+
+**取证（日志 + 结构，日志实锤）：**
+- 主进程日志 `logs/ai-handler/ai-handler_20260927_084522.log`（5985 行）：`req-eaac45e98f94` 于 09:41:21 发起 Lynne 角色描述生成，09:41:23 用户取消 → `AbortError` → 主进程 catch 后戛然而止，**未发 `ai:stream:error`、`activeRequests` 清理不完整** → 渲染进程该请求的监听器滞留
+- 渲染 `AIService.sendStreamChatRequest` 注册 `streamListener`/`completeListener`/`errorListener` 到全局频道 `'ai:stream'`/`'ai:stream:complete'`/`'ai:stream:error'`（`event.sender.send`，按 webContents 广播）
+- 滞留监听器在**后续请求**的 chunk/complete 事件上继续触发 → 旧 `onStream` 把**新请求**内容累积写入**旧字段** → 跨字段串写
+
+**根因（三层断裂，非缓存）：**
+1. **⚠️【重点标记】全局频道无请求归属**：`'ai:stream'` 等按 webContents 广播，同一窗口内先后/并发流式请求共用频道，监听器无法区分事件属于哪个请求；同一窗口多请求必然串扰
+2. 监听器清理分散且不完备：`completeListener` 漏 off `'ai:stream:error'`；`errorListener` 不移除自身；`!result.success` 路径无 `return`；**外层 catch（AbortError/超时/网络错）完全不清理** → 任一异常路径即滞留监听器
+3. 滞留监听器持续接收后续请求事件，`onStream`/`onComplete` 按旧字段闭包写值 → 内容跨字段污染
+
+**修复（9 处，主进程+preload+渲染进程三协同，已 git diff 确认落盘）：**
+- 主进程 `aiHandlers.ts`：所有流式事件（chunk/complete/error）回传 `requestId`（渲染进程传入优先，否则 `generateRequestId()`）；chunk L441、complete L754、error L977 均携带
+- preload `preload.ts`：`ai.request` 类型补 `requestId?: string`
+- 渲染 `AIService.tsx`：
+  - 每请求生成 `req-${Date.now()}-...` requestId；监听器加 `isOwnEvent` 过滤（requestId 匹配 + `disposed` 守卫）——串扰防御核心
+  - 清理收敛为**单一幂等 `cleanup()`**（`disposed` 标志，全路径调用：complete/error/失败/catch/兜底定时器）
+  - `completeListener`/`errorListener` 补 off `'ai:stream:error'`；`!result.success` 路径补 `return`
+  - invoke 携带 requestId + **30s 兜底定时器**防 complete 丢失导致监听器滞留
+  - 外层 catch 补 `cleanup()`
+- **⚠️【重点标记】作用域修正**：try 移位到只包裹 invoke，`cleanup` 提升到 method 级使 catch 可访问（原 `cleanup` 在 try 内，catch 访问报 TS2304，移位后闭合）
+
+**验证：**
+- 主进程/preload 经 `git diff` 确认正确；渲染 AIService.tsx 9 处确定性脚本替换全绿（+67 -14）
+- `tsc --noEmit` 本次涉及文件零新增错误（stash 对照：React/unknown/OpenAI 响应类为存量基线，不变）
+- dev server 已重启（VITE ready in 475ms + preload.js 重建 65.30kB，含新 requestId）
+- 调用链闭合确认：角色卡按钮 → `runStreamingAI` → `sendAssistantAIStreamRequest` → `sendStreamChatRequest`（已修函数）；翻译/润色/生成三按钮全走此链
+- 功能验证待用户：角色卡连续多次生成/翻译/润色（含取消中断）确认仅目标字段更新、无跨字段串写
+
+**经验教训：**
+- Electron 流式 IPC 用全局频道广播时，必须用请求级 id 贯穿事件归属，且清理收敛为单一幂等入口 + 所有路径调用（含 catch/超时/异常）；漏一条路径即泄漏
+- 监听器注册后必须有"确定性注销"，不能依赖某个事件按时到达；安全定时器是重要保险
+- 多请求并发时，按 webContents 广播的频道天然串扰，单一监听器无法区分来源——过滤必须按 requestId
+- 调试"状态被外部事件污染"类问题：先取证日志确认事件时序（哪个请求触发哪个事件）→ 查监听器生命周期（是否泄漏）→ 定位归属过滤缺失
+
+**用户验证路径：**
+角色卡编辑页 → 连续点"生成描述"→ 取消/改点"翻译"→ 再"润色"，每次只目标字段变化、其余字段内容不变；且多次快速连续操作不累积串扰。
+
+
+## §7.71 角色卡 AI 三操作全字段上下文统一（2026-09-28，Spec: unify-character-card-full-field-context，功能增强非 bug）
+
+**需求：** 用户要求生成/翻译/润色点击时自动收集角色卡全部可编辑字段（名称、昵称、标签、系统提示、历史记录后指令、创建者笔记等）作为统一参考基准，实现三操作数据处理的一致性与同步性。
+
+**现状差距（改造前）：**
+- 翻译/润色：`buildCharacterContext` 遍历 `FIELD_DESCRIPTIONS`（仅 9 个长文本字段）→ `<context_reference>` 缺 name/nickname/source/creator/character_version/tags 6 个短字段
+- 生成：`existing_fields_info` 同样仅 9 字段（缺 source），短字段靠 `character-card.generate` 模板变量（character_name + 4 行）另行拼接 → 三操作参考基准不统一
+
+**改动（3 文件，最小侵入）：**
+1. `characterFieldScope.ts`：`FIELD_DESCRIPTIONS` 扩展 6 个短字段条目（name=角色名称、nickname=昵称、source=来源、creator=创建者、character_version=版本信息、tags=标签，label 与 CharacterEditModal 编辑器一致）；`buildCharacterContext` 从 useCharacterAIOperations 移入本纯模块（原文件头已注明该 hook 依赖 antd/AIService 测试导入链路重，沿用既有抽取模式），tags 数组用顿号连接保持单行紧凑（其他数组字段仍换行连接）
+2. `useCharacterAIOperations.ts`：删除本地 `buildCharacterContext`，改为导入；翻译（`<context_reference>`）、润色、生成 `existing_fields_info` 三处消费遍历同一 `FIELD_DESCRIPTIONS`，自动统一为"全部 15 个可编辑字段（排除目标字段与空值）"
+3. `characterFieldScope.test.ts`：新增 7 用例（短字段标签防御 2 判越界 / 防御 1 提取 name、tags 标签后内容；buildCharacterContext 全字段排除目标、短字段目标排除、顿号/换行连接、空值跳过）
+
+**自动受益（未改调用处）：** 翻译/润色上下文补齐 6 个短字段；生成补 source；`extractTargetFieldContent` 越界防御识别"角色名称：/【标签】"等短字段段落（Flash 模型全卡泛化输出防御增强）；翻译/润色短字段目标时 fieldLabel 显示中文名（原显示英文 key）
+
+**兼容性决策：** 生成模板的 `character_name` 与 4 个短字段行变量保持传入不动（主进程 `character-card.generate` 为用户可编辑持久化模板，避免动其变量语义）；`existing_fields_info` 与模板行存在少量短字段重复，属模板兼容可接受冗余。短字段无生成按钮（现状保持）。
+
+**验证：** 17 个单测全绿（既有 10 零回归 + 新增 7）；typecheck 本次文件零新增错误；dev server 已重启（VITE ready 466ms + preload 重建）。用户验证路径：编辑弹窗内对长字段翻译/润色时提示词 `<context_reference>` 应含角色名称/标签等短字段；生成时 `existing_fields_info` 应含"来源"（若已填）。

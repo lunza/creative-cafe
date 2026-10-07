@@ -1,0 +1,2 @@
+{"session": "v2-p3-features", "point": "createProject-result", "data": {"success": false, "projectId": "", "error": "Cannot read properties of undefined (reading 'substring')", "params": {"descLen": -1, "model": "local-llm"}}, "ts": 1790681073582, "runId": "pre"}
+{"session": "v2-p3-features", "point": "createProject-result", "data": {"success": true, "projectId": "writing_project_1790681506086_j2zz0tm4y", "error": null, "params": {"chapterCount": 10, "targetWordCount": 20000, "descLen": 1719, "model": "local-llm"}}, "ts": 1790681506101, "runId": "pre"}

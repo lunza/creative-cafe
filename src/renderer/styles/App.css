@@ -1150,3 +1150,38 @@
   color: var(--color-info);
 }
 
+/* ==========================================================================
+   写作 2.0 漫画解析：右侧 Tabs 内容区滚动
+   ⚠️ antd 6（@rc-component/tabs）的 Tabs DOM 类名与 antd 5 不同：
+   .ant-tabs > .ant-tabs-nav + .ant-tabs-body-holder > .ant-tabs-body
+     > .ant-tabs-content（每个页签一个，非激活带 -hidden 类）
+   此处选择器必须用 antd 6 类名（antd 5 的 .ant-tabs-content-holder /
+   .ant-tabs-tabpane 在 antd 6 中不存在，CSS 会静默落空）。
+   ========================================================================== */
+
+.v2-manga-stage-tabs {
+  display: flex;
+  flex-direction: column;
+}
+
+.v2-manga-stage-tabs > .ant-tabs-nav {
+  flex-shrink: 0;
+}
+
+.v2-manga-stage-tabs > .ant-tabs-body-holder {
+  flex: 1;
+  min-height: 0;
+}
+
+.v2-manga-stage-tabs .ant-tabs-body {
+  height: 100%;
+}
+
+.v2-manga-stage-tabs .ant-tabs-body > .ant-tabs-content {
+  height: 100%;
+}
+
+.v2-manga-stage-tabs .ant-tabs-body > .ant-tabs-content:not(.ant-tabs-content-hidden) {
+  overflow-y: auto;
+}
+

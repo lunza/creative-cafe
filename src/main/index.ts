@@ -99,6 +99,30 @@ app.whenReady().then(async () => {
   createWindow();
   setupIpcHandlers();
 
+  // dev-only：无头 E2E 自动执行（Spec: add-novel-writing-pipeline-api）
+  // 通过环境变量 PIPELINE_E2E_SCALE=smoke|full|v2-integrated 触发；打包版忽略。
+  // - smoke/full：runE2E，报告落盘 data/writing-projects/exports/e2e-report-*.json
+  // - v2-integrated：runV2IntegratedE2E（Spec: test-writing-v2-integrated-e2e），
+  //   整合剧情审核单条修正 + 表格整理 + 表格上下文注入，报告落盘 exports/v2-integrated-report-*.json
+  // 完成后不退出，便于 UI 查看。
+  const e2eScale = process.env.PIPELINE_E2E_SCALE;
+  if (!app.isPackaged && (e2eScale === 'smoke' || e2eScale === 'full' || e2eScale === 'v2-integrated')) {
+    const { writingPipelineService } = await import('./services/writing/WritingPipelineService');
+    setTimeout(() => {
+      const runner =
+        e2eScale === 'v2-integrated'
+          ? writingPipelineService.runV2IntegratedE2E()
+          : writingPipelineService.runE2E({ scale: e2eScale as 'smoke' | 'full' });
+      runner
+        .then((res) => {
+          console.log(
+            `[PipelineE2E] auto-run finished success=${res.success} verdict=${res.data?.report?.verdict ?? '-'} error=${res.error ?? ''}`
+          );
+        })
+        .catch((e) => console.error('[PipelineE2E] auto-run crashed:', e));
+    }, 6000);
+  }
+
   // 启动内嵌 LAN API 服务（供局域网安卓客户端访问；Spec: add-android-chat-client / Task 1）
   startLanApiServer();
 
