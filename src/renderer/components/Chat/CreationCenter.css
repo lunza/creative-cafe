@@ -31,9 +31,9 @@
   --panel-chat-active: #818cf8;
   --panel-chat-glow: rgba(99, 102, 241, 0.3);
 
-  --panel-creative-color: #f59e0b;
-  --panel-creative-active: #fbbf24;
-  --panel-creative-glow: rgba(245, 158, 11, 0.3);
+  --panel-creative-color: #06b6d4;
+  --panel-creative-active: #22d3ee;
+  --panel-creative-glow: rgba(6, 182, 212, 0.3);
 
   --panel-game-color: #10b981;
   --panel-game-active: #34d399;
@@ -121,20 +121,20 @@
 }
 
 /* 写作模式纹理 - 纸张质感纹理 */
-.chat-panel[data-panel="creative"]::before {
+.chat-panel[data-panel="creative-v2"]::before {
   background-image: 
-    repeating-linear-gradient(0deg, transparent, transparent 28px, rgba(245, 158, 11, 0.08) 28px, rgba(245, 158, 11, 0.08) 29px),
-    repeating-linear-gradient(90deg, transparent, transparent 28px, rgba(245, 158, 11, 0.05) 28px, rgba(245, 158, 11, 0.05) 29px),
-    linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, transparent 50%, rgba(245, 158, 11, 0.05) 100%);
+    repeating-linear-gradient(0deg, transparent, transparent 28px, rgba(6, 182, 212, 0.08) 28px, rgba(6, 182, 212, 0.08) 29px),
+    repeating-linear-gradient(90deg, transparent, transparent 28px, rgba(6, 182, 212, 0.05) 28px, rgba(6, 182, 212, 0.05) 29px),
+    linear-gradient(135deg, rgba(6, 182, 212, 0.1) 0%, transparent 50%, rgba(6, 182, 212, 0.05) 100%);
   background-size: 100% 100%, 100% 100%, 100% 100%;
   opacity: var(--texture-opacity);
 }
 
-.chat-panel[data-panel="creative"]:hover::before {
+.chat-panel[data-panel="creative-v2"]:hover::before {
   opacity: var(--texture-opacity-hover);
 }
 
-.chat-panel[data-panel="creative"].active::before {
+.chat-panel[data-panel="creative-v2"].active::before {
   opacity: var(--texture-opacity-active);
   animation: creativeShimmer 2.5s ease-in-out infinite;
 }
@@ -291,7 +291,7 @@
   --panel-glow: var(--panel-chat-glow);
 }
 
-.chat-panel[data-panel="creative"] .chat-panel-icon {
+.chat-panel[data-panel="creative-v2"] .chat-panel-icon {
   --panel-glow: var(--panel-creative-glow);
 }
 
@@ -464,7 +464,7 @@
     0 4px 16px var(--panel-chat-glow);
 }
 
-.chat-panel[data-panel="creative"].active .chat-panel-border {
+.chat-panel[data-panel="creative-v2"].active .chat-panel-border {
   box-shadow:
     inset 0 2px 0 rgba(255, 255, 255, 0.2),
     inset 0 -2px 0 rgba(0, 0, 0, 0.15),

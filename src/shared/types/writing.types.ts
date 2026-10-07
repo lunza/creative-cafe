@@ -79,36 +79,6 @@ export enum ImportanceLevel {
   CRITICAL = 'critical'
 }
 
-// 生成模式
-export enum GenerationMode {
-  SINGLE = 'single',
-  CONTINUOUS = 'continuous'
-}
-
-// 写作模式视图
-export enum WritingModeView {
-  PROJECT_LIST = 'project_list',
-  CONFIG = 'config',
-  OUTLINE_GENERATING = 'outline_generating',
-  OUTLINE_EDITING = 'outline_editing',
-  CONTENT_GENERATING = 'content_generating',
-  CONTENT_EDITING = 'content_editing',
-  CONTENT_GENERATION = 'content_generation'
-}
-
-// 生成状态
-export enum GenerationState {
-  IDLE = 'idle',
-  PREPARING = 'preparing',
-  GENERATING = 'generating',
-  STREAMING = 'streaming',
-  SAVING = 'saving',
-  PAUSED = 'paused',
-  COMPLETED = 'completed',
-  STOPPED = 'stopped',
-  ERROR = 'error'
-}
-
 // 导出格式
 export enum ExportFormat {
   TXT = 'txt',
@@ -145,20 +115,6 @@ export interface WritingResourceConfig {
   knowledgeItemIds?: string[];
   referenceMaterials?: ReferenceMaterial[];
   writingStyleIds?: string[];
-}
-
-// 素材类型
-export type MaterialType = 'worldbook' | 'character' | 'persona' | 'knowledge' | 'writing-style';
-
-// 素材项
-export interface MaterialItem {
-  id: string;
-  name: string;
-  type: MaterialType;
-  description?: string;
-  path: string;
-  isSelected: boolean;
-  metadata?: Record<string, any>;
 }
 
 // 创作参数
@@ -300,11 +256,6 @@ export interface ContentGenerationRequest {
   customWritingStyleId?: string;
 }
 
-// 章节生成用户建议（简洁模式）
-export interface GenerationSuggestion {
-  suggestion: string;
-}
-
 // 章节重新生成结构化建议（高级模式）
 export interface RegenerationSuggestion {
   keepContent: string;    // 需保留的优秀部分
@@ -341,24 +292,6 @@ export interface StoryLine {
     resolution: string;
   };
   theme: string;
-}
-
-// 增强版故事主线（支持更全面的故事设定）
-export interface EnhancedStoryLine extends StoryLine {
-  backstory?: string;
-  setting?: string;
-  tone?: string;
-  genre?: string[];
-  subplots?: {
-    name: string;
-    description: string;
-    relatedChapters: number[];
-  }[];
-  majorEvents?: {
-    title: string;
-    description: string;
-    chapterRange: [number, number];
-  }[];
 }
 
 // 章节大纲
@@ -405,114 +338,10 @@ export interface CharacterRelationship {
   }[];
 }
 
-// 角色详情（增强版）
-export interface CharacterDetail {
-  id: string;
-  name: string;
-  role: string;
-  description: string;
-  personality: string;
-  background: string;
-  motivations: string;
-  conflicts: string;
-  development: string;
-  relationships: {
-    targetCharacterId: string;
-    targetCharacterName: string;
-    relationshipType: string;
-    description: string;
-  }[];
-  tags?: string[];
-}
-
-// 角色关系网络
-export interface CharacterRelationshipNetwork {
-  characters: CharacterDetail[];
-  relationships: {
-    fromCharacterId: string;
-    toCharacterId: string;
-    type: string;
-    description: string;
-    intensity: 'low' | 'medium' | 'high' | 'critical';
-  }[];
-}
-
 // 世界观要点
 export interface WorldbuildingNotes {
   category: string;
   points: string[];
-}
-
-// 世界观设定
-export interface WorldSetting {
-  id: string;
-  name: string;
-  category: string;
-  description: string;
-  details: string[];
-  relatedCharacters?: string[];
-  relatedChapters?: number[];
-  importance?: ImportanceLevel;
-}
-
-// 世界观分组
-export interface WorldSettingGroup {
-  id: string;
-  name: string;
-  description: string;
-  settings: WorldSetting[];
-}
-
-// 大纲编辑区域
-export enum OutlineEditSection {
-  STORYLINE = 'storyline',
-  CHARACTERS = 'characters',
-  WORLD = 'world',
-  CHAPTERS = 'chapters',
-}
-
-// 大纲编辑模式
-export enum OutlineEditMode {
-  AI_GENERATED = 'ai_generated',
-  MANUAL_EDIT = 'manual_edit',
-  AI_ASSISTED = 'ai_assisted',
-}
-
-// 大纲版本信息
-export interface OutlineVersion {
-  id: string;
-  outline: GeneratedOutline;
-  timestamp: number;
-  note?: string;
-  source: 'auto_save' | 'manual_save' | 'ai_generation' | 'ai_edit' | 'restore';
-  isCurrent: boolean;
-}
-
-// AI编辑意图
-export interface AIEditIntent {
-  type: 'storyline' | 'chapter' | 'character' | 'world' | 'continuation';
-  instruction: string;
-  targetSection?: OutlineEditSection;
-  targetId?: string;
-  context?: Record<string, any>;
-}
-
-// AI编辑结果
-export interface AIEditResult {
-  success: boolean;
-  content?: string;
-  changes?: Record<string, any>;
-  suggestions?: string[];
-  error?: string;
-}
-
-// 大纲变更影响分析
-export interface OutlineImpactAnalysis {
-  affectedChapters: number[];
-  affectedCharacters: string[];
-  affectedWorldSettings: string[];
-  severity: 'low' | 'medium' | 'high';
-  description: string;
 }
 
 // 生成的大纲
@@ -646,32 +475,6 @@ export interface WritingError {
   errorType?: 'timeout' | 'network' | 'service' | 'unknown';
 }
 
-// 流式数据
-export interface StreamChunkData {
-  projectId: string;
-  chapterIndex: number;
-  chunk: string;
-}
-
-export interface StreamCompleteData {
-  projectId: string;
-  chapterIndex: number;
-  content: string;
-  metadata: {
-    model: string;
-    temperature: number;
-    tokensUsed: number;
-    generationTime: number;
-    finishReason: string;
-  };
-}
-
-export interface StreamErrorData {
-  projectId: string;
-  chapterIndex: number;
-  error: WritingError;
-}
-
 // 世界书上下文
 export interface WorldBookContext {
   id: string;
@@ -719,52 +522,6 @@ export interface RetrieveOptions {
   sources?: string[];
   scopeIds?: string[];
   filter?: Record<string, any>;
-}
-
-// 生成元数据
-export interface GenerationMetadata {
-  model: string;
-  temperature: number;
-  tokensUsed: number;
-  generationTime: number;
-  finishReason: string;
-}
-
-// 大纲操作类型（用于撤销/重做）
-export enum OutlineActionType {
-  ADD_CHAPTER = 'add_chapter',
-  DELETE_CHAPTER = 'delete_chapter',
-  UPDATE_CHAPTER = 'update_chapter',
-  MOVE_CHAPTER = 'move_chapter',
-  MERGE_CHAPTERS = 'merge_chapters',
-  SPLIT_CHAPTER = 'split_chapter',
-  ADD_SUB_CHAPTER = 'add_sub_chapter',
-  DELETE_SUB_CHAPTER = 'delete_sub_chapter',
-  MOVE_SUB_CHAPTER = 'move_sub_chapter'
-}
-
-// 大纲操作记录
-export interface OutlineAction {
-  type: OutlineActionType;
-  timestamp: number;
-  // 操作前的状态（用于撤销）
-  before: any;
-  // 操作后的状态（用于重做）
-  after: any;
-  // 操作描述（用于UI显示）
-  description: string;
-}
-
-// 大纲历史状态
-export interface OutlineHistoryState {
-  // 章节列表快照
-  chapters: ChapterOutline[];
-  // 时间戳
-  timestamp: number;
-  // 操作描述
-  description: string;
-  // 是否自动保存
-  isAutoSave?: boolean;
 }
 
 // AI辅助拆分/合并相关类型
@@ -950,12 +707,6 @@ export interface PlotCheckReport {
   error?: string;
 }
 
-export interface PlotCheckRequest {
-  projectId: string;
-  chapterIndex: number;
-  content: string;
-}
-
 // 逻辑异常检测相关类型
 export enum LogicContradictionType {
   ITEM_STATE = 'item_state',
@@ -1022,12 +773,6 @@ export interface QuickFixSuggestion {
     startIndex: number;
     endIndex: number;
   };
-}
-
-export interface QuickFixResult {
-  success: boolean;
-  suggestion: QuickFixSuggestion | null;
-  error?: string;
 }
 
 export interface AutoFixDiff {

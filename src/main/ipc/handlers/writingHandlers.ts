@@ -27,11 +27,10 @@ import { registerWritingStyleHandlers } from './writing/writingStyleHandlers';
 import { registerWritingPlotCheckHandlers } from './writing/writingPlotCheckHandlers';
 import { registerWritingCrossCheckHandlers } from './writing/writingCrossCheckHandlers';
 import { registerWritingTemplateHandlers } from './writing/writingTemplateHandlers';
-import { registerWritingAgentHandlers, abortActiveWritingAgent } from './writing/writingAgentHandlers';
 
 // 重新导出 abortAllActiveRequests，保持 main/index.ts 调用方式不变
 // （main/index.ts: import { registerWritingHandlers, abortAllActiveRequests } from './ipc/handlers/writingHandlers'）
-export { abortAllActiveRequests, abortActiveWritingAgent };
+export { abortAllActiveRequests };
 
 export function registerWritingHandlers(): void {
   registerWritingProjectHandlers();
@@ -43,6 +42,4 @@ export function registerWritingHandlers(): void {
   // 跨章节连贯性审查（Spec: add-cross-chapter-coherence-review）
   registerWritingCrossCheckHandlers();
   registerWritingTemplateHandlers();
-  // Task 15.2: 写作智能体编排 IPC（run/cancel/status/resume + progress 流）
-  registerWritingAgentHandlers();
 }

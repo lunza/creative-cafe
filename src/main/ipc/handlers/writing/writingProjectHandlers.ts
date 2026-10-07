@@ -1,8 +1,7 @@
 /**
  * 写作模式 - 项目相关 IPC handler
  *
- * 涵盖：项目 CRUD、原始大纲保存、资源加载、版本控制、
- * AI 生成历史、清理全部生成请求等。
+ * 涵盖：项目 CRUD、资源加载、版本控制、清理全部生成请求等。
  *
  * 注意：本文件内 handler 历史上以「try/catch + 返回 { success: false, error }」
  * 模式向渲染进程返回失败结果，因此保留内部 try/catch 以保持 IPC 响应形态不变，
@@ -10,16 +9,13 @@
  * 统一通过 utils/wrapHandler 包装。
  */
 import { ipcMain } from 'electron';
-import fs from 'fs';
-import path from 'path';
 import { writingStorageService } from '../../../services/WritingStorageService';
 import { writingResourceManager } from '../../../services/WritingResourceManager';
 import { addLog } from '../../../services/memory/chatLogService';
 import {
   WritingConfig,
   WritingProject,
-  ProjectStatus,
-  ExportFormat
+  ProjectStatus
 } from '../../../../shared/types/writing.types';
 import { wrapHandler } from '../utils/wrapHandler';
 
@@ -123,36 +119,10 @@ export function registerWritingProjectHandlers(): void {
     }
   });
 
-  ipcMain.handle('writing:saveProjectRaw', async (_event, projectId: string, rawContent: string) => {
-    try {
-      const projectDir = writingStorageService.getProjectDirPath(projectId);
-      if (projectDir && rawContent) {
-        const rawFile = path.join(projectDir, 'outline_raw.md');
-        fs.writeFileSync(rawFile, rawContent, 'utf8');
-        return { success: true };
-      }
-      return { success: false, error: 'Project dir not found' };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
-    }
-  });
-
   ipcMain.handle('writing:deleteProject', async (_event, projectId: string) => {
     try {
       const deleted = await writingStorageService.deleteProject(projectId);
       return { success: deleted };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      };
-    }
-  });
-
-  ipcMain.handle('writing:exportProject', async (_event, projectId: string, format: ExportFormat) => {
-    try {
-      const filePath = await writingStorageService.exportProject(projectId, format);
-      return { success: true, filePath };
     } catch (error) {
       return {
         success: false,
@@ -221,68 +191,6 @@ export function registerWritingProjectHandlers(): void {
     try {
       const success = await writingStorageService.restoreVersion(projectId, chapterIndex, versionId);
       return { success };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      };
-    }
-  });
-
-  // ========== AI 生成历史 ==========
-
-  ipcMain.handle('writing:saveAIGenerationHistory', async (_event, { projectId, history }) => {
-    try {
-      const project = await writingStorageService.loadProject(projectId);
-      if (!project) return { success: false, error: 'Project not found' };
-
-      project.aiGenerationHistory = project.aiGenerationHistory || [];
-      project.aiGenerationHistory.push(history);
-
-      const maxHistory = 20;
-      if (project.aiGenerationHistory.length > maxHistory) {
-        project.aiGenerationHistory = project.aiGenerationHistory.slice(-maxHistory);
-      }
-
-      project.updatedAt = Date.now();
-      await writingStorageService.saveProject(project);
-
-      return { success: true };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      };
-    }
-  });
-
-  ipcMain.handle('writing:loadAIGenerationHistory', async (_event, { projectId }) => {
-    try {
-      const project = await writingStorageService.loadProject(projectId);
-      if (!project) return { success: false, error: 'Project not found' };
-
-      return {
-        success: true,
-        history: project.aiGenerationHistory || []
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      };
-    }
-  });
-
-  ipcMain.handle('writing:clearAIGenerationHistory', async (_event, { projectId }) => {
-    try {
-      const project = await writingStorageService.loadProject(projectId);
-      if (!project) return { success: false, error: 'Project not found' };
-
-      project.aiGenerationHistory = [];
-      project.updatedAt = Date.now();
-      await writingStorageService.saveProject(project);
-
-      return { success: true };
     } catch (error) {
       return {
         success: false,

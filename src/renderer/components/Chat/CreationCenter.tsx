@@ -11,19 +11,13 @@ import { useDataStore } from '../../stores/dataStore';
 import { useFavoritesStore } from '../../stores/favoritesStore';
 import './CreationCenter.css';
 
-// Lazy mount WritingModeEntry：仅当用户打开写作模式对话框时才加载其模块
-// （包含 OutlineEditor / ContentWorkspace / WritingConfigModal 等重依赖）
-const WritingModeEntry = lazy(
-  () => import('../Creative/WritingMode').then(m => ({ default: m.WritingModeEntry }))
-);
-
 // Lazy mount WritingV2Entry：写作模式 2.0（Spec: refactor-writing-mode-v2）
-// 独立模块 WritingModeV2，与 V1 互不影响；仅当用户打开 V2 对话框时才加载
+// 独立模块 WritingModeV2；仅当用户打开 V2 对话框时才加载
 const WritingV2Entry = lazy(
   () => import('../Creative/WritingModeV2').then(m => ({ default: m.WritingV2Entry }))
 );
 
-type ChatPanelType = 'chat' | 'creative' | 'creative-v2';
+type ChatPanelType = 'chat' | 'creative-v2';
 
 interface PanelConfig {
   label: string;
@@ -44,17 +38,9 @@ const panelConfig: Record<ChatPanelType, PanelConfig> = {
     color: '#6366f1',
     activeColor: '#818cf8',
   },
-  creative: {
+  'creative-v2': {
     label: '写作模式',
     description: 'AI辅助创作，生成故事、小说和各类文本内容',
-    icon: <EditOutlined />,
-    color: '#f59e0b',
-    activeColor: '#fbbf24',
-    devBadge: true,
-  },
-  'creative-v2': {
-    label: '写作模式 2.0',
-    description: '全新架构的AI写作（分阶段上线，与经典版共用项目库）',
     icon: <EditOutlined />,
     color: '#06b6d4',
     activeColor: '#22d3ee',
@@ -65,7 +51,6 @@ const panelConfig: Record<ChatPanelType, PanelConfig> = {
 
 const colorMap: Record<ChatPanelType, string> = {
   chat: '#6366f1',
-  creative: '#f59e0b',
   'creative-v2': '#06b6d4',
 };
 
@@ -138,13 +123,11 @@ const FavoriteItem = React.memo<FavoriteItemProps>(({ character, onClick, onRemo
 export const CreationCenter: React.FC = () => {
   const [activePanel, setActivePanel] = useState<ChatPanelType>('chat');
   const [showChatDialog, setShowChatDialog] = useState(false);
-  const [showWritingDialog, setShowWritingDialog] = useState(false);
   const [showWritingV2Dialog, setShowWritingV2Dialog] = useState(false);
   const [selectedCharacterPath, setSelectedCharacterPath] = useState<string | undefined>(undefined);
   const [flashingPanel, setFlashingPanel] = useState<ChatPanelType | null>(null);
   const [ripples, setRipples] = useState<Record<ChatPanelType, Ripple[]>>({
     chat: [],
-    creative: [],
     'creative-v2': [],
   });
   const rippleCounter = useRef(0);
@@ -304,8 +287,6 @@ export const CreationCenter: React.FC = () => {
     if (panel === 'chat') {
       setSelectedCharacterPath(undefined);
       setShowChatDialog(true);
-    } else if (panel === 'creative') {
-      setShowWritingDialog(true);
     } else if (panel === 'creative-v2') {
       setShowWritingV2Dialog(true);
     }
@@ -314,10 +295,6 @@ export const CreationCenter: React.FC = () => {
   const handleCloseChat = useCallback(() => {
     setShowChatDialog(false);
     setSelectedCharacterPath(undefined);
-  }, []);
-
-  const handleCloseWriting = useCallback(() => {
-    setShowWritingDialog(false);
   }, []);
 
   const handleCloseWritingV2 = useCallback(() => {
@@ -420,14 +397,6 @@ export const CreationCenter: React.FC = () => {
         onCloseDialog={handleCloseChat}
         initialCharacterPath={selectedCharacterPath}
       />
-
-      <FullscreenDialog
-        visible={showWritingDialog}
-        title="写作模式"
-        onClose={handleCloseWriting}
-      >
-        <WritingModeEntry />
-      </FullscreenDialog>
 
       <FullscreenDialog
         visible={showWritingV2Dialog}

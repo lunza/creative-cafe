@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import path from 'path';
 import { setupIpcHandlers } from './ipc';
-import { abortAllActiveRequests, abortActiveWritingAgent } from './ipc/handlers/writingHandlers';
+import { abortAllActiveRequests } from './ipc/handlers/writingHandlers';
 import { abortAllAIRequests } from './ipc/handlers/aiHandlers';
 import { startLanApiServer, stopLanApiServer } from './services/lanApiServer/server';
 
@@ -90,8 +90,6 @@ function createWindow() {
   // Abort all active generation requests on page refresh (F5/Cmd+R) or navigation
   mainWindow.webContents.on('will-navigate', () => {
     abortAllActiveRequests();
-    // Task 15.2: 同时取消活跃的写作智能体编排，避免后台孤儿任务
-    abortActiveWritingAgent();
   });
 }
 
@@ -162,9 +160,6 @@ app.on('before-quit', (event) => {
 
   // 停止内嵌 LAN API 服务（Spec: add-android-chat-client）
   stopLanApiServer();
-
-  // Task 15.2: 退出前取消活跃的写作智能体编排（避免后台孤儿任务持续调用 AI）
-  abortActiveWritingAgent();
 
   // 中止所有活跃的 AI HTTP 请求（世界书翻译/润色/审核等），避免退出后孤儿请求继续执行
   const cancelledAICount = abortAllAIRequests();

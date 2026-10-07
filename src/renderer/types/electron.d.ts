@@ -1,16 +1,3 @@
-import {
-  WritingStyleResource,
-  WritingStyleLearningRequest,
-  WritingStyleProgress,
-  CustomNovelTypeTemplate,
-  CustomWritingStyleTemplate
-} from '../../shared/types/writing.types';
-import type {
-  WritingAgentRequest,
-  WritingAgentResult,
-  WritingAgentStatus,
-  WritingAgentEvent
-} from '../../shared/types/writing-agent.types';
 import type { WritingV2API } from '../../shared/types/writing-v2.types';
 import type {
   PromptPolishRequest,
@@ -626,89 +613,8 @@ interface ElectronAPI {
     ) => Promise<{ success: boolean }>;
   };
 
-  // 写作模式 API
-  writing: {
-    loadProjects: () => Promise<{ success: boolean; projects: any[] }>;
-    createProject: (config: any) => Promise<{ success: boolean; projectId: string }>;
-    saveProject: (project: any) => Promise<{ success: boolean }>;
-    deleteProject: (projectId: string) => Promise<{ success: boolean }>;
-    exportProject: (projectId: string, format: string) => Promise<{ success: boolean; filePath?: string }>;
-    generateOutline: (request: any) => Promise<{ success: boolean; outline?: any; outlineRaw?: string; error?: string; parseError?: string }>;
-    saveProjectRaw: (projectId: string, rawContent: string) => Promise<{ success: boolean; error?: string }>;
-    generateChapter: (request: any) => Promise<{ success: boolean }>;
-    generateChapterChunk: (request: any) => Promise<{ success: boolean }>;
-    cancelGeneration: (projectId: string) => Promise<{ success: boolean }>;
-    cancelChunkGeneration: (projectId: string, chapterIndex: number, chunkIndex: number) => Promise<{ success: boolean }>;
-    autoSaveChapter: (data: { projectId: string; chapterIndex: number; content: string }) => Promise<{ success: boolean }>;
-    saveVersion: (data: { projectId: string; chapterIndex: number; content: string; note?: string }) => Promise<{ success: boolean }>;
-    restoreVersion: (data: { projectId: string; chapterIndex: number; versionId: string }) => Promise<{ success: boolean }>;
-    onStreamChunk: (callback: (data: { projectId: string; chapterIndex: number; chunk: string }) => void) => () => void;
-    onStreamComplete: (callback: (data: { projectId: string; chapterIndex: number; content: string; metadata: any }) => void) => () => void;
-    onStreamError: (callback: (data: { projectId: string; chapterIndex: number; error: any }) => void) => () => void;
-    onChunkStart: (callback: (data: { projectId: string; chapterIndex: number; chunkIndex: number }) => void) => () => void;
-    onChunkProgress: (callback: (data: { projectId: string; chapterIndex: number; chunkIndex: number; chunk: string }) => void) => () => void;
-    onChunkComplete: (callback: (data: { projectId: string; chapterIndex: number; chunkIndex: number; content: string }) => void) => () => void;
-    onChunkError: (callback: (data: { projectId: string; chapterIndex: number; chunkIndex: number; error: any }) => void) => () => void;
-    offStreamChunk: (callback: (data: any) => void) => void;
-    offStreamComplete: (callback: (data: any) => void) => void;
-    offStreamError: (callback: (data: any) => void) => void;
-    // 写作风格 API
-    style: {
-      upload: (request: WritingStyleLearningRequest) => Promise<{ success: boolean; taskId: string; error?: string }>;
-      list: () => Promise<{ success: boolean; styles: WritingStyleResource[]; error?: string }>;
-      get: (resourceId: string) => Promise<{ success: boolean; style: WritingStyleResource | null; error?: string }>;
-      delete: (resourceId: string) => Promise<{ success: boolean; error?: string }>;
-      cancel: (taskId: string) => Promise<{ success: boolean; error?: string }>;
-      getActiveTasks: () => Promise<{ success: boolean; activeTaskIds: string[]; error?: string }>;
-      onProgress: (callback: (data: { taskId: string; progress: WritingStyleProgress }) => void) => () => void;
-      onComplete: (callback: (data: { taskId: string; resource: WritingStyleResource }) => void) => () => void;
-      onError: (callback: (data: { taskId: string; error: string }) => void) => () => void;
-    };
-    // 表格整理 API
-    table: {
-      getTableData: (projectId: string) => Promise<{ sheets: string[]; headers: Record<string, string[]>; data: Record<string, Record<string, any>[]>; sheetDescriptions: Record<string, string> }>;
-      saveTableData: (projectId: string, sheetName: string, sheetData: Record<string, any>[]) => Promise<void>;
-      clearTableData: (projectId: string) => Promise<void>;
-      updateRowInTable: (projectId: string, sheetName: string, rowIndex: number, rowData: Record<string, any>) => Promise<boolean>;
-      getTableConfig: (projectId: string) => Promise<{ enabled: boolean; autoOrganize: boolean; organizeMode: 'sync' | 'async'; associatedTemplateId: string | null; associatedTemplateName: string } | null>;
-      saveTableConfig: (projectId: string, config: { enabled: boolean; autoOrganize: boolean; organizeMode: 'sync' | 'async'; associatedTemplateId: string | null; associatedTemplateName: string }) => Promise<void>;
-      associateTableTemplate: (projectId: string, templateId: string, templateName: string, templateSheets: Array<{ name: string; headers: string[]; description?: string }>) => Promise<{ success: boolean; error?: string }>;
-      getAllTemplates: () => Promise<{ success: boolean; templates: any[]; error?: string }>;
-      organizeTable: (projectId: string, modelConfig: any, chapterIndex?: number) => Promise<{ success: boolean; message: string; processedCount?: number; errorCount?: number; errors?: string[] }>;
-      getOrganizeProgress: (projectId: string) => Promise<{ progress: number; status: string } | null>;
-    };
-    // 自定义模板管理 API
-    template: {
-      novelType: {
-        list: () => Promise<{ success: boolean; templates: CustomNovelTypeTemplate[]; error?: string }>;
-        get: (id: string) => Promise<{ success: boolean; template: CustomNovelTypeTemplate | null; error?: string }>;
-        save: (template: CustomNovelTypeTemplate) => Promise<{ success: boolean; id?: string; error?: string }>;
-        delete: (id: string) => Promise<{ success: boolean; error?: string }>;
-      };
-      writingStyle: {
-        list: () => Promise<{ success: boolean; templates: CustomWritingStyleTemplate[]; error?: string }>;
-        get: (id: string) => Promise<{ success: boolean; template: CustomWritingStyleTemplate | null; error?: string }>;
-        save: (template: CustomWritingStyleTemplate) => Promise<{ success: boolean; id?: string; error?: string }>;
-        delete: (id: string) => Promise<{ success: boolean; error?: string }>;
-      };
-    };
-    // 写作智能体编排 API（Task 15.2: 前端"智能体写作"按钮 + 进度流 + 断点续跑）
-    agent: {
-      /** 启动智能体写作编排 */
-      run: (request: WritingAgentRequest) => Promise<WritingAgentResult>;
-      /** 取消正在运行的编排 */
-      cancel: () => Promise<{ success: boolean; error?: string }>;
-      /** 查询编排状态（running + checkpoint） */
-      status: () => Promise<WritingAgentStatus>;
-      /** 从 checkpoint 恢复编排 */
-      resume: (request: WritingAgentRequest) => Promise<WritingAgentResult>;
-      /** 订阅进度事件，返回取消订阅函数 */
-      onProgress: (callback: (event: WritingAgentEvent) => void) => () => void;
-    };
-  };
-
   // 写作模式 2.0（V2）API（Spec: refactor-writing-mode-v2 / Phase 0）
-  // 全类型化契约，复用现有 writing:* IPC 通道；与 V1 的 writing 命名空间互不影响
+  // 全类型化契约，复用现有 writing:* IPC 通道
   writingV2: WritingV2API;
 
   prompt: {
