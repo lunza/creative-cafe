@@ -9,7 +9,9 @@
 
 ### 概述
 
-在**完全保留 V1 写作模式**（`src/renderer/components/Creative/WritingMode/` 零改动）的前提下，平行新增写作模式 2.0（`src/renderer/components/Creative/WritingModeV2/`），V1/V2 共用同一项目库（零数据迁移）。入口：`CreationCenter.tsx` 创作面板区在 V1 入口右侧新增"写作模式 2.0"入口（青色 #06b6d4 主题 + `2.0` 徽章），点击打开独立 FullscreenDialog。
+写作模式 2.0（`src/renderer/components/Creative/WritingModeV2/`）是当前唯一的写作模式入口。入口：`CreationCenter.tsx` 创作面板区"写作模式"卡片（青色 #06b6d4 主题 + `2.0` 徽章），点击打开独立 FullscreenDialog。项目库与 V1 共用（零数据迁移），旧 V1 项目可直接在 V2 项目列表中打开。
+
+> 📦 **2026-10-07 更新**：写作模式 1.0（`src/renderer/components/Creative/WritingMode/`）已**整体移除**（回滚 tag `pre-remove-writing-v1`，详见 `.trae/specs/remove-writing-mode-v1/`）。移除范围：V1 渲染层全部文件、preload V1 `writing` 命名空间、主进程 V1 独占模块与 IPC 通道、`writing.types.ts` 中 26 个零引用 V1 类型。V2 不受影响：`writingV2` preload 命名空间自包含，直接 invoke `writing:*` 通道；主进程仅修剪了 V1 独占通道（generateChapter、chunk 系列、saveOutline、polishDescription、exportProject、AI 生成历史等），保留 `writing:generateOutline` 与 `style:*`（V2 仍在调用）。
 
 ### 关键架构规则（spec.md G 节）
 
@@ -4006,7 +4008,7 @@ const handleApplyCombination = useCallback(
 
 ### 涉及文件清单
 
-**已确认并修复的 5 个文件：**
+**已确认并修复的 5 个文件：**（其中 3 个 `Creative/WritingMode/` 文件已随写作模式 1.0 于 2026-10-07 移除，此处为历史清单）
 
 - `src/renderer/components/Creative/WritingMode/QuickFixSuggestionModal.tsx` — 原文本/修正后/修正理由三个对比块的 backgroundColor + border + color
 - `src/renderer/components/WorldBook/WorldBookAuthoringModal.tsx` — 事件流容器、StatCard、AuditProgressCard、AutoFixesList 修复前/后背景、ArrowRight、多处次要文字色

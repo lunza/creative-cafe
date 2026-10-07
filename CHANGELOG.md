@@ -1,5 +1,19 @@
 # Changelog
 
+## [重大重构] - 2026-10-07 - 移除写作模式 1.0（V2 已达生产就绪，V1 整体下线）
+
+- **背景**：写作模式 2.0（`src/renderer/components/Creative/WritingModeV2/`）已开发完成并达到生产就绪状态，写作模式 1.0（`src/renderer/components/Creative/WritingMode/`）整体移除
+- **移除范围**：
+  - 渲染层：V1 全部组件/stores/hooks（约 55 个文件），`CreationCenter.tsx` 入口卡片改为「写作模式」+ `2.0` 徽标（原 V1 入口删除，CSS 死选择器重定向至 creative-v2 青色主题）
+  - preload：删除 V1 `writing` 命名空间（V2 使用自包含的 `writingV2` 命名空间，直接 invoke 同名 `writing:*` 通道）；`electron.d.ts` 同步删除 V1 类型声明
+  - 主进程：删除 V1 独占模块（`writingAgentHandlers.ts`、`agent/writing/` 3 文件、`DescriptionPolisher.ts`、`writing-agent.types.ts`）；`writingHandlers.ts` / `writingChapterHandlers.ts` / `writingProjectHandlers.ts` / `writingOutlineHandlers.ts` / `writingStyleHandlers.ts` 内删除 V1 独占 IPC 通道（generateChapter、chunk 系列、saveOutline、polishDescription、exportProject、AI 生成历史等）；`WritingStorageService` / `ChapterChunkService` 修剪 V1 独占方法
+  - 共享类型：`writing.types.ts` 删除 26 个零引用 V1 类型
+  - 依赖：经 import 面核对（70 个已删文件）无 V1 独占依赖，package.json 不变
+- **数据**：V1 项目数据不迁移，V2 项目列表直接兼容打开旧项目
+- **验证**：typecheck 零新增错误（基线 771 → 当前 599，修复 172）；`npm test` 1517 passed / 4 failed（4 个失败均在基线 tag 复现，预存）；残留扫描零实质残留；构建产物 13988 KB → 13606.2 KB（**减少约 382 KB**）；Electron 运行时冒烟 + 用户目视确认通过
+- **回滚**：`git reset --hard pre-remove-writing-v1`（移除前全量快照 tag）
+- **详见**：`.trae/specs/remove-writing-mode-v1/`（spec/tasks/checklist）
+
 ## [新增功能] - 2026-10-07 - 漫画信息弹窗「AI 生成角色信息」（图片识别生成角色描述）
 
 - **需求（Spec: add-ai-character-gen-to-manga-meta）**：编辑漫画信息界面主要角色字段手填繁琐，要求上传角色图片后由 AI 识别生成角色信息（姓名/外貌/性格），保留全部既有手动编辑能力

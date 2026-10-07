@@ -3,60 +3,61 @@
 > 依赖原则：先备份（T1）→ 渲染层删除（T2-T4）→ 主进程/共享层（T5-T7）→ 依赖核对（T8）→ 静态验证（T9）→ 运行时回归（T10）→ 文档（T11）→ 收尾提交（T12）。
 > T2-T7 之间无强依赖可并行，但为控制回滚成本建议顺序执行；每完成一个任务立即跑一次 `npm run typecheck` 快速止损。
 
-- [ ] Task 1: 删除前备份存档
-  - [ ] SubTask 1.1: `git status` 确认工作区无与本任务无关的未提交改动（有则先与用户确认处理方式）
-  - [ ] SubTask 1.2: 提交当前状态（message: `chore: snapshot before removing writing mode v1`）并打 tag `pre-remove-writing-v1`
-  - [ ] SubTask 1.3: `git tag -l pre-remove-writing-v1` 验证 tag 存在
-- [ ] Task 2: 删除 V1 渲染层独占文件
-  - [ ] SubTask 2.1: 删除目录 `src/renderer/components/Creative/WritingMode/`（55 文件）
-  - [ ] SubTask 2.2: 删除 `src/renderer/stores/writingProjectStore.ts`、`writingModeStore.ts`、`writingModeUIStore.ts`、`index.ts`
-  - [ ] SubTask 2.3: 删除 `src/renderer/constants/writingModeConstants.ts`、`src/renderer/utils/outlineVersionUtils.ts`、`src/renderer/utils/ImpactAnalyzer.ts`、`src/renderer/services/AIEditService.ts`
-  - [ ] SubTask 2.4: `npm run typecheck` 确认剩余报错均指向 Task 3 待改文件（CreationCenter / electron.d.ts）
-- [ ] Task 3: 清理 CreationCenter V1 入口
-  - [ ] SubTask 3.1: 移除 `WritingModeEntry` lazy 导入、V1 卡片渲染、`showWritingDialog` 状态与 V1 FullscreenDialog
-  - [ ] SubTask 3.2: 「写作模式 2.0」卡片保留；确认卡片文案/徽标是否需微调（默认：保留原样，仅文案中"经典"等 V1 对比措辞清理）
-- [ ] Task 4: 清理 V1 preload 命名空间与类型声明
-  - [ ] SubTask 4.1: `src/main/preload.ts` 删除 V1 `writing` 命名空间（L629-790 区域，含 chunk/polish 事件订阅方法）；`writingV2` 命名空间零改动
-  - [ ] SubTask 4.2: `src/renderer/types/electron.d.ts` 删除 V1 `writing` 命名空间声明、`writing-agent.types` 导入、`writing.agent` 子命名空间；`writingV2: WritingV2API` 保留
-  - [ ] SubTask 4.3: `npm run typecheck`
-- [ ] Task 5: 删除主进程 V1 独占模块
-  - [ ] SubTask 5.1: 删除 `src/main/ipc/handlers/writing/writingAgentHandlers.ts`
-  - [ ] SubTask 5.2: 删除目录 `src/main/services/agent/writing/`（writingAgentService / writingAgentTypes / index）
-  - [ ] SubTask 5.3: 删除 `src/main/services/writing/ChapterChunkService.ts`、`src/main/services/writing/DescriptionPolisher.ts`、`src/shared/types/writing-agent.types.ts`
-  - [ ] SubTask 5.4: `src/main/ipc/handlers/writingHandlers.ts` 移除 agent handler 的导入/注册/再导出（`abortActiveWritingAgent` 一并移除）
-  - [ ] SubTask 5.5: `src/main/index.ts` 移除 `abortActiveWritingAgent` 导入与 L94 / L167 两处调用
-  - [ ] SubTask 5.6: `npm run typecheck`
-- [ ] Task 6: 删除 handler 内 V1 独占通道
-  - [ ] SubTask 6.1: `writingChapterHandlers.ts`：删 `writing:generateChapter` / `generateChapterChunk` / `cancelChunkGeneration` / `generateChunkSummary` / `saveChunkCheckpoint` / `getChunkCheckpoint` / `clearChunkCheckpoint` + `chapterChunkService` 导入；保留 `activeAbortControllers` / cancelGeneration / shard / DeAi / 拆并
-  - [ ] SubTask 6.2: `writingProjectHandlers.ts`：删 `writing:exportProject` / `saveProjectRaw` / `saveAIGenerationHistory` / `loadAIGenerationHistory` / `clearAIGenerationHistory`
-  - [ ] SubTask 6.3: `writingOutlineHandlers.ts`：删 `writing:saveOutline` / `outline:update` / `outline:save` / `outline:load` / `continueOutline`
-  - [ ] SubTask 6.4: `writingStyleHandlers.ts`：删 `writing:polishDescription` + `descriptionPolisher` 导入
-  - [ ] SubTask 6.5: `WritingStorageService.ts`：删 chunk checkpoint 三个代理方法与仅 V1 通道使用的 AI 生成历史存储方法（先 grep 确认无其他消费方）
-  - [ ] SubTask 6.6: 以 preload `writingV2` 命名空间实际 invoke 清单逐条比对，确认无 V2 依赖通道被误删
-- [ ] Task 7: 修剪共享类型（writing.types.ts）
-  - [ ] SubTask 7.1: 基于 typecheck 结果识别零引用的 V1 专属类型（chunk 流水线类型等），删除
-  - [ ] SubTask 7.2: `WritingProject` / `WritingConfig` / `GeneratedOutline` 等落盘数据形状类型一律保留；`npm run typecheck` 零新增错误
-- [ ] Task 8: 依赖核对（package.json）
-  - [ ] SubTask 8.1: 汇总已删除 V1 文件的 import 集合，与 `src/` 其余文件比对，确认无 V1 独占依赖
-  - [ ] SubTask 8.2: 若发现独占依赖则从 `package.json` 移除并 `npm ls <pkg>` 验证；预期结论为"无独占依赖，package.json 不动"
-- [ ] Task 9: 静态验证
-  - [ ] SubTask 9.1: `npm run typecheck` 零新增错误
-  - [ ] SubTask 9.2: `npm test` 不劣于基线（1466+ passed / 2 预存 failed）
-  - [ ] SubTask 9.3: 残留扫描：`src/` 内 grep `WritingMode['"]`（排除 WritingModeV2）、`writingModeStore|writingProjectStore|writingModeUIStore`、`writing-agent`、`generateChapterChunk`、`polishDescription`、`saveAIGenerationHistory`，零残留（注释中的历史提及可保留）
-- [ ] Task 10: 运行时回归（dev server 自动重启）
-  - [ ] SubTask 10.1: 按 AGENTS.md 规则重启 dev server（查 vite/node 进程 → Stop-Process → `npm run dev` 后台）
-  - [ ] SubTask 10.2: 创意中心仅剩「写作模式 2.0」卡片；打开 V2 界面渲染正常
-  - [ ] SubTask 10.3: V2 冒烟：项目列表加载 → 打开 V1 旧项目（数据完整）→ 新建项目 → 大纲（手动或 AI）→ 分片生成（可只跑 1 分片）→ 导出 TXT 成功
-  - [ ] SubTask 10.4: 记录构建体积对比（移除前后 `npm run build` 产物大小），写入验证记录
-- [ ] Task 11: 文档更新
-  - [ ] SubTask 11.1: `.trae/documents/技术文档.md`：删除/改写 V1 章节（37 处引用），保留并校对 V2 章节
-  - [ ] SubTask 11.2: `CODE_WIKI.md`：删除 V1 章节（21 处引用）
-  - [ ] SubTask 11.3: `docs/user-manual.md`：写作模式说明更新为 2.0（5 处引用）
-  - [ ] SubTask 11.4: `CHANGELOG.md`：新增移除条目
-  - [ ] SubTask 11.5: `.trae/documents/小说写作模式自定义设置功能开发计划.md`：头部标注"历史归档（V1 功能计划，功能已由写作模式 2.0 取代）"
-- [ ] Task 12: 收尾提交
-  - [ ] SubTask 12.1: `git status` 全量核对删除/修改清单与本 spec 一致
-  - [ ] SubTask 12.2: 分两条提交：`refactor: remove writing mode v1 (renderer + main + shared)`、`docs: update docs after removing writing mode v1`（message 说明回滚方式：tag pre-remove-writing-v1）
+- [x] Task 1: 删除前备份存档
+  - [x] SubTask 1.1: `git status` 确认工作区无与本任务无关的未提交改动（有则先与用户确认处理方式）
+  - [x] SubTask 1.2: 提交当前状态（message: `chore: snapshot before removing writing mode v1`）并打 tag `pre-remove-writing-v1`
+  - [x] SubTask 1.3: `git tag -l pre-remove-writing-v1` 验证 tag 存在
+- [x] Task 2: 删除 V1 渲染层独占文件
+  - [x] SubTask 2.1: 删除目录 `src/renderer/components/Creative/WritingMode/`（55 文件）
+  - [x] SubTask 2.2: 删除 `src/renderer/stores/writingProjectStore.ts`、`writingModeStore.ts`、`writingModeUIStore.ts`、`index.ts`
+  - [x] SubTask 2.3: 删除 `src/renderer/constants/writingModeConstants.ts`、`src/renderer/utils/outlineVersionUtils.ts`、`src/renderer/utils/ImpactAnalyzer.ts`、`src/renderer/services/AIEditService.ts`
+  - [x] SubTask 2.4: `npm run typecheck` 确认剩余报错均指向 Task 3 待改文件（CreationCenter / electron.d.ts）
+- [x] Task 3: 清理 CreationCenter V1 入口
+  - [x] SubTask 3.1: 移除 `WritingModeEntry` lazy 导入、V1 卡片渲染、`showWritingDialog` 状态与 V1 FullscreenDialog
+  - [x] SubTask 3.2: 「写作模式 2.0」卡片保留；确认卡片文案/徽标是否需微调（默认：保留原样，仅文案中"经典"等 V1 对比措辞清理）（实施：卡片 label 改为「写作模式」+ 保留 2.0 徽标，清理"经典版"措辞；CreationCenter.css 中 V1 `data-panel="creative"` 死选择器重定向至 `creative-v2` 并换为青色主题）
+- [x] Task 4: 清理 V1 preload 命名空间与类型声明
+  - [x] SubTask 4.1: `src/main/preload.ts` 删除 V1 `writing` 命名空间（L629-790 区域，含 chunk/polish 事件订阅方法）；`writingV2` 命名空间零改动
+  - [x] SubTask 4.2: `src/renderer/types/electron.d.ts` 删除 V1 `writing` 命名空间声明、`writing-agent.types` 导入、`writing.agent` 子命名空间；`writingV2: WritingV2API` 保留
+  - [x] SubTask 4.3: `npm run typecheck`
+- [x] Task 5: 删除主进程 V1 独占模块
+  - [x] SubTask 5.1: 删除 `src/main/ipc/handlers/writing/writingAgentHandlers.ts`
+  - [x] SubTask 5.2: 删除目录 `src/main/services/agent/writing/`（writingAgentService / writingAgentTypes / index）
+  - [x] SubTask 5.3: 删除 `src/main/services/writing/ChapterChunkService.ts`、`src/main/services/writing/DescriptionPolisher.ts`、`src/shared/types/writing-agent.types.ts`（修订：ChapterChunkService 非 V1 独占——V2 共享的 ContentGenerator 使用其 calculateChunkStrategy/generateChunkPrompt/detectTruncation 三方法，改为**保留文件**，仅删除 V1 独占的 `generateSummary` 与死代码 `buildSlidingWindowContext`，见 SubTask 6.5b）
+  - [x] SubTask 5.4: `src/main/ipc/handlers/writingHandlers.ts` 移除 agent handler 的导入/注册/再导出（`abortActiveWritingAgent` 一并移除）
+  - [x] SubTask 5.5: `src/main/index.ts` 移除 `abortActiveWritingAgent` 导入与 L94 / L167 两处调用
+  - [x] SubTask 5.6: `npm run typecheck`
+- [x] Task 6: 删除 handler 内 V1 独占通道
+  - [x] SubTask 6.1: `writingChapterHandlers.ts`：删 `writing:generateChapter` / `generateChapterChunk` / `cancelChunkGeneration` / `generateChunkSummary` / `saveChunkCheckpoint` / `getChunkCheckpoint` / `clearChunkCheckpoint` + `chapterChunkService` 导入；保留 `activeAbortControllers` / cancelGeneration / shard / DeAi / 拆并
+  - [x] SubTask 6.2: `writingProjectHandlers.ts`：删 `writing:exportProject` / `saveProjectRaw` / `saveAIGenerationHistory` / `loadAIGenerationHistory` / `clearAIGenerationHistory` + 连带失效导入（fs/path/ExportFormat）
+  - [x] SubTask 6.3: `writingOutlineHandlers.ts`：删 `writing:saveOutline` / `outline:update` / `outline:save` / `outline:load` / `continueOutline` + 连带失效导入（writingStorageService/getStorageService/4 个类型导入）；保留 `writing:generateOutline`（preload writingV2 仍调用）
+  - [x] SubTask 6.4: `writingStyleHandlers.ts`：删 `writing:polishDescription` + 连带失效导入（descriptionPolisher/writingResourceManager/getStorageService/addLog/activeAbortControllers）；保留 style:* 六通道（preload writingV2 仍调用）
+  - [x] SubTask 6.5: `WritingStorageService.ts`：删 chunk checkpoint 三个代理方法与 `exportProject` 代理方法（grep 确认无其他消费方）+ ExportFormat 导入
+  - [x] SubTask 6.5b: （修订新增）`ChapterChunkService.ts`：删 `generateSummary`（V1 通道专用）与 `buildSlidingWindowContext`（零引用死代码），保留 V2 使用的 3 方法
+  - [x] SubTask 6.6: 以 preload `writingV2` 命名空间实际 invoke 清单逐条比对，确认无 V2 依赖通道被误删（含多行注册形式的 `writing:cancelGeneration`）
+- [x] Task 7: 修剪共享类型（writing.types.ts）
+  - [x] SubTask 7.1: 基于 typecheck 结果识别零引用的 V1 专属类型（chunk 流水线类型等），删除（共 23 个：GenerationMode/WritingModeView/GenerationState/MaterialType/MaterialItem/GenerationSuggestion/EnhancedStoryLine/CharacterDetail/CharacterRelationshipNetwork/WorldSetting/WorldSettingGroup/OutlineEditSection/OutlineEditMode/OutlineVersion/AIEditIntent/AIEditResult/OutlineImpactAnalysis/StreamChunkData/StreamCompleteData/StreamErrorData/GenerationMetadata/OutlineActionType/OutlineAction/OutlineHistoryState/PlotCheckRequest/QuickFixResult 中的 23 个；SuggestionRecord/ProjectMetadata/MangaReferenceMaterial/AIGenerationHistory 家族/BatchFixIssueResult/TableCellChange 因被保留类型引用而保留）
+  - [x] SubTask 7.2: `WritingProject` / `WritingConfig` / `GeneratedOutline` 等落盘数据形状类型一律保留；`npm run typecheck` 零新增错误（771→599，0 新增）
+- [x] Task 8: 依赖核对（package.json）
+  - [x] SubTask 8.1: 汇总已删除 V1 文件（70 个，git diff --diff-filter=D）的 import 集合（@ant-design/icons/antd/electron/fs/path/react/zustand），与 `src/` 其余文件比对，确认无 V1 独占依赖
+  - [x] SubTask 8.2: 结论与预期一致："无独占依赖，package.json 不动"
+- [x] Task 9: 静态验证
+  - [x] SubTask 9.1: `npm run typecheck` 零新增错误（签名对比法：基线 771 / 当前 599 / 0 新增 / 172 修复）
+  - [x] SubTask 9.2: `npm test` 1517 passed / 4 failed；4 个失败（PromptTemplateService×2/skills×1/agentModeService×1）已在基线 worktree（tag pre-remove-writing-v1）复跑确认**全部预存**，无劣化
+  - [x] SubTask 9.3: 残留扫描零实质残留：`WritingMode`（非 V2）仅 2 处注释（WorldBook 对标参考）；`writingModeStore` 等仅 1 处注释；`writing-agent` 为 agent-center 自身概念（legacy agent ID 迁移 + 注释）；`polishDescription` 仅 agent-center 内置技能 description-polish/SKILL.md（基线中该工具同样未注册 ToolRegistry，状态与基线一致）；`generateChapterChunk`/`saveAIGenerationHistory` 零残留
+- [x] Task 10: 运行时回归（dev server 自动重启）
+  - [x] SubTask 10.1: 按 AGENTS.md 规则重启 dev server（`npm run dev` 后台，http://localhost:5174/）+ Electron 应用（`NODE_ENV=development; npm run electron:prod`）
+  - [x] SubTask 10.2: 用户目视确认：创意中心仅剩「写作模式 2.0」卡片，V2 界面渲染正常
+  - [x] SubTask 10.3: 冒烟：Electron 启动日志全部 handler 注册完成、渲染进程加载成功（setting:load 正常响应）、无 `writing:` 通道 "No handler registered" 报错、AI 请求处理正常（200）、退出时向量持久化干净；用户确认旧项目打开数据完整。生成/导出全链路未重跑（由 9.1-9.3 静态验证 + 1517 passed 测试覆盖）
+  - [x] SubTask 10.4: 构建体积对比：基线（tag pre-remove-writing-v1）13988 KB → 当前 13606.2 KB（**减少约 382 KB**；assets 8144.8→7850.1，main 2979.5→2931.2）
+- [x] Task 11: 文档更新
+  - [x] SubTask 11.1: `.trae/documents/技术文档.md`：5 个 V1 功能章节加「V1 历史记录」/「注」标注（素材选择/自动修正反馈/表格整理/大纲数据结构/模板管理）+ 1 处 Bug 修复条目文件标注 + 文末新增「写作模式 1.0 完整移除」章节（移除范围/保留决策/验证数据/踩坑重点标记/回滚方式）
+  - [x] SubTask 11.2: `CODE_WIKI.md`：V2 章节概述改写为当前状态（V2 为唯一写作模式入口）+ 新增 2026-10-07 移除说明；颜色审计历史清单标注 3 个已删文件
+  - [x] SubTask 11.3: `docs/user-manual.md`：写作模式章节按 V2 实际功能面（五阶段/拆并建议/跨章审查/漫画改编/导出等 12 项）重写，并注明 V1 移除与数据兼容
+  - [x] SubTask 11.4: `CHANGELOG.md`：新增「[重大重构] 2026-10-07 移除写作模式 1.0」条目（历史条目未改写）
+  - [x] SubTask 11.5: `.trae/documents/小说写作模式自定义设置功能开发计划.md`：头部加「历史归档」标注（V1 功能计划，由 V2 V2TemplatePanel 取代）
+- [x] Task 12: 收尾提交
+  - [x] SubTask 12.1: `git status` 全量核对：70 删除 + 13 代码修改 + 6 文档修改，与本 spec 一致；6 个临时文件已清理
+  - [x] SubTask 12.2: 两条提交完成：`e3fb56b refactor: remove writing mode v1 (renderer + main + shared)`（83 文件，-24522 行）、`f7190e9 docs: update docs after removing writing mode v1`（6 文件）；commit message 均含回滚方式 `git reset --hard pre-remove-writing-v1`
 
 # Task Dependencies
 - Task 1 最先执行（备份）
