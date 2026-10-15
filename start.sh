@@ -191,12 +191,21 @@ fi
 if [ -f "node_modules/better-sqlite3/build/Release/better_sqlite3.node" ]; then
   echo "  better-sqlite3 原生模块: [OK]"
 else
-  echo "  [重建] better-sqlite3 原生模块缺失，执行 electron-rebuild..."
-  npm run rebuild:native
+  ELE_TARGET="$(node -p "require('electron/package.json').version" 2>/dev/null || echo "")"
+  echo "  [预编译] 下载 Electron $ELE_TARGET 预编译二进制（prebuild-install）..."
+  (cd node_modules/better-sqlite3 && npx --no-install prebuild-install --runtime electron --target "$ELE_TARGET") >/dev/null 2>&1
   if [ -f "node_modules/better-sqlite3/build/Release/better_sqlite3.node" ]; then
     echo "  better-sqlite3 原生模块: [OK]"
   else
-    echo "  [警告] 原生模块重建失败，向量数据库功能可能受限。可稍后手动执行: npm run rebuild:native"
+    echo "  [编译] 预编译下载失败，执行 electron-rebuild（需要 Xcode CLT 或 VS C++ 工具链）..."
+    npm run rebuild:native
+    if [ -f "node_modules/better-sqlite3/build/Release/better_sqlite3.node" ]; then
+      echo "  better-sqlite3 原生模块: [OK]"
+    else
+      echo "  [警告] 原生模块不可用，向量数据库功能受限。"
+      echo "         macOS: xcode-select --install 后重跑本脚本"
+      echo "         Linux: 安装 build-essential + python3 后重跑本脚本"
+    fi
   fi
 fi
 

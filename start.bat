@@ -156,17 +156,20 @@ if exist "node_modules\electron\dist\electron.exe" (
     )
 )
 
-if exist "node_modules\better-sqlite3\build\Release\better_sqlite3.node" (
-    echo   better-sqlite3 原生模块: [OK]
-) else (
-    echo   [重建] better-sqlite3 原生模块缺失，执行 electron-rebuild...
-    call npm run rebuild:native
-    if exist "node_modules\better-sqlite3\build\Release\better_sqlite3.node" (
-        echo   better-sqlite3 原生模块: [OK]
-    ) else (
-        echo   [警告] 原生模块重建失败，向量数据库功能可能受限。可稍后手动执行: npm run rebuild:native
-    )
-)
+if exist "node_modules\better-sqlite3\build\Release\better_sqlite3.node" goto :bsql_ok
+echo   [预编译] 部署仓库内置预编译二进制（无需 VS / 无需管理员）...
+if exist "package\native-prebuilds\better-sqlite3-v11.10.0-electron-v130-win32-x64.tar.gz" tar -xzf "package\native-prebuilds\better-sqlite3-v11.10.0-electron-v130-win32-x64.tar.gz" -C "node_modules\better-sqlite3" >nul 2>nul
+if exist "node_modules\better-sqlite3\build\Release\better_sqlite3.node" goto :bsql_ok
+echo   [编译] 预编译包不适用（依赖版本可能已变更），执行 electron-rebuild...
+call npm run rebuild:native
+if exist "node_modules\better-sqlite3\build\Release\better_sqlite3.node" goto :bsql_ok
+echo   [警告] 原生模块不可用，向量数据库功能受限。解决方案:
+echo     安装 Visual Studio Build Tools 的 C++ 工作负载后重新运行本脚本，
+echo     或手动执行: npm run rebuild:native
+goto :bsql_end
+:bsql_ok
+echo   better-sqlite3 原生模块: [OK]
+:bsql_end
 
 rem ================= [5/7] 目录初始化 =================
 echo.
