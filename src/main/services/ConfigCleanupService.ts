@@ -15,13 +15,14 @@ const FORBIDDEN_VECTOR_FIELDS = [
 ];
 
 // 合法配置字段白名单
+// 【M-15/S-9】vectorStoreMode/autoRetrieveContext/contextTopK/contextMinScore
+// 四孤儿子键已移除（全仓无消费），存量磁盘值由 settingMigrations v3 剥离
 const ALLOWED_VECTOR_CONFIG_FIELDS = [
   'embeddingMode', 'remoteModel', 'remoteApiUrl', 'remoteApiKey',
-  'remoteApiKeyTransmission', 'localModel', 'vectorStoreMode',
+  'remoteApiKeyTransmission', 'localModel',
   'cacheEnabled', 'cacheL1Size', 'cacheL1TTL', 'cacheL2TTL',
   'defaultTopK', 'minSimilarityScore', 'contextWindowTokens',
   'autoVectorizeWorldBook', 'autoVectorizeKnowledge',
-  'autoRetrieveContext', 'contextTopK', 'contextMinScore',
   'dimension'
 ];
 

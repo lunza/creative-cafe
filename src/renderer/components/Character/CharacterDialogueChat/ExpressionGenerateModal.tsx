@@ -30,6 +30,8 @@ import { useExpressionStore } from '../../../stores/expressionStore';
 import { useCharacterLoraStore } from '../../../stores/characterLoraStore';
 import { useCharacterTraitStore } from '../../../stores/characterTraitStore';
 import type { SDWebuiConfig } from '../../../types/setting';
+// Spec: settings-feature-optimization-report / N6, M-17（统一封装）
+import { getSettingAPI } from '../../../services/settingServiceClient';
 import LoraSelectModal from './LoraSelectModal';
 import SizeSelector from './SizeSelector';
 
@@ -320,7 +322,7 @@ const ExpressionGenerateModal: React.FC<ExpressionGenerateModalProps> = ({
         // 1. 加载 SD 设置
         let config: SDWebuiConfig = DEFAULT_SD_CONFIG;
         try {
-          const settingResult = await window.electronAPI.setting.load();
+          const settingResult = await getSettingAPI()?.load() ?? { success: false, error: 'setting API 不可用' };
           if (settingResult?.success && settingResult.setting?.sdWebui) {
             config = { ...DEFAULT_SD_CONFIG, ...settingResult.setting.sdWebui };
           }

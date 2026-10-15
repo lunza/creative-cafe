@@ -20,7 +20,8 @@ import { Modal, Form, Input, Select, Radio, Button, Tooltip, Image, theme, messa
 import { DeleteOutlined, PictureOutlined, ThunderboltOutlined, LoadingOutlined } from '@ant-design/icons';
 import type { MangaMetaInfo, MangaPageSummary } from '../../../../../shared/types/writing-v2.types';
 import { getWritingV2API } from '../../../../services/writingV2Service';
-import CustomPromptPopover, { readCustomPrompt } from '../shared/CustomPromptPopover';
+import CustomPromptPopover, { readScopedCustomPrompt } from '../shared/CustomPromptPopover';
+import { estimateBytesFromDataUri, compressImageToLimit } from './mangaImageCompress';
 
 const LANGUAGE_OPTIONS = [
   { value: 'japanese', label: '日文' },
@@ -68,6 +69,8 @@ interface Props {
   supportsVision?: boolean;
   /** 当前漫画全部页面分析摘要（AI 生成角色信息时注入整体分析结果，新建模式为空） */
   comicSummaries?: MangaPageSummary[];
+  /** 自定义提示词作用域（漫画 folderPath）：按漫画独立配置，未配置时回退全局默认 */
+  promptScope?: string;
   onOk: (meta: MangaMetaInfo) => void;
   onCancel: () => void;
 }
@@ -79,6 +82,7 @@ const V2MangaMetaModal: React.FC<Props> = ({
   okText,
   supportsVision,
   comicSummaries,
+  promptScope,
   onOk,
   onCancel,
 }) => {
@@ -147,16 +151,24 @@ const V2MangaMetaModal: React.FC<Props> = ({
         return;
       }
 
-      // 大小校验：data URI base64 段长度 × 3/4 ≈ 原始字节数（渲染层无法 stat 文件）
-      const commaIdx = result.data.indexOf(',');
-      const approxBytes = commaIdx >= 0 ? Math.floor(((result.data.length - commaIdx - 1) * 3) / 4) : 0;
+      // 大小校验 + 自动压缩：超过 8MB 时 canvas 等比重编码为 JPEG 压缩到 8MB 以下
+      let finalDataUri = result.data;
+      let approxBytes = estimateBytesFromDataUri(finalDataUri);
       if (approxBytes > MAX_CHAR_IMAGE_SIZE) {
-        message.error(`图片过大（${(approxBytes / 1024 / 1024).toFixed(1)}MB），请压缩到 8MB 以下`);
-        return;
+        const compressed = await compressImageToLimit(finalDataUri, MAX_CHAR_IMAGE_SIZE);
+        if (compressed) {
+          finalDataUri = compressed;
+          approxBytes = estimateBytesFromDataUri(compressed);
+        }
+        if (approxBytes > MAX_CHAR_IMAGE_SIZE) {
+          message.error(`图片过大（压缩后 ${(approxBytes / 1024 / 1024).toFixed(1)}MB），仍超过 8MB，请换用小图`);
+          return;
+        }
+        message.success(`图片已自动压缩至 ${(approxBytes / 1024 / 1024).toFixed(1)}MB`);
       }
 
       setCharImagePath(selected);
-      setCharImagePreview(result.data);
+      setCharImagePreview(finalDataUri);
     } catch (error) {
       message.error(`图片选择失败：${error instanceof Error ? error.message : '未知错误'}`);
     }
@@ -189,10 +201,12 @@ const V2MangaMetaModal: React.FC<Props> = ({
       const api = getWritingV2API();
       const result = await api?.manga.generateCharacterInfo({
         imagePath: charImagePath,
+        // 优先传压缩后的 data URI（charImagePreview 即原图或压缩图），主进程直接用它、跳过文件 8MB 校验
+        imageDataUri: charImagePreview || undefined,
         summaries,
         mangaMeta: buildCurrentMeta(),
         currentCharacters: form.getFieldValue('characters') || '',
-        customPrompt: readCustomPrompt(CHARACTER_GEN_CUSTOM_PROMPT_KEY) || undefined,
+        customPrompt: readScopedCustomPrompt(CHARACTER_GEN_CUSTOM_PROMPT_KEY, promptScope) || undefined,
       });
 
       if (!result) {
@@ -293,6 +307,7 @@ const V2MangaMetaModal: React.FC<Props> = ({
             </Tooltip>
             <CustomPromptPopover
               storageKey={CHARACTER_GEN_CUSTOM_PROMPT_KEY}
+              scope={promptScope}
               title="AI 生成角色信息 - 自定义提示词"
               placeholder="例如：重点描述服装细节；角色姓名保留日文原名；突出主视觉角色"
               disabled={charGenLoading}
@@ -300,7 +315,14 @@ const V2MangaMetaModal: React.FC<Props> = ({
           </div>
           {charImagePreview ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Image src={charImagePreview} height={64} style={{ borderRadius: 4 }} />
+              {/* 固定 64×64 盒子 + objectFit:contain：浏览器自动检测图片宽高比并等比缩放到合适大小，
+                  横图/宽图不再溢出弹窗（原实现仅限 height，宽图按原始比例放大导致「图片过大」） */}
+              <Image
+                src={charImagePreview}
+                width={64}
+                height={64}
+                style={{ objectFit: 'contain', borderRadius: 4, flexShrink: 0 }}
+              />
               <span style={{ fontSize: 12, color: token.colorTextTertiary }}>
                 {charImageName}
                 <br />

@@ -5,8 +5,9 @@
 import Store from 'electron-store';
 import fs from 'fs';
 import path from 'path';
-import { app, getAppPath } from '../utils/appPath';
+import { getUserDataPath } from '../utils/appPath';
 import { getLogDir } from './logPathService';
+import { atomicWriteJsonSync, readSettingsFile } from './settingsFileIO';
 import {
   StorageModule,
   StorageOperation,
@@ -84,8 +85,10 @@ export class StorageManager {
    * 初始化基础目录结构
    */
   private initializeBaseDirectories(): void {
-    const appDataPath = getAppPath('appData');
-    this.appDirPath = path.join(appDataPath, 'creative-cafe');
+    // [Spec: migrate-user-data-to-project-root] 原 getAppPath('appData')/creative-cafe 硬编码
+    // %APPDATA%，dev 重定向到 appData/ 后仍会在旧目录重建目录结构（复活空目录树）。
+    // 收敛到 getUserDataPath()：dev 跟随 appData/，打包 = %APPDATA%\creative-cafe（布局不变）。
+    this.appDirPath = getUserDataPath();
     this.baseDataPath = path.join(this.appDirPath, STORAGE_DIRECTORIES.BASE);
 
     try {
@@ -126,7 +129,6 @@ export class StorageManager {
         }
       }
 
-      this.log(`AppData 路径: ${appDataPath}`, 'info');
       this.log(`应用存储路径: ${this.appDirPath}`, 'info');
       this.log(`基础数据路径: ${this.baseDataPath}`, 'info');
       this.log('目录结构初始化完成', 'info');
@@ -352,7 +354,15 @@ export class StorageManager {
   private readFromSettingsFile(key: string): StorageResult<any> {
     try {
       const settingsPath = path.join(this.baseDataPath, 'settings.json');
-      if (!fs.existsSync(settingsPath)) {
+      const read = readSettingsFile(settingsPath, (msg, type, context) => this.log(msg, type, context));
+
+      if (read.needsWriteBack && read.data !== null) {
+        // 损坏恢复或 schema 迁移后原子回写，修复磁盘文件（H-4/H-12）
+        atomicWriteJsonSync(settingsPath, read.data);
+      }
+
+      const settings = read.data;
+      if (!settings) {
         // settings.json 不存在，返回适当的默认值
         if (key === 'settings') {
           return { success: true, data: {} };
@@ -365,9 +375,6 @@ export class StorageManager {
         }
         return { success: true, data: null };
       }
-
-      const raw = fs.readFileSync(settingsPath, 'utf-8');
-      const settings = JSON.parse(raw);
 
       if (key === 'settings') {
         return { success: true, data: settings };
@@ -467,7 +474,8 @@ export class StorageManager {
         settings[key] = value;
       }
 
-      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+      // 原子写：tmp + rename，崩溃中途不会留下半截 JSON（H-2）
+      atomicWriteJsonSync(settingsPath, settings);
       this.log(`写入 settings.json - 键: ${key}`, 'debug');
       return { success: true };
     } catch (error) {

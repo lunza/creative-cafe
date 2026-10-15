@@ -4,6 +4,8 @@ import type { InputRef } from 'antd';
 import { useSettingStore } from '../../../stores/settingStore';
 import { useLogStore } from '../../../stores/logStore';
 import { AIService, AIServiceConfig } from '../AIService';
+// Spec: settings-feature-optimization-report / H-5（默认值单一来源）
+import { DEFAULT_ENGINE_PARAMS } from '../../../../shared/settingDefaults';
 import {
   AIToolType,
   SUPPORTED_LANGUAGES,
@@ -111,7 +113,7 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
     const engineMaxTokens = activeEngine.max_tokens;
     const safeMaxTokens = (typeof engineMaxTokens === 'number' && engineMaxTokens > 0) 
       ? engineMaxTokens 
-      : 10240;
+      : DEFAULT_ENGINE_PARAMS.maxTokens;
     
     if (typeof engineMaxTokens === 'number' && engineMaxTokens <= 0) {
       addLog(`[MarkdownAI] ⚠️ 引擎 max_tokens 值无效 (${engineMaxTokens})，请检查配置`, 'warn');
@@ -120,7 +122,7 @@ const MarkdownAITools: React.FC<MarkdownAIToolsProps> = ({
     const engineTemp = activeEngine.temperature;
     const safeTemperature = (typeof engineTemp === 'number' && engineTemp >= 0 && engineTemp <= 2) 
       ? engineTemp 
-      : 0.7;
+      : DEFAULT_ENGINE_PARAMS.temperature;
     
     if (typeof engineTemp === 'number' && (engineTemp < 0 || engineTemp > 2)) {
       addLog(`[MarkdownAI] ⚠️ 引擎 temperature 值无效 (${engineTemp})，请检查配置`, 'warn');

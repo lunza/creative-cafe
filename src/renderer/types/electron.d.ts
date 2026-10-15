@@ -4,9 +4,21 @@ import type {
   PromptPolishResult
 } from '../../shared/types/promptTemplate.types';
 
-import type { AIEngineCapabilities } from './setting';
+import type { AIEngineCapabilities, AppSetting } from './setting';
+import type { SettingLoadResult, SettingSaveResult, SettingPathResult } from '../../shared/types/setting.types';
 import type { AgentModeStatus, AgentModeOverride, AgentConfig } from '../../shared/types/agent-center.types';
 import type { CharacterTraitManifestV2, CategorizedTrait, GlobalTraitCategoryDictionary, TraitCategory } from '../../shared/types/characterTrait.types';
+import type {
+  DialogueQualityCheckRequest,
+  DialogueQualityReport,
+  DialogueQualityFixRequest,
+  DialogueQualityFixResult,
+  DialogueQualityHistoryEntry
+} from '../../shared/types/dialogueQuality.types';
+import type {
+  CharacterStyleLearningRequest,
+  CharacterStyleResource
+} from '../../shared/types/characterStyle.types';
 
 declare global {
   interface Window {
@@ -22,10 +34,13 @@ interface ElectronAPI {
   on: (channel: string, callback: (...args: any[]) => void) => void;
 
   off: (channel: string, callback: (...args: any[]) => void) => void;
+  // Spec: settings-feature-optimization-report / N6, M-17（setting IPC 全类型化，禁 any 穿透）
   setting: {
-    load: () => Promise<{ success: boolean; setting?: any; error?: string }>;
-    save: (setting: any) => Promise<{ success: boolean; error?: string }>;
-    getPath: () => Promise<{ success: boolean; path?: string; error?: string }>;
+    load: () => Promise<SettingLoadResult>;
+    save: (setting: AppSetting) => Promise<SettingSaveResult>;
+    getPath: () => Promise<SettingPathResult>;
+    /** 【M-16/N5】设置变更事件订阅，返回取消订阅函数 */
+    onChanged: (callback: (payload: { presetName?: string; engineCount: number }) => void) => () => void;
   };
   worldBook: {
     list: () => Promise<any[]>;
@@ -450,11 +465,12 @@ interface ElectronAPI {
      *     sd.generateTxt2Img 之间展示此状态）
      *   - 'image-generating'：由渲染进程本地设置（调用 sd.generateTxt2Img 前），非主进程推送
      *
-     * 订阅模式参照 sd.onGenerationProgress：on 注册不返回 unsubscribe，
-     * 需在组件卸载时调用 offTraitPromptProgress 一次性移除全部监听器。
+     * 【Phase 1 / H4 - conversation-mode-optimization-report】标准订阅模式：
+     * 返回 unsubscribe 函数，组件卸载时在 cleanup 中直接调用，
+     * 仅移除本次注册的监听器，不再需要 offTraitPromptProgress 全量清除。
      */
-    onTraitPromptProgress: (callback: (data: { phase: 'tag-generating' | 'tag-auditing' | 'image-generating' }) => void) => void;
-    /** 取消 ai:traitPromptProgress 全部监听器（组件卸载时调用，避免内存泄漏） */
+    onTraitPromptProgress: (callback: (data: { phase: 'tag-generating' | 'tag-auditing' | 'image-generating' }) => void) => () => void;
+    /** 兼容旧接口：一次性移除 ai:traitPromptProgress 全部监听器 */
     offTraitPromptProgress: () => void;
     /**
      * 探测 AI 模型能力（Spec: add-model-capability-detection-and-image-recognition / Task 3）
@@ -489,6 +505,20 @@ interface ElectronAPI {
     deleteTestChat: (creativeId: string, characterCardId: string) => Promise<boolean>;
     getAllTestChats: () => Promise<any[]>;
     clearCache: () => Promise<{ success: boolean }>;
+  };
+  // 【Phase 4 / L4 - conversation-mode-optimization-report】对话质量检查与人设一致性检查 API
+  characterQuality: {
+    check: (request: DialogueQualityCheckRequest) => Promise<{ success: boolean; report: DialogueQualityReport | null; error: string | null }>;
+    fixIssue: (request: DialogueQualityFixRequest) => Promise<DialogueQualityFixResult>;
+    getHistory: (characterCardId: string) => Promise<{ success: boolean; history: DialogueQualityHistoryEntry[]; error?: string }>;
+    clearHistory: (characterCardId: string) => Promise<{ success: boolean; error?: string }>;
+  };
+  // 【Phase 4 / L5 - conversation-mode-optimization-report】角色风格学习 API（基于对话历史）
+  characterStyle: {
+    learn: (request: CharacterStyleLearningRequest) => Promise<{ success: boolean; resource: CharacterStyleResource | null; error: string | null }>;
+    list: () => Promise<{ success: boolean; styles: CharacterStyleResource[]; error?: string }>;
+    get: (characterCardId: string) => Promise<{ success: boolean; style: CharacterStyleResource | null; error?: string }>;
+    delete: (characterCardId: string) => Promise<{ success: boolean; error?: string }>;
   };
   // 通用存储 API
   storage: {

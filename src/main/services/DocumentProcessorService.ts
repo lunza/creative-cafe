@@ -1,5 +1,6 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { getUserDataPath } from '../utils/appPath';
 import { getEmbeddingService } from './EmbeddingService';
 import { vectorStoreService } from './VectorStoreService';
 import { vectorRegistryService, VectorSourceType } from './VectorRegistryService';
@@ -56,7 +57,9 @@ export class DocumentProcessorService {
   private docsStorePath: string;
 
   constructor() {
-    this.docsStorePath = path.join(process.env.APPDATA || '', 'creative-cafe', 'data', 'vector-docs');
+    // [Spec: migrate-user-data-to-project-root] 原硬编码 process.env.APPDATA/creative-cafe/data/vector-docs
+    // 绕过 userData helper，dev 重定向后不会跟随 appData/ 新数据根，收敛到 getUserDataPath()
+    this.docsStorePath = path.join(getUserDataPath(), 'data', 'vector-docs');
   }
 
   private async ensureDocsDir(): Promise<void> {

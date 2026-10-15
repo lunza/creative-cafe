@@ -68,4 +68,36 @@ describe('写作表格模板结构守卫', () => {
     expect(names).toContain('事件表');
     expect(names).toContain('伏笔表');
   });
+
+  it('身体表插在角色表与物品表之间（默认模板与轻量模板）', () => {
+    for (const t of WRITING_TABLE_TEMPLATES) {
+      const names = t.sheets.map((s) => s.name);
+      const roleIdx = names.indexOf('角色表');
+      const bodyIdx = names.indexOf('身体表');
+      const itemIdx = names.indexOf('物品表');
+      if (roleIdx >= 0 && itemIdx >= 0) {
+        // 含角色表与物品表的模板，身体表必须存在且严格位于两者之间
+        expect(bodyIdx, `模板 ${t.name} 缺少身体表`).toBeGreaterThan(-1);
+        expect(bodyIdx, `模板 ${t.name} 身体表不在角色表之后`).toBeGreaterThan(roleIdx);
+        expect(bodyIdx, `模板 ${t.name} 身体表不在物品表之前`).toBeLessThan(itemIdx);
+      }
+    }
+  });
+
+  it('身体表字段结构符合约定（所属角色ID 关联角色表唯一id）', () => {
+    const def = WRITING_TABLE_TEMPLATES.find((t) => t.id === WRITING_DEFAULT_TABLE_TEMPLATE_ID);
+    const body = def?.sheets.find((s) => s.name === '身体表');
+    expect(body).toBeDefined();
+    expect(body?.headers).toEqual([
+      '所属角色ID',
+      '部位名称',
+      '外观描述',
+      '功能说明',
+      '当前状态',
+      '状态详细描述',
+    ]);
+    // description 必须说明关联规则与状态枚举，否则 AI 整理时不知道所属角色ID 填什么
+    expect(body?.description).toContain('唯一id');
+    expect(body?.description).toContain('健康');
+  });
 });

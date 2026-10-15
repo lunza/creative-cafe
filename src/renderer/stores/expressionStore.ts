@@ -36,7 +36,26 @@
  */
 
 import { create } from 'zustand';
+import { LRUCache } from 'lru-cache';
 import { EMOTION_PRESETS } from '../components/Character/CharacterDialogueChat/PromptBuilder';
+
+// ==================== 【Phase 3 / L7 - conversation-mode-optimization-report】imageCache LRU（P3） ====================
+// 原 imageCache 为无容量上限的 Record，长时间使用后无限增长。
+// 改为 LRU 缓存（上限 50 张，超出淘汰最旧）：LRUCache 为唯一数据源，
+// zustand 的 imageCache Record 仅作 React 感知的快照（每次变更时重新生成）。
+// get() 会更新键的最近使用序（渲染期 resolveExpressionImage 命中即刷新热度，
+// 仅改变 LRU 内部顺序，不触发 React 重渲染）。
+const EXPRESSION_IMAGE_CACHE_MAX = 50;
+const imageLru = new LRUCache<string, string>({ max: EXPRESSION_IMAGE_CACHE_MAX });
+
+/** LRU → 普通 Record 快照（供 zustand state 与 React 订阅使用） */
+function lruToRecord(): Record<string, string> {
+  const record: Record<string, string> = {};
+  imageLru.forEach((value, key) => {
+    record[key] = value;
+  });
+  return record;
+}
 
 // ==================== 类型定义 ====================
 
@@ -250,7 +269,8 @@ export const useExpressionStore = create<ExpressionState>((set, get) => ({
       // 再通过 file.readAsBase64 转换为 data URL 存入缓存。
       // 【重点标记 - CSP 裂图 BUG 修复】绝对路径无法直接用于 <img src>（CSP 拦截），
       // 必须转为 data URL，与 useCharacterSwitch.ts 加载头像的方式保持一致。
-      const imageCache: Record<string, string> = {};
+      // 【Phase 3 / L7】写入 LRU（切换角色卡时先清空，避免跨角色卡缓存串用）
+      imageLru.clear();
       const emotionKeys = Object.keys(safeManifest.expressions);
       for (const emotionKey of emotionKeys) {
         try {
@@ -264,7 +284,7 @@ export const useExpressionStore = create<ExpressionState>((set, get) => ({
             // 将磁盘文件读为 data URL（data:image/png;base64,...）
             const base64Result = await window.electronAPI.file.readAsBase64(pathResult.imagePath);
             if (base64Result?.success && base64Result.data) {
-              imageCache[emotionKey] = base64Result.data;
+              imageLru.set(emotionKey, base64Result.data);
             } else {
               console.warn(
                 `[expressionStore] readAsBase64 failed for ${emotionKey}:`,
@@ -276,6 +296,8 @@ export const useExpressionStore = create<ExpressionState>((set, get) => ({
           console.warn(`[expressionStore] getImagePath failed for ${emotionKey}:`, e);
         }
       }
+
+      const imageCache = lruToRecord();
 
       // 预加载所有图像到浏览器缓存（fire-and-forget，无需 await）
       for (const path of Object.values(imageCache)) {
@@ -367,10 +389,9 @@ export const useExpressionStore = create<ExpressionState>((set, get) => ({
           }
 
           // 更新 imageCache（仅存 data URL，CSP 兼容）
-          const nextImageCache = {
-            ...state.imageCache,
-            [emotionKey]: imageSrcForCache,
-          };
+          // 【Phase 3 / L7】写入 LRU（超限自动淘汰最旧），state 存快照
+          imageLru.set(emotionKey, imageSrcForCache);
+          const nextImageCache = lruToRecord();
 
           return { manifest: nextManifest, imageCache: nextImageCache };
         });
@@ -407,12 +428,12 @@ export const useExpressionStore = create<ExpressionState>((set, get) => ({
           const nextExpressions = { ...state.manifest.expressions };
           delete nextExpressions[emotionKey];
 
-          const nextImageCache = { ...state.imageCache };
-          delete nextImageCache[emotionKey];
+          // 【Phase 3 / L7】从 LRU 移除并生成新快照
+          imageLru.delete(emotionKey);
 
           return {
             manifest: { ...state.manifest, expressions: nextExpressions },
-            imageCache: nextImageCache,
+            imageCache: lruToRecord(),
           };
         });
       }
@@ -549,8 +570,8 @@ export const useExpressionStore = create<ExpressionState>((set, get) => ({
           const nextExpressions = { ...state.manifest.expressions };
           delete nextExpressions[key];
 
-          const nextImageCache = { ...state.imageCache };
-          delete nextImageCache[key];
+          // 【Phase 3 / L7】从 LRU 移除并生成新快照
+          imageLru.delete(key);
 
           return {
             manifest: {
@@ -558,7 +579,7 @@ export const useExpressionStore = create<ExpressionState>((set, get) => ({
               customEmotions: nextCustomEmotions,
               expressions: nextExpressions,
             },
-            imageCache: nextImageCache,
+            imageCache: lruToRecord(),
           };
         });
       }
@@ -578,13 +599,10 @@ export const useExpressionStore = create<ExpressionState>((set, get) => ({
     if (emotionKey === null || emotionKey === undefined || emotionKey === '') {
       return null;
     }
-    const { imageCache } = get();
+    // 【Phase 3 / L7】直接从 LRU 读取（get 会刷新最近使用序，实现真正的 LRU 淘汰语义）
     // default 情绪：优先使用用户上传的 default 表情图片（角色卡原图），
     // 若未上传则返回 null，由调用方回退到 avatarPath
-    if (emotionKey === 'default') {
-      return imageCache['default'] || null;
-    }
-    return imageCache[emotionKey] || null;
+    return imageLru.get(emotionKey) || null;
   },
 
   getAvailableEmotionKeys: () => {
@@ -606,17 +624,18 @@ export const useExpressionStore = create<ExpressionState>((set, get) => ({
   },
 
   getUploadedEmotionKeys: () => {
-    const { imageCache } = get();
     const allKeys = get().getAvailableEmotionKeys();
-    // 只返回 imageCache 中有 data URL 的键（即用户已上传图片的情绪）
+    // 只返回 LRU 中有 data URL 的键（即用户已上传图片的情绪）
     return allKeys.filter((k) => {
       // default 情绪始终使用 avatarPath 回退，不需要上传图片
       if (k === 'default') return true;
-      return !!imageCache[k];
+      return imageLru.has(k);
     });
   },
 
   clear: () => {
+    // 【Phase 3 / L7】清空 LRU 与 state 快照
+    imageLru.clear();
     set({
       currentCharacterCardId: null,
       manifest: null,

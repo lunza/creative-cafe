@@ -372,6 +372,70 @@ export interface V2TableTemplatesResult {
   error?: string;
 }
 
+// ==================== 唯一 ID 一致性校验 ====================
+
+/** 表内重复 ID 分组（rows 为 1 基行号） */
+export interface V2IdDuplicateGroup {
+  id: string;
+  rows: number[];
+  /** 整理前预扫描即存在（存量问题标记） */
+  preExisting?: boolean;
+}
+
+/** 单表 ID 扫描统计 */
+export interface V2IdSheetStats {
+  sheetName: string;
+  totalRows: number;
+  /** 缺 ID 行的 1 基行号 */
+  missingIdRows: number[];
+  /** missingIdRows 中属于存量的行数 */
+  missingPreExisting: number;
+  duplicateIds: V2IdDuplicateGroup[];
+}
+
+/** 跨表悬空引用（引用列的值不在任何表的唯一 ID 集合中） */
+export interface V2DanglingRef {
+  sheetName: string;
+  /** 1 基行号 */
+  row: number;
+  /** 引用列名（如 所属角色ID） */
+  column: string;
+  /** 悬空值 */
+  value: string;
+  preExisting?: boolean;
+}
+
+/** pre-flight 自动修正记录 */
+export interface V2IdFixRecord {
+  sheetName: string;
+  action: 'insertToUpdate' | 'stripIdChange' | 'rejectEmptyId' | 'mergeSameEntity';
+  /** 原命令描述 */
+  original: string;
+  /** 修正说明 */
+  detail: string;
+}
+
+/** ID 一致性校验报告 */
+export interface V2IdConsistencyReport {
+  ok: boolean;
+  sheets: V2IdSheetStats[];
+  danglingRefs: V2DanglingRef[];
+  fixes: V2IdFixRecord[];
+  /** 需人工核查项（语义冲突等无法自动修正的问题） */
+  manualReview: string[];
+  /** 整理后全局去重移除的行数（最后防线记录，不再静默） */
+  dedupRemoved: number;
+  /** 一行摘要（UI 直接展示） */
+  summary: string;
+}
+
+/** ID 一致性按需重扫结果 */
+export interface V2IdConsistencyReportResult {
+  success: boolean;
+  report?: V2IdConsistencyReport;
+  error?: string;
+}
+
 /** 表格整理结果（organizeTable / organizeSingleSheet） */
 export interface V2TableOrganizeResult {
   success: boolean;
@@ -381,6 +445,8 @@ export interface V2TableOrganizeResult {
   error?: string;
   /** 因用户取消而提前结束（已处理部分保留） */
   cancelled?: boolean;
+  /** 整理后 ID 一致性校验报告（终扫 + 自动修正 + 人工核查项） */
+  idReport?: V2IdConsistencyReport;
 }
 
 /** 章节整理状态 */
@@ -468,6 +534,8 @@ export interface V2TableAPI {
   getChapterOrganizeStatus: (projectId: string) => Promise<V2ChapterOrganizeStatusResult>;
   /** 请求取消进行中的整理任务（当前分片完成后生效） */
   cancelOrganize: (projectId: string) => Promise<V2BoolResult>;
+  /** ID 一致性按需重扫（只读校验，不改数据、不触发整理） */
+  getIdConsistencyReport: (projectId: string) => Promise<V2IdConsistencyReportResult>;
   getVersionSnapshot: (projectId: string) => Promise<V2VersionSnapshotResult>;
   confirmVersion: (projectId: string) => Promise<V2BoolResult>;
   rollbackVersion: (projectId: string) => Promise<V2BoolResult>;
@@ -619,6 +687,17 @@ export interface WritingV2API {
     chapterIndex: number;
     content: string;
   }) => Promise<V2BoolResult>;
+  /**
+   * Humanizer 文本转写（独立接口，仅适配 jialinyyzz/humanizer 模型）。
+   * 按该模型规范走 /v1/completions（text completion，非 chat），字节级精确 prompt，
+   * 采样 temperature 1.0 / top_p 0.95 / top_k 关闭 / min_p 0 / EOS 停止。
+   * 返回值 rewritten 为改写后全文（超长章节按段落切分后拼接）。
+   */
+  humanizeChapter: (params: {
+    projectId: string;
+    chapterIndex: number;
+    content: string;
+  }) => Promise<{ success: boolean; rewritten?: string; chunks?: number; error?: string }>;
   /** 保存章节版本快照 */
   saveVersion: (params: {
     projectId: string;
@@ -662,6 +741,8 @@ export interface WritingV2API {
     chapterIndex: number;
     content: string;
     previousChapters?: { index: number; title: string; content: string }[];
+    /** 用户自定义评审要求（可选，最高优先级；渲染层按 章节 → 项目 → 全局 回退链读取后传入） */
+    customPrompt?: string;
   }) => Promise<V2PlotCheckResult>;
   /** 章节内容 AI 味审核（humanizer 规则审读 + 修订文本，通道 writing:checkChapterDeAi） */
   checkChapterDeAi: (params: {
@@ -1049,6 +1130,11 @@ export interface MangaComicRecord {
   mangaMeta?: MangaMetaInfo;
   /** 已生成的故事大纲快照（Markdown，随记录持久化，重开漫画时恢复） */
   outline?: string;
+  /**
+   * 每页独立的页面内容引导（2026-10-08）：key = 页面序号（字符串），value = 引导文本。
+   * 分析第 N 页时携带给 AI（userGuidance），按页差异化配置；未配置的页不受影响。
+   */
+  pageGuides?: Record<string, string>;
   createdAt: number;
   updatedAt: number;
 }
@@ -1304,9 +1390,21 @@ export interface V2MangaAPI {
   /** 单页漫画多模态 AI 分析（通道 manga:analyzePage） */
   analyzePage: (params: {
     imagePath: string;
+    /**
+     * 渲染层压缩后的图片 data URI（可选，优先于 imagePath）。
+     * 漫画单页超过 8MB 时，渲染层用 canvas 等比重编码为 JPEG 压缩到 8MB 以下后传入，
+     * 主进程直接使用此 data URI，跳过文件读取与 8MB 文件大小校验。
+     */
+    imageDataUri?: string;
     readingOrder: MangaReadingOrder;
     previousSummaries: MangaPageSummary[];
     pageIndex: number;
+    /**
+     * 最近一个已解析前页的完整分析（可选）。
+     * 注入提示词作为连贯性/一致性关键参照（角色命名一致、场景衔接、对话风格延续、narrativeContinuity 依据），
+     * 与 previousSummaries（全部前页截断摘要表格）互补：摘要表格提供全局脉络，本页提供细节。
+     */
+    previousFullAnalysis?: { pageIndex: number; analysis: MangaPageAnalysis };
     /** 用户对页面内容的引导提示（可选），注入 AI 提示词辅助识别 */
     userGuidance?: string;
     /** 漫画背景信息（可选），注入 AI 提示词辅助角色识别与剧情理解 */
@@ -1349,6 +1447,12 @@ export interface V2MangaAPI {
   generateCharacterInfo: (params: {
     /** 人物参考图片的本地路径（渲染层经 file:selectFile 选择） */
     imagePath: string;
+    /**
+     * 渲染层压缩后的图片 data URI（可选，优先于 imagePath）。
+     * 原图超过 8MB 时，渲染层用 canvas 等比重编码为 JPEG 压缩到 8MB 以下后传入，
+     * 主进程直接使用此 data URI，跳过文件读取与 8MB 文件大小校验。
+     */
+    imageDataUri?: string;
     /** 当前漫画全部页面分析摘要（可选，空数组表示新建模式无分析结果） */
     summaries?: MangaPageSummary[];
     /** 当前表单中的漫画背景信息（可选） */

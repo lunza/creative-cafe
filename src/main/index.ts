@@ -1,9 +1,23 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import path from 'path';
-import { setupIpcHandlers } from './ipc';
-import { abortAllActiveRequests } from './ipc/handlers/writingHandlers';
-import { abortAllAIRequests } from './ipc/handlers/aiHandlers';
-import { startLanApiServer, stopLanApiServer } from './services/lanApiServer/server';
+// ⚠️ [Spec: migrate-user-data-to-project-root] 本文件顶层只允许静态 import electron 与纯路径工具：
+// 数据服务模块（./ipc 及其传递依赖）必须在 whenReady 内动态 import——模块级单例
+// （CategoryDictionaryService / ThumbnailService / storageManager 等）在构造时即锁定
+// userData 派生路径，若 setPath 晚于它们被 import，路径会分裂到旧 APPDATA 与新 appData 两处。
+import { getDataRoot } from './utils/appPath';
+import { migrateUserDataOnce } from './services/dataMigrationService';
+
+// ========== [Spec: migrate-user-data-to-project-root] dev 模式：一次性迁移 + userData 单点重定向 ==========
+// 必须在模块顶层执行（先于任何数据服务模块被 import）。迁移失败则回退旧目录，系统不中断。
+if (!app.isPackaged) {
+  const mig = migrateUserDataOnce();
+  if (!mig.fallback) {
+    app.setPath('userData', getDataRoot());
+    console.log(`[App] userData redirected (dev): ${getDataRoot()}`);
+  } else {
+    console.warn(`[App] userData migration failed, keeping legacy APPDATA userData: ${mig.reason}`);
+  }
+}
 
 // ========== 全局异常处理器（防止未捕获的 Promise rejection / 同步异常导致主进程崩溃） ==========
 // 【重点标记】修复：增量向量化等 fire-and-forget 调用若产生逃逸异常，Node.js 16+ 默认会退出进程，
@@ -29,6 +43,12 @@ if (process.platform === 'win32') {
 const isDev = !!(process.env.VITE_DEV_SERVER_URL) || process.env.NODE_ENV === 'development';
 
 let mainWindow: BrowserWindow | null = null;
+
+// 数据服务句柄：whenReady 内动态 import 后赋值（避免静态 import 早于 setPath 锁定路径）
+let abortAllActiveRequests: () => void = () => {};
+let abortAllAIRequests: () => number = () => 0;
+let startLanApiServer: () => void = () => {};
+let stopLanApiServer: () => void = () => {};
 
 export function sendLogToRenderer(message: string, type: 'error' | 'warn' | 'info' | 'debug' = 'info') {
   console.log(`[${type.toUpperCase()}] ${message}`);
@@ -94,8 +114,21 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  // [Spec: migrate-user-data-to-project-root] 数据服务模块必须在此动态 import：
+  // setPath 已在模块顶层完成（先于一切数据服务 import），此时所有 userData 派生路径正确。
+  const [ipc, writingHandlers, aiHandlers, lanServer] = await Promise.all([
+    import('./ipc'),
+    import('./ipc/handlers/writingHandlers'),
+    import('./ipc/handlers/aiHandlers'),
+    import('./services/lanApiServer/server'),
+  ]);
+  abortAllActiveRequests = writingHandlers.abortAllActiveRequests;
+  abortAllAIRequests = aiHandlers.abortAllAIRequests;
+  startLanApiServer = lanServer.startLanApiServer;
+  stopLanApiServer = lanServer.stopLanApiServer;
+
   createWindow();
-  setupIpcHandlers();
+  ipc.setupIpcHandlers();
 
   // dev-only：无头 E2E 自动执行（Spec: add-novel-writing-pipeline-api）
   // 通过环境变量 PIPELINE_E2E_SCALE=smoke|full|v2-integrated 触发；打包版忽略。

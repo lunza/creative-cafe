@@ -340,19 +340,37 @@ export class OutlineGenerator {
     chapters: Array<Record<string, unknown>>;
   } | null {
     const lines = text.split(/\r?\n/);
-    const chapters: Array<{ title: string; summary: string }> = [];
+    const chapters: Array<{
+      title: string;
+      summary: string;
+      keyPlotPoints: string[];
+      characters: string[];
+      scenes: string[];
+    }> = [];
     let suggestedTitle = '';
     const prefaceLines: string[] = [];
     // 元信息区归桶：characters（角色/人物类）与 story（背景/主题/主线类）
     const metaText: { characters: string[]; story: string[] } = { characters: [], story: [] };
-    let current: { title: string; body: string[] } | null = null;
+    let current: {
+      title: string;
+      body: string[];
+      keyPlotPoints: string[];
+      characters: string[];
+      scenes: string[];
+    } | null = null;
     // 当前元信息区上下文（遇到剧情章节或更高层级标题时重置）
     let metaBucket: 'characters' | 'story' | null = null;
     let metaLevel = 0;
 
     const flush = () => {
       if (current) {
-        chapters.push({ title: current.title, summary: current.body.join('\n').trim() });
+        chapters.push({
+          title: current.title,
+          summary: current.body.join('\n').trim(),
+          keyPlotPoints: current.keyPlotPoints,
+          characters: current.characters,
+          scenes: current.scenes,
+        });
         current = null;
       }
     };
@@ -398,7 +416,7 @@ export class OutlineGenerator {
         const isMetaChild = metaBucket !== null && headingLevel > metaLevel;
         if (isStrongChapter || (!isMetaKeyword && !isMetaChild)) {
           // 剧情章节（强编号 / 弱编号 / 语义化标题）
-          current = { title: headingTitle, body: [] };
+          current = { title: headingTitle, body: [], keyPlotPoints: [], characters: [], scenes: [] };
           metaBucket = null;
           metaLevel = 0;
         } else {
@@ -414,7 +432,27 @@ export class OutlineGenerator {
           current = null;
         }
       } else if (current) {
-        current.body.push(line);
+        // 章节内结构化行（漫画大纲约定格式）：提取到对应字段，不进散文摘要
+        // 兼容：全角/半角冒号、加粗包裹（**关键情节点：** / **关键情节点**：）、
+        // 以及 AI 高频的"列表项"前缀（- 关键情节点：…，实测 local-llm 输出均带 `- `）
+        const plotMatch = line.match(/^\s*(?:[-*+]\s+)?\*{0,2}关键情节点\s*\*{0,2}\s*[:：]\s*\*{0,2}\s*(.+)$/);
+        const charMatch = line.match(/^\s*(?:[-*+]\s+)?\*{0,2}出场人物\s*\*{0,2}\s*[:：]\s*\*{0,2}\s*(.+)$/);
+        const sceneMatch = line.match(/^\s*(?:[-*+]\s+)?\*{0,2}场景\s*\*{0,2}\s*[:：]\s*\*{0,2}\s*(.+)$/);
+        if (plotMatch) {
+          current.keyPlotPoints.push(
+            ...plotMatch[1].split(/[；;]/).map((s) => s.trim()).filter(Boolean)
+          );
+        } else if (charMatch) {
+          current.characters.push(
+            ...charMatch[1].split(/[、,，]/).map((s) => s.trim()).filter(Boolean)
+          );
+        } else if (sceneMatch) {
+          current.scenes.push(
+            ...sceneMatch[1].split(/[、,，]/).map((s) => s.trim()).filter(Boolean)
+          );
+        } else {
+          current.body.push(line);
+        }
       } else if (metaBucket) {
         metaText[metaBucket].push(line);
       } else {
@@ -438,7 +476,13 @@ export class OutlineGenerator {
         // 前言 + 背景/主题/角色类元信息 → 故事主线说明（元信息保留不丢失，但不进章节列表）
         coreConflict: [preface, storyMeta, characterMeta].filter(Boolean).join('\n'),
       },
-      chapters: chapters.map((ch) => ({ title: ch.title, summary: ch.summary })),
+      chapters: chapters.map((ch) => ({
+        title: ch.title,
+        summary: ch.summary,
+        keyPlotPoints: ch.keyPlotPoints,
+        characters: ch.characters,
+        scenes: ch.scenes,
+      })),
     };
   }
 

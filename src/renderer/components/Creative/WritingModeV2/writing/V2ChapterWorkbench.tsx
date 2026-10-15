@@ -12,6 +12,7 @@ import {
   CloseCircleOutlined,
   StopOutlined,
   NodeIndexOutlined,
+  SwapOutlined,
 } from '@ant-design/icons';
 import type { WritingProject, ChapterOutline } from '../../../../../shared/types/writing-v2.types';
 import { ChapterStatus, ShardStatus } from '../../../../../shared/types/writing-v2.types';
@@ -26,7 +27,7 @@ import V2PlotCheckPanel from '../plotcheck/V2PlotCheckPanel';
 import V2CrossCheckPanel from '../crosscheck/V2CrossCheckPanel';
 import V2TablePanel from '../table/V2TablePanel';
 import V2VersionHistoryModal from './V2VersionHistoryModal';
-import CustomPromptPopover, { readCustomPrompt } from '../shared/CustomPromptPopover';
+import CustomPromptPopover, { readScopedCustomPrompt } from '../shared/CustomPromptPopover';
 
 const { Content } = Layout;
 
@@ -53,6 +54,12 @@ const V2ChapterWorkbench: React.FC<{ project: WritingProject }> = ({ project }) 
     selectedChapterIndex != null && chapters[selectedChapterIndex] ? selectedChapterIndex : 0;
   const chapter = chapters[selectedIndex];
 
+  // ===== 章节级自定义提示词（2026-10-08 配置分层：章节 > 项目 > 全局）=====
+  // 章节作用域 key = `${baseKey}:${projectId}:${chapterIndex}`，回退链：章节 → 项目 `${baseKey}:${projectId}` → 全局 baseKey
+  const chapterScope = `${project.id}:${selectedIndex}`;
+  const readChapterPrompt = (baseKey: string) =>
+    readScopedCustomPrompt(baseKey, chapterScope, `${baseKey}:${project.id}`) || undefined;
+
   // 编辑器本地文本（防抖落盘）
   const [text, setText] = useState('');
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -62,6 +69,8 @@ const V2ChapterWorkbench: React.FC<{ project: WritingProject }> = ({ project }) 
   const livePreviewRef = useRef(false);
   // 一键生成进行中（声明前置：实时预览 effect 依赖它）
   const [autoRunning, setAutoRunning] = useState(false);
+  // Humanizer 文本转写进行中（独立接口，仅适配 jialinyyzz/humanizer 模型）
+  const [humanizing, setHumanizing] = useState(false);
 
   // 切换章节 / 章节结构变化（AI 拆并）时载入正文
   useEffect(() => {
@@ -100,6 +109,40 @@ const V2ChapterWorkbench: React.FC<{ project: WritingProject }> = ({ project }) 
     saveTimerRef.current = setTimeout(() => {
       persistContent(textRef.current);
     }, CONTENT_SAVE_DELAY);
+  };
+
+  // Humanizer 文本转写：按 jialinyyzz/humanizer 模型规范（text completion，字节级 prompt）
+  // 直接改写本章正文并覆盖保存。仅适配该模型，其他模型无此接口语义。
+  const handleHumanize = async () => {
+    const api = getWritingV2API();
+    if (!api || humanizing || autoRunning) return;
+    if (!textRef.current.trim()) {
+      message.warning('本章正文为空，无可转写内容');
+      return;
+    }
+    setHumanizing(true);
+    try {
+      const res = await api.humanizeChapter({
+        projectId: project.id,
+        chapterIndex: selectedIndex,
+        content: textRef.current,
+      });
+      if (res.success && res.rewritten) {
+        setText(res.rewritten);
+        await persistContent(res.rewritten);
+        message.success(
+          res.chunks && res.chunks > 1
+            ? `转写完成（原文超长，按段落切分为 ${res.chunks} 块逐块改写）`
+            : '转写完成，已用 humanizer 改写结果替换本章正文'
+        );
+      } else {
+        message.error(res.error || '转写失败');
+      }
+    } catch (e: any) {
+      message.error(`转写异常：${e?.message || e}`);
+    } finally {
+      setHumanizing(false);
+    }
   };
 
   // 一键生成实时预览：把正在生成的分片内容（思考流/正文）映射到中间编辑区，
@@ -167,8 +210,8 @@ const V2ChapterWorkbench: React.FC<{ project: WritingProject }> = ({ project }) 
     setAutoRunning(true);
     const count = Math.min(10, Math.max(1, Math.round((chapter.targetWordCount || 3000) / 1000)));
     const key = 'autoGenChapter';
-    // 自定义提示词同时注入分片大纲与分片内容两条生成链（最高优先级）
-    const customPrompt = readCustomPrompt(GEN_CUSTOM_PROMPT_KEY) || undefined;
+    // 自定义提示词同时注入分片大纲与分片内容两条生成链（最高优先级；按章节读取：本章 → 项目 → 全局）
+    const customPrompt = readChapterPrompt(GEN_CUSTOM_PROMPT_KEY);
     try {
       message.loading({ content: `第 ${selectedIndex + 1} 章：生成 ${count} 个分片大纲…`, key, duration: 0 });
       const planned = await planShards(count, customPrompt);
@@ -261,7 +304,7 @@ const V2ChapterWorkbench: React.FC<{ project: WritingProject }> = ({ project }) 
         content,
         modelConfig: project.config.modelConfig,
         // 自定义审核要求（可选，最高优先级）
-        customPrompt: readCustomPrompt(DEAI_CUSTOM_PROMPT_KEY) || undefined,
+        customPrompt: readChapterPrompt(DEAI_CUSTOM_PROMPT_KEY),
       });
       if (result.success) {
         setDeAiResult({
@@ -423,10 +466,27 @@ const V2ChapterWorkbench: React.FC<{ project: WritingProject }> = ({ project }) 
             </Button>
             <CustomPromptPopover
               storageKey={GEN_CUSTOM_PROMPT_KEY}
+              scope={chapterScope}
+              fallbackKey={`${GEN_CUSTOM_PROMPT_KEY}:${project.id}`}
+              scopeLabel="本章专属"
               title="AI 生成本章 - 自定义提示词"
               placeholder="输入写作要求（如：多写对话、节奏紧凑、突出莫妮卡的情绪变化等），将作为最高优先级约束同时附加到分片大纲与正文生成（可选）"
               disabled={autoRunning}
             />
+            {/* 文本转写：仅适配 jialinyyzz/humanizer 模型（text completion 独立接口） */}
+            <Tooltip
+              title="仅适配 jialinyyzz/humanizer 模型：按该模型的 text completion 规范（字节级 prompt + temperature 1.0 / top-p 0.95 / EOS 停止）直接改写本章正文并覆盖保存，其他模型无此接口语义"
+            >
+              <Button
+                size="small"
+                icon={<SwapOutlined />}
+                loading={humanizing}
+                disabled={autoRunning || !text.trim()}
+                onClick={handleHumanize}
+              >
+                文本转写
+              </Button>
+            </Tooltip>
             <Button
               size="small"
               icon={<AuditOutlined />}
@@ -438,6 +498,9 @@ const V2ChapterWorkbench: React.FC<{ project: WritingProject }> = ({ project }) 
             </Button>
             <CustomPromptPopover
               storageKey={DEAI_CUSTOM_PROMPT_KEY}
+              scope={chapterScope}
+              fallbackKey={`${DEAI_CUSTOM_PROMPT_KEY}:${project.id}`}
+              scopeLabel="本章专属"
               title="检查 AI 味 - 自定义提示词"
               disabled={deAiChecking || autoRunning}
             />
@@ -497,8 +560,12 @@ const V2ChapterWorkbench: React.FC<{ project: WritingProject }> = ({ project }) 
         />
 
         {/* 右：多 Tab 面板（分片流水线 / 剧情检查 / 表格整理） */}
-        <Layout.Sider width={rightWidth} style={{ display: 'flex', flexDirection: 'column', background: token.colorBgContainer }}>
-          <div style={{ display: 'flex', borderBottom: `1px solid ${token.colorBorderSecondary}`, flexShrink: 0 }}>
+        <Layout.Sider width={rightWidth} style={{ background: token.colorBgContainer }}>
+          {/* ⚠️ antd Sider 内部会用块级 div.ant-layout-sider-children 包裹子节点，
+              直接写 flex:1 会被该块级包装层吞掉（高度 auto 撑破容器、无滚动条、内容被外层 overflow:hidden 裁切）。
+              必须在此显式补一个 height:100% 的 flex 列容器，恢复高度约束链。 */}
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+            <div style={{ display: 'flex', borderBottom: `1px solid ${token.colorBorderSecondary}`, flexShrink: 0 }}>
             {(
               [
                 { key: 'pipeline', icon: <AppstoreOutlined />, label: '生成流水线' },
@@ -530,8 +597,8 @@ const V2ChapterWorkbench: React.FC<{ project: WritingProject }> = ({ project }) 
             {rightTab === 'pipeline' && (
               <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
                 <V2ShardPipelinePanel
-                  planShards={planShards}
-                  generateShard={generateShard}
+                  planShards={(n) => planShards(n, readChapterPrompt(GEN_CUSTOM_PROMPT_KEY))}
+                  generateShard={(i) => generateShard(i, readChapterPrompt(GEN_CUSTOM_PROMPT_KEY))}
                   mergeToChapter={doMerge}
                 />
                 <Button
@@ -547,23 +614,30 @@ const V2ChapterWorkbench: React.FC<{ project: WritingProject }> = ({ project }) 
               </div>
             )}
             {rightTab === 'plotcheck' && (
-              <V2PlotCheckPanel
-                project={project}
-                chapterIndex={selectedIndex}
-                content={text}
-                onContentUpdated={handleContentUpdated}
-              />
+              <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
+                <V2PlotCheckPanel
+                  project={project}
+                  chapterIndex={selectedIndex}
+                  content={text}
+                  onContentUpdated={handleContentUpdated}
+                />
+              </div>
             )}
             {rightTab === 'crosscheck' && (
-              <V2CrossCheckPanel
-                project={project}
-                chapterIndex={selectedIndex}
-                onContentUpdated={handleContentUpdated}
-              />
+              <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
+                <V2CrossCheckPanel
+                  project={project}
+                  chapterIndex={selectedIndex}
+                  onContentUpdated={handleContentUpdated}
+                />
+              </div>
             )}
             {rightTab === 'table' && (
-              <V2TablePanel project={project} chapterIndex={selectedIndex} />
+              <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
+                <V2TablePanel project={project} chapterIndex={selectedIndex} />
+              </div>
             )}
+          </div>
           </div>
         </Layout.Sider>
       </Layout>

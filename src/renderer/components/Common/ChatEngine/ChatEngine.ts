@@ -18,6 +18,7 @@ import {
   resolveStopForRequestBody,
   buildSamplingExtras
 } from './ChatEngine.types';
+import { resolveEngineParams } from '../../../../shared/parameterResolver';
 
 export class ChatEngine implements IChatEngine {
   private streamCallback: StreamCallback | null = null;
@@ -117,17 +118,21 @@ export class ChatEngine implements IChatEngine {
       if (!config.model_name) {
         throw new Error('未配置 AI 模型名称');
       }
-      // max_tokens 配置值表示上下文窗口大小，非 API 输出限制，不发送给 API
-      // 让 API 自行使用模型默认的最大输出长度
-      const maxTokens = undefined;
-      const temperature = Number(config.temperature) ?? 0.8;
+      // 【重点标记 - FL-2 分链路失效修复 + M-18/N7 统一参数解析】max_tokens 配置值
+      // 曾硬编码 undefined 覆盖（角色对话无视输出上限）；temperature 曾 Number(x) ?? 0.8
+      // 因 ?? 不拦 NaN 而可能写入 null。现统一走 resolveEngineParams 三级合并：
+      // 消费引擎设置值，缺省回退 DEFAULT_ENGINE_PARAMS.maxTokens / 0.8（与世界书链路一致）。
+      const resolved = resolveEngineParams(config);
+      const maxTokens = resolved.max_tokens;
+      const temperature = resolved.temperature;
 
       const requestBody: any = {
         model: config.model_name,
         temperature,
         stream: true,
       };
-      // 仅当 max_tokens 有有效值时才注入请求体；为 0/undefined 时不发送，让后端使用默认行为
+      // 注入 max_tokens 输出上限（H-8：FL-2 修复后 maxTokens 恒为有效正整数，
+      // 此处恒注入，使角色对话链路与世界书/创作链路行为一致）
       if (maxTokens !== undefined) {
         requestBody.max_tokens = maxTokens;
       }

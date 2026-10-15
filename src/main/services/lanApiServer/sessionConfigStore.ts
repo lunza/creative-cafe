@@ -67,6 +67,16 @@ export interface LanSessionConfig {
   customStopSequencesEnabled: boolean;
   /** 自定义停止序列数组（每行一个） */
   customStopSequences: string[];
+  /** Token 管理开关（【Phase 4 / L9 - conversation-mode-optimization-report】对齐桌面端 ConfigPanel Token 管理） */
+  tokenManagementEnabled: boolean;
+  /** 最大上下文 Token 数（默认 256000，对齐桌面端缺省） */
+  maxContextTokens: number;
+  /** 响应预留 Token 数（默认 4096） */
+  reservedForResponse: number;
+  /** 最少保留对话轮数（1 轮 = 2 条消息；默认 3） */
+  minMessagesToKeep: number;
+  /** 最多保留消息条数（默认 60） */
+  maxMessagesToKeep: number;
   lastUpdated: number;
 }
 
@@ -88,6 +98,13 @@ const NUM_RANGES: Record<string, { min: number; max: number; integer?: boolean }
 const LANGUAGES = new Set(['zh', 'en', 'ja']);
 const THINK_TAG_MODES = new Set(['strip', 'strip_render', 'fold']);
 const BOOL_KEYS = new Set(['expression_display', 'image_gen_enabled', 'assist_mode']);
+// 【Phase 4 / L9】Token 管理顶层数值字段范围（对齐桌面端 TokenManagementPanel InputNumber min/max）
+const TOKEN_MGMT_NUM_RANGES: Record<string, { min: number; max: number; integer?: boolean }> = {
+  maxContextTokens: { min: 1000, max: 1000000, integer: true },
+  reservedForResponse: { min: 256, max: 65536, integer: true },
+  minMessagesToKeep: { min: 1, max: 20, integer: true },
+  maxMessagesToKeep: { min: 10, max: 500, integer: true },
+};
 const MAX_STOP_SEQUENCES = 32;
 const MAX_STOP_SEQUENCE_LENGTH = 200;
 const MAX_KB_BINDINGS = 64;
@@ -197,13 +214,29 @@ export function validateAndNormalizeSessionConfig(
   }
 
   // 布尔开关
-  for (const key of ['memoryTableEnabled', 'customStopSequencesEnabled'] as const) {
+  for (const key of ['memoryTableEnabled', 'customStopSequencesEnabled', 'tokenManagementEnabled'] as const) {
     if (key in raw) {
       if (typeof raw[key] !== 'boolean') {
         issues.push({ field: key, reason: '必须是布尔值' });
       } else {
         normalized[key] = raw[key] as boolean;
       }
+    }
+  }
+
+  // 【Phase 4 / L9】Token 管理顶层数值字段
+  for (const key of Object.keys(TOKEN_MGMT_NUM_RANGES)) {
+    if (!(key in raw)) continue;
+    const range = TOKEN_MGMT_NUM_RANGES[key];
+    const value = raw[key];
+    if (typeof value !== 'number' || !isFinite(value)) {
+      issues.push({ field: key, reason: '必须是数字' });
+    } else if (value < range.min || value > range.max) {
+      issues.push({ field: key, reason: `范围 ${range.min}-${range.max}` });
+    } else if (range.integer && !Number.isInteger(value)) {
+      issues.push({ field: key, reason: '必须是整数' });
+    } else {
+      (normalized as any)[key] = value;
     }
   }
 
@@ -248,6 +281,12 @@ function defaultConfig(characterCardId: string): LanSessionConfig {
     memoryTableEnabled: false,
     customStopSequencesEnabled: false,
     customStopSequences: [],
+    // 【Phase 4 / L9】Token 管理缺省（对齐桌面端 TokenManagementPanel 默认值）
+    tokenManagementEnabled: false,
+    maxContextTokens: 256000,
+    reservedForResponse: 4096,
+    minMessagesToKeep: 3,
+    maxMessagesToKeep: 60,
     lastUpdated: 0,
   };
 }
@@ -294,6 +333,12 @@ class SessionConfigStore {
         customStopSequences: Array.isArray(parsed.customStopSequences)
           ? parsed.customStopSequences.filter((x): x is string => typeof x === 'string')
           : [],
+        // 【Phase 4 / L9】Token 管理字段级兜底（缺省对齐桌面端默认值）
+        tokenManagementEnabled: parsed.tokenManagementEnabled === true,
+        maxContextTokens: typeof parsed.maxContextTokens === 'number' ? parsed.maxContextTokens : 256000,
+        reservedForResponse: typeof parsed.reservedForResponse === 'number' ? parsed.reservedForResponse : 4096,
+        minMessagesToKeep: typeof parsed.minMessagesToKeep === 'number' ? parsed.minMessagesToKeep : 3,
+        maxMessagesToKeep: typeof parsed.maxMessagesToKeep === 'number' ? parsed.maxMessagesToKeep : 60,
         lastUpdated: typeof parsed.lastUpdated === 'number' ? parsed.lastUpdated : 0,
       };
     } catch (error) {

@@ -73,6 +73,7 @@ creative-cafe/
 | 目录 | 用途 |
 |---|---|
 | `tmp/` | **所有**运行时临时产物唯一存放地：调试截图、UI 树 dump、tsc/eslint 错误快照、一次性脚本、中间 JSON |
+| `.runtime/` | 便携运行时：start 脚本在系统缺少 Node.js（或版本过低）时自动下载解压到此处（`.runtime/node/`），前置 PATH 使用，零全局安装、零管理员权限 |
 
 **规范**：
 - 任何临时文件（`.tmp-*`、`*.png` 调试截图、`*-errors*.txt`、一次性 `tmp-*.js`）只准写 `tmp/`，禁止落项目根

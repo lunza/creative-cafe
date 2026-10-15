@@ -20,6 +20,22 @@ interface UseV2ShardGenerationParams {
   chapter?: ChapterOutline;
 }
 
+/**
+ * 章节范围识别守卫（2026-10-08 修复"AI生成本章写出全书"的入口防线）：
+ * 当前章节没有大纲时，生成 prompt 的「章节大纲」为空，模型失去剧情边界会自由发挥
+ * （漫画项目实测：生成第一章却写出第一至第五章全部内容）。此时禁止发起生成。
+ * 纯函数，可单测。
+ */
+export function chapterOutlineMissing(
+  chapter: { summary?: string } | undefined | null
+): string | null {
+  if (!chapter) return '当前章节不存在';
+  if (!chapter.summary || !chapter.summary.trim()) {
+    return '当前章节没有大纲，无法限定生成范围（会写出整书剧情），请先在大纲中填写本章剧情再生成';
+  }
+  return null;
+}
+
 export function useV2ShardGeneration({ project, chapter }: UseV2ShardGenerationParams) {
   const store = useV2GenerationStore;
 
@@ -70,6 +86,12 @@ export function useV2ShardGeneration({ project, chapter }: UseV2ShardGenerationP
     async (shardCount: number, customPrompt?: string) => {
       const api = getWritingV2API();
       if (!api || !chapter) return false;
+      // 章节范围识别守卫：无大纲 → 无边界 → 禁止生成（防 AI 自由发挥出整书剧情）
+      const outlineError = chapterOutlineMissing(chapter);
+      if (outlineError) {
+        store.getState().failShard(0, outlineError);
+        return false;
+      }
       const s = store.getState();
       s.beginPlanning(chapter.index);
       try {

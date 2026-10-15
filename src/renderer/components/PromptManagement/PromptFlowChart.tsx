@@ -1,6 +1,8 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Empty } from 'antd';
 import type { PromptTemplate, PromptPart, PromptVariable } from '../../../shared/types/promptTemplate.types';
+// Spec: settings-feature-optimization-report / N6, M-17（统一封装）
+import { getSettingAPI } from '../../services/settingServiceClient';
 
 interface PromptFlowChartProps {
   template: PromptTemplate;
@@ -41,7 +43,8 @@ const truncateText = (text: string, maxLen: number = 22): string => {
 
 const loadEngineSystemPrompt = async (): Promise<string> => {
   try {
-    const result = await window.electronAPI.setting.load();
+    // Spec: settings-feature-optimization-report / N6, M-17（统一封装）
+    const result = await getSettingAPI()?.load() ?? { success: false, error: 'setting API 不可用' };
     if (result.success && result.setting) {
       const engines = result.setting.aiEngines || [];
       const activeEngineId = result.setting.activeEngineId;

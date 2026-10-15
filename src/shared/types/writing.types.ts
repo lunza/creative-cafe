@@ -8,6 +8,9 @@ export type { WritingTableData, WritingTableContext, WritingTableConfig } from '
 // 漫画解析信息类型定义在 writing-v2.types.ts（仅类型导入，运行时零依赖，无循环风险）
 import type { MangaMetaInfo, MangaPageAnalysis } from './writing-v2.types';
 
+// 跨章审查类型（cross-chapter-review.types.ts 为纯类型文件无 import，无循环风险）
+import type { CrossCheckReport, CrossCheckStrictness } from './cross-chapter-review.types';
+
 // 小说类型
 export enum NovelType {
   WEB_NOVEL = 'web_novel',
@@ -368,6 +371,24 @@ export interface PlotCheckHistoryEntry {
   timestamp: number;
   overallScore: number;
   totalIssues: number;
+  /** 完整检查报告（2026-10-09 起保存，支持查看历史详情；旧条目无此字段） */
+  report?: PlotCheckReport;
+}
+
+// 跨章审查历史条目（存于项目实体，切换页签/重启后仍可查看历史审查详情）
+export interface CrossCheckReviewRecord {
+  id: string;
+  timestamp: number;
+  /** 起始章节位置（0 基） */
+  startPos: number;
+  /** 章节数 */
+  count: number;
+  distance: number;
+  similarityThreshold: number;
+  aiStrictness: CrossCheckStrictness;
+  enableAiReview: boolean;
+  /** 完整审查报告（含 issues 明细，支持历史回看） */
+  report: CrossCheckReport;
 }
 
 // 章节
@@ -432,6 +453,8 @@ export interface WritingProject {
    * 让 AI 知道具体台词、角色动作、场景细节
    */
   mangaReference?: MangaReferenceMaterial;
+  /** 跨章审查历史（最近 20 条，含完整报告，存项目实体，切换页签/重启不丢失） */
+  crossCheckHistory?: CrossCheckReviewRecord[];
 }
 
 // 漫画解析全文素材（章节写作参考，与角色卡/世界书同级）

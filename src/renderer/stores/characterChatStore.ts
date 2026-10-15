@@ -18,7 +18,9 @@ interface ChatMessage {
 }
 
 // 角色卡测试对话
-interface CharacterTestChat {
+// 【Phase 1 / H1 - conversation-mode-optimization-report】导出供 characterChatService 复用，
+// 避免服务层重复定义导致 IPC 边界类型与 store 类型不一致（TS2345）
+export interface CharacterTestChat {
   id: string;
   creativeId: string;
   characterCardId: string;
@@ -38,14 +40,15 @@ interface CharacterTestChat {
 
 interface CharacterChatStore {
   // 测试对话
+  // 【Phase 3 / L7 - conversation-mode-optimization-report】仅保留当前对话（P3）：
+  // 原 testChats 累积会话期间加载过的所有角色卡对话全量消息，无 UI 消费方
+  // （loadAllChats 已无任何调用方，一并删除），内存随使用时长无限增长。
+  // 现约定 testChats 至多 1 个元素（当前对话），内存占用恒定。
   testChats: CharacterTestChat[];
   // 加载状态
   isLoading: boolean;
   // 当前选中的对话
   currentTestChat: CharacterTestChat | null;
-
-  // 加载所有对话
-  loadAllChats: () => Promise<void>;
 
   // 测试对话操作
   loadTestChat: (creativeId: string, characterCardId: string) => Promise<void>;
@@ -106,20 +109,6 @@ export const useCharacterChatStore = create<CharacterChatStore>((set, get) => ({
   isLoading: false,
   currentTestChat: null,
 
-  // 加载所有对话
-  loadAllChats: async () => {
-    set({ isLoading: true });
-    try {
-      if (window.electronAPI && window.electronAPI.characterChat) {
-        const testChats = await window.electronAPI.characterChat.getAllTestChats();
-        set({ testChats, isLoading: false });
-      }
-    } catch (error) {
-      console.error('[CharacterChatStore] Failed to load all chats:', error);
-      set({ isLoading: false });
-    }
-  },
-
   // 测试对话操作
   loadTestChat: async (creativeId: string, characterCardId: string) => {
     set({ isLoading: true });
@@ -146,19 +135,12 @@ export const useCharacterChatStore = create<CharacterChatStore>((set, get) => ({
             chat.sessionTraits = undefined;
           }
 
-          set((state) => {
-            // 更新或添加到列表
-            const exists = state.testChats.some(c => c.id === chat.id);
-            const newTestChats = exists
-              ? state.testChats.map(c => c.id === chat.id ? chat : c)
-              : [...state.testChats, chat];
-
-            return {
-              testChats: newTestChats,
-              currentTestChat: chat,
-              isLoading: false
-            };
-          });
+          set(() => ({
+            // 【Phase 3 / L7】仅保留当前对话，不累积历史对话
+            testChats: [chat],
+            currentTestChat: chat,
+            isLoading: false
+          }));
         } else {
           // 如果不存在，设置为 null
           set({ currentTestChat: null, isLoading: false });
@@ -257,11 +239,7 @@ export const useCharacterChatStore = create<CharacterChatStore>((set, get) => ({
           }
 
           set((state) => {
-            const exists = state.testChats.some(c => c.id === chat.id);
-            const newTestChats = exists
-              ? state.testChats.map(c => c.id === chat.id ? chat : c)
-              : [...state.testChats, chat];
-
+            // 【Phase 3 / L7】仅保留当前对话，不累积历史对话
             // 只有当前正在查看这个对话时（或 currentTestChat 尚未初始化时）才更新 currentTestChat。
             // 【Bug 修复】原逻辑 `state.currentTestChat && ...` 在 currentTestChat 为 null 时
             // updateCurrent 恒为 falsy，导致 currentTestChat 永远无法从 null 初始化，
@@ -276,7 +254,7 @@ export const useCharacterChatStore = create<CharacterChatStore>((set, get) => ({
                state.currentTestChat.characterCardId === characterCardId);
 
             return {
-              testChats: newTestChats,
+              testChats: [chat],
               currentTestChat: updateCurrent ? chat : state.currentTestChat
             };
           });
@@ -354,12 +332,10 @@ export const useCharacterChatStore = create<CharacterChatStore>((set, get) => ({
           ...state.currentTestChat,
           sessionTraits: deepCopy,
         };
-        const newTestChats = state.testChats.map(c =>
-          c.id === updatedChat.id ? updatedChat : c
-        );
+        // 【Phase 3 / L7 - conversation-mode-optimization-report】仅保留当前对话，不累积历史对话
         return {
           currentTestChat: updatedChat,
-          testChats: newTestChats,
+          testChats: [updatedChat],
         };
       });
       await get().saveTestChat(
@@ -386,12 +362,10 @@ export const useCharacterChatStore = create<CharacterChatStore>((set, get) => ({
           ...state.currentTestChat,
           sessionTraits: undefined,
         };
-        const newTestChats = state.testChats.map(c =>
-          c.id === updatedChat.id ? updatedChat : c
-        );
+        // 【Phase 3 / L7 - conversation-mode-optimization-report】仅保留当前对话，不累积历史对话
         return {
           currentTestChat: updatedChat,
-          testChats: newTestChats,
+          testChats: [updatedChat],
         };
       });
       await get().saveTestChat(
@@ -436,12 +410,10 @@ export const useCharacterChatStore = create<CharacterChatStore>((set, get) => ({
           ...state.currentTestChat,
           sessionTraits: newTraits,
         };
-        const newTestChats = state.testChats.map(c =>
-          c.id === updatedChat.id ? updatedChat : c
-        );
+        // 【Phase 3 / L7 - conversation-mode-optimization-report】仅保留当前对话，不累积历史对话
         return {
           currentTestChat: updatedChat,
-          testChats: newTestChats,
+          testChats: [updatedChat],
         };
       });
       await get().saveTestChat(
@@ -482,12 +454,10 @@ export const useCharacterChatStore = create<CharacterChatStore>((set, get) => ({
           ...state.currentTestChat,
           sessionTraits: newTraits,
         };
-        const newTestChats = state.testChats.map(c =>
-          c.id === updatedChat.id ? updatedChat : c
-        );
+        // 【Phase 3 / L7 - conversation-mode-optimization-report】仅保留当前对话，不累积历史对话
         return {
           currentTestChat: updatedChat,
-          testChats: newTestChats,
+          testChats: [updatedChat],
         };
       });
       await get().saveTestChat(
@@ -520,12 +490,10 @@ export const useCharacterChatStore = create<CharacterChatStore>((set, get) => ({
           ...state.currentTestChat,
           sessionTraits: newTraits,
         };
-        const newTestChats = state.testChats.map(c =>
-          c.id === updatedChat.id ? updatedChat : c
-        );
+        // 【Phase 3 / L7 - conversation-mode-optimization-report】仅保留当前对话，不累积历史对话
         return {
           currentTestChat: updatedChat,
-          testChats: newTestChats,
+          testChats: [updatedChat],
         };
       });
       await get().saveTestChat(
@@ -540,4 +508,5 @@ export const useCharacterChatStore = create<CharacterChatStore>((set, get) => ({
   }
 }));
 
-export type { ChatMessage, CharacterTestChat };
+// CharacterTestChat 已在声明处导出（Phase 1 / H1），此处不再重复导出（TS2484）
+export type { ChatMessage };

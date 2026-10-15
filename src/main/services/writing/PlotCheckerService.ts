@@ -55,6 +55,8 @@ export interface PlotCheckRequestData {
     data?: Record<string, Record<string, any>[]>;
     sheetDescriptions?: Record<string, string>;
   };
+  /** 用户自定义评审要求（可选，最高优先级；渲染层按 章节 → 项目 → 全局 回退链解析后传入） */
+  customPrompt?: string;
 }
 
 export class PlotCheckerService {
@@ -1067,7 +1069,11 @@ ${contextParts}
     const config = await aiService.getConfig();
     addLog(`AI 配置: baseUrl=${config.baseUrl}, model=${config.model}`, 'debug');
 
-    const systemPrompt = `你是一个专业的小说编辑和质量检查助手。请以JSON格式返回检查结果。`;
+    const systemPrompt = `你是一个专业的小说编辑和质量检查助手。请以JSON格式返回检查结果。` +
+      // 章节级自定义评审要求（最高优先级，注入 system 末尾；可为章节专属/项目级/全局）
+      (request.customPrompt
+        ? `\n\n【本章评审专属要求（最高优先级，与下述通用维度冲突时以此为准）】\n${request.customPrompt}`
+        : '');
     const userPrompt = this.buildCheckPrompt(request);
 
     addLog(`【剧情检查】当前章节内容完整长度: ${request.content.length} 字符`, 'debug');

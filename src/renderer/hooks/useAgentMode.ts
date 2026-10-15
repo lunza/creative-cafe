@@ -23,9 +23,19 @@ export function useAgentMode() {
 
   useEffect(() => {
     let mounted = true;
+    const agentModeApi = window.electronAPI?.agent?.mode;
+
+    // 【回归走查发现】裸浏览器模式（npm run dev 只起 vite，无 Electron preload）
+    // 下 window.electronAPI 为 undefined，本 effect 直接读 .agent 抛 TypeError，
+    // Sidebar/Header 顶层消费本 hook → 整树卸载白屏。加防御降级：API 缺失时
+    // 保持默认状态（isActive=false）仅结束 loading，UI 正常渲染。
+    if (!agentModeApi) {
+      setLoading(false);
+      return;
+    }
 
     // 查询初始状态
-    window.electronAPI.agent.mode.getStatus().then(result => {
+    agentModeApi.getStatus().then(result => {
       if (mounted && result.ok && result.status) {
         setStatus(result.status);
         setIsActive(result.status.active);
@@ -37,7 +47,7 @@ export function useAgentMode() {
     });
 
     // 订阅模式变更事件
-    const unsubscribe = window.electronAPI.agent.mode.onModeChanged((newStatus) => {
+    const unsubscribe = agentModeApi.onModeChanged((newStatus) => {
       if (mounted) {
         setStatus(newStatus);
         setIsActive(newStatus.active);
@@ -51,6 +61,10 @@ export function useAgentMode() {
   }, []);
 
   const setOverride = useCallback(async (override: AgentModeOverride) => {
+    // 浏览器模式防御：API 缺失时返回失败 Result，调用方按失败路径处理
+    if (!window.electronAPI?.agent?.mode) {
+      return { ok: false, error: 'Agent 模式 API 不可用（非 Electron 环境）' } as any;
+    }
     const result = await window.electronAPI.agent.mode.setOverride(override);
     if (result.ok && result.status) {
       setStatus(result.status);

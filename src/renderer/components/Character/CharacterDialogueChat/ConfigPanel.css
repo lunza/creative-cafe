@@ -1422,3 +1422,64 @@
   border-color: rgba(245, 158, 11, 0.5) !important;
   color: #fbbf24 !important;
 }
+
+
+/* 【Phase 2 / M3 - conversation-mode-optimization-report】参数搜索 + Tab 式分组 */
+.config-panel-search {
+  position: relative;
+  margin-bottom: 8px;
+}
+.config-panel-search-box {
+  position: relative;
+}
+.config-panel-search-results {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 1050;
+  margin-top: 4px;
+  background: var(--config-panel-bg, #1e293b);
+  border: 1px solid var(--config-panel-border, #334155);
+  border-radius: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+.config-panel-search-item {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--config-panel-text-color, #e2e8f0);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.config-panel-search-item:hover {
+  background: rgba(22, 119, 255, 0.15);
+}
+.config-panel-search-empty {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: #64748b;
+}
+.config-panel-search-hint {
+  margin-top: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: #1677ff;
+  background: rgba(22, 119, 255, 0.1);
+  border-radius: 4px;
+  animation: config-hint-fade 0.2s ease-in;
+}
+@keyframes config-hint-fade {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.config-panel-tabs .ant-tabs-nav {
+  margin-bottom: 12px;
+}
+.config-panel-tabs .ant-tabs-tab {
+  font-size: 13px;
+  padding: 6px 4px !important;
+}

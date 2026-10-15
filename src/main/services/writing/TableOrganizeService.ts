@@ -14,6 +14,13 @@ import { TableTemplate, TableSheet } from '../memory/tableTemplateService';
 import { resolveWritingTableTemplate } from './writingTemplateRegistry';
 import { tableEditParser } from '../memory/tableEditParser';
 import { addLog } from '../memory/chatLogService';
+import {
+  scanTableData,
+  preFlightCheckCommands,
+  buildReport,
+  IdConsistencyReport,
+  IdFixRecord,
+} from './IdConsistencyValidator';
 
 /**
  * 表格整理业务逻辑服务。
@@ -66,10 +73,31 @@ export class TableOrganizeService {
    * 确保表格数据文件存在且含模板结构，缺失时按已绑定模板重建空表并落盘。
    * 背景：「清空」按钮会删除整个 table-data.json（含 sheets/headers 结构），但模板绑定配置仍在，
    * 此前整理入口会误报「表格数据不存在，请先绑定模板」——这里自愈重建，让「AI 整理全部」可直接重跑。
+   *
+   * 2026-10-08 增量补齐：数据文件存在但**缺少模板中的某张表**（如模板新增"身体表"后的存量项目）时，
+   * 按模板把缺失的 sheet 追加为空表（既有 sheets 顺序与行数据全部保留），并落盘。
    */
   private async ensureTableDataFromTemplate(projectId: string): Promise<WritingTableData> {
     const existing = loadTableData(projectId);
     if (existing && existing.sheets && existing.sheets.length > 0) {
+      // 增量补齐：模板新增了表而存量数据文件没有时，追加缺失 sheet 的空结构
+      const tableConfig = await this.tableRepo.getTableConfig(projectId);
+      if (tableConfig?.associatedTemplateId) {
+        const template = resolveWritingTableTemplate(tableConfig.associatedTemplateId);
+        if (template?.sheets?.length) {
+          const missing = template.sheets.filter((s) => !existing.sheets.includes(s.name));
+          if (missing.length > 0) {
+            for (const sheet of missing) {
+              existing.sheets.push(sheet.name);
+              existing.headers[sheet.name] = sheet.headers;
+              existing.data[sheet.name] = [];
+              existing.sheetDescriptions[sheet.name] = sheet.description || '';
+            }
+            saveTableDataFile(projectId, existing);
+            addLog(`[WritingOrganize] 表格数据缺少模板新增的表，已按模板补齐空表结构: ${missing.map((s) => s.name).join('、')}`, 'info');
+          }
+        }
+      }
       return existing;
     }
 
@@ -105,8 +133,8 @@ export class TableOrganizeService {
     onProgress?: (current: number, total: number, message: string, percent?: number, currentChunk?: number, totalChunks?: number) => void,
     requirements?: string,
     skipOrganized?: boolean
-  ): Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[]; cancelled?: boolean }> {
-    const result = { success: false, processedCount: 0, errorCount: 0, errors: [] as string[], cancelled: false };
+  ): Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[]; cancelled?: boolean; idReport?: IdConsistencyReport }> {
+    const result = { success: false, processedCount: 0, errorCount: 0, errors: [] as string[], cancelled: false, idReport: undefined as IdConsistencyReport | undefined };
     const startTime = Date.now();
 
     addLog(`[WritingOrganize] 开始整理表格: ${projectId}, chapterIndex: ${chapterIndex}`, 'info');
@@ -124,6 +152,11 @@ export class TableOrganizeService {
 
       // 数据文件可能被「清空」整删，模板已绑定时按模板重建空表结构（自愈）
       const tableData = await this.ensureTableDataFromTemplate(projectId);
+
+      // ID 一致性校验-整理前预扫描：存量问题记入最终报告基线（不阻塞、不改数据）
+      const idBaseline = scanTableData(tableData);
+      const idFixes: IdFixRecord[] = [];
+      const idManualReview: string[] = [];
 
       // 保存原始数据快照（深拷贝）
       const originalDataSnapshot: WritingTableData = JSON.parse(JSON.stringify(tableData));
@@ -255,6 +288,10 @@ export class TableOrganizeService {
             requirements
           );
 
+          // 累计 ID 校验的修正与人工核查项（成功/暂停/失败均可能产生）
+          if (chapterResult.fixes?.length) idFixes.push(...chapterResult.fixes);
+          if (chapterResult.manualReview?.length) idManualReview.push(...chapterResult.manualReview);
+
           if (chapterResult.success) {
             progress.processedCount++;
             // SubTask 9.6: 不可变更新章节状态为 organized，消除 as any
@@ -264,6 +301,12 @@ export class TableOrganizeService {
                 : ch
             );
             addLog(`[WritingOrganize] 章节处理成功: ${chapter.title}`, 'info');
+          } else if (chapterResult.paused) {
+            // ID 语义冲突暂停：不标记 organized，剩余分片已跳过，其余章节继续
+            const errorMsg = chapterResult.error || 'ID 一致性语义冲突';
+            addLog(`[WritingOrganize] 章节因 ID 语义冲突暂停: ${chapter.title} - ${errorMsg}`, 'warn');
+            progress.errors.push(`章节 ${chapter.title}（已暂停，需人工核查）: ${errorMsg}`);
+            progress.errorCount++;
           } else {
             const errorMsg = chapterResult.error || '未知错误';
             addLog(`[WritingOrganize] 章节处理失败: ${chapter.title} - ${errorMsg}`, 'error');
@@ -298,6 +341,15 @@ export class TableOrganizeService {
       const removedCount = this.deduplicateTableData(projectId);
       if (removedCount > 0) {
         addLog(`[WritingOrganize] 已清理 ${removedCount} 行重复数据`, 'info');
+      }
+
+      // ID 一致性校验-整理后终扫：生成完整报告（含取消收尾场景，已处理部分同样校验）
+      const finalTableData = loadTableData(projectId);
+      if (finalTableData) {
+        result.idReport = buildReport(scanTableData(finalTableData), idBaseline, idFixes, idManualReview, removedCount);
+        progress.idReport = result.idReport;
+        this.tableRepo.saveOrganizeProgress(projectId, progress);
+        addLog(`[WritingOrganize] ID 一致性报告: ${result.idReport.summary}`, result.idReport.ok ? 'info' : 'warn');
       }
 
       result.success = progress.processedCount > 0;
@@ -349,9 +401,9 @@ export class TableOrganizeService {
     chapterIndex?: number,
     onProgress?: (current: number, total: number, status: string, percent: number, currentChunk?: number, totalChunks?: number) => void,
     requirements?: string
-  ): Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[]; cancelled?: boolean }> {
+  ): Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[]; cancelled?: boolean; idReport?: IdConsistencyReport }> {
     const startTime = new Date().toISOString();
-    const result = { success: false, processedCount: 0, errorCount: 0, errors: [] as string[], cancelled: false };
+    const result = { success: false, processedCount: 0, errorCount: 0, errors: [] as string[], cancelled: false, idReport: undefined as IdConsistencyReport | undefined };
 
     try {
       addLog(`[WritingOrganize] 开始整理单个表格: ${projectId}, sheet=${sheetName}`, 'info');
@@ -372,6 +424,11 @@ export class TableOrganizeService {
 
       // 与 organizeTable 一致：数据文件缺失时按模板重建（自愈），再校验目标 sheet
       const tableData = await this.ensureTableDataFromTemplate(projectId);
+
+      // ID 一致性校验-整理前预扫描（与 organizeTable 相同，存量问题记入报告基线）
+      const idBaseline = scanTableData(tableData);
+      const idFixes: IdFixRecord[] = [];
+      const idManualReview: string[] = [];
 
       // 验证指定的 sheet 是否存在
       if (!tableData.sheets.includes(sheetName)) {
@@ -496,6 +553,10 @@ export class TableOrganizeService {
             requirements
           );
 
+          // 累计 ID 校验的修正与人工核查项
+          if (chapterResult.fixes?.length) idFixes.push(...chapterResult.fixes);
+          if (chapterResult.manualReview?.length) idManualReview.push(...chapterResult.manualReview);
+
           if (chapterResult.success) {
             progress.processedCount++;
             // SubTask 9.6: 不可变更新章节状态为 organized，消除 as any
@@ -505,6 +566,12 @@ export class TableOrganizeService {
                 : ch
             );
             addLog(`[WritingOrganize] 章节处理成功: ${chapter.title}`, 'info');
+          } else if (chapterResult.paused) {
+            // ID 语义冲突暂停：不标记 organized，其余章节继续
+            const errorMsg = chapterResult.error || 'ID 一致性语义冲突';
+            addLog(`[WritingOrganize] 章节因 ID 语义冲突暂停（单表整理）: ${chapter.title} - ${errorMsg}`, 'warn');
+            progress.errors.push(`章节 ${chapter.title}（已暂停，需人工核查）: ${errorMsg}`);
+            progress.errorCount++;
           } else {
             const errorMsg = chapterResult.error || '未知错误';
             addLog(`[WritingOrganize] 章节处理失败: ${chapter.title} - ${errorMsg}`, 'error');
@@ -536,7 +603,19 @@ export class TableOrganizeService {
       this.tableRepo.saveOrganizeProgress(projectId, progress);
 
       // 对目标 sheet 进行去重
-      this.deduplicateSingleSheet(projectId, sheetName);
+      const removedCount = this.deduplicateSingleSheet(projectId, sheetName);
+      if (removedCount > 0) {
+        addLog(`[WritingOrganize] 单表去重: 已清理 ${removedCount} 行重复数据`, 'info');
+      }
+
+      // ID 一致性校验-整理后终扫：生成完整报告
+      const finalTableData = loadTableData(projectId);
+      if (finalTableData) {
+        result.idReport = buildReport(scanTableData(finalTableData), idBaseline, idFixes, idManualReview, removedCount);
+        progress.idReport = result.idReport;
+        this.tableRepo.saveOrganizeProgress(projectId, progress);
+        addLog(`[WritingOrganize] ID 一致性报告（单表）: ${result.idReport.summary}`, result.idReport.ok ? 'info' : 'warn');
+      }
 
       result.success = progress.processedCount > 0;
       result.processedCount = progress.processedCount;
@@ -628,6 +707,14 @@ export class TableOrganizeService {
       // 解析 AI 返回的新行数据
       const updatedRow = this.parseAIRowResponse(aiResponse, sheetTemplate.headers, rowData);
 
+      // ID 一致性校验：唯一 ID 是系统去重键，AI 不得篡改（parseAIRowResponse 已结构性保留，
+      // 此处显式守卫兜底——被篡改则还原原 ID 并记日志）
+      const originalUid = rowData['1'];
+      if (originalUid !== undefined && updatedRow['1'] !== undefined && String(updatedRow['1']) !== String(originalUid)) {
+        addLog(`[WritingOrganize] 单行重整理试图修改唯一id（${originalUid} → ${updatedRow['1']}），已还原`, 'warn');
+        updatedRow['1'] = originalUid;
+      }
+
       // 保存更新后的行数据到存储
       const tableData = loadTableData(projectId);
       if (tableData && tableData.data && tableData.data[sheet]) {
@@ -705,11 +792,14 @@ export class TableOrganizeService {
     modelConfig: ModelConfig,
     onChunkProgress?: (chunkIndex: number, totalChunks: number, chapterTitle: string) => void,
     requirements?: string
-  ): Promise<{ success: boolean; error?: string }> {
+  ): Promise<{ success: boolean; error?: string; paused?: boolean; fixes?: IdFixRecord[]; manualReview?: string[] }> {
     const content = chapter.content || '';
     const chunks = this.splitChapterContent(content);
 
     addLog(`[WritingOrganize] 单表格处理章节: ${chapter.title}, sheet=${targetSheetName}, 分块数: ${chunks.length}`, 'info');
+
+    // 本章累计的 ID pre-flight 自动修正记录
+    const allIdFixes: IdFixRecord[] = [];
 
     for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
       // 取消检查（分片级：当前分片 AI 调用完成后停止）
@@ -753,8 +843,32 @@ export class TableOrganizeService {
       }
 
       if (parseResult.commands.length > 0) {
-        addLog(`[WritingOrganize] 执行 ${parseResult.commands.length} 个tableEdit命令 (分块 ${chunkIndex + 1})`, 'info');
-        this.editExecutor.execute(projectId, parseResult.commands, existingTableData);
+        // ID 一致性校验-pre-flight：冲突先暂停、核查修正、ID 统一后方可执行
+        const preFlight = preFlightCheckCommands(parseResult.commands, existingTableData);
+        for (const fix of preFlight.fixes) {
+          addLog(`[WritingOrganize] ID 预检修正: ${fix.sheetName} [${fix.action}] ${fix.original} → ${fix.detail}`, 'warn');
+        }
+        allIdFixes.push(...preFlight.fixes);
+
+        if (preFlight.unresolved.length > 0) {
+          // 语义冲突无法自动修正：暂停该章剩余分片，记「需人工核查」，其余章节继续
+          for (const u of preFlight.unresolved) {
+            addLog(`[WritingOrganize] ID 语义冲突（暂停本章剩余分片，单表整理）: ${u}`, 'warn');
+          }
+          if (onChunkProgress) {
+            onChunkProgress(chunkIndex + 1, chunks.length, chapter.title);
+          }
+          return {
+            success: false,
+            paused: true,
+            error: `ID 一致性语义冲突，已暂停本章剩余分片: ${preFlight.unresolved[0]}`,
+            fixes: allIdFixes,
+            manualReview: preFlight.unresolved,
+          };
+        }
+
+        addLog(`[WritingOrganize] 执行 ${preFlight.corrected.length} 个tableEdit命令 (分块 ${chunkIndex + 1}，拒绝 ${preFlight.rejected.length})`, 'info');
+        this.editExecutor.execute(projectId, preFlight.corrected, existingTableData);
       }
 
       if (onChunkProgress) {
@@ -763,7 +877,7 @@ export class TableOrganizeService {
     }
 
     addLog(`[WritingOrganize] 单表格章节处理完成: ${chapter.title}`, 'info');
-    return { success: true };
+    return { success: true, fixes: allIdFixes, manualReview: [] };
   }
 
   /**
@@ -881,6 +995,12 @@ ${requirementsSection}
 9. 操作结果确认：在生成tableEdit命令后，简要说明每个操作的目的
 10. 【绝对禁止】对于唯一ID已存在的实体，绝对不要使用insertRow！
 
+【ID完整性与一致性反复确认（最高优先级）】
+唯一ID是表格系统的核心逻辑和数据一致性基础，整理前、中、后必须反复确认其完整性与一致性：
+A. 整理前：生成任何insertRow前，必须先查"唯一ID快速查找索引"确认该ID不存在；已存在则改用updateRow
+B. 整理中：严禁修改任何已有行的唯一id（字段2），严禁省略字段2；同一实体（含各种称呼变体）在整个表格系统中必须始终共用同一个唯一ID
+C. 输出前自查：本批所有命令中，同一实体的所有称呼是否共用同一ID？引用型字段（如"所属角色ID"）填的值，必须真实存在于现有数据的唯一ID集合中，或已在本批命令中插入；两者都不满足时留空该字段，禁止编造不存在的引用值
+
 【tableEdit命令格式】
 <tableEdit>
 {
@@ -920,12 +1040,12 @@ ${requirementsSection}
   /**
    * 对单个 sheet 进行去重
    */
-  private deduplicateSingleSheet(projectId: string, sheetName: string): void {
+  private deduplicateSingleSheet(projectId: string, sheetName: string): number {
     const tableData = loadTableData(projectId);
-    if (!tableData || !tableData.data || !tableData.data[sheetName]) return;
+    if (!tableData || !tableData.data || !tableData.data[sheetName]) return 0;
 
     const rows = tableData.data[sheetName];
-    if (!Array.isArray(rows)) return;
+    if (!Array.isArray(rows)) return 0;
 
     const seenIds = new Set<string>();
     const dedupedRows: Record<string, unknown>[] = [];
@@ -952,6 +1072,7 @@ ${requirementsSection}
     if (removedCount > 0) {
       addLog(`[WritingOrganize] 单表格去重完成: ${sheetName}, 移除 ${removedCount} 行重复数据`, 'info');
     }
+    return removedCount;
   }
 
   /**
@@ -1005,7 +1126,13 @@ ${requirements}
 - 键名必须是数字字符串，从 "2" 开始，与上方字段定义的键名一一对应
 - 不要返回唯一id和流水号（系统字段由程序保留）
 - 必须返回所有字段的键值对，数量与字段定义中的字段数相同
-- 不要返回任何其他内容，仅返回 JSON`;
+- 不要返回任何其他内容，仅返回 JSON
+
+【ID完整性与一致性反复确认（最高优先级）】
+唯一ID是表格系统的核心逻辑和数据一致性基础：
+A. 本行的唯一id是系统去重键，整理前后必须保持完全不变（程序会自动还原任何改动，不要试图修改）
+B. 引用型字段（如"所属角色ID"）填的值，必须真实存在于"唯一ID快速查找索引"中；找不到对应实体时留空该字段，禁止编造不存在的引用值
+C. 输出前自查：本行各字段与已有数据是否一致（同一实体同ID、引用值真实存在）`;
   }
 
   /**
@@ -1086,11 +1213,14 @@ ${requirements}
     modelConfig: ModelConfig,
     onChunkProgress?: (chunkIndex: number, totalChunks: number, chapterTitle: string) => void,
     requirements?: string
-  ): Promise<{ success: boolean; error?: string }> {
+  ): Promise<{ success: boolean; error?: string; paused?: boolean; fixes?: IdFixRecord[]; manualReview?: string[] }> {
     const content = chapter.content || '';
     const chunks = this.splitChapterContent(content);
 
     addLog(`[WritingOrganize] 处理章节: ${chapter.title}, 分块数: ${chunks.length}`, 'info');
+
+    // 本章累计的 ID pre-flight 自动修正记录
+    const allIdFixes: IdFixRecord[] = [];
 
     for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
       // 取消检查（分片级：当前分片 AI 调用完成后停止）
@@ -1149,8 +1279,32 @@ ${requirements}
       }
 
       if (parseResult.commands.length > 0) {
-        addLog(`[WritingOrganize] 执行 ${parseResult.commands.length} 个tableEdit命令 (分块 ${chunkIndex + 1})`, 'info');
-        this.editExecutor.execute(projectId, parseResult.commands, existingTableData);
+        // ID 一致性校验-pre-flight：冲突先暂停、核查修正、ID 统一后方可执行
+        const preFlight = preFlightCheckCommands(parseResult.commands, existingTableData);
+        for (const fix of preFlight.fixes) {
+          addLog(`[WritingOrganize] ID 预检修正: ${fix.sheetName} [${fix.action}] ${fix.original} → ${fix.detail}`, 'warn');
+        }
+        allIdFixes.push(...preFlight.fixes);
+
+        if (preFlight.unresolved.length > 0) {
+          // 语义冲突无法自动修正：暂停该章剩余分片，记「需人工核查」，其余章节继续
+          for (const u of preFlight.unresolved) {
+            addLog(`[WritingOrganize] ID 语义冲突（暂停本章剩余分片）: ${u}`, 'warn');
+          }
+          if (onChunkProgress) {
+            onChunkProgress(chunkIndex + 1, chunks.length, chapter.title);
+          }
+          return {
+            success: false,
+            paused: true,
+            error: `ID 一致性语义冲突，已暂停本章剩余分片: ${preFlight.unresolved[0]}`,
+            fixes: allIdFixes,
+            manualReview: preFlight.unresolved,
+          };
+        }
+
+        addLog(`[WritingOrganize] 执行 ${preFlight.corrected.length} 个tableEdit命令 (分块 ${chunkIndex + 1}，拒绝 ${preFlight.rejected.length})`, 'info');
+        this.editExecutor.execute(projectId, preFlight.corrected, existingTableData);
         addLog(`[WritingOrganize] 分块 ${chunkIndex + 1} 整理结果已录入表格`, 'info');
       }
 
@@ -1161,7 +1315,7 @@ ${requirements}
     }
 
     addLog(`[WritingOrganize] 章节处理完成: ${chapter.title}`, 'info');
-    return { success: true };
+    return { success: true, fixes: allIdFixes, manualReview: [] };
   }
 
   private buildTableContextForPrompt(projectId: string, template: TableTemplate): string {
@@ -1376,6 +1530,12 @@ ${uniqueIdGuide}
 11. 操作结果确认：在生成tableEdit命令后，简要说明每个操作的目的
 12. 【绝对禁止】对于唯一ID已存在的实体，绝对不要使用insertRow！这是最严重的错误，会导致数据重复！
 
+【ID完整性与一致性反复确认（最高优先级）】
+唯一ID是表格系统的核心逻辑和数据一致性基础，整理前、中、后必须反复确认其完整性与一致性：
+A. 整理前：生成任何insertRow前，必须先查"唯一ID快速查找索引"确认该ID不存在；已存在则改用updateRow
+B. 整理中：严禁修改任何已有行的唯一id（字段2），严禁省略字段2；同一实体（含各种称呼变体）在整个表格系统中必须始终共用同一个唯一ID
+C. 输出前自查：本批所有命令中，同一实体的所有称呼是否共用同一ID？引用型字段（如"所属角色ID"）填的值，必须真实存在于现有数据的唯一ID集合中，或已在本批命令中插入；两者都不满足时留空该字段，禁止编造不存在的引用值
+
 【tableEdit命令格式】
 你需要将操作指令放在<tableEdit>标签内,使用HTML注释格式:
 
@@ -1400,13 +1560,16 @@ deleteRow(表格索引, 行索引)
 
 假设表格模板包含：
 - [索引1] 角色表：模板字段为 [3:姓名, 4:身份, 5:性格, 6:特征, 7:关键关系, 8:首次登场章节]
-- [索引2] 物品表：模板字段为 [3:名称, 4:类型, 5:持有者, 6:作用, 7:相关事件]
+- [索引2] 身体表：模板字段为 [3:所属角色ID, 4:部位名称, 5:外观描述, 6:功能说明, 7:当前状态, 8:状态详细描述]
+- [索引3] 物品表：模板字段为 [3:名称, 4:类型, 5:持有者, 6:作用, 7:相关事件]
 （字段1=流水号由系统自动生成无需填写，字段2=唯一id由你生成）
 
 现有表格数据：
   【角色表】(表格索引: 1)
   行1: 唯一id=zhudi_001, 姓名=朱迪, 身份=警官, 性格=勇敢正直, 特征=兔子、灰色毛发、警服, 关键关系=尼克的搭档, 首次登场章节=第1章
-  【物品表】(表格索引: 2)
+  【身体表】(表格索引: 2)
+  行1: 唯一id=zhudi_erduo_001, 所属角色ID=zhudi_001, 部位名称=耳朵, 外观描述=修长的兔耳，内侧粉色绒毛, 功能说明=灵敏听觉，可独立转动捕捉声源方向, 当前状态=健康, 状态详细描述=双耳直立，听觉敏锐无异常
+  【物品表】(表格索引: 3)
   行1: 唯一id=mask_001, 名称=电子面罩, 类型=装备, 持有者=典狱长, 作用=监控囚犯, 相关事件=第2章没收
 
 当前消息："朱迪说她今天升官成了警长。她在中央公园捡到一枚金色徽章。"
@@ -1422,14 +1585,22 @@ updateRow(1, 1, {"4":"警长"})
   不要重复填写未变化的字段(唯一id、姓名、性格、特征等)
 
 === 新增操作 ===
-insertRow(2, {"2":"badge_001","3":"金色徽章","4":"饰品","5":"朱迪","6":"朱迪在中央公园捡到的金色徽章","7":"朱迪捡到徽章"})
-说明：在物品表(索引2)中新增一行"金色徽章"
+insertRow(3, {"2":"badge_001","3":"金色徽章","4":"饰品","5":"朱迪","6":"朱迪在中央公园捡到的金色徽章","7":"朱迪捡到徽章"})
+说明：在物品表(索引3)中新增一行"金色徽章"
   字段2(唯一id): badge_001 - 语义化命名，badge表示徽章，001表示序号
   字段3(名称): 金色徽章
   字段4(类型): 饰品
   字段5(持有者): 朱迪
   字段6(作用): 朱迪在中央公园捡到的金色徽章
   字段7(相关事件): 朱迪捡到徽章
+
+=== 身体表操作说明 ===
+身体表(索引2)记录角色身体部位的详细状态：
+  字段3(所属角色ID)必须填写角色表中该角色的唯一id（如朱迪的部位填 zhudi_001，与角色表关联）
+  字段4(部位名称): 如 耳朵、乳房、左臂、子宫
+  字段7(当前状态): 如 健康、肥大化、受伤、怀孕
+  同一角色同一部位只保留一行：已存在则用updateRow更新状态，禁止重复插入
+  唯一id建议用"角色id前缀_部位拼音_序号"，如 zhudi_erduo_001（朱迪的耳朵）
 -->
 </tableEdit>
 

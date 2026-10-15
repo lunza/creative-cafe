@@ -51,6 +51,8 @@ import type {
 } from './worldbookAuthoringTypes';
 import type { ToolCallContext, ToolExecutionResult, IMemoryProvider } from '../contracts';
 import { retryAsync } from '../infra/retry';
+// Spec: settings-feature-optimization-report / H-5（默认值单一来源）
+import { DEFAULT_ENGINE_PARAMS } from '../../../../shared/settingDefaults';
 import { toAgentError } from '../infra/errors';
 import { resolvePacedNextRunAtMs } from '../learning/pacing';
 // Spec: polish-deai-humanizer 扩展 — 生成场景去AI味规则（与渲染进程 6 个生成入口同款 JSON-aware 变体）
@@ -2255,7 +2257,7 @@ ${internalRefSection}
           ],
           {
             model: modelName,
-            temperature: aiConfig.temperature ?? 0.7,
+            temperature: aiConfig.temperature ?? DEFAULT_ENGINE_PARAMS.temperature,
             maxTokens: aiConfig.maxTokens ?? 4096,
             timeoutMs: 60_000,
             maxRetries: 1,

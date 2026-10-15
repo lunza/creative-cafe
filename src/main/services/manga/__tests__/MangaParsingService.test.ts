@@ -223,3 +223,48 @@ describe('MangaParsingService.buildContextTable（富信息跨页上下文）', 
     expect(res.table).toBe('');
   });
 });
+
+describe('MangaParsingService.buildPreviousPageSection（上一页完整分析注入）', () => {
+  it('完整渲染上一页角色/场景/逐分镜剧情/全部文本/情感/叙事衔接', () => {
+    const section = mangaParsingService.buildPreviousPageSection({ pageIndex: 3, analysis: makeAnalysis() });
+    expect(section).toContain('## 上一页完整分析（第 3 页');
+    // 角色（表情+动作）
+    expect(section).toContain('林晚（惊讶）：猛地后退半步');
+    expect(section).toContain('苏哲（冷静）：缓步走入');
+    // 场景
+    expect(section).toContain('市图书馆地下档案室');
+    // 逐分镜完整剧情（不截断：原句完整保留）
+    expect(section).toContain('分镜1 剧情：林晚独自坐在档案室中央的长桌前');
+    expect(section).toContain('分镜2 剧情：门被推开，苏哲逆光而入');
+    expect(section).toContain('分镜1 情绪：焦灼、专注');
+    // 全部文本（含类型标注）
+    expect(section).toContain('「二十年前的真相，到底藏在哪里……」（旁白）');
+    expect(section).toContain('「你比我想象中来得早。」（对话）');
+    // 整体情感 + 叙事衔接
+    expect(section).toContain('整体情感：悬念递进');
+    expect(section).toContain('叙事衔接：承接上一页林晚潜入档案室');
+  });
+
+  it('附带连贯性约束（角色命名一致/场景衔接/对话风格/narrativeContinuity 依据）', () => {
+    const section = mangaParsingService.buildPreviousPageSection({ pageIndex: 1, analysis: makeAnalysis() });
+    expect(section).toContain('连贯性约束（必须遵守）');
+    expect(section).toContain('同一角色同一称呼，禁止改名');
+    expect(section).toContain('场景转换须合理');
+    expect(section).toContain('narrativeContinuity 字段必须基于以上上一页完整内容');
+  });
+
+  it('超长分镜剧情被软截断（长度保护，不破坏后续字段）', () => {
+    const analysis = makeAnalysis();
+    analysis.pageAnalysis.panels[0].plot = '画面细节'.repeat(400); // 1600 字 > 500 上限
+    const section = mangaParsingService.buildPreviousPageSection({ pageIndex: 2, analysis });
+    expect(section).toContain('…');
+    // 截断不影响后续分镜与整体情感渲染
+    expect(section).toContain('分镜2 剧情：门被推开');
+    expect(section).toContain('整体情感：');
+  });
+
+  it('analysis 缺失时返回空字符串（buildSystemPrompt 据此跳过注入）', () => {
+    const section = mangaParsingService.buildPreviousPageSection({ pageIndex: 1, analysis: null as unknown as MangaPageAnalysis });
+    expect(section).toBe('');
+  });
+});

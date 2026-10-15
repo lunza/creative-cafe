@@ -447,6 +447,12 @@ async function handlePutSessionConfig(
     ...(normalized.memoryTableEnabled !== undefined ? { memoryTableEnabled: normalized.memoryTableEnabled } : {}),
     ...(normalized.customStopSequencesEnabled !== undefined ? { customStopSequencesEnabled: normalized.customStopSequencesEnabled } : {}),
     ...(normalized.customStopSequences !== undefined ? { customStopSequences: normalized.customStopSequences } : {}),
+    // 【Phase 4 / L9 - conversation-mode-optimization-report】Token 管理字段级合并
+    ...(normalized.tokenManagementEnabled !== undefined ? { tokenManagementEnabled: normalized.tokenManagementEnabled } : {}),
+    ...(normalized.maxContextTokens !== undefined ? { maxContextTokens: normalized.maxContextTokens } : {}),
+    ...(normalized.reservedForResponse !== undefined ? { reservedForResponse: normalized.reservedForResponse } : {}),
+    ...(normalized.minMessagesToKeep !== undefined ? { minMessagesToKeep: normalized.minMessagesToKeep } : {}),
+    ...(normalized.maxMessagesToKeep !== undefined ? { maxMessagesToKeep: normalized.maxMessagesToKeep } : {}),
     lastUpdated: Date.now(),
   };
   await sessionConfigStore.save(filePath, next);

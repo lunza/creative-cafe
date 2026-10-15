@@ -4,11 +4,12 @@
  * Sidebar 菜单与 App.tsx 的渲染块均从此处消费配置，
  * 新增 tab 只需在此处添加一项即可。
  *
- * 行为保持：
- *  - `test-vector` 在原 App.tsx 中无对应 case，落入 default 渲染 Dashboard。
- *    此处通过省略 `component` 字段保持相同行为。
- *  - `test` 父项虽在 antd Menu 中默认展开子项而非选中，原 switch 仍保留
- *    `case 'test'` 渲染 TestPage 的兼容逻辑，此处同样保留 `component: TestPage`。
+ * L-6/S-7 测试菜单收敛（debugMode 门控保留，devOnly 测试页逐一评估）：
+ *  - TestPage（MarkdownEditor 组件演示页，无诊断价值）已删除，test-markdown 子项随之移除。
+ *  - test-vector 子项原无 component（点击落 default 渲染 Dashboard，体验陷阱）已删除。
+ *  - DocumentVectorPage 是向量化管线真实诊断工具（上传/分块/检索/统计，
+ *    documentVectorService 同时被 KnowledgeBaseService 消费）保留，「测试」菜单项
+ *    直接指向它并在 label 标注「测试」。
  */
 import React from 'react';
 import {
@@ -21,7 +22,6 @@ import {
   ThunderboltOutlined,
   DatabaseOutlined,
   FileTextOutlined,
-  EditOutlined,
   MessageOutlined,
   RobotOutlined
 } from '@ant-design/icons';
@@ -34,7 +34,6 @@ const CharacterManager = React.lazy(() => import('./components/Character/Charact
 const Settings = React.lazy(() => import('./components/Settings/Settings'));
 const MemoryChatManager = React.lazy(() => import('./components/MemoryChat/MemoryChatManager'));
 const CreativeManager = React.lazy(() => import('./components/Creative/CreativeManager'));
-const TestPage = React.lazy(() => import('./components/Test/TestPage'));
 const DocumentVectorPage = React.lazy(() => import('./components/Test/DocumentVectorPage'));
 // 命名导出需要通过 .then(m => ({ default: m.X })) 适配 React.lazy 的 default 导入约定
 const KnowledgeBaseManager = React.lazy(() =>
@@ -128,34 +127,12 @@ export const routeConfigs: RouteConfig[] = [
     component: PromptManagement
   },
   {
+    // L-6/S-7：收敛为单一诊断入口（向量化管线诊断工具），label 标注「测试」
     key: 'test',
-    label: '测试',
+    label: '测试 · 向量化诊断',
     icon: ToolOutlined,
-    component: TestPage,
-    devOnly: true,
-    children: [
-      // 注：原 App.tsx switch 无 'test-vector' case，省略 component 保持 default → Dashboard 行为
-      {
-        key: 'test-vector',
-        label: '向量化测试',
-        icon: DatabaseOutlined,
-        devOnly: true
-      },
-      {
-        key: 'document-vector',
-        label: '文档向量化',
-        icon: FileTextOutlined,
-        component: DocumentVectorPage,
-        devOnly: true
-      },
-      {
-        key: 'test-markdown',
-        label: 'Markdown 测试',
-        icon: EditOutlined,
-        component: TestPage,
-        devOnly: true
-      }
-    ]
+    component: DocumentVectorPage,
+    devOnly: true
   },
   {
     key: 'settings',

@@ -1,15 +1,24 @@
 // 角色对话业务逻辑Hooks
 
-import { useState, useReducer, useCallback, useRef, useEffect, useMemo } from 'react';
+import { useCallback, useRef, useEffect, useMemo } from 'react';
 import { message } from 'antd';
 import { useSettingStore } from '../../../stores/settingStore';
 import { useCharacterChatStore } from '../../../stores/characterChatStore';
 import { useLogStore } from '../../../stores/logStore';
+// 【Phase 1 - conversation-mode-optimization-report】stores 三件套（H2）
+// 消息/流式状态收敛到 useChatGenerationStore（H3 消除双真相源），
+// UI 瞬态收敛到 useChatUIStore，会话级 config/personas 收敛到 useChatSessionStore。
+import { useChatGenerationStore } from './stores/useChatGenerationStore';
+import { useChatUIStore } from './stores/useChatUIStore';
+import { useChatSessionStore } from './stores/useChatSessionStore';
+// 【Phase 1 / H1】IPC 统一服务封装，组件/hook 禁止直接裸调 window.electronAPI
+import { avatar as avatarService, characterConfig as characterConfigService, characterChat as characterChatService, ai as aiService, character as characterService, context as contextService, chatHistory as chatHistoryService, memory as memoryService, chatVersion as chatVersionService, asset as assetService } from '../../../services/characterChatService';
 // 表情显示系统状态（Spec: add-character-expression-system / Task 9）
 // 使用 useExpressionStore.getState() 在非 React 上下文（requestAIResponse 回调内）命令式读取可用情绪键
 import { useExpressionStore } from '../../../stores/expressionStore';
 import { ChatMessage, CharacterInfo, UserPersona, EffectiveAIParams, deriveThinkTagMode, ImageAttachment } from './CharacterDialogueChat.types';
-import { chatReducer, initialChatState } from './chatReducer';
+// 注意：chatReducer 纯函数已收敛进 useChatGenerationStore 作为状态迁移函数，
+// hook 不再通过 useReducer 持有消息状态（Phase 1 / H3）。
 import { ChatEngineFactory } from '../../Common/ChatEngine/ChatEngine.factory';
 import { ChatEngine } from '../../Common/ChatEngine/ChatEngine';
 import { AIEngineConfig, AIResponse, getDefaultEngineCapabilities } from '../../Common/ChatEngine/ChatEngine.types';
@@ -38,6 +47,14 @@ import {
   createSummaryMessage,
   KEEP_RECENT_ROUNDS,
 } from './contextCompactor';
+// 【Phase 3 / L3 - conversation-mode-optimization-report】消息版本恢复统一服务（R4）
+import {
+  guardStreaming,
+  truncateBeforeLastAssistant,
+  normalizeVersionMessages,
+  buildPendingAssistantMessage,
+  restoreTableSnapshot,
+} from './messageVersionService';
 import { nGramJaccard, overlapRate } from './utils/similarityUtils';
 import { stripThinkingTags } from './utils/messageProcessor';
 import {
@@ -55,6 +72,8 @@ import {
 } from './utils/styleFingerprint';
 // Spec: reduce-dialogue-ai-flavor-and-repetition / Phase 1（多样性诊断指标）
 import { computeDiversityReport, formatDiversityReport } from './utils/diversityMetrics';
+// 【重点标记 - FL-3 死代码修复】Agent 模式状态（H-7）
+import { useAgentMode } from '../../../hooks/useAgentMode';
 
 // ==================== 去重检测配置（Spec: optimize-chat-ai-intelligence / Task 5） ====================
 
@@ -286,21 +305,20 @@ function saveStoredConfig(characterCardId: string, config: any) {
 
 export function useCharacterConfig(characterCardId: string) {
   const setting = useSettingStore(state => state.setting);
-  const [config, setConfig] = useState(() => getStoredConfig(characterCardId));
-  const configRef = useRef(config);
-
-  // 同步更新 ref，确保在状态更新的同一时刻 ref 也是最新的
-  // 不依赖 useEffect（useEffect 在渲染完成后才执行，会导致闭包陈旧问题）
+  // 【Phase 1 / H2】config 迁入 useChatSessionStore（单一真相源）：
+  // 取代原 useState + configRef 双轨模式。非 React 上下文（闭包/回调）统一通过
+  // useChatSessionStore.getState().config 读取最新值，彻底消除闭包陈旧问题。
+  const config = useChatSessionStore(s => s.config);
+  const setConfig = useChatSessionStore(s => s.setConfig);
 
   useEffect(() => {
     const stored = getStoredConfig(characterCardId);
     setConfig(stored);
-    configRef.current = stored; // 同步更新 ref
-  }, [characterCardId]);
+  }, [characterCardId, setConfig]);
 
-  const updateConfig = useCallback((updates: Partial<typeof config> | ((prev: typeof config | null) => Partial<typeof config>)) => {
-    // 立即计算下一个状态，不依赖 setConfig 的异步回调
-    const currentConfig = configRef.current;
+  const updateConfig = useCallback((updates: Partial<Record<string, any>> | ((prev: Record<string, any> | null) => Partial<Record<string, any>>)) => {
+    // 立即计算下一个状态，从 store 读取最新配置（不依赖闭包快照）
+    const currentConfig = useChatSessionStore.getState().config;
     const resolvedUpdates = typeof updates === 'function' ? updates(currentConfig) : updates;
     const next = {
       ...currentConfig,
@@ -308,12 +326,9 @@ export function useCharacterConfig(characterCardId: string) {
       characterCardId,
       lastUpdated: Date.now(),
     };
-    
-    // 同步更新 ref，确保 sendMessage 能立即读取到最新配置
-    configRef.current = next;
-    
-    // 触发 React 状态更新
-    setConfig(next);
+
+    // 同步更新 store（sendMessage 等回调立即通过 getState() 读取到最新配置）
+    useChatSessionStore.getState().setConfig(next);
     saveStoredConfig(characterCardId, next);
   }, [characterCardId]);
 
@@ -321,19 +336,18 @@ export function useCharacterConfig(characterCardId: string) {
     try {
       localStorage.removeItem(`${STORAGE_KEY_PREFIX}${characterCardId}`);
     } catch { /* ignore */ }
-    setConfig(null);
+    useChatSessionStore.getState().setConfig(null);
   }, [characterCardId]);
 
   const resetParameters = useCallback(() => {
-    setConfig(prev => {
-      const next = prev ? { ...prev, customParameters: undefined, lastUpdated: Date.now() } : null; 
-      saveStoredConfig(characterCardId, next);
-      return next;
-    });
+    const prev = useChatSessionStore.getState().config;
+    const next = prev ? { ...prev, customParameters: undefined, lastUpdated: Date.now() } : null;
+    useChatSessionStore.getState().setConfig(next);
+    saveStoredConfig(characterCardId, next);
   }, [characterCardId]);
 
   const getEffectiveParams = useCallback((): EffectiveAIParams => {
-    const currentConfig = configRef.current;
+    const currentConfig = useChatSessionStore.getState().config;
     const customParams = currentConfig?.customParameters || {};
     
     console.log(`[CharacterDialogueChat] getEffectiveParams - raw config:`, currentConfig);
@@ -452,15 +466,18 @@ export function useCharacterConfig(characterCardId: string) {
 // ==================== 人设加载 Hook ====================
 
 export function usePersonas() {
-  const [personas, setPersonas] = useState<UserPersona[]>([]);
-  const [loading, setLoading] = useState(true);
+  // 【Phase 1 / H2】人设列表迁入 useChatSessionStore（会话级单一真相源）
+  const personas = useChatSessionStore(s => s.personas);
+  const loading = useChatSessionStore(s => s.personasLoading);
 
   useEffect(() => {
     let mounted = true;
+    const setPersonas = (list: UserPersona[]) => useChatSessionStore.getState().setPersonas(list);
+    const setLoading = (value: boolean) => useChatSessionStore.getState().setPersonasLoading(value);
     const loadPersonas = async () => {
       try {
         console.log('[CharacterDialogueChat] Loading personas from file system...');
-        const avatarList = await window.electronAPI.avatar.list();
+        const avatarList = await avatarService.list();
         console.log('[CharacterDialogueChat] Avatar list:', avatarList);
         
         if (mounted) {
@@ -469,7 +486,7 @@ export function usePersonas() {
           for (const avatar of avatarList) {
             if (avatar.path.endsWith('.json') && !avatar.path.includes('user-profile.json')) {
               try {
-                const content = await window.electronAPI.avatar.read(avatar.path);
+                const content = await avatarService.read(avatar.path);
                 if (content) {
                   loadedPersonas.push({
                     id: content.id || avatar.name.replace('.json', ''),
@@ -525,14 +542,38 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     }
   }, []);
 
-  const [state, dispatch] = useReducer(chatReducer, initialChatState);
+  // 【Phase 1 / H3】消息/流式状态迁入 useChatGenerationStore（zustand 单一真相源）。
+  // 与 characterChatStore（持久化投影）的关系：本 store 是内存中的唯一消息真相源，
+  // characterChatStore 仅通过 saveChatToStore 同步快照，消除原 useReducer 与
+  // characterChatStore 并存的双真相源漂移问题（F2）。
+  // dispatch 签名与旧 useReducer 完全一致，全部调用点无需改动。
+  const state = useChatGenerationStore();
+  const dispatch = useChatGenerationStore(s => s.dispatch);
   // stateRef 在每次渲染后同步更新，供异步回调（engine.onStream/onComplete/onError 等）读取最新 state，
   // 避免闭包陈旧问题（useCallback 闭包中的 state 是渲染时的快照）
   const stateRef = useRef(state);
   stateRef.current = state;
 
+  // 【Phase 1 / H2+H3】对话框打开时重置全局 store（store 为全局单例，须清除上一会话残留）。
+  // 声明在 loadChatHistory effect 之前，确保先 reset 再加载历史消息。
+  useEffect(() => {
+    useChatGenerationStore.getState().reset();
+    useChatUIStore.getState().resetUI();
+    useChatSessionStore.getState().initSession(characterInfo.characterCardId);
+    return () => {
+      useChatSessionStore.getState().endSession();
+    };
+  }, [characterInfo.characterCardId]);
+
   const { config: characterConfig, updateConfig, resetParameters, getEffectiveParams } = useCharacterConfig(characterInfo.characterCardId);
   const { personas, loading: personasLoading } = usePersonas();
+  // 【重点标记 - FL-3 死代码修复（H-7）】此前全仓无代码向 ChatEngine config 注入 agentModeActive，
+  // 导致 ChatEngine.ts:86-100 的 AgentCore 智能体路径（需 agentModeActive===true）永远走不到，
+  // 角色对话的智能体模式实际未接通。现由 useAgentMode().isActive（agentModeService 综合
+  // agentModeOverride × capabilities.supportsToolCalling 计算）注入 requestAIResponse 的
+  // engineConfigWithParams，接通智能体对话路径。仅主对话路径注入：用户回复/润色为单轮确定性
+  // 任务，不应进入 AgentCore 循环。
+  const { isActive: agentModeActive } = useAgentMode();
 
   const messagesRef = useRef<ChatMessage[]>([]);
   const firstMessageSentRef = useRef(false);
@@ -549,24 +590,30 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
   const memoryTableOrganizeModeRef = useRef<'sync' | 'async'>('sync');
   const memoryTableDataRef = useRef<string>('');
   const isOrganizingRef = useRef(false);
-  const [isOrganizing, setIsOrganizing] = useState(false);
+  // 【Phase 1 / H2】UI 瞬态迁入 useChatUIStore（对齐 V2 useV2UIStore 范式），
+  // hook 不再持有本地 UI useState。selector 订阅保证 UI 正常重渲染。
+  const isOrganizing = useChatUIStore(s => s.isOrganizing);
+  const setIsOrganizing = useChatUIStore(s => s.setIsOrganizing);
   // 手动整理按钮 loading 状态（Spec: add-manual-table-organize-button / Task 1）
-  const [manualOrganizing, setManualOrganizing] = useState(false);
+  const manualOrganizing = useChatUIStore(s => s.manualOrganizing);
+  const setManualOrganizing = useChatUIStore(s => s.setManualOrganizing);
   // 用户回复生成状态与累积缓冲（Spec: add-ai-user-reply-button / Task 2.2 + 2.3）
-  // - isGeneratingUserReply：state，驱动 UI 按钮态切换与 Send/textarea 禁用
+  // - isGeneratingUserReply：store 状态，驱动 UI 按钮态切换与 Send/textarea 禁用
   // - isGeneratingUserReplyRef：ref，cancelRequest 中同步读取避免闭包陈旧
   // - isGeneratingUserReplyAbortRef：ref，cancelRequest 触发后用于 onStream 回调早返
   // - generatedReplyAccumulatedRef：ref，流式累积 chunk，完成后供 Promise resolve 使用
-  const [isGeneratingUserReply, setIsGeneratingUserReply] = useState(false);
+  const isGeneratingUserReply = useChatUIStore(s => s.isGeneratingUserReply);
+  const setIsGeneratingUserReply = useChatUIStore(s => s.setIsGeneratingUserReply);
   const generatedReplyAccumulatedRef = useRef<string>('');
   const isGeneratingUserReplyRef = useRef<boolean>(false);
   const isGeneratingUserReplyAbortRef = useRef<boolean>(false);
   // 润色输入状态与累积缓冲（Spec: refine-user-input-text / Task 2）
-  // - isPolishingInput：state，驱动 UI 按钮态切换与输入框禁用
+  // - isPolishingInput：store 状态，驱动 UI 按钮态切换与输入框禁用
   // - polishedAccumulatedRef：ref，流式累积 chunk，完成后供 Promise resolve 使用
   // - isPolishingInputRef：ref，cancelRequest 中同步读取避免闭包陈旧
   // - isPolishingInputAbortRef：ref，cancelRequest 触发后用于 onStream 回调早返
-  const [isPolishingInput, setIsPolishingInput] = useState(false);
+  const isPolishingInput = useChatUIStore(s => s.isPolishingInput);
+  const setIsPolishingInput = useChatUIStore(s => s.setIsPolishingInput);
   const polishedAccumulatedRef = useRef<string>('');
   const isPolishingInputRef = useRef<boolean>(false);
   const isPolishingInputAbortRef = useRef<boolean>(false);
@@ -619,7 +666,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
 
       saveStoredConfig(characterInfo.characterCardId, configToSave);
 
-      const result = await window.electronAPI.characterConfig.save(characterInfo.characterCardId, configToSave);
+      const result = await characterConfigService.save(characterInfo.characterCardId, configToSave);
       if (result.success) {
         const timestamp = new Date().toLocaleString('zh-CN');
         const summary = JSON.stringify({
@@ -674,7 +721,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     console.log('[CharacterDialogueChat] first_mes length:', characterInfo.first_mes?.length || 0);
     const loadChatHistory = async () => {
       try {
-        const savedChat = await window.electronAPI.characterChat.getTestChat(characterInfo.creativeId, characterInfo.characterCardId);
+        const savedChat = await characterChatService.getTestChat(characterInfo.creativeId, characterInfo.characterCardId);
         if (cancelled) return;
         console.log('[CharacterDialogueChat] savedChat:', savedChat);
         if (savedChat && savedChat.messages && savedChat.messages.length > 0) {
@@ -753,7 +800,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
   // 订阅故障转移事件
   // provider 切换时展示 toast 通知，重试时提示正在重试。
   useEffect(() => {
-    const unsubscribe = window.electronAPI.ai.failover.onFailover((data: {
+    const unsubscribe = aiService.onFailover((data: {
       type: 'retry' | 'switch';
       toProvider?: string;
       toModel?: string;
@@ -842,11 +889,32 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       }
     };
 
+    // 【Phase 2 / M8 - conversation-mode-optimization-report】流式渲染节流（P2）：
+    // STREAM_CHUNK 以 50ms 间隔批量 dispatch，避免每次 token 到达都触发 React 重渲染。
+    // 流结束路径（onComplete / onError / 超时 / catch）必须调用 flushStreamNow() 立即冲刷，
+    // 保证最终内容不丢失、错误兜底能读到最新部分内容。
+    const STREAM_FLUSH_INTERVAL_MS = 50;
+    let streamFlushTimer: NodeJS.Timeout | null = null;
+    const scheduleStreamFlush = () => {
+      if (streamFlushTimer) return;
+      streamFlushTimer = setTimeout(() => {
+        streamFlushTimer = null;
+        dispatch({ type: 'STREAM_CHUNK', targetMessageId, content: streamContentRef.current });
+      }, STREAM_FLUSH_INTERVAL_MS);
+    };
+    const flushStreamNow = () => {
+      if (!streamFlushTimer) return;
+      clearTimeout(streamFlushTimer);
+      streamFlushTimer = null;
+      dispatch({ type: 'STREAM_CHUNK', targetMessageId, content: streamContentRef.current });
+    };
+
     const streamTimeoutMs = 300000; // 统一 300 秒超时（AI 生成通常较长）
 
     streamTimeout = setTimeout(() => {
       addLog(`[CharacterDialogueChat] Stream timeout reached (${streamTimeoutMs / 1000}s)`, 'warn');
       engine.cancelRequest();
+      flushStreamNow(); // 【Phase 2 / M8】超时前冲刷未落屏的流式内容
       const timeoutState = stateRef.current;
       const timeoutMsg = timeoutState.messages.find(m => m.id === targetMessageId);
       dispatch({ type: 'STREAM_ERROR', targetMessageId, content: timeoutMsg?.content || '响应超时，请重试', error: '响应超时' });
@@ -897,6 +965,9 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       // 也到不了 ChatEngine，请求永远不带 enable_thinking → 混合思考模型默认不思考）
       thinking_mode: activeEngine.thinking_mode,
       use_function_calling: activeEngine.use_function_calling,
+      // 【重点标记 - FL-3 死代码修复（H-7）】注入 Agent 模式状态，接通 ChatEngine 智能体路径。
+      // ChatEngine 内部再按 capabilities.supportsToolCalling 做双条件守卫（降级保护）。
+      agentModeActive: agentModeActive,
     };
 
     console.log(`[CharacterDialogueChat] engineConfigWithParams.max_tokens:`, engineConfigWithParams.max_tokens);
@@ -960,7 +1031,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         // resolveWorldBookPaths warn 跳过。
         let mergedScopeIds: string[] = boundKnowledgeBaseIds.length > 0 ? [...boundKnowledgeBaseIds] : [];
         try {
-          const relations = await window.electronAPI.character.getWorldBookRelations(characterInfo.characterCardId);
+          const relations = await characterService.getWorldBookRelations(characterInfo.characterCardId);
           const enabledPaths = (relations || [])
             .filter((rel: any) => rel?.enabled !== false && typeof rel?.worldBookPath === 'string' && rel.worldBookPath)
             .map((rel: any) => rel.worldBookPath as string);
@@ -990,7 +1061,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
           creatorNotes: typeof characterConfig?.creatorNotes === 'string' ? characterConfig.creatorNotes : undefined,
         };
 
-        const contextResult = await window.electronAPI.context.retrieveWithKeywords(
+        const contextResult = await contextService.retrieveWithKeywords(
           [...contextMessages.slice(-20), { role: 'user', content: lastUserMessage.content }],
           { topK: 5, minScore: 0.3, sources: ['worldbook', 'knowledge', 'memory'], scopeIds: mergedScopeIds.length > 0 ? mergedScopeIds : undefined },
           true,  // 启用关键词匹配
@@ -1041,7 +1112,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
               `[CharacterDialogueChat] Step A2: RAG retrieval triggered (messages=${contextMessages.length} > threshold), chatId=${ragChatId}`,
               'info'
             );
-            chatHistoryItems = await window.electronAPI.chatHistory.retrieve(
+            chatHistoryItems = await chatHistoryService.retrieve(
               ragChatId,
               lastUserMessageForRag.content,
               3,    // topK
@@ -1094,7 +1165,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
         const chatId = characterInfo.characterCardName || characterInfo.characterCardId;
         addLog(`[CharacterDialogueChat] Requesting table data for chatId: ${chatId}`, 'info');
         console.log('[DEBUG-MEMORY-TABLE] Using chatId:', chatId);
-        const tableResult = await window.electronAPI.memory.getTableData(chatId);
+        const tableResult = await memoryService.getTableData(chatId);
         console.log('[DEBUG-MEMORY-TABLE] tableResult:', tableResult);
         console.log('[DEBUG-MEMORY-TABLE] tableResult.data:', tableResult?.data);
         console.log('[DEBUG-MEMORY-TABLE] tableResult.data type:', typeof tableResult?.data);
@@ -1431,7 +1502,11 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
           addLog(`[CharacterDialogueChat] Content validation warning: content mismatch detected`, 'warn');
         }
 
-        dispatch({ type: 'STREAM_CHUNK', targetMessageId, content: currentContent });
+        // 【Phase 2 / M8】节流：50ms 批量 dispatch，取代每 token 一次 dispatch
+        scheduleStreamFlush();
+      } else if (isDone) {
+        // 流结束信号：立即冲刷最后一批内容
+        flushStreamNow();
       }
     });
 
@@ -1455,6 +1530,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       console.log('[DEBUG-COMPLETE] response?.content contains tableEdit:', response?.content?.includes('tableEdit') || false);
       console.log('[DEBUG-COMPLETE] streamContentRef.current length:', streamContentRef.current?.length || 0);
       clearStreamTimeout();
+      flushStreamNow(); // 【Phase 2 / M8】完成前冲刷，确保空回复检测读到最新内容
       const accumulatedContent = streamContentRef.current;
       const serverContent = response?.content || '';
       const hasInitialContent = initialContentRef.current.length > 0;
@@ -1766,7 +1842,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
                 // 重新包装为标准格式供解析器处理
                 const wrappedContent = `<tableEdit><!--\n${rawCommandsText}\n--></tableEdit>`;
                 addLog(`[CharacterDialogueChat] 调用parseTableEdit, 包装后长度: ${wrappedContent.length}`, 'info');
-                const parseResult = await window.electronAPI.memory.parseTableEdit(wrappedContent);
+                const parseResult = await memoryService.parseTableEdit(wrappedContent);
                 addLog(`[CharacterDialogueChat] parseTableEdit结果: 成功=${parseResult.success}, 命令数=${parseResult.commands.length}, 错误数=${parseResult.errors.length}`, 'info');
 
                 // 解析失败降级处理：记录日志，不阻塞 UI 更新
@@ -1783,13 +1859,13 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
 
                 if (parseResult.commands.length > 0) {
                   addLog(`[CharacterDialogueChat] 解析到 ${parseResult.commands.length} 个tableEdit命令，chatId=${chatId}，开始执行...`, 'info');
-                  const execResult = await window.electronAPI.memory.executeTableEditCommands(chatId, parseResult.commands);
+                  const execResult = await memoryService.executeTableEditCommands(chatId, parseResult.commands);
                   if (execResult.success) {
                     addLog(`[CharacterDialogueChat] 异步整理完成: 成功执行 ${execResult.executed} 个命令`, 'info');
 
                     // 刷新表格数据，确保后续对话使用最新上下文
                     try {
-                      let refreshedData = await window.electronAPI.memory.getTableData(chatId);
+                      let refreshedData = await memoryService.getTableData(chatId);
                       if (refreshedData?.data) {
                         memoryTableDataRef.current = refreshedData.data;
                         addLog('[CharacterDialogueChat] 表格数据已刷新，后续对话将使用最新上下文', 'info');
@@ -2078,7 +2154,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
             const activeEngine = getActiveEngineConfig();
             if (activeEngine) {
               // 使用新的 options 参数，继续从上次位置处理，最小间隔 3000ms
-              await window.electronAPI.memory.processChatProgressive(chatId, '', {
+              await memoryService.processChatProgressive(chatId, '', {
                 apiKey: activeEngine.api_key || '',
                 apiUrl: activeEngine.api_url || '',
                 modelName: activeEngine.model_name || '',
@@ -2128,7 +2204,8 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
               'info'
             );
             // fire-and-forget：不 await，错误由 .catch 内部记录
-            window.electronAPI.chatHistory
+            // 【Phase 1 / H1】IPC 走服务封装层
+            chatHistoryService
               .vectorizeIncremental(incrementalChatId, recentMessagesForVectorize)
               .catch(err => {
                 addLog(
@@ -2203,6 +2280,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
 
     engine.onError((error) => {
       clearStreamTimeout();
+      flushStreamNow(); // 【Phase 2 / M8】错误前冲刷，保证错误兜底读到最新部分内容
       const errorState = stateRef.current;
       const errorMsg = errorState.messages.find(m => m.id === targetMessageId);
       dispatch({ type: 'STREAM_ERROR', targetMessageId, content: errorMsg?.content ? `${errorMsg.content}\n\nError: ${error.message}` : `Error: ${error.message}`, error: error.message });
@@ -2331,6 +2409,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       console.log('[DEBUG-FLOW] === requestAIResponse END ===');
     } catch (error) {
       console.error('[DEBUG-FLOW] Step E: engine.sendMessage threw error:', error);
+      flushStreamNow(); // 【Phase 2 / M8】异常前冲刷未落屏的流式内容
       const errorMessage = error instanceof Error ? error.message : 'Failed to send message';
       const catchState = stateRef.current;
       const catchMsg = catchState.messages.find(m => m.id === targetMessageId);
@@ -2344,7 +2423,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     dispatch({ type: 'STREAM_ERROR', targetMessageId, content: `错误: ${error instanceof Error ? error.message : '未知错误'}`, error: error instanceof Error ? error.message : '未知错误' });
     message.error(`对话请求失败: ${error instanceof Error ? error.message : '未知错误'}`);
   }
-  }, [getActiveEngineConfig, getEffectiveParams, buildDialoguePrompt, buildContinuationPrompt, saveChatToStore, addLog, characterConfig, selectedPersona]);
+  }, [getActiveEngineConfig, getEffectiveParams, buildDialoguePrompt, buildContinuationPrompt, saveChatToStore, addLog, characterConfig, selectedPersona, agentModeActive]);
 
   /**
    * 生成用户回复（Spec: add-ai-user-reply-button / Task 2）
@@ -2891,6 +2970,12 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
 
   const sendMessage = useCallback(async (content: string) => {
     if (!content.trim() || state.isStreaming) return;
+    // 【Phase 3 / L8 - conversation-mode-optimization-report】压缩与消息发送互斥（P4）：
+    // 压缩过程中发送消息会基于即将被摘要替换的消息列表构建上下文，导致不一致。压缩中禁止发送。
+    if (useChatUIStore.getState().isCompressing) {
+      message.warning('上下文压缩中，请等待完成后再发送消息');
+      return;
+    }
 
     const userId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
     const userMessage: ChatMessage = {
@@ -2959,10 +3044,8 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
   }, [state.isStreaming, requestAIResponse, addLog]);
 
   const retryMessage = useCallback(async (messageId: string) => {
-    if (state.isStreaming) {
-      message.warning('请等待当前回复完成');
-      return;
-    }
+    // 【Phase 3 / L3 - conversation-mode-optimization-report】流式守卫改用 messageVersionService（R4）
+    if (guardStreaming(state.isStreaming)) return;
 
     const existingMessage = messagesRef.current.find(m => m.id === messageId);
     if (!existingMessage) {
@@ -3069,7 +3152,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     const assetId = `conv_${Date.now()}`;
     let generatedImageRef: string = imageBase64; // fallback: 若保存失败则直接存 base64
     try {
-      const saveResult = await window.electronAPI.asset.save({
+      const saveResult = await assetService.save({
         characterCardId,
         assetType: 'general',
         assetId,
@@ -3156,7 +3239,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     // 遍历 history 逐个删除磁盘文件 + manifest
     for (const item of attachment.history) {
       try {
-        await window.electronAPI.asset.delete({
+        await assetService.delete({
           characterCardId,
           assetType: 'general',
           assetId: item.assetId,
@@ -3206,7 +3289,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       // 使用 characterCardName 而不是 characterCardId，因为表格整理功能使用 characterCardName 保存文件
       const chatId = characterInfo.characterCardName || characterInfo.characterCardId;
       console.log('[DEBUG-MEMORY-TABLE] fetchMemoryTableData using chatId:', chatId);
-      const tableResult = await window.electronAPI.memory.getTableData(chatId);
+      const tableResult = await memoryService.getTableData(chatId);
       if (tableResult && tableResult.sheets && tableResult.sheets.length > 0 && tableResult.data) {
         let formattedData = '# 记忆表格数据\n\n';
         for (const sheetName of tableResult.sheets) {
@@ -3274,35 +3357,14 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     saveChatToStore(updatedMessages);
     addLog(`[CharacterDialogueChat] Rolled back to message ${messageId}, removed ${removedCount} messages`, 'info');
 
-    // ===== 表格跟随回退：查找对应版本并恢复表格快照 =====
-    try {
-      const chatId = characterInfo.characterCardName || characterInfo.characterCardId;
-      if (chatId && versionIndexRef.current?.versions) {
-        const targetTimestamp = targetMessage.timestamp;
-        const index = versionIndexRef.current;
-        // 从版本索引中查找时间匹配（±1000ms）的联动版本
-        const matchedRecord = index.versions.find((v: any) => {
-          return v.tableSnapshot?.exists && 
-            Math.abs(v.timestamp - targetTimestamp) <= 1000;
-        });
-        if (matchedRecord) {
-          addLog(`[CharacterDialogueChat] 卷回时找到匹配的联动版本: ${matchedRecord.versionLinkId}，准备恢复表格快照`, 'info');
-          const restoreResult = await window.electronAPI.memory.restoreTableFromSnapshot(chatId, matchedRecord.versionLinkId);
-          if (restoreResult.success) {
-            addLog(`[CharacterDialogueChat] 卷回时表格快照恢复成功: ${matchedRecord.versionLinkId}`, 'info');
-            // 刷新 memoryTableDataRef
-            await fetchMemoryTableData();
-          } else {
-            addLog(`[CharacterDialogueChat] 卷回时表格快照恢复失败: ${restoreResult.error}`, 'warn');
-          }
-        } else {
-          addLog(`[CharacterDialogueChat] 卷回时未找到匹配的联动版本，跳过表格回退`, 'debug');
-        }
-      }
-    } catch (tableError) {
-      addLog(`[CharacterDialogueChat] 卷回时表格回退异常: ${tableError}`, 'warn');
-      // 不阻塞卷回主流程
-    }
+    // ===== 表格跟随回退 =====
+    // 【Phase 3 / L3 - conversation-mode-optimization-report】表格快照恢复改用 messageVersionService（R4）
+    const chatId = characterInfo.characterCardName || characterInfo.characterCardId;
+    await restoreTableSnapshot(
+      chatId,
+      { versionIndex: versionIndexRef.current, targetTimestamp: targetMessage.timestamp },
+      { memoryService, fetchMemoryTableData, addLog }
+    );
 
     return rolledBackContent;
   }, [state.isStreaming, cancelRequest, saveChatToStore, addLog, characterInfo, fetchMemoryTableData]);
@@ -3347,7 +3409,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     setManualOrganizing(true);
     try {
       addLog('[CharacterDialogueChat] Manual table organize triggered', 'info');
-      const result = await window.electronAPI.memory.processChatProgressive(chatId, '', {
+      const result = await memoryService.processChatProgressive(chatId, '', {
         apiKey: activeEngine.api_key || '',
         apiUrl: activeEngine.api_url || '',
         modelName: activeEngine.model_name || '',
@@ -3391,7 +3453,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     const chatId = characterInfo.characterCardName || characterInfo.characterCardId;
     try {
       addLog(`[CharacterDialogueChat] Stopping organize task for: ${chatId}`, 'info');
-      const result = await window.electronAPI.memory.stopOrganizing(chatId);
+      const result = await memoryService.stopOrganizing(chatId);
       if (result.success) {
         isOrganizingRef.current = false;
         setIsOrganizing(false);
@@ -3409,11 +3471,11 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
 
   const loadVersions = useCallback(async () => {
     try {
-      const versions = await window.electronAPI.chatVersion.getVersions(characterInfo.characterCardName);
+      const versions = await chatVersionService.getVersions(characterInfo.characterCardName);
       versionListRef.current = versions.sort((a, b) => a.timestamp - b.timestamp);
       
       try {
-        const index = await window.electronAPI.chatVersion.getVersionIndex(characterInfo.characterCardName);
+        const index = await chatVersionService.getVersionIndex(characterInfo.characterCardName);
         versionIndexRef.current = index;
       } catch {
         versionIndexRef.current = null;
@@ -3498,26 +3560,19 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
   }, []);
 
   const retryMessageFromVersion = useCallback(async (versionFilePath: string) => {
-    if (state.isStreaming) {
-      message.warning('请等待当前回复完成');
-      return;
-    }
+    // 【Phase 3 / L3 - conversation-mode-optimization-report】版本恢复逻辑改用 messageVersionService（R4）
+    if (guardStreaming(state.isStreaming)) return;
 
     try {
       addLog(`[CharacterDialogueChat] Restoring from version: ${versionFilePath}`, 'info');
-      const versionData = await window.electronAPI.chatVersion.getVersionContent(versionFilePath);
+      const versionData = await chatVersionService.getVersionContent(versionFilePath);
       if (!versionData || !versionData.messages) {
         message.error('版本数据无效');
         return;
       }
 
-      const restoredMessages: ChatMessage[] = versionData.messages.map((msg: any) => ({
-        ...msg,
-        status: msg.status || 'sent',
-      }));
-
-      const messagesBeforeRetry = restoredMessages.slice(0, -1);
-      const lastMessage = restoredMessages[restoredMessages.length - 1];
+      const restoredMessages = normalizeVersionMessages(versionData.messages);
+      const { before: messagesBeforeRetry, last: lastMessage } = truncateBeforeLastAssistant(restoredMessages);
 
       if (!lastMessage || lastMessage.role !== 'assistant') {
         message.warning('版本数据格式不正确');
@@ -3525,32 +3580,14 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
       }
 
       // ===== 表格跟随回退：恢复对应版本的表格快照 =====
-      try {
-        const chatId = characterInfo.characterCardName || characterInfo.characterCardId;
-        if (chatId && versionData.versionLinkId) {
-          addLog(`[CharacterDialogueChat] 重新生成时恢复表格快照: versionLinkId=${versionData.versionLinkId}`, 'info');
-          const restoreResult = await window.electronAPI.memory.restoreTableFromSnapshot(chatId, versionData.versionLinkId);
-          if (restoreResult.success) {
-            addLog(`[CharacterDialogueChat] 重新生成时表格快照恢复成功`, 'info');
-            // 刷新内存中的表格数据
-            await fetchMemoryTableData();
-          } else {
-            addLog(`[CharacterDialogueChat] 重新生成时表格快照恢复失败: ${restoreResult.error}`, 'warn');
-          }
-        }
-      } catch (tableError) {
-        addLog(`[CharacterDialogueChat] 重新生成时表格回退异常: ${tableError}`, 'warn');
-        // 不阻塞重新生成主流程
-      }
+      const chatId = characterInfo.characterCardName || characterInfo.characterCardId;
+      await restoreTableSnapshot(
+        chatId,
+        { versionLinkId: versionData.versionLinkId },
+        { memoryService, fetchMemoryTableData, addLog }
+      );
 
-      const newEmptyMessage: ChatMessage = {
-        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-        role: 'assistant',
-        content: '',
-        timestamp: Date.now(),
-        status: 'sending',
-        speakerName: characterInfo.characterCardName,
-      };
+      const newEmptyMessage = buildPendingAssistantMessage(characterInfo.characterCardName);
 
       messagesRef.current = [...messagesBeforeRetry, newEmptyMessage];
       dispatch({ type: 'SEND_MESSAGE', messages: [...messagesBeforeRetry, newEmptyMessage] });
@@ -3572,8 +3609,16 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
   }, [state, getVersionInfoForMessage]);
 
   // 手动触发上下文压缩（Spec: optimize-agent-interaction-from-openclaw / M3-Task9）
-  const [isCompressing, setIsCompressing] = useState(false);
+  // 【Phase 1 / H2】isCompressing 迁入 useChatUIStore
+  const isCompressing = useChatUIStore(s => s.isCompressing);
+  const setIsCompressing = useChatUIStore(s => s.setIsCompressing);
   const compressContext = useCallback(async () => {
+    // 【Phase 3 / L8 - conversation-mode-optimization-report】压缩与消息发送互斥（P4）：
+    // 流式生成中压缩会截断正在使用的上下文，导致上下文不一致。发送中禁止压缩。
+    if (stateRef.current.isStreaming) {
+      message.warning('消息发送中，请等待完成后再压缩上下文');
+      return;
+    }
     setIsCompressing(true);
     try {
       const currentMessages = messagesRef.current;
@@ -3757,3 +3802,7 @@ export function useCharacterDialogueChat(characterInfo: CharacterInfo) {
     isCompressing,
   };
 }
+
+// 【Phase 2 / M1 - conversation-mode-optimization-report】hook 返回值类型别名。
+// 子组件/子 hook 以整体 chat 对象透传（props 透传范式），避免逐字段解构导致编排层膨胀。
+export type ChatHook = ReturnType<typeof useCharacterDialogueChat>;

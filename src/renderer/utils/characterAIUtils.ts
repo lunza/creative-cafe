@@ -1,4 +1,6 @@
 import { defaultAIService } from '../components/Common/AIService';
+// Spec: settings-feature-optimization-report / H-5（默认值单一来源）
+import { DEFAULT_ENGINE_PARAMS } from '../../shared/settingDefaults';
 import type { AIRequestOptions, AIResult } from '../components/Common/AIService.types';
 import type { AIEngine } from '../types/setting';
 
@@ -11,7 +13,7 @@ function buildAIRequestOptions(
 ): AIRequestOptions {
   const temperature = (typeof engine.temperature === 'number' && engine.temperature >= 0 && engine.temperature <= 2)
     ? engine.temperature
-    : 0.7;
+    : DEFAULT_ENGINE_PARAMS.temperature;
 
   return {
     model: engine.model_name ?? (() => { throw new Error('未配置 AI 模型名称') })(),

@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { BatchFixRequest } from '../shared/types/writing.types';
+// Spec: settings-feature-optimization-report / N6, M-17（setting 命名空间全类型化）
+import type { AppSetting } from '../renderer/types/setting';
 import type { CrossCheckStreamEvent } from '../shared/types/cross-chapter-review.types';
 import type {
   WritingProject,
@@ -39,6 +41,7 @@ import type {
   V2TableTemplateInput,
   V2TableTemplateOpResult,
   V2ChapterOrganizeStatusResult,
+  V2IdConsistencyReportResult,
   V2VersionSnapshotResult,
   V2TableOrganizeProgressEvent,
   WritingTableConfig,
@@ -121,10 +124,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
       channelMap.delete(callback);
     }
   },
+  // Spec: settings-feature-optimization-report / N6, M-17（setting IPC 全类型化，禁 any 穿透）
   setting: {
-    load: () => ipcRenderer.invoke('setting:load'),
-    save: (setting: any) => ipcRenderer.invoke('setting:save', setting),
-    getPath: () => ipcRenderer.invoke('setting:getPath')
+    load: (): Promise<import('../shared/types/setting.types').SettingLoadResult> =>
+      ipcRenderer.invoke('setting:load'),
+    save: (setting: AppSetting): Promise<import('../shared/types/setting.types').SettingSaveResult> =>
+      ipcRenderer.invoke('setting:save', setting),
+    getPath: (): Promise<import('../shared/types/setting.types').SettingPathResult> =>
+      ipcRenderer.invoke('setting:getPath'),
+    // 【M-16/N5】设置变更事件订阅（写盘确认成功后主进程广播），返回取消订阅函数
+    onChanged: (callback: (payload: { presetName?: string; engineCount: number }) => void) => {
+      const subscription = (_event: unknown, payload: { presetName?: string; engineCount: number }) => callback(payload);
+      ipcRenderer.on('setting:changed', subscription);
+      return () => ipcRenderer.removeListener('setting:changed', subscription);
+    }
   },
   worldBook: {
     list: () => ipcRenderer.invoke('worldBook:list'),
@@ -446,10 +459,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 图片生成阶段进度事件订阅（Spec: enhance-conversation-image-bubble / Task 3）
     // 主进程在 ai:generateTraitPrompts handler 内推送 { phase } 进度事件，
     // 渲染进程据此切换占位文案（「标签生成中…」/「标签审核中…」）。
-    // 订阅/取消模式参照 sd.onGenerationProgress / sd.removeProgressListeners
-    // （on 注册不返回 unsubscribe，off 一次性 removeAllListeners，适合组件挂载/卸载成对调用）
-    onTraitPromptProgress: (callback: (data: { phase: 'tag-generating' | 'tag-auditing' | 'image-generating' }) => void) =>
-      ipcRenderer.on('ai:traitPromptProgress', (_event, data) => callback(data)),
+    // 【Phase 1 / H4 - conversation-mode-optimization-report】标准订阅模式：
+    // 返回 unsubscribe 函数，仅移除本次注册的监听器（removeListener 精确卸载），
+    // 取代原先 offTraitPromptProgress 一次性 removeAllListeners 的非标准模式
+    // （后者会误删其他组件注册的监听器，且卸载时机与注册不对称存在泄漏风险）。
+    onTraitPromptProgress: (callback: (data: { phase: 'tag-generating' | 'tag-auditing' | 'image-generating' }) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: { phase: 'tag-generating' | 'tag-auditing' | 'image-generating' }) => callback(data);
+      ipcRenderer.on('ai:traitPromptProgress', listener);
+      return () => {
+        ipcRenderer.removeListener('ai:traitPromptProgress', listener);
+      };
+    },
     offTraitPromptProgress: () => {
       ipcRenderer.removeAllListeners('ai:traitPromptProgress');
     },
@@ -491,6 +511,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
     deleteTestChat: (creativeId: string, characterCardId: string) => ipcRenderer.invoke('characterChat:deleteTestChat', creativeId, characterCardId),
     getAllTestChats: () => ipcRenderer.invoke('characterChat:getAllTestChats'),
     clearCache: () => ipcRenderer.invoke('characterChat:clearCache')
+  },
+  // 【Phase 4 / L4 - conversation-mode-optimization-report】对话质量检查与人设一致性检查 API
+  characterQuality: {
+    check: (request: any) => ipcRenderer.invoke('characterQuality:check', request),
+    fixIssue: (request: any) => ipcRenderer.invoke('characterQuality:fixIssue', request),
+    getHistory: (characterCardId: string) => ipcRenderer.invoke('characterQuality:getHistory', characterCardId),
+    clearHistory: (characterCardId: string) => ipcRenderer.invoke('characterQuality:clearHistory', characterCardId)
+  },
+  // 【Phase 4 / L5 - conversation-mode-optimization-report】角色风格学习 API（基于对话历史）
+  characterStyle: {
+    learn: (request: any) => ipcRenderer.invoke('characterStyle:learn', request),
+    list: () => ipcRenderer.invoke('characterStyle:list'),
+    get: (characterCardId: string) => ipcRenderer.invoke('characterStyle:get', characterCardId),
+    delete: (characterCardId: string) => ipcRenderer.invoke('characterStyle:delete', characterCardId)
   },
   // 聊天记录版本管理 API
   chatVersion: {
@@ -661,6 +695,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       chapterIndex: number;
       content: string;
     }): Promise<V2BoolResult> => ipcRenderer.invoke('writing:autoSaveChapter', params),
+    // Humanizer 文本转写（独立接口，仅适配 jialinyyzz/humanizer 模型）
+    humanizeChapter: (params: {
+      projectId: string;
+      chapterIndex: number;
+      content: string;
+    }): Promise<{ success: boolean; rewritten?: string; chunks?: number; error?: string }> =>
+      ipcRenderer.invoke('writing:humanizeChapter', params),
     saveVersion: (params: {
       projectId: string;
       chapterIndex: number;
@@ -836,6 +877,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke('writing:table:getChapterOrganizeStatus', projectId),
       cancelOrganize: (projectId: string): Promise<V2BoolResult> =>
         ipcRenderer.invoke('writing:table:cancelOrganize', projectId),
+      // ID 一致性按需重扫（只读校验，不改数据、不触发整理）
+      getIdConsistencyReport: (projectId: string): Promise<V2IdConsistencyReportResult> =>
+        ipcRenderer.invoke('writing:table:getIdConsistencyReport', projectId),
       getVersionSnapshot: (projectId: string): Promise<V2VersionSnapshotResult> =>
         ipcRenderer.invoke('writing:table:getVersionSnapshot', projectId),
       confirmVersion: (projectId: string): Promise<V2BoolResult> =>
@@ -1044,11 +1088,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke('manga:scanFolder', folderPath),
       analyzePage: (params: {
         imagePath: string;
+        imageDataUri?: string;
         readingOrder: MangaReadingOrder;
         previousSummaries: MangaPageSummary[];
         pageIndex: number;
         userGuidance?: string;
         mangaMeta?: MangaMetaInfo;
+        customPrompt?: string;
       }): Promise<V2MangaAnalyzeResult> =>
         ipcRenderer.invoke('manga:analyzePage', params),
       buildContextTable: (summaries: MangaPageSummary[]): Promise<V2MangaContextResult> =>
@@ -1075,6 +1121,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke('manga:generateProjectDraft', summaries, outline, mangaMeta, customPrompt),
       generateCharacterInfo: (params: {
         imagePath: string;
+        imageDataUri?: string;
         summaries?: MangaPageSummary[];
         mangaMeta?: MangaMetaInfo;
         currentCharacters?: string;

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Tooltip, Modal, Tag, Collapse } from 'antd';
 import { CopyOutlined, CheckOutlined, ReloadOutlined, DoubleRightOutlined, RetweetOutlined, LoadingOutlined, EditOutlined, TableOutlined, WarningOutlined, RollbackOutlined, PictureOutlined, DeleteOutlined, LeftOutlined, RightOutlined, DownOutlined, CheckCircleOutlined, BulbOutlined } from '@ant-design/icons';
 import { MessageRenderer } from './MessageRenderer';
+import ImageStageProgress from './ImageStageProgress';
 import { ChatMessage, ChatMessageVersionInfo } from './CharacterDialogueChat.types';
 import { EMOTION_PRESETS } from './PromptBuilder';
 import './ChatMessageBubble.css';
@@ -149,19 +150,8 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
     setPromptPanelExpanded(false);
   }, [imageAttachment?.currentIndex]);
 
-  // 阶段状态文案映射（SubTask 5.1）
-  const phaseText = useMemo(() => {
-    switch (imageAttachment?.phase) {
-      case 'tag-generating':
-        return '标签生成中…';
-      case 'tag-auditing':
-        return '标签审核中…';
-      case 'image-generating':
-        return '图片生成中…';
-      default:
-        return '处理中…';
-    }
-  }, [imageAttachment?.phase]);
+  // 【Phase 2 / M2】阶段状态文案由 ImageStageProgress 组件取代（阶段进度条 + 预计耗时），
+  // 原 phaseText 文案映射移除
 
   // 父气泡左侧立绘解析（SubTask 11.2 / Spec: enhance-conversation-image-bubble）
   // 优先使用 imageAttachment.emotion 通过 resolveExpressionImage 解析；
@@ -558,9 +548,9 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
                   <div className="chat-msg-image-attachment">
                     {isImageGenerating ? (
                       // 生成中：阶段状态占位（SubTask 5.1）
+                      // 【Phase 2 / M2】文案占位升级为阶段进度条（三阶段流水线 + 实时耗时 + 预计耗时）
                       <div className="chat-msg-image-placeholder">
-                        <LoadingOutlined spin />
-                        <span className="chat-msg-image-phase-text">{phaseText}</span>
+                        <ImageStageProgress phase={imageAttachment.phase} />
                       </div>
                     ) : isImageError ? (
                       // 错误状态：显示错误信息 + 重试按钮（SubTask 5.2）

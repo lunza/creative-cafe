@@ -949,3 +949,61 @@
   font-style: italic;
   padding: 4px 0;
 }
+
+
+/* 【Phase 2 / M2 - conversation-mode-optimization-report】图片生成阶段进度条 */
+.chat-msg-image-stage-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.chat-msg-image-stage {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #999;
+  opacity: 0.5;
+}
+.chat-msg-image-stage .stage-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+}
+.chat-msg-image-stage .stage-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid #888;
+}
+.chat-msg-image-stage .stage-label {
+  white-space: nowrap;
+}
+.chat-msg-image-stage.active {
+  opacity: 1;
+  color: #1677ff;
+}
+.chat-msg-image-stage.done {
+  opacity: 0.85;
+  color: #52c41a;
+}
+.chat-msg-image-stage-progress .stage-elapsed {
+  font-size: 12px;
+  color: #888;
+  white-space: nowrap;
+}
+
+
+/* 【Phase 2 / M4】窄屏（消息区 100% 宽）：缩小表情立绘，避免气泡被挤得过窄 */
+.chat-area[data-layout='narrow'] .chat-msg-expression {
+  width: 128px;
+  height: 128px;
+}
+.chat-area[data-layout='narrow'] .chat-msg-inner.is-assistant:has(.chat-msg-expression) {
+  max-width: 100%;
+}

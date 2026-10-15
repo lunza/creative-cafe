@@ -11,6 +11,8 @@ import { updateHandlers } from './handlers/updateHandlers';
 import { registerMemoryHandlers } from './handlers/memoryHandlers';
 import { registerCreativeHandlers } from './handlers/creativeHandlers';
 import { registerCharacterChatHandlers } from './handlers/characterChatHandlers';
+import { registerCharacterQualityCheckHandlers } from './handlers/characterQualityCheckHandlers';
+import { registerCharacterStyleHandlers } from './handlers/characterStyleHandlers';
 import { registerWritingHandlers } from './handlers/writingHandlers';
 import { registerWritingV2Handlers } from './handlers/writingV2Handlers';
 import { registerWritingPipelineHandlers } from './handlers/writingPipelineHandlers';
@@ -71,6 +73,12 @@ export function setupIpcHandlers() {
   registerMemoryHandlers();
   registerCreativeHandlers();
   registerCharacterChatHandlers();
+  // 【Phase 4 / L4】对话质量检查与人设一致性检查（N2：参考 V2PlotCheckPanel）
+  // 暴露 characterQuality:check / fixIssue / getHistory / clearHistory 四个通道
+  registerCharacterQualityCheckHandlers();
+  // 【Phase 4 / L5】角色风格学习（N6：基于对话历史学习角色语言风格）
+  // 暴露 characterStyle:learn / list / get / delete 四个通道
+  registerCharacterStyleHandlers();
   registerWritingHandlers();
   // 写作模式 2.0 专用通道（parseOutline / exportWithChapters）
   registerWritingV2Handlers();

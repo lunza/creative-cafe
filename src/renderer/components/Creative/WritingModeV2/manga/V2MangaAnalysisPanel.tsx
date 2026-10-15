@@ -46,6 +46,10 @@ interface Props {
   onSaveAnalysis: (updated: MangaPageAnalysis) => void;
   /** 中止进行中的分析（manga:cancel('analyzePage')，可选） */
   onStopAnalyzing?: () => void;
+  /** 本页已持久化的页面内容引导（2026-10-08：按页独立配置，切页回显） */
+  pageGuide?: string;
+  /** 引导词变更回调（输入即持久化到漫画记录 pageGuides） */
+  onPageGuideChange?: (guide: string) => void;
 }
 
 const TEXT_TYPE_OPTIONS = [
@@ -62,12 +66,19 @@ const V2MangaAnalysisPanel: React.FC<Props> = ({
   onAnalyze,
   onSaveAnalysis,
   onStopAnalyzing,
+  pageGuide,
+  onPageGuideChange,
 }) => {
   const { token } = theme.useToken();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<MangaPageAnalysis | null>(null);
-  /** 用户提供的页面内容引导提示（输入框，分析时携带给 AI） */
-  const [userGuidance, setUserGuidance] = useState('');
+  /** 用户提供的页面内容引导提示（按页持久化，切页时回显该页已保存的引导） */
+  const [userGuidance, setUserGuidance] = useState(pageGuide ?? '');
+
+  // 切换页面 / 外部持久化值变化时回显（自身输入触发的同值写入会被 React 忽略，无循环）
+  useEffect(() => {
+    setUserGuidance(pageGuide ?? '');
+  }, [pageGuide, pageIndex]);
 
   // 当 analysis 变化且不在编辑态时，同步 draft
   useEffect(() => {
@@ -144,12 +155,15 @@ const V2MangaAnalysisPanel: React.FC<Props> = ({
       {!analyzing && (
         <div style={{ marginBottom: 12, flexShrink: 0 }}>
           <div style={{ fontSize: 12, color: token.colorTextTertiary, marginBottom: 4 }}>
-            页面内容引导（可选，帮助 AI 更准确识别）
+            页面内容引导（本页专属，可选，帮助 AI 更准确识别）
           </div>
           <Input.TextArea
-            rows={2}
+            autoSize={{ minRows: 2, maxRows: 10 }}
             value={userGuidance}
-            onChange={(e) => setUserGuidance(e.target.value)}
+            onChange={(e) => {
+              setUserGuidance(e.target.value);
+              onPageGuideChange?.(e.target.value);
+            }}
             placeholder="例如：这一页有3个格子，主角小明和神秘人在暗室对话，小明表情紧张"
             disabled={editing}
           />
@@ -252,7 +266,7 @@ const V2MangaAnalysisPanel: React.FC<Props> = ({
                   <div style={{ marginBottom: 6 }}>
                     <div style={{ fontSize: 12, color: token.colorTextTertiary, marginBottom: 4 }}>剧情</div>
                     <Input.TextArea
-                      rows={2}
+                      autoSize={{ minRows: 2, maxRows: 10 }}
                       value={panel.plot}
                       disabled={!editing}
                       onChange={(e) => updatePanel(data, pi, 'plot', e.target.value, setDraft)}
@@ -319,7 +333,7 @@ const V2MangaAnalysisPanel: React.FC<Props> = ({
               <div style={{ marginBottom: 6 }}>
                 <div style={{ fontSize: 12, color: token.colorTextTertiary, marginBottom: 4 }}>整页情绪氛围</div>
                 <Input.TextArea
-                  rows={2}
+                  autoSize={{ minRows: 2, maxRows: 10 }}
                   value={data.pageAnalysis.overallEmotion}
                   disabled={!editing}
                   onChange={(e) =>
@@ -333,7 +347,7 @@ const V2MangaAnalysisPanel: React.FC<Props> = ({
               <div>
                 <div style={{ fontSize: 12, color: token.colorTextTertiary, marginBottom: 4 }}>叙事衔接</div>
                 <Input.TextArea
-                  rows={2}
+                  autoSize={{ minRows: 2, maxRows: 10 }}
                   value={data.pageAnalysis.narrativeContinuity}
                   disabled={!editing}
                   onChange={(e) =>

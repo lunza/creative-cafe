@@ -33,7 +33,7 @@ import {
   AuditOutlined,
 } from '@ant-design/icons';
 import { getWritingV2API } from '../../../../services/writingV2Service';
-import CustomPromptPopover, { readCustomPrompt } from '../shared/CustomPromptPopover';
+import CustomPromptPopover, { readScopedCustomPrompt } from '../shared/CustomPromptPopover';
 import { useV2ProjectStore } from '../stores/useV2ProjectStore';
 import { useMangaComicStore } from './useMangaComicStore';
 import { useV2UIStore } from '../stores/useV2UIStore';
@@ -127,7 +127,7 @@ const V2MangaOutlinePanel: React.FC<Props> = ({
         text,
         mangaMeta ?? undefined,
         summaries,
-        readCustomPrompt(AUDIT_CUSTOM_PROMPT_KEY) || undefined
+        readScopedCustomPrompt(AUDIT_CUSTOM_PROMPT_KEY, folderPath || undefined) || undefined
       );
       if (res.cancelled) {
         message.info('已停止大纲审核');
@@ -154,7 +154,7 @@ const V2MangaOutlinePanel: React.FC<Props> = ({
       const res = await api.manga.generateOutline(
         summaries,
         mangaMeta ?? undefined,
-        readCustomPrompt(GEN_CUSTOM_PROMPT_KEY) || undefined
+        readScopedCustomPrompt(GEN_CUSTOM_PROMPT_KEY, folderPath || undefined) || undefined
       );
       if (res.cancelled) {
         message.info('已停止大纲生成');
@@ -272,7 +272,7 @@ const V2MangaOutlinePanel: React.FC<Props> = ({
         summaries,
         outline,
         mangaMeta ?? undefined,
-        readCustomPrompt(DRAFT_CUSTOM_PROMPT_KEY) || undefined
+        readScopedCustomPrompt(DRAFT_CUSTOM_PROMPT_KEY, folderPath || undefined) || undefined
       );
       if (res.success && res.draft) {
         // 显式回填（antd Form 的 initialValues 仅首次挂载生效，AI 结果到达时表单已挂载）
@@ -408,6 +408,7 @@ const V2MangaOutlinePanel: React.FC<Props> = ({
         </Button>
         <CustomPromptPopover
           storageKey={GEN_CUSTOM_PROMPT_KEY}
+          scope={folderPath || undefined}
           title="自定义提示词 - 故事大纲生成"
           disabled={phase !== 'idle'}
         />
@@ -422,6 +423,7 @@ const V2MangaOutlinePanel: React.FC<Props> = ({
         </Button>
         <CustomPromptPopover
           storageKey={AUDIT_CUSTOM_PROMPT_KEY}
+          scope={folderPath || undefined}
           title="自定义提示词 - AI 大纲审核"
           disabled={phase !== 'idle'}
         />
@@ -435,6 +437,7 @@ const V2MangaOutlinePanel: React.FC<Props> = ({
         </Button>
         <CustomPromptPopover
           storageKey={DRAFT_CUSTOM_PROMPT_KEY}
+          scope={folderPath || undefined}
           title="自定义提示词 - AI 项目信息生成"
           disabled={!outline || phase !== 'idle'}
         />

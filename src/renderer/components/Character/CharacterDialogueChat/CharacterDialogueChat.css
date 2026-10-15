@@ -122,3 +122,30 @@
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
+
+
+/* 【Phase 2 / M4 - conversation-mode-optimization-report】响应式三档：配置面板开关标签（中屏折叠/窄屏抽屉） */
+.chat-config-toggle-tab {
+  position: absolute;
+  right: 0;
+  top: 42%;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 56px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  background: rgba(30, 41, 59, 0.9);
+  color: #94a3b8;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.chat-config-toggle-tab:hover {
+  color: #e2e8f0;
+  background: rgba(30, 41, 59, 1);
+  box-shadow: 0 0 8px rgba(22, 119, 255, 0.3);
+}

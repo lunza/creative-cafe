@@ -2,6 +2,14 @@ import { create } from 'zustand';
 import { AppSetting } from '../settings';
 import { AppSetting as AppSettingType } from '../types/setting';
 import { useLogStore } from './logStore';
+// Spec: settings-feature-optimization-report / H-1（日志脱敏：api_key 不落日志）
+import { redactSecrets } from '../../shared/utils/redactSecrets';
+// Spec: settings-feature-optimization-report / H-5（默认值单一来源）
+import { DEFAULT_ENGINE_PARAMS } from '../../shared/settingDefaults';
+// Spec: settings-feature-optimization-report / H-3（重置白名单合并：保留接口外键，防 DC-4 数据丢失）
+import { mergePreservedKeys, appendSettingSnapshot } from '../components/Settings/settingMapper';
+// Spec: settings-feature-optimization-report / N6, M-17（渲染层禁裸调 electronAPI.setting，统一封装）
+import { getSettingAPI } from '../services/settingServiceClient';
 
 // 直接从 logStore 获取 addLog 方法
 type LogCategory = 'system' | 'ai' | 'setting' | 'network' | 'user' | 'other';
@@ -32,11 +40,13 @@ interface SettingState {
   fetchSetting: () => Promise<void>;
   saveSetting: (setting: AppSettingType) => Promise<void>;
   testConnection: (setting: AppSettingType) => Promise<{ success: boolean; responseTime?: number; model?: string; error?: string; details?: string }>;
-  applySetting: (setting: AppSettingType) => Promise<void>;
   restoreDefault: () => Promise<void>;
-  exportSetting: () => Promise<string>;
-  importSetting: (setting: string) => Promise<void>;
+  // Spec: settings-feature-optimization-report / L-7, S-11 前半 ——
+  // applySetting / exportSetting / importSetting 三个零消费方死 action 已删除
+  // （数据安全兜底由 N1 快照回滚 + H-4 损坏恢复承担，无需再留导出/导入桩）。
   getSettingHistory: () => Promise<any[]>;
+  // Spec: settings-feature-optimization-report / H-11（N1 版本回滚）
+  rollbackToVersion: (versionId: string) => Promise<void>;
 }
 
 export const useSettingStore = create<SettingState>((set, get) => ({
@@ -51,9 +61,9 @@ export const useSettingStore = create<SettingState>((set, get) => ({
     try {
       addLog('开始从主进程加载设置', 'info');
 
-      // 使用 IPC 从主进程加载设置
-      const result = await window.electronAPI.setting.load();
-      addLog(`设置加载结果: ${JSON.stringify(result)}`, 'debug');
+      // 使用 IPC 从主进程加载设置（Spec: N6/M-17 统一封装）
+      const result = await getSettingAPI()?.load() ?? { success: false, error: 'setting API 不可用' };
+      addLog(`设置加载结果: ${redactSecrets(JSON.stringify(result))}`, 'debug');
 
       if (result.success && result.setting) {
         addLog('设置加载成功', 'info');
@@ -66,7 +76,7 @@ export const useSettingStore = create<SettingState>((set, get) => ({
       const defaultSetting = AppSetting.defaultSetting as unknown as AppSettingType;
 
       // 保存默认设置到主进程
-      const saveResult = await window.electronAPI.setting.save(defaultSetting);
+      const saveResult = await getSettingAPI()?.save(defaultSetting) ?? { success: false, error: 'setting API 不可用' };
       addLog(`保存默认设置结果: ${saveResult.success}`, 'debug');
 
       set({ setting: defaultSetting, loading: false });
@@ -88,15 +98,20 @@ export const useSettingStore = create<SettingState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       addLog('开始保存设置到主进程', 'info');
-      addLog(`设置对象: ${JSON.stringify(setting)}`, 'debug');
+      // 【重点标记 - N1 版本快照（H-11）】保存前对「保存前状态」自动留档（滚动 20 条），
+      // 使误操作/重置/迁移导致的配置损坏可回滚。content 已剥离 versions 防递归。
+      const preSaveSetting = get().setting;
+      const versions = appendSettingSnapshot(preSaveSetting?.versions, preSaveSetting);
+      const settingToSave: AppSettingType = { ...setting, versions };
+      addLog(`设置对象: ${redactSecrets(JSON.stringify(settingToSave))}`, 'debug');
 
-      // 使用 IPC 保存设置到主进程
-      const result = await window.electronAPI.setting.save(setting);
-      addLog(`保存设置结果: ${JSON.stringify(result)}`, 'debug');
+      // 使用 IPC 保存设置到主进程（Spec: N6/M-17 统一封装）
+      const result = await getSettingAPI()?.save(settingToSave) ?? { success: false, error: 'setting API 不可用' };
+      addLog(`保存设置结果: ${redactSecrets(JSON.stringify(result))}`, 'debug');
 
       if (result.success) {
         addLog('设置保存成功', 'info');
-        set({ setting, loading: false });
+        set({ setting: settingToSave, loading: false });
       } else {
         const errorMsg = result.error || '保存设置失败';
         addLog('保存设置失败', 'error', {
@@ -216,7 +231,7 @@ export const useSettingStore = create<SettingState>((set, get) => ({
             }
           ],
           max_tokens: 1,
-          temperature: activeEngine.temperature ?? 0.7
+          temperature: activeEngine.temperature ?? DEFAULT_ENGINE_PARAMS.temperature
         },
         timeout: 5000
       };
@@ -357,37 +372,18 @@ export const useSettingStore = create<SettingState>((set, get) => ({
       };
     }
   },
-  applySetting: async (setting) => {
-    set({ loading: true, error: null });
-    try {
-      const result = await window.electronAPI.setting.save(setting);
-      if (result.success) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        set({ setting, loading: false });
-      } else {
-        throw new Error('保存设置失败');
-      }
-    } catch (error) {
-      addLog('应用设置失败', 'error', {
-        category: 'setting',
-        error: error instanceof Error ? error : undefined,
-        context: {
-          errorType: error instanceof Error ? error.name : 'UnknownError',
-          errorLocation: 'settingStore.ts:358:applySetting',
-          errorMessage: error instanceof Error ? error.message : 'Unknown error'
-        },
-        details: '应用设置时发生错误，请检查设置值是否正确。'
-      });
-      set({ error: 'Failed to apply setting', loading: false });
-    }
-  },
   restoreDefault: async () => {
     set({ loading: true, error: null });
     try {
+      // 【重点标记 - DC-4 数据丢失修复（H-3）】restoreDefault 此前直接 save(defaultSetting)
+      // 全量替换，defaultSetting 不含 knowledgeBase / *Path / _version 等接口外键，
+      // 重置后这些磁盘数据被静默清除。现经 mergePreservedKeys 白名单合并：
+      // 仅复位 defaultSetting 覆盖的配置域，接口外数据原样保留。
       const defaultSetting = AppSetting.defaultSetting as unknown as AppSettingType;
-      const result = await window.electronAPI.setting.save(defaultSetting);
+      const merged = mergePreservedKeys(defaultSetting, get().setting);
+      const result = await getSettingAPI()?.save(merged) ?? { success: false, error: 'setting API 不可用' };
       if (result.success) {
-        set({ setting: defaultSetting, loading: false });
+        set({ setting: merged, loading: false });
       } else {
         throw new Error('保存默认设置失败');
       }
@@ -403,74 +399,62 @@ export const useSettingStore = create<SettingState>((set, get) => ({
         details: '恢复默认设置时发生错误，请检查文件系统权限。'
       });
       set({ error: 'Failed to restore default setting', loading: false });
-    }
-  },
-  exportSetting: async () => {
-    set({ loading: true, error: null });
-    try {
-      const setting = get().setting;
-      set({ loading: false });
-      return JSON.stringify(setting, null, 2);
-    } catch (error) {
-      addLog('导出设置失败', 'error', {
-        category: 'setting',
-        error: error instanceof Error ? error : undefined,
-        context: {
-          errorType: error instanceof Error ? error.name : 'UnknownError',
-          errorLocation: 'settingStore.ts:405:exportSetting',
-          errorMessage: error instanceof Error ? error.message : 'Unknown error'
-        },
-        details: '导出设置时发生错误，请检查设置对象是否有效。'
-      });
-      set({ error: 'Failed to export setting', loading: false });
-      return '';
-    }
-  },
-  importSetting: async (settingString) => {
-    set({ loading: true, error: null });
-    try {
-      const setting = JSON.parse(settingString);
-      set({ setting, loading: false });
-    } catch (error) {
-      addLog('导入设置失败', 'error', {
-        category: 'setting',
-        error: error instanceof Error ? error : undefined,
-        context: {
-          errorType: error instanceof Error ? error.name : 'UnknownError',
-          errorLocation: 'settingStore.ts:427:importSetting',
-          errorMessage: error instanceof Error ? error.message : 'Unknown error'
-        },
-        details: '导入设置时发生错误，请检查设置字符串是否为有效的JSON格式。'
-      });
-      set({ error: 'Failed to import setting', loading: false });
+      // 【重点标记 - FL-9 错误行为统一（L-1）】此前 restoreDefault 失败仅 set error
+      // 不 throw，而 saveSetting 失败 rethrow —— 调用方（Settings.doReset 的 catch）
+      // 永不触发，磁盘只读等失败场景 UI 仍提示「设置已重置」。现与 saveSetting
+      // 对齐：set error 后 rethrow，由调用方 catch 统一呈现失败反馈。
+      throw error;
     }
   },
   getSettingHistory: async () => {
     set({ loading: true, error: null });
     try {
-      const history = [
-        {
-          id: 1,
-          timestamp: new Date().toISOString(),
-          setting: get().setting,
-          description: 'Current setting'
-        }
-      ];
+      // 【重点标记 - N1 桩实现补齐（H-11）】此前返回伪造的「Current setting」单条记录。
+      // 现返回真实快照历史（saveSetting 保存前自动留档的 versions，最新在前）。
+      const versions = get().setting?.versions ?? [];
       set({ loading: false });
-      return history;
+      return versions;
     } catch (error) {
       addLog('获取设置历史失败', 'error', {
         category: 'setting',
         error: error instanceof Error ? error : undefined,
         context: {
           errorType: error instanceof Error ? error.name : 'UnknownError',
-          errorLocation: 'settingStore.ts:447:getSettingHistory',
+          errorLocation: 'settingStore.ts:getSettingHistory',
           errorMessage: error instanceof Error ? error.message : 'Unknown error'
         },
         details: '获取设置历史时发生错误，请检查设置对象是否有效。'
       });
       set({ error: 'Failed to get setting history', loading: false });
       return [];
+    }
+  },
+  rollbackToVersion: async (versionId) => {
+    set({ loading: true, error: null });
+    try {
+      const versions = get().setting?.versions ?? [];
+      const target = versions.find(v => v.id === versionId);
+      if (!target) {
+        throw new Error('未找到对应版本快照');
+      }
+      // 回滚：以快照 content 覆盖当前设置。经 saveSetting 会先对「回滚前状态」留档，
+      // 因此回滚操作本身也可再回滚（形成完整版本链）。content 已剥离 versions，
+      // saveSetting 会重新计算并写入新的 versions（含回滚前快照）。
+      addLog(`回滚到版本 ${versionId}（${target.note ?? '无备注'}）`, 'info');
+      await get().saveSetting(target.content as AppSettingType);
+    } catch (error) {
+      addLog('回滚版本失败', 'error', {
+        category: 'setting',
+        error: error instanceof Error ? error : undefined,
+        context: {
+          errorType: error instanceof Error ? error.name : 'UnknownError',
+          errorLocation: 'settingStore.ts:rollbackToVersion',
+          errorMessage: error instanceof Error ? error.message : 'Unknown error'
+        },
+        details: '回滚版本时发生错误，请检查版本快照是否有效。'
+      });
+      set({ error: error instanceof Error ? error.message : 'Failed to rollback version', loading: false });
+      throw error;
     }
   }
 }));

@@ -1,7 +1,9 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-type TabType = 'dashboard' | 'chat' | 'creative' | 'worldbook' | 'avatar' | 'character' | 'plugin' | 'memory' | 'knowledge' | 'settings' | 'prompt-management' | 'test' | 'test-vector' | 'test-markdown' | 'document-vector';
+// L-6/S-7：test-vector/test-markdown 已随 TestPage 删除；保留 'document-vector'
+// 兼容存量 localStorage（旧键回退到 Dashboard，不会崩溃）
+type TabType = 'dashboard' | 'chat' | 'creative' | 'worldbook' | 'avatar' | 'character' | 'plugin' | 'memory' | 'knowledge' | 'settings' | 'prompt-management' | 'test' | 'document-vector';
 type ThemeType = 'light' | 'dark' | 'auto';
 export type CreativeTabType = 'creative' | 'character' | 'worldbook';
 export type CreativeViewType = 'list' | 'edit';

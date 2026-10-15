@@ -103,6 +103,28 @@ export function getDatabaseDir(): string {
 }
 
 /**
+ * 获取统一数据根目录（Spec: migrate-user-data-to-project-root）。
+ *
+ * 开发环境（!app.isPackaged）：项目根目录/appData——与 logs/、database/、models/ 落项目根
+ * 的既有模式一致，避免 2.9GB 用户数据挤占 C 盘 %APPDATA%。
+ * 生产环境（app.isPackaged）或兜底：默认 userData（%APPDATA%\creative-cafe，app.asar 只读）。
+ *
+ * 本函数是「重定向目标」的单一事实来源；index.ts 在 dev 模式下据此调用
+ * app.setPath('userData', getDataRoot())，全部既有路径引用（getUserDataPath /
+ * app.getPath('userData')）自动跟随，无需逐处修改。
+ */
+export function getDataRoot(): string {
+  try {
+    if (app && typeof app.isPackaged === 'boolean' && !app.isPackaged) {
+      return path.join(getProjectRoot(), 'appData');
+    }
+  } catch {
+    // 静默失败，使用兜底方案
+  }
+  return getAppPath('userData');
+}
+
+/**
  * 将 __USER_DATA__ 占位符替换为实际用户数据路径
  * 仅当路径以 __USER_DATA__ 开头时执行替换，否则原样返回。
  * @param dir - 可能包含 __USER_DATA__ 占位符的路径

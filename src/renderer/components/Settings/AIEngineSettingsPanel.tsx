@@ -4,8 +4,12 @@ import { SettingOutlined, SaveOutlined, PlusOutlined, EditOutlined, CopyOutlined
 import { useSettingStore } from '../../stores/settingStore';
 import { useAIEngineSettings } from './hooks/useAIEngineSettings';
 import { AIEngineSetting, AIEngineCapabilities } from '../../types/setting';
+// Spec: settings-feature-optimization-report / N8, L-5（交互式参数预设面板）
+import EngineSamplingSection from './EngineSamplingSection';
 // Spec: analyze-llamacpp-model-compatibility（修复 H1/H3：按模型系列预填官方推荐参数）
 import { MODEL_SERIES_PRESETS, getModelSeriesPreset } from '../../../shared/modelParameterPresets';
+// Spec: settings-feature-optimization-report / H-5（placeholder 引用默认值单一来源）
+import { DEFAULT_ENGINE_PARAMS } from '../../../shared/settingDefaults';
 
 /** 模型系列下拉选项（tooltip 承载官方来源说明） */
 const MODEL_SERIES_SELECT_OPTIONS = MODEL_SERIES_PRESETS.map(p => ({
@@ -167,7 +171,7 @@ const AIEngineSettingsPanel: React.FC<AIEngineSettingsPanelProps> = ({ form }) =
           </Form.Item>
 
           <Form.Item label="API地址" name="api_url">
-            <Input placeholder="例如: http://127.0.0.1:5000" />
+            <Input placeholder={`例如: ${DEFAULT_ENGINE_PARAMS.apiBaseUrl}`} />
           </Form.Item>
 
           <Form.Item label="API密钥" name="api_key">
@@ -248,36 +252,12 @@ const AIEngineSettingsPanel: React.FC<AIEngineSettingsPanelProps> = ({ form }) =
           </Form.Item>
 
           <Form.Item label="最大令牌数 (max_tokens)" name="max_tokens">
-            <Input type="number" min={1} max={1000000} placeholder="范围: 1-1000000，例如: 10240" />
+            <Input type="number" min={1} max={1000000} placeholder={`范围: 1-1000000，例如: ${DEFAULT_ENGINE_PARAMS.maxTokens}`} />
           </Form.Item>
 
-          <Form.Item label="温度参数 (temperature)" name="temperature">
-            <Input type="number" min={0} max={2} step={0.1} placeholder="范围: 0-2，例如: 0.7" />
-          </Form.Item>
-
-          <Form.Item label="Top P (top_p)" name="top_p">
-            <Input type="number" min={0} max={1} step={0.05} placeholder="范围: 0-1，例如: 0.95" />
-          </Form.Item>
-
-          <Form.Item label="Top K (top_k)" name="top_k">
-            <Input type="number" min={0} max={200} step={1} placeholder="范围: 0-200，例如: 40" />
-          </Form.Item>
-
-          <Form.Item label="Min P (min_p)" name="min_p">
-            <Input type="number" min={0} max={1} step={0.05} placeholder="范围: 0-1，例如: 0.1" />
-          </Form.Item>
-
-          <Form.Item label="频率惩罚 (frequency_penalty)" name="frequency_penalty">
-            <Input type="number" min={-2} max={2} step={0.1} placeholder="范围: -2到2，例如: 0" />
-          </Form.Item>
-
-          <Form.Item label="存在惩罚 (presence_penalty)" name="presence_penalty">
-            <Input type="number" min={-2} max={2} step={0.1} placeholder="范围: -2到2，例如: 0" />
-          </Form.Item>
-
-          <Form.Item label="生成数量 (n)" name="n">
-            <Input type="number" min={1} max={10} step={1} placeholder="范围: 1-10，例如: 1" />
-          </Form.Item>
+          {/* Spec: N8/L-5 — 采样参数交互区（滑块 + 防重复三档预设 + DRY 能力门控），
+              替换原 6 个纯数字输入框；字段名与保存链路一致 */}
+          <EngineSamplingSection form={form} capabilities={activeEngine?.capabilities} />
 
           <Form.Item label="连接超时 (connection_timeout)" name="connection_timeout" tooltip="等待 AI 服务器响应头到达的最大时间（毫秒）。兼容深度思考模型首字延迟较长的情况。0 表示不限制。默认 120000ms（120秒）">
             <Input type="number" min={0} max={3600000} step={1000} placeholder="范围: 0-3600000，默认 120000（120秒），0 表示不限制" />
@@ -353,8 +333,17 @@ const AIEngineSettingsPanel: React.FC<AIEngineSettingsPanelProps> = ({ form }) =
           <Button key="cancel" onClick={handleCloseEngineModal}>
             取消
           </Button>,
-          <Button key="save" type="primary" icon={<SaveOutlined />} onClick={handleSaveEngine}>
-            {editingEngine && (editingEngine as AIEngineSetting).id ? '保存修改' : '添加引擎'}
+          // Spec: settings-feature-optimization-report / M-7, IX-3（双保存路径心智梳理）：
+          // 引擎 Modal 的保存是即时落盘（handleSaveEngine 直接 saveSetting），与页面底部
+          // 「保存设置」按钮（聚合主表单 + 6 面板）是两条独立路径，按钮显式标注防误解
+          <Button
+            key="save"
+            type="primary"
+            icon={<SaveOutlined />}
+            onClick={handleSaveEngine}
+            title="即时保存：引擎配置直接写入磁盘并立即生效，无需再点击页面底部「保存设置」"
+          >
+            {editingEngine && (editingEngine as AIEngineSetting).id ? '保存修改（即时保存）' : '添加引擎（即时保存）'}
           </Button>,
         ].filter(Boolean)}
         width={800}
@@ -454,7 +443,7 @@ const AIEngineSettingsPanel: React.FC<AIEngineSettingsPanelProps> = ({ form }) =
               <Input placeholder="请输入引擎名称" />
             </Form.Item>
             <Form.Item label="API地址" name="api_url" rules={[{ required: true, message: '请输入API地址' }]}>
-              <Input placeholder="例如: http://127.0.0.1:5000" />
+              <Input placeholder={`例如: ${DEFAULT_ENGINE_PARAMS.apiBaseUrl}`} />
             </Form.Item>
             <Form.Item label="API密钥" name="api_key">
               <Input placeholder="请输入API密钥（可选）" />
@@ -534,29 +523,17 @@ const AIEngineSettingsPanel: React.FC<AIEngineSettingsPanelProps> = ({ form }) =
               </Button>
             </Form.Item>
             <Form.Item label="最大令牌数 (max_tokens)" name="max_tokens">
-              <Input type="number" min={1} max={1000000} placeholder="范围: 1-1000000，例如: 10240" />
+              <Input type="number" min={1} max={1000000} placeholder={`范围: 1-1000000，例如: ${DEFAULT_ENGINE_PARAMS.maxTokens}`} />
             </Form.Item>
-            <Form.Item label="温度参数 (temperature)" name="temperature">
-              <Input type="number" min={0} max={2} step={0.1} placeholder="范围: 0-2，例如: 0.7" />
-            </Form.Item>
-            <Form.Item label="Top P (top_p)" name="top_p">
-              <Input type="number" min={0} max={1} step={0.05} placeholder="范围: 0-1，例如: 0.95" />
-            </Form.Item>
-            <Form.Item label="Top K (top_k)" name="top_k">
-              <Input type="number" min={0} max={200} step={1} placeholder="范围: 0-200，例如: 40" />
-            </Form.Item>
-            <Form.Item label="Min P (min_p)" name="min_p">
-              <Input type="number" min={0} max={1} step={0.05} placeholder="范围: 0-1，例如: 0.1" />
-            </Form.Item>
-            <Form.Item label="频率惩罚 (frequency_penalty)" name="frequency_penalty">
-              <Input type="number" min={-2} max={2} step={0.1} placeholder="范围: -2到2，例如: 0" />
-            </Form.Item>
-            <Form.Item label="存在惩罚 (presence_penalty)" name="presence_penalty">
-              <Input type="number" min={-2} max={2} step={0.1} placeholder="范围: -2到2，例如: 0" />
-            </Form.Item>
-            <Form.Item label="生成数量 (n)" name="n">
-              <Input type="number" min={1} max={10} step={1} placeholder="范围: 1-10，例如: 1" />
-            </Form.Item>
+            {/* Spec: N8/L-5 — 与主表单同一采样参数交互区；能力取「引擎既有能力
+                ∪ Modal 内测试连通性探测到的能力」，测试后 DRY/重复惩罚滑块即时显现 */}
+            <EngineSamplingSection
+              form={engineForm}
+              capabilities={{
+                ...(editingEngine as AIEngineSetting | undefined)?.capabilities,
+                ...engineTestResult?.capabilities,
+              }}
+            />
             <Form.Item label="连接超时 (connection_timeout)" name="connection_timeout" tooltip="等待 AI 服务器响应头到达的最大时间（毫秒）。兼容深度思考模型首字延迟较长的情况。0 表示不限制。默认 120000ms（120秒）">
               <Input type="number" min={0} max={3600000} step={1000} placeholder="范围: 0-3600000，默认 120000（120秒），0 表示不限制" />
             </Form.Item>

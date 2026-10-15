@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Progress, Space, Spin, Tag, theme, message } from 'antd';
 import {
   AuditOutlined,
@@ -26,6 +26,10 @@ import { useV2ProjectStore } from '../stores/useV2ProjectStore';
 import { useV2UIStore } from '../stores/useV2UIStore';
 import V2PlotIssueList, { type V2NormalizedIssue } from './V2PlotIssueList';
 import { V2FixConfirmModal, V2BatchConfirmModal, V2LogicRecordsModal } from './V2PlotCheckModals';
+import CustomPromptPopover, { readScopedCustomPrompt } from '../shared/CustomPromptPopover';
+
+/** 剧情检查自定义评审要求 localStorage key（按功能入口隔离；作用域 = 章节 / 项目，见 readScopedCustomPrompt） */
+const PLOT_CHECK_PROMPT_KEY = 'v2plotcheck_custom_prompt';
 
 interface V2BookCheckResult {
   chapterIndex: number;
@@ -96,15 +100,20 @@ const V2PlotCheckPanel: React.FC<V2PlotCheckPanelProps> = ({
   const chapters = project.outline?.chapters ?? [];
   const chapterHistory = chapters[chapterIndex]?.plotCheckHistory ?? [];
 
-  /** 检查完成后追加历史（存章节实体，随项目落盘；保留最近 20 条） */
-  const appendCheckHistory = (chIdx: number, overallScore: number, totalIssues: number) => {
+  /** 检查完成后追加历史（存章节实体，随项目落盘；保留最近 20 条，含完整报告供回看详情） */
+  const appendCheckHistory = (chIdx: number, report: PlotCheckReport) => {
     const outline = project.outline;
     if (!outline) return;
     const ch = outline.chapters[chIdx];
     if (!ch) return;
     const history = [
       ...(ch.plotCheckHistory ?? []),
-      { timestamp: Date.now(), overallScore, totalIssues },
+      {
+        timestamp: Date.now(),
+        overallScore: report.overallScore,
+        totalIssues: report.totalIssues,
+        report,
+      },
     ].slice(-20);
     patchProject(project.id, {
       outline: {
@@ -116,7 +125,19 @@ const V2PlotCheckPanel: React.FC<V2PlotCheckPanelProps> = ({
     });
   };
 
+  /** 回看历史检查详情（完整报告存于章节实体；旧版条目无 report，不显示按钮） */
+  const handleViewHistory = useCallback((report: PlotCheckReport) => {
+    setReport(report);
+    setFixedKeys(new Set());
+  }, []);
+
   const hasContent = !!content && content.trim().length > 0;
+
+  // ===== 章节级自定义评审要求（2026-10-08 配置分层：章节 > 项目 > 全局）=====
+  // 章节作用域 key = `${KEY}:${projectId}:${chapterIndex}`，回退链：章节 → 项目 `${KEY}:${projectId}` → 全局 KEY
+  const chapterScope = `${project.id}:${chapterIndex}`;
+  const readCheckPrompt = (pos: number) =>
+    readScopedCustomPrompt(PLOT_CHECK_PROMPT_KEY, `${project.id}:${pos}`, `${PLOT_CHECK_PROMPT_KEY}:${project.id}`) || undefined;
 
   /** 维度问题 + 逻辑问题归一化 */
   const normalizedIssues: V2NormalizedIssue[] = useMemo(() => {
@@ -185,11 +206,13 @@ const V2PlotCheckPanel: React.FC<V2PlotCheckPanelProps> = ({
         chapterIndex,
         content,
         previousChapters,
+        // 章节级自定义评审要求（本章 → 项目 → 全局 回退链）
+        customPrompt: readCheckPrompt(chapterIndex),
       });
       if (result.success && result.report) {
         setReport(result.report);
         setFixedKeys(new Set());
-        appendCheckHistory(chapterIndex, result.report.overallScore, result.report.totalIssues);
+        appendCheckHistory(chapterIndex, result.report);
         message.success(`检查完成：${result.report.totalIssues} 个问题`);
       } else {
         message.error(result.error || '剧情检查失败');
@@ -239,13 +262,17 @@ const V2PlotCheckPanel: React.FC<V2PlotCheckPanelProps> = ({
           chapterIndex: targets[i].pos,
           content: c.content as string,
           previousChapters,
+          // 逐章读取该章专属评审要求（本章 → 项目 → 全局 回退链）
+          customPrompt: readCheckPrompt(targets[i].pos),
         });
         if (res.success && res.report) {
-          results.push({ chapterIndex: c.index, title: c.title, report: res.report });
-          appendCheckHistory(c.index, res.report.overallScore, res.report.totalIssues);
+          // ⚠️ 存 0 基数组位置（pos）而非 c.index 字段值：漫画导入项目 index 为 1 基，
+          // 用字段值会把历史挂错章节，且"查看"会跳到错误的下一章
+          results.push({ chapterIndex: targets[i].pos, title: c.title, report: res.report });
+          appendCheckHistory(targets[i].pos, res.report);
         } else {
           results.push({
-            chapterIndex: c.index,
+            chapterIndex: targets[i].pos,
             title: c.title,
             error: res.error || '检查失败',
           });
@@ -389,7 +416,7 @@ const V2PlotCheckPanel: React.FC<V2PlotCheckPanelProps> = ({
   };
 
   return (
-    <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 12, overflow: 'auto', height: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <Space size={8}>
         <Button
           type="primary"
@@ -401,6 +428,15 @@ const V2PlotCheckPanel: React.FC<V2PlotCheckPanelProps> = ({
         >
           剧情检查
         </Button>
+        <CustomPromptPopover
+          storageKey={PLOT_CHECK_PROMPT_KEY}
+          scope={chapterScope}
+          fallbackKey={`${PLOT_CHECK_PROMPT_KEY}:${project.id}`}
+          scopeLabel="本章专属"
+          title="剧情检查 - 自定义评审要求"
+          placeholder="输入本章评审要求（如：重点检查角色情绪是否连贯、严格核对时间线等），将作为最高优先级约束附加到评审（可选）"
+          disabled={checking || !!bookProgress}
+        />
         {report && (
           <Button size="small" icon={<ThunderboltOutlined />} loading={batchRunning} onClick={handleBatchFix}>
             批量修正
@@ -418,6 +454,14 @@ const V2PlotCheckPanel: React.FC<V2PlotCheckPanelProps> = ({
         >
           全书检查
         </Button>
+        <CustomPromptPopover
+          storageKey={PLOT_CHECK_PROMPT_KEY}
+          scope={project.id}
+          scopeLabel="本项目默认"
+          title="全书检查 - 项目级评审要求"
+          placeholder="输入适用于全书各章的通用评审要求（章节专属要求优先于它；未配置章节专属时各章回退到这里，再回退全局）"
+          disabled={checking || !!bookProgress}
+        />
       </Space>
       {!hasContent && (
         <div style={{ fontSize: 12, color: token.colorTextTertiary }}>
@@ -644,6 +688,11 @@ const V2PlotCheckPanel: React.FC<V2PlotCheckPanelProps> = ({
                   >
                     {delta > 0 ? `↑${delta}` : `↓${Math.abs(delta)}`}
                   </span>
+                )}
+                {h.report && (
+                  <Button size="small" type="link" style={{ padding: 0 }} onClick={() => handleViewHistory(h.report!)}>
+                    查看详情
+                  </Button>
                 )}
               </div>
             );

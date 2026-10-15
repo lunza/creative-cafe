@@ -3,20 +3,10 @@ import { fileService } from '../../services/fileService';
 import { pathService } from '../../services/pathService';
 import * as fs from 'fs';
 import * as path from 'path';
-import JSON5 from 'json5';
 
-function getSettingData(): any {
-  try {
-    const settingsPath = path.join(app.getPath('userData'), 'storage', 'settings.json');
-    if (fs.existsSync(settingsPath)) {
-      const content = fs.readFileSync(settingsPath, 'utf-8');
-      return JSON5.parse(content);
-    }
-  } catch {
-    // ignore
-  }
-  return null;
-}
+// [Spec: migrate-user-data-to-project-root] 删除死引用 getSettingData()：
+// 它读取 {userData}/storage/settings.json（storage/ 目录已不存在的 v1 遗留布局），
+// 且全文件无调用方。设置数据现统一由 settingHandlers/storageService 走 data/settings.json。
 
 function getDirectorySize(dirPath: string): number {
   let totalSize = 0;

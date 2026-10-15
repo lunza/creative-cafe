@@ -58,6 +58,8 @@ import ImageCropperModal from './ImageCropperModal';
 import AssetGenerateModal from './AssetGenerateModal';
 import LoraSelectModal from './LoraSelectModal';
 import RagQualityReport from './RagQualityReport';
+import CharacterStyleLearningPanel from './CharacterStyleLearningPanel';
+import type { ChatMessage } from '../../../../shared/types/chat.types';
 import { useExpressionStore } from '../../../stores/expressionStore';
 import { useSettingStore } from '../../../stores/settingStore';
 import type { CustomEmotion } from '../../../stores/expressionStore';
@@ -90,6 +92,12 @@ interface AssetManagerModalProps {
   characterScenario?: string;
   /** 默认表情（角色卡 PNG）预览，用于 default 卡片 + 未上传情绪的占位 */
   avatarPath?: string;
+  /**
+   * 【Phase 4 / L5】当前对话历史（可选）。
+   * 仅对话模式（CharacterDialogueChat）传入，供「风格学习」Tab 基于对话历史学习角色风格。
+   * 内联模式（CharacterEditModal）不传，风格学习 Tab 显示无上下文提示。
+   */
+  dialogueMessages?: ChatMessage[];
   onClose: () => void;
   /**
    * 角色卡图片替换回调（Task 2）。
@@ -4438,6 +4446,7 @@ const AssetManagerModal: React.FC<AssetManagerModalProps> = ({
   characterPersonality,
   characterScenario,
   avatarPath,
+  dialogueMessages,
   onClose,
   inline = false,
   onCardImageReplaced,
@@ -4553,6 +4562,20 @@ const AssetManagerModal: React.FC<AssetManagerModalProps> = ({
           characterDescription={characterDescription}
           characterPersonality={characterPersonality}
           characterScenario={characterScenario}
+        />
+      ),
+    },
+    // 【Phase 4 / L5 - conversation-mode-optimization-report】角色风格学习（N6：基于对话历史学习角色语言风格）
+    {
+      key: 'style-learning',
+      label: '风格学习',
+      children: (
+        <CharacterStyleLearningPanel
+          characterCardId={characterCardId}
+          characterName={characterName}
+          characterDescription={characterDescription}
+          characterPersonality={characterPersonality}
+          dialogueMessages={dialogueMessages}
         />
       ),
     },

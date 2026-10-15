@@ -1,4 +1,6 @@
 /**
+ * Spec: settings-feature-optimization-report / H-5（api_url 默认值单一来源）
+ *
  * useAiConfig - 统一读取当前激活 AI 引擎配置的 renderer 侧 hook。
  *
  * 背景：
@@ -23,6 +25,8 @@
 import { useMemo } from 'react';
 import { useSettingStore } from '../stores/settingStore';
 import type { AIEngineSetting } from '../types/setting';
+// Spec: settings-feature-optimization-report / H-5（默认值单一来源）
+import { DEFAULT_ENGINE_PARAMS } from '../../shared/settingDefaults';
 
 export interface AiConfig {
   apiKey: string;
@@ -74,7 +78,8 @@ export function useAiConfig(): UseAiConfigReturn {
 
     return {
       apiKey: activeEngine.api_key || '',
-      apiUrl: activeEngine.api_url || 'http://127.0.0.1:5000',
+      // Spec: settings-feature-optimization-report / H-5（默认值单一来源）
+      apiUrl: activeEngine.api_url || DEFAULT_ENGINE_PARAMS.apiBaseUrl,
       modelName,
       apiMode: activeEngine.api_mode || 'chat_completion',
       engine: activeEngine,

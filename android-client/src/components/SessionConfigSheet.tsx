@@ -64,6 +64,7 @@ function NumberField({
   onChange,
   keyboardType = 'decimal-pad',
   hint,
+  disabled = false,
   style,
 }: {
   label: string;
@@ -71,6 +72,7 @@ function NumberField({
   onChange: (v: number | undefined) => void;
   keyboardType?: 'decimal-pad' | 'numeric';
   hint?: string;
+  disabled?: boolean;
   style?: StyleProp<TextInputProps['style']>;
 }) {
   const [text, setText] = useState(value === undefined ? '' : String(value));
@@ -85,6 +87,7 @@ function NumberField({
       placeholder={hint || '未设置（沿用引擎配置）'}
       keyboardType={keyboardType}
       value={text}
+      disabled={disabled}
       onChangeText={t => {
         setText(t);
         if (t.trim() === '') {
@@ -117,6 +120,14 @@ export function SessionConfigSheet({ visible, onDismiss, baseUrl, characterId, o
   const [cp, setCp] = useState<SessionCustomParameters>({});
   const [memoryTableEnabled, setMemoryTableEnabled] = useState(false);
   const [boundIds, setBoundIds] = useState<string[]>([]);
+  // 【Phase 4 / L9 - conversation-mode-optimization-report】上下文管理（Token 管理，对齐桌面端 ConfigPanel）
+  const [tokenMgmt, setTokenMgmt] = useState({
+    enabled: false,
+    maxContextTokens: 256000,
+    reservedForResponse: 4096,
+    minMessagesToKeep: 3,
+    maxMessagesToKeep: 60,
+  });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -133,6 +144,13 @@ export function SessionConfigSheet({ visible, onDismiss, baseUrl, characterId, o
       setCp(config.customParameters || {});
       setMemoryTableEnabled(config.memoryTableEnabled === true);
       setBoundIds(config.boundKnowledgeBaseIds || []);
+      setTokenMgmt({
+        enabled: config.tokenManagementEnabled === true,
+        maxContextTokens: config.maxContextTokens ?? 256000,
+        reservedForResponse: config.reservedForResponse ?? 4096,
+        minMessagesToKeep: config.minMessagesToKeep ?? 3,
+        maxMessagesToKeep: config.maxMessagesToKeep ?? 60,
+      });
     } catch (err) {
       const e = err instanceof ApiError ? err : null;
       setLoadError(e ? e.message : `配置加载失败：${String(err)}`);
@@ -166,6 +184,11 @@ export function SessionConfigSheet({ visible, onDismiss, baseUrl, characterId, o
         customParameters: cp,
         memoryTableEnabled,
         boundKnowledgeBaseIds: boundIds,
+        tokenManagementEnabled: tokenMgmt.enabled,
+        maxContextTokens: tokenMgmt.maxContextTokens,
+        reservedForResponse: tokenMgmt.reservedForResponse,
+        minMessagesToKeep: tokenMgmt.minMessagesToKeep,
+        maxMessagesToKeep: tokenMgmt.maxMessagesToKeep,
       });
       setSaved(true);
       onSaved?.(config);
@@ -175,7 +198,7 @@ export function SessionConfigSheet({ visible, onDismiss, baseUrl, characterId, o
     } finally {
       setSaving(false);
     }
-  }, [baseUrl, characterId, selectedPersonaId, cp, memoryTableEnabled, boundIds, onSaved]);
+  }, [baseUrl, characterId, selectedPersonaId, cp, memoryTableEnabled, boundIds, tokenMgmt, onSaved]);
 
   const selectedPersona = useMemo(
     () => personas.find(p => p.id === selectedPersonaId) || null,
@@ -393,6 +416,70 @@ export function SessionConfigSheet({ visible, onDismiss, baseUrl, characterId, o
                 onValueChange={v => patchCp({ assist_mode: v })}
               />
             </View>
+
+            <Divider style={styles.divider} />
+
+            {/* ===== 上下文管理（【Phase 4 / L9】对齐桌面端 ConfigPanel Token 管理） ===== */}
+            <Text variant="titleSmall" style={styles.sectionTitle}>
+              上下文管理
+            </Text>
+            <View style={styles.switchRow}>
+              <View style={styles.switchTextWrap}>
+                <RNText style={styles.switchTitle}>启用 Token 管理</RNText>
+                <RNText style={styles.switchDesc}>
+                  {tokenMgmt.enabled
+                    ? '自动进行 Token 计数与上下文截断，防止上下文过长导致性能问题'
+                    : '关闭时保留最近 60 条消息（安全网行为）'}
+                </RNText>
+              </View>
+              <Switch
+                value={tokenMgmt.enabled}
+                onValueChange={v => setTokenMgmt(prev => ({ ...prev, enabled: v }))}
+              />
+            </View>
+            <View style={styles.fieldRow}>
+              <NumberField
+                label="最大上下文 Token"
+                value={tokenMgmt.maxContextTokens}
+                onChange={v => v !== undefined && setTokenMgmt(prev => ({ ...prev, maxContextTokens: v }))}
+                keyboardType="numeric"
+                hint="缺省 256000"
+                disabled={!tokenMgmt.enabled}
+                style={styles.field}
+              />
+              <NumberField
+                label="响应预留 Token"
+                value={tokenMgmt.reservedForResponse}
+                onChange={v => v !== undefined && setTokenMgmt(prev => ({ ...prev, reservedForResponse: v }))}
+                keyboardType="numeric"
+                hint="缺省 4096"
+                disabled={!tokenMgmt.enabled}
+                style={styles.field}
+              />
+            </View>
+            <View style={styles.fieldRow}>
+              <NumberField
+                label="最少保留轮数"
+                value={tokenMgmt.minMessagesToKeep}
+                onChange={v => v !== undefined && setTokenMgmt(prev => ({ ...prev, minMessagesToKeep: v }))}
+                keyboardType="numeric"
+                hint="缺省 3"
+                disabled={!tokenMgmt.enabled}
+                style={styles.field}
+              />
+              <NumberField
+                label="最多保留消息条数"
+                value={tokenMgmt.maxMessagesToKeep}
+                onChange={v => v !== undefined && setTokenMgmt(prev => ({ ...prev, maxMessagesToKeep: v }))}
+                keyboardType="numeric"
+                hint="缺省 60"
+                disabled={!tokenMgmt.enabled}
+                style={styles.field}
+              />
+            </View>
+            <RNText style={styles.switchDesc}>
+              对话历史超过 Token 限制时，系统自动从最旧的消息开始截断；关闭时发送全部对话历史（保留 60 条安全网）
+            </RNText>
 
             <Divider style={styles.divider} />
 

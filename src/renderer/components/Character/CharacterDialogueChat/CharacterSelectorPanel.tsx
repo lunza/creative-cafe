@@ -1,6 +1,8 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { Input } from 'antd';
 import { UserOutlined, HeartFilled, SearchOutlined } from '@ant-design/icons';
+// 【Phase 3 / L3 - conversation-mode-optimization-report】头像加载流程改用共享工具
+import { loadCharacterAvatar } from '@shared/utils/avatarLoader';
 import './CharacterSelectorPanel.css';
 
 interface Character {
@@ -65,22 +67,12 @@ const CharacterSelectorPanel: React.FC<CharacterSelectorPanelProps> = ({
     setAvatarLoading(prev => ({ ...prev, [character.path]: true }));
 
     try {
-      const isImageFile = character.path.endsWith('.png') || character.path.endsWith('.jpg') || character.path.endsWith('.jpeg') || character.path.endsWith('.webp');
-      
-      if (isImageFile) {
-        const result = await window.electronAPI.file.readAsBase64(character.path);
-        if (result?.success && result.data) {
-          setAvatarCache(prev => ({ ...prev, [character.path]: result.data }));
-        } else {
-          setAvatarError(prev => ({ ...prev, [character.path]: true }));
-        }
+      // 【Phase 3 / L3 - conversation-mode-optimization-report】头像加载流程改用 shared/utils/avatarLoader
+      const avatarUrl = await loadCharacterAvatar(character.path);
+      if (avatarUrl) {
+        setAvatarCache(prev => ({ ...prev, [character.path]: avatarUrl }));
       } else {
-        const content = await window.electronAPI.character.read(character.path);
-        if (content?.avatar) {
-          setAvatarCache(prev => ({ ...prev, [character.path]: content.avatar }));
-        } else {
-          setAvatarError(prev => ({ ...prev, [character.path]: true }));
-        }
+        setAvatarError(prev => ({ ...prev, [character.path]: true }));
       }
     } catch {
       setAvatarError(prev => ({ ...prev, [character.path]: true }));

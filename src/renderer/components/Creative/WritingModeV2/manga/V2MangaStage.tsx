@@ -39,6 +39,7 @@ import {
 } from '@ant-design/icons';
 import { getWritingV2API } from '../../../../services/writingV2Service';
 import { useSettingStore } from '../../../../stores/settingStore';
+import { readImageAsDataUri } from './mangaImageCompress';
 import type {
   MangaPage,
   MangaPageAnalysis,
@@ -56,7 +57,7 @@ import V2MangaMetaModal from './V2MangaMetaModal';
 import { analysisToSummary } from './mangaSummaryUtils';
 import { useMangaComicStore } from './useMangaComicStore';
 import { useV2ProjectStore } from '../stores/useV2ProjectStore';
-import CustomPromptPopover, { readCustomPrompt } from '../shared/CustomPromptPopover';
+import CustomPromptPopover, { readScopedCustomPrompt } from '../shared/CustomPromptPopover';
 
 /** 页面分析自定义提示词 localStorage key（单页与批量共用同一入口，按功能隔离） */
 const ANALYZE_CUSTOM_PROMPT_KEY = 'v2manga_page_analyze_custom_prompt';
@@ -118,6 +119,7 @@ const V2MangaStage: React.FC = () => {
   const mangaComics = useMangaComicStore((s) => s.comics);
   const upsertComic = useMangaComicStore((s) => s.upsertComic);
   const removeComic = useMangaComicStore((s) => s.removeComic);
+  const setPageGuide = useMangaComicStore((s) => s.setPageGuide);
 
   // 当前打开漫画的记录快照（持久化层）与信息兜底值：
   // 状态 mangaMeta 为空时回退到记录快照（⚠️ 历史 bug 期曾出现状态为空但记录仍有数据的情况，
@@ -144,6 +146,8 @@ const V2MangaStage: React.FC = () => {
       mangaMeta: mangaMeta ?? existing?.mangaMeta ?? undefined,
       // 大纲同样随记录持久化（此前只存内存，重开漫画/重启应用后丢失）
       outline: outline || existing?.outline || undefined,
+      // 每页独立的页面内容引导（2026-10-08）：upsert 时保留已有配置，不被覆盖
+      pageGuides: existing?.pageGuides,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     });
@@ -300,6 +304,22 @@ const V2MangaStage: React.FC = () => {
     []
   );
 
+  // ===== 收集最近一个已解析前页的完整分析（连贯性/一致性关键参照）=====
+  // 摘要表格对每页做截断压缩，上一页的逐分镜完整剧情/全部台词/角色动作细节会大量丢失；
+  // 完整携带上一页分析可显著提升跨页连贯一致性（角色命名一致、场景衔接、对话风格延续）
+  const findPrevFullAnalysis = useCallback(
+    (upToIndex: number, map: Map<number, MangaPageAnalysis>): { pageIndex: number; analysis: MangaPageAnalysis } | undefined => {
+      let best: { pageIndex: number; analysis: MangaPageAnalysis } | undefined;
+      for (const [pageIndex, analysis] of map) {
+        if (pageIndex < upToIndex && (!best || pageIndex > best.pageIndex)) {
+          best = { pageIndex, analysis };
+        }
+      }
+      return best;
+    },
+    []
+  );
+
   // ===== 单页分析（可携带用户引导） =====
   const handleAnalyzePage = useCallback(async (userGuidance?: string) => {
     const api = getWritingV2API();
@@ -315,16 +335,24 @@ const V2MangaStage: React.FC = () => {
 
     setAnalyzingPage(currentIndex);
     try {
+      // 读取页面图片，超 8MB 时自动等比压缩（避免主进程 8MB 校验拒收）
+      const imageDataUri = await readImageAsDataUri(page.absolutePath);
+      if (!imageDataUri) {
+        message.error(`第 ${currentIndex} 页图片读取失败，无法分析`);
+        return;
+      }
       const previousSummaries = buildPrevSummaries(currentIndex, analysisMap);
       const res = await api.manga.analyzePage({
         imagePath: page.absolutePath,
+        imageDataUri,
         readingOrder,
         previousSummaries,
+        previousFullAnalysis: findPrevFullAnalysis(currentIndex, analysisMap),
         pageIndex: currentIndex,
         userGuidance,
         mangaMeta: mangaMeta ?? undefined,
-        // 自定义分析要求（可选，最高优先级）
-        customPrompt: readCustomPrompt(ANALYZE_CUSTOM_PROMPT_KEY) || undefined,
+        // 自定义分析要求（按漫画专属配置，未配置时回退全局；最高优先级）
+        customPrompt: readScopedCustomPrompt(ANALYZE_CUSTOM_PROMPT_KEY, folderPath || undefined) || undefined,
       });
       if (res.success && res.analysis) {
         const analysis = res.analysis;
@@ -343,7 +371,7 @@ const V2MangaStage: React.FC = () => {
     } finally {
       setAnalyzingPage(null);
     }
-  }, [pages, currentIndex, readingOrder, analysisMap, analyzingPage, visionUnsupported, buildPrevSummaries, mangaMeta]);
+  }, [pages, currentIndex, readingOrder, analysisMap, analyzingPage, visionUnsupported, buildPrevSummaries, findPrevFullAnalysis, mangaMeta]);
 
   // ===== 批量分析（串行逐页）=====
   // initialMap 显式传入工作集：重新分析（清空后重跑）时传空 Map，
@@ -372,15 +400,25 @@ const V2MangaStage: React.FC = () => {
         continue;
       }
 
+      // 读取页面图片，超 8MB 时自动等比压缩（避免主进程 8MB 校验拒收）；读取失败计为失败并继续下一页
+      const imageDataUri = await readImageAsDataUri(page.absolutePath);
+      if (!imageDataUri) {
+        failCount++;
+        message.warning(`第 ${page.index} 页图片读取失败，已跳过（可点击该页重试）`);
+        continue;
+      }
+
       const previousSummaries = buildPrevSummaries(page.index, workMap);
       const res = await api.manga.analyzePage({
         imagePath: page.absolutePath,
+        imageDataUri,
         readingOrder,
         previousSummaries,
+        previousFullAnalysis: findPrevFullAnalysis(page.index, workMap),
         pageIndex: page.index,
         mangaMeta: mangaMeta ?? undefined,
-        // 自定义分析要求（可选，最高优先级）
-        customPrompt: readCustomPrompt(ANALYZE_CUSTOM_PROMPT_KEY) || undefined,
+        // 自定义分析要求（按漫画专属配置，未配置时回退全局；最高优先级）
+        customPrompt: readScopedCustomPrompt(ANALYZE_CUSTOM_PROMPT_KEY, folderPath || undefined) || undefined,
       });
 
       if (res.cancelled) {
@@ -409,7 +447,7 @@ const V2MangaStage: React.FC = () => {
         message.success(`批量分析结束：成功 ${successCount} / ${pages.length} 页`);
       }
     },
-    [pages, readingOrder, analysisMap, analyzingPage, buildPrevSummaries, mangaMeta]
+    [pages, readingOrder, analysisMap, analyzingPage, buildPrevSummaries, findPrevFullAnalysis, mangaMeta]
   );
 
   // 「分析全部页面」按钮：已有分析结果时先确认删除重跑
@@ -424,16 +462,37 @@ const V2MangaStage: React.FC = () => {
       void runBatchAnalyze();
       return;
     }
-    Modal.confirm({
-      title: '重新分析全部页面',
-      content: `当前已有 ${analysisMap.size}/${pages.length} 页分析结果。确认后将删除全部分析结果与上下文预览，并按当前漫画信息与图片重新分析。`,
-      okText: '删除并重新分析',
-      cancelText: '保留当前结果',
+    // 已有分析结果：三选项确认框
+    // ① 保留当前并继续分析（默认推荐）：只补跑未分析页，已分析页原样保留并作为后续页的连贯性上下文
+    // ② 删除并重新分析：清空全部结果后重跑（典型场景：修改漫画信息后按新信息重析）
+    // ③ 保留当前结果：什么都不做
+    const remainCount = pages.length - analysisMap.size;
+    let modal: ReturnType<typeof Modal.confirm> | null = null;
+    modal = Modal.confirm({
+      title: '分析全部页面',
+      content: `当前已有 ${analysisMap.size}/${pages.length} 页分析结果，剩余 ${remainCount} 页未分析。可选择「保留当前并继续分析」仅补跑剩余页；或「删除并重新分析」清空全部分析结果与上下文预览，按当前漫画信息与图片重新分析。`,
+      okText: '保留当前并继续分析',
       onOk: () => {
-        // 清空分析结果（上下文预览表格由分析结果派生，随之清空），以空工作集重跑
-        setAnalysisMap(new Map());
-        void runBatchAnalyze(new Map());
+        // workMap 以当前 analysisMap 初始化，已分析页自动跳过，仅补跑剩余页
+        void runBatchAnalyze();
       },
+      footer: (_, { OkBtn }) => (
+        <>
+          <Button onClick={() => modal?.destroy()}>保留当前结果</Button>
+          <Button
+            danger
+            onClick={() => {
+              // 清空分析结果（上下文预览表格由分析结果派生，随之清空），以空工作集重跑
+              setAnalysisMap(new Map());
+              void runBatchAnalyze(new Map());
+              modal?.destroy();
+            }}
+          >
+            删除并重新分析
+          </Button>
+          <OkBtn />
+        </>
+      ),
     });
   }, [pages.length, analyzingPage, visionUnsupported, analysisMap, runBatchAnalyze]);
 
@@ -569,6 +628,7 @@ const V2MangaStage: React.FC = () => {
           onCancel={() => setMetaModal((s) => ({ ...s, open: false }))}
           supportsVision={!visionUnsupported}
           comicSummaries={summaries}
+          promptScope={folderPath || undefined}
         />
       </div>
     );
@@ -648,6 +708,7 @@ const V2MangaStage: React.FC = () => {
           <>
             <CustomPromptPopover
               storageKey={ANALYZE_CUSTOM_PROMPT_KEY}
+              scope={folderPath || undefined}
               title="页面分析 - 自定义提示词"
               placeholder="输入分析要求（如：重点识别角色动作与表情、注意画面文字等），将作为最高优先级约束附加到单页与批量分析（可选）"
               disabled={analyzingPage !== null}
@@ -695,6 +756,8 @@ const V2MangaStage: React.FC = () => {
                     supportsVision={!visionUnsupported}
                     onAnalyze={handleAnalyzePage}
                     onSaveAnalysis={handleSaveAnalysis}
+                    onPageGuideChange={(guide) => setPageGuide(folderPath, currentIndex, guide)}
+                    pageGuide={currentRecord?.pageGuides?.[String(currentIndex)] ?? ''}
                     onStopAnalyzing={() => {
                       // 批量运行中：停止整个批量；否则仅中止当前单页请求
                       if (batchState.running) {
@@ -745,6 +808,7 @@ const V2MangaStage: React.FC = () => {
         onCancel={() => setMetaModal((s) => ({ ...s, open: false }))}
         supportsVision={!visionUnsupported}
         comicSummaries={summaries}
+        promptScope={folderPath || undefined}
       />
     </div>
   );

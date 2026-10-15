@@ -1,5 +1,18 @@
 // 角色测试聊天类型定义
 
+// 角色选择器条目（【Phase 2 / M1】由 CharacterDialogueChat.tsx 迁入，供 ChatModal/ChatMessageArea 复用）
+export interface CharacterSelectorItem {
+  name: string;
+  path: string;
+  size: number;
+  modified: Date;
+  characterName?: string;
+  version?: string;
+  creator?: string;
+  tags?: string[];
+  cardVersion?: 'v1' | 'v2' | 'v3';
+}
+
 // 聊天消息接口
 export interface ChatMessage {
   id: string;

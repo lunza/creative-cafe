@@ -18,6 +18,8 @@ import { Carousel } from 'antd';
 import { useDataStore } from '../../stores/dataStore';
 import { useWorldBookStore } from '../../stores/worldBookStore';
 import { useSettingStore } from '../../stores/settingStore';
+// Spec: settings-feature-optimization-report / N6, M-17（统一封装）
+import { getSettingAPI } from '../../services/settingServiceClient';
 import { useUIStore } from '../../stores/uiStore';
 import { useLogStore } from '../../stores/logStore';
 import { useVectorStore } from '../../stores/vectorStore';
@@ -135,7 +137,11 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     const testAiEngine = async () => {
       try {
-        const testSetting = setting || (await window.electronAPI.setting.load()).setting;
+        // Spec: settings-feature-optimization-report / N6, M-17（统一封装 + Result 信封判空）
+        const loaded = setting
+          ? null
+          : await (getSettingAPI()?.load() ?? ({ success: false, error: 'setting API 不可用' } as const));
+        const testSetting = setting || (loaded && loaded.success ? loaded.setting : null);
         if (!testSetting || !testSetting.aiEngines || testSetting.aiEngines.length === 0) {
           setAiEngineStatus({ connected: false, engineName: '未配置', model: '-' });
           setAiEngineLoading(false);

@@ -52,6 +52,11 @@ const MAX_CONFIG_SIZE_BYTES = 10000;
  */
 export const vectorDimensionEmitter = new EventEmitter();
 
+// 【M-16/N5】设置变更事件 emitter：settingHandlers 写盘确认后 emit，
+// 本类订阅后失效 5s 缓存（终结 DC-8 的 vector 域时延分裂）。
+export const settingChangedEmitter = new EventEmitter();
+export const SETTING_CHANGED_EVENT = 'setting:changed';
+
 export class VectorConfigManager {
   private cachedConfig: Partial<VectorConfig> | null = null;
   private lastLoadTime: number = 0;
@@ -286,6 +291,20 @@ export class VectorConfigManager {
   clearCache(): void {
     this.cachedConfig = null;
     this.lastLoadTime = 0;
+  }
+
+  /**
+   * 监听设置变更事件（M-16/N5）。
+   *
+   * 由 settingHandlers 在 setting:save 写盘确认成功后 emit；
+   * 典型挂接：`vectorConfigManager.onSettingChanged(() => vectorConfigManager.clearCache())`。
+   * @returns 取消监听函数
+   */
+  onSettingChanged(listener: () => void): () => void {
+    settingChangedEmitter.on(SETTING_CHANGED_EVENT, listener);
+    return () => {
+      settingChangedEmitter.off(SETTING_CHANGED_EVENT, listener);
+    };
   }
 }
 

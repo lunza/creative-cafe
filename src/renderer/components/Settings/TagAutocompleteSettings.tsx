@@ -6,7 +6,9 @@
  * 职责：
  *  1. 全局开关（启用标签自动推荐）→ tagAutocomplete.enabled
  *  2. CSV 文件路径选择（只读 Input 显示 + "选择文件"按钮触发原生文件对话框）
- *     → tagAutocomplete.csvPath
+ *     【M-15/S-10】路径不再走 settings 持久化：显示值来自 tag:getLoadStatus
+ *     （主进程 TagAutocompleteService 持有 this.csvPath，是唯一真相源），
+ *     选择后立即走 tag:setCsvPath IPC 生效
  *  3. 默认排序规则（匹配度 / 使用频率 / 字母顺序）→ tagAutocomplete.sortBy
  *  4. 路径变更时立即触发 tag:setCsvPath IPC 重新加载标签库（保存前即时生效）
  *  5. 顶部展示当前标签库加载状态（loaded / totalCount / error，来自 tag:getLoadStatus）
@@ -47,8 +49,11 @@ import {
   SyncOutlined,
   QuestionCircleOutlined,
 } from '@ant-design/icons';
-import { useSettingStore } from '../../stores/settingStore';
 import type { TagAutocompleteConfig } from '../../types/setting';
+// Spec: settings-feature-optimization-report / M-2, CR-2（面板骨架收敛到共享 hook；
+// 域默认值单一来源 shared/settingDefaults，消除面板内联 DEFAULT_* 复制）
+import { useSettingsPanel } from './hooks/useSettingsPanel';
+import { DEFAULT_TAG_AUTOCOMPLETE_CONFIG } from '@shared/settingDefaults';
 
 const { Text } = Typography;
 
@@ -59,17 +64,18 @@ const { Text } = Typography;
  */
 export interface TagAutocompleteSettingsRef {
   getFormValues: () => TagAutocompleteConfig | undefined;
+  /** Spec: settings-feature-optimization-report / M-1, UI-1（保存按钮脏检测：与初始化快照比较） */
+  isDirty: () => boolean;
+  /** Spec: settings-feature-optimization-report / UI-3（统一重置契约：复位为默认配置） */
+  resetFields: () => void;
+  /** Spec: settings-feature-optimization-report / M-9（保存失败后还原为 store 中上次保存的值） */
+  refreshFromStore: () => void;
 }
 
-/**
- * 标签自动推荐默认配置（与 src/shared/settings.ts defaultSetting.tagAutocomplete 保持一致）。
- * 当 setting.tagAutocomplete 不存在时（旧配置迁移场景）用于初始化表单。
- */
-const DEFAULT_TAG_AUTOCOMPLETE_CONFIG: TagAutocompleteConfig = {
-  enabled: true,
-  csvPath: '',
-  sortBy: 'relevance',
-};
+interface TagAutocompleteSettingsProps {
+  /** Spec: M-1 — 脏状态变化时通知父组件（驱动保存按钮三态化） */
+  onDirtyChange?: (dirty: boolean) => void;
+}
 
 /** 排序规则选项列表 */
 const SORT_BY_OPTIONS: Array<{
@@ -122,9 +128,15 @@ interface TagReloadResultSnapshot {
  * 父组件通过 ref.current.getFormValues() 在保存时获取表单值，
  * 与 WebSearchSettings / SDWebuiSettings 模式一致。
  */
-const TagAutocompleteSettings = forwardRef<TagAutocompleteSettingsRef>((_props, ref) => {
-  const [form] = Form.useForm<TagAutocompleteConfig>();
-  const setting = useSettingStore(s => s.setting);
+const TagAutocompleteSettings = forwardRef<TagAutocompleteSettingsRef, TagAutocompleteSettingsProps>(({ onDirtyChange }, ref) => {
+  // Spec: settings-feature-optimization-report / M-2, CR-2 — 面板骨架收敛到
+  // useSettingsPanel 共享 hook，本组件只保留 Form.Item 声明与文件选择/加载逻辑。
+  const { form, refHandle } = useSettingsPanel({
+    configKey: 'tagAutocomplete',
+    defaults: DEFAULT_TAG_AUTOCOMPLETE_CONFIG,
+    onDirtyChange,
+  });
+  useImperativeHandle(ref, () => refHandle, [refHandle]);
 
   // 文件选择按钮加载态
   const [selectingFile, setSelectingFile] = useState(false);
@@ -134,28 +146,6 @@ const TagAutocompleteSettings = forwardRef<TagAutocompleteSettingsRef>((_props, 
   const [loadStatus, setLoadStatus] = useState<TagLoadStatusSnapshot | null>(null);
   // reload 结果（成功/失败提示）
   const [reloadResult, setReloadResult] = useState<TagReloadResultSnapshot | null>(null);
-
-  // 暴露 getFormValues 给父组件
-  useImperativeHandle(ref, () => ({
-    getFormValues: () => {
-      const values = form.getFieldsValue(true) as Partial<TagAutocompleteConfig>;
-      // 合并默认值，避免字段缺失（旧配置无 tagAutocomplete 时初始化场景）
-      return {
-        ...DEFAULT_TAG_AUTOCOMPLETE_CONFIG,
-        ...values,
-      } as TagAutocompleteConfig;
-    },
-  }));
-
-  // 当 setting 加载/变化时，初始化表单值
-  useEffect(() => {
-    const saved = setting?.tagAutocomplete;
-    const initialValues: TagAutocompleteConfig = {
-      ...DEFAULT_TAG_AUTOCOMPLETE_CONFIG,
-      ...(saved || {}),
-    };
-    form.setFieldsValue(initialValues);
-  }, [setting, form]);
 
   /**
    * 拉取标签库加载状态并更新顶部 Alert。
@@ -187,9 +177,9 @@ const TagAutocompleteSettings = forwardRef<TagAutocompleteSettingsRef>((_props, 
    * 文件选择按钮回调：
    *  1. 调用 file:selectFile 打开原生文件选择对话框（CSV 过滤器）
    *  2. 用户取消（返回 null）时静默返回，不报错
-   *  3. 选中后更新表单 csvPath 字段
-   *  4. 立即触发 tag:setCsvPath IPC 重新加载标签库（路径变更即时生效，不等保存）
-   *  5. 展示加载结果（成功显示标签总数，失败显示错误 Alert）
+   *  3. 立即触发 tag:setCsvPath IPC 重新加载标签库（路径变更即时生效，不等保存）
+   *  4. 展示加载结果（成功显示标签总数，失败显示错误 Alert）
+   *  5. 刷新顶部加载状态（Input 显示值随之更新，M-15/S-10：不再写表单 csvPath）
    */
   const handleSelectFile = useCallback(async () => {
     setSelectingFile(true);
@@ -199,9 +189,6 @@ const TagAutocompleteSettings = forwardRef<TagAutocompleteSettingsRef>((_props, 
       if (!selectedPath) {
         return;
       }
-
-      // 更新表单字段
-      form.setFieldsValue({ csvPath: selectedPath });
 
       // 立即触发重新加载
       setReloading(true);
@@ -229,11 +216,12 @@ const TagAutocompleteSettings = forwardRef<TagAutocompleteSettingsRef>((_props, 
     } finally {
       setSelectingFile(false);
     }
-  }, [form, refreshLoadStatus]);
+  }, [refreshLoadStatus]);
 
   /**
    * 重新加载按钮回调：
-   *  1. 读取当前表单 csvPath
+   *  1. 读取当前标签库路径（M-15/S-10：来自 tag:getLoadStatus 快照，
+   *     不再读表单 csvPath——settings 侧已无此键）
    *  2. 路径非空时传给 tag:reload 切换到该路径；路径为空时不传 csvPath，
    *     主进程 service.reload() 会沿用 this.csvPath（首次加载时已解析为内置 docs/ 路径）
    *  3. 展示加载结果
@@ -242,7 +230,7 @@ const TagAutocompleteSettings = forwardRef<TagAutocompleteSettingsRef>((_props, 
    * （用于 CSV 文件被外部更新后重新加载，或清空自定义路径后回退到内置标签库）。
    */
   const handleReload = useCallback(async () => {
-    const csvPath = form.getFieldValue('csvPath');
+    const csvPath = loadStatus?.csvPath;
     const trimmedPath = (csvPath || '').trim();
 
     setReloading(true);
@@ -267,7 +255,7 @@ const TagAutocompleteSettings = forwardRef<TagAutocompleteSettingsRef>((_props, 
     } finally {
       setReloading(false);
     }
-  }, [form, refreshLoadStatus]);
+  }, [loadStatus, refreshLoadStatus]);
 
   return (
     <Card
@@ -354,9 +342,10 @@ const TagAutocompleteSettings = forwardRef<TagAutocompleteSettingsRef>((_props, 
           <Switch />
         </Form.Item>
 
-        {/* ==================== CSV 文件路径选择 ==================== */}
+        {/* ==================== CSV 文件路径选择 ====================
+            【M-15/S-10】csvPath 不再是表单字段（不随 settings 保存）：
+            显示值直接来自 tag:getLoadStatus 快照（主进程是唯一真相源）。 */}
         <Form.Item
-          name="csvPath"
           label={
             <Space>
               <span>CSV 标签库路径</span>
@@ -368,6 +357,7 @@ const TagAutocompleteSettings = forwardRef<TagAutocompleteSettingsRef>((_props, 
           tooltip="留空使用内置标签库；选择 CSV 文件后立即重新加载（不等保存）。路径变更触发 tag:setCsvPath IPC"
         >
           <Input
+            value={loadStatus?.csvPath || ''}
             placeholder="留空使用内置标签库，或点击右侧按钮选择自定义 CSV 文件"
             readOnly
             addonAfter={

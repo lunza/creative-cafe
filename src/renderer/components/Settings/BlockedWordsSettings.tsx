@@ -15,7 +15,7 @@
  *  - 保存：通过 forwardRef + useImperativeHandle 暴露 getFormValues() / getDialogueNaturalnessValues()，
  *          由 Settings.tsx 的 handleSave 合并到 updatedSetting 中保存
  */
-import { forwardRef, useImperativeHandle, useState, useEffect, useCallback } from 'react';
+import { forwardRef, useImperativeHandle, useState, useCallback, useRef } from 'react';
 import {
   Card,
   Form,
@@ -46,6 +46,10 @@ import { useSettingStore } from '../../stores/settingStore';
 import type { ForbiddenWordsConfig, ForbiddenWordCategory, ForbiddenWordsEnforcement } from '@shared/types/forbiddenWords';
 import { DEFAULT_FORBIDDEN_WORDS_CONFIG, DEFAULT_ENFORCEMENT, DEFAULT_REPLACEMENT_TEXT, DEFAULT_MAX_RETRIES } from '@shared/types/forbiddenWords';
 import type { DialogueNaturalnessConfig } from '../../types/setting';
+// Spec: settings-feature-optimization-report / M-1（脏检测：键序无关的表单值深度比较）
+import { areFormValuesEqual } from './settingMapper';
+// Spec: settings-feature-optimization-report / M-2, CR-2（面板骨架收敛到共享 hook）
+import { useSettingsPanel } from './hooks/useSettingsPanel';
 
 const { Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -58,7 +62,24 @@ export interface BlockedWordsSettingsRef {
   getFormValues: () => ForbiddenWordsConfig | undefined;
   /** 对话自然度配置（Spec: enforce-forbidden-words-and-dialogue-naturalness / Task 2） */
   getDialogueNaturalnessValues: () => DialogueNaturalnessConfig | undefined;
+  /** Spec: settings-feature-optimization-report / M-1, UI-1（保存按钮脏检测：表单 + 本地 state 与快照比较） */
+  isDirty: () => boolean;
+  /** Spec: settings-feature-optimization-report / UI-3（统一重置契约：复位为默认配置） */
+  resetFields: () => void;
+  /** Spec: settings-feature-optimization-report / M-9（保存失败后还原为 store 中上次保存的值） */
+  refreshFromStore: () => void;
 }
+
+interface BlockedWordsSettingsProps {
+  /** Spec: M-1 — 脏状态变化时通知父组件（驱动保存按钮三态化） */
+  onDirtyChange?: (dirty: boolean) => void;
+}
+
+/** L-2/IX-5：表单值类型 = 禁词域 + 对话自然度跨域字段（dn_ 前缀标识） */
+type ExtendedForbiddenWordsConfig = ForbiddenWordsConfig & {
+  dn_deAiEnabled: boolean;
+  dn_samplingPresetEnabled: boolean;
+};
 
 /** JSON 文件选择对话框过滤器 */
 const JSON_FILE_FILTERS = [
@@ -78,10 +99,7 @@ const EMPTY_CATEGORY: ForbiddenWordCategory = {
  * 禁词提示词注入设置面板。
  * 保留旧文件名 BlockedWordsSettings 以兼容 Settings.tsx 的导入引用。
  */
-const BlockedWordsSettings = forwardRef<BlockedWordsSettingsRef>((_props, ref) => {
-  const [form] = Form.useForm<ForbiddenWordsConfig>();
-  const setting = useSettingStore(s => s.setting);
-
+const BlockedWordsSettings = forwardRef<BlockedWordsSettingsRef, BlockedWordsSettingsProps>(({ onDirtyChange }, ref) => {
   // 本地类别列表状态
   const [categories, setCategories] = useState<ForbiddenWordCategory[]>([]);
   // 类别编辑 Modal 可见性
@@ -90,44 +108,66 @@ const BlockedWordsSettings = forwardRef<BlockedWordsSettingsRef>((_props, ref) =
   const [editingIndex, setEditingIndex] = useState(-1);
   // 编辑表单数据
   const [editForm, setEditForm] = useState<ForbiddenWordCategory>({ ...EMPTY_CATEGORY });
-  // 对话自然度配置（Spec: enforce-forbidden-words-and-dialogue-naturalness / Task 2）
-  const [dialogueNaturalness, setDialogueNaturalness] = useState<DialogueNaturalnessConfig>({});
+  // 【重点标记 - IX-5 表单外受控 Switch 纳入表单（L-2）】去AI味/采样预设两开关
+  // 原为表单外受控 Switch（本地 state 驱动），form.getFieldsValue() 无该字段，
+  // dirty 检测/重置全靠 isExtraDirty/onResetExtras 旁路补丁。现改表单字段
+  // dn_deAiEnabled / dn_samplingPresetEnabled（dn_ 前缀标识跨域）：脏检测/重置
+  // 走 hook 统一的表单值比较，经 excludeSaveFields 从 forbiddenWords 域输出剔除，
+  // 仍由 getDialogueNaturalnessValues 独立通道保存（不污染 settings.json 域结构）。
+  const initialCategoriesRef = useRef<ForbiddenWordCategory[] | null>(null);
 
-  // 暴露 getFormValues 给父组件
-  useImperativeHandle(ref, () => ({
-    getFormValues: () => {
-      const values = form.getFieldsValue(true) as Partial<ForbiddenWordsConfig>;
-      return {
-        ...DEFAULT_FORBIDDEN_WORDS_CONFIG,
-        ...values,
-        categories, // 使用本地列表状态
-      } as ForbiddenWordsConfig;
-    },
-    getDialogueNaturalnessValues: () => ({ ...dialogueNaturalness }),
-  }));
-
-  // 当 setting 加载/变化时，初始化表单和列表
-  useEffect(() => {
-    const saved = setting?.forbiddenWords;
-    const initialValues: ForbiddenWordsConfig = {
+  const { form, refHandle } = useSettingsPanel<ExtendedForbiddenWordsConfig>({
+    configKey: 'forbiddenWords',
+    defaults: { ...DEFAULT_FORBIDDEN_WORDS_CONFIG, dn_deAiEnabled: true, dn_samplingPresetEnabled: false } as ExtendedForbiddenWordsConfig,
+    onDirtyChange,
+    // 兼容旧配置：已保存的配置中 categories 为空时，从默认配置继承
+    // （解决已持久化的 categories:[] 覆盖代码默认值的问题）
+    buildInitialValues: (saved) => ({
       ...DEFAULT_FORBIDDEN_WORDS_CONFIG,
       ...(saved || {}),
-      // 兼容旧配置：已保存的配置中 categories 为空时，从默认配置继承
-      // 这解决已持久化的 categories:[] 覆盖代码默认值的问题
       categories: (saved?.categories && saved.categories.length > 0)
         ? saved.categories
         : DEFAULT_FORBIDDEN_WORDS_CONFIG.categories,
-    };
-    form.setFieldsValue(initialValues);
-    setCategories(initialValues.categories || []);
-    // 对话自然度：存量配置缺字段取默认语义（deAiEnabled 默认开 / samplingPresetEnabled 默认关），
-    // 此处落显式值，保存后写入 settings.json
-    const savedDn = setting?.dialogueNaturalness;
-    setDialogueNaturalness({
-      deAiEnabled: savedDn?.deAiEnabled !== false,
-      samplingPresetEnabled: savedDn?.samplingPresetEnabled === true,
-    });
-  }, [setting, form]);
+      // 对话自然度表单字段：存量配置缺字段取默认语义（deAiEnabled 默认开 / samplingPresetEnabled 默认关）
+      dn_deAiEnabled: useSettingStore.getState().setting?.dialogueNaturalness?.deAiEnabled !== false,
+      dn_samplingPresetEnabled: useSettingStore.getState().setting?.dialogueNaturalness?.samplingPresetEnabled === true,
+    }),
+    // 重置值：表单字段（含 dn_*）一并复位默认语义
+    buildResetValues: () => ({
+      ...DEFAULT_FORBIDDEN_WORDS_CONFIG,
+      dn_deAiEnabled: true,
+      dn_samplingPresetEnabled: false,
+    }),
+    // 保存值用本地列表状态（表单内 categories 字段仅承载展示值）
+    getExtraSaveValues: () => ({ categories }),
+    // dn_* 属 dialogueNaturalness 域，剔除出 forbiddenWords 域输出
+    excludeSaveFields: ['dn_deAiEnabled', 'dn_samplingPresetEnabled'],
+    // 本地 state 脏检测（表单值比较之外的补充，仅余 categories）
+    isExtraDirty: () => {
+      if (initialCategoriesRef.current && !areFormValuesEqual(categories, initialCategoriesRef.current)) return true;
+      return false;
+    },
+    // UI-3：本地 state 复位（dn_* 表单字段由 hook resetFields 经 buildResetValues 复位）
+    onResetExtras: () => {
+      const defaultCategories = DEFAULT_FORBIDDEN_WORDS_CONFIG.categories || [];
+      setCategories(defaultCategories);
+      initialCategoriesRef.current = defaultCategories;
+    },
+    // 每次初始化（setting 变化 effect / M-9 回滚）后同步本地 state 与快照
+    onInitialized: (initialValues) => {
+      setCategories(initialValues.categories || []);
+      initialCategoriesRef.current = initialValues.categories || [];
+    },
+  });
+  // 暴露 ref 契约给父组件（Spec: M-1/UI-1 + UI-3 + M-9 + M-2 共享 hook）
+  // dn_* 表单值 → DialogueNaturalnessConfig 映射（缺省取默认语义，与原本地 state 一致）
+  useImperativeHandle(ref, () => ({
+    ...refHandle,
+    getDialogueNaturalnessValues: (): DialogueNaturalnessConfig => ({
+      deAiEnabled: form.getFieldValue('dn_deAiEnabled') !== false,
+      samplingPresetEnabled: form.getFieldValue('dn_samplingPresetEnabled') === true,
+    }),
+  }), [refHandle, form]);
 
   // ===== 类别编辑 Modal 操作 =====
 
@@ -388,48 +428,49 @@ const BlockedWordsSettings = forwardRef<BlockedWordsSettingsRef>((_props, ref) =
             );
           }}
         </Form.Item>
-      </Form>
-
       {/* ==================== 对话自然度分组 ==================== */}
-      {/* 注：antd v7 Divider orientation 类型损坏（TagRagSettings 同款存量错误），改用样式标题 */}
-      <div
-        style={{
-          margin: '20px 0 12px',
-          paddingBottom: 8,
-          fontWeight: 600,
-          fontSize: 14,
-          borderBottom: '1px solid rgba(128, 128, 128, 0.2)',
-        }}
-      >
+      {/* L-2/IX-5：两开关原为表单外受控 Switch（本地 state），现纳入表单字段 dn_*
+          （dn_ 前缀标识跨域）：脏检测/重置走 hook 统一表单值比较，保存时经
+          excludeSaveFields 从 forbiddenWords 域输出剔除，由 getDialogueNaturalnessValues
+          独立通道映射回 dialogueNaturalness 域（不污染 settings.json 域结构）。
+          注：antd v7 Divider orientation 类型损坏（TagRagSettings 同款存量错误），改用样式标题 */}
+      <div style={{ margin: '20px 0 12px', paddingBottom: 8, fontWeight: 600, fontSize: 14, borderBottom: '1px solid rgba(128, 128, 128, 0.2)' }}>
         对话自然度
       </div>
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
-          <div>
-            <Text strong>对话去AI味</Text>
-            <Paragraph style={{ margin: '2px 0 0', fontSize: 12, color: '#9ca3af' }}>
-              注入真人化说话方式约束（RP 词表 + 27 种 AI 写作模式修正），降低对话的机器感
-            </Paragraph>
-          </div>
-          <Switch
-            checked={dialogueNaturalness.deAiEnabled !== false}
-            onChange={checked => setDialogueNaturalness(prev => ({ ...prev, deAiEnabled: checked }))}
-          />
-        </div>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
-          <div>
-            <Text strong>对话采样预设（按模型系列）</Text>
-            <Paragraph style={{ margin: '2px 0 0', fontSize: 12, color: '#9ca3af' }}>
-              按当前引擎模型系列覆盖请求采样参数（qwen: temp 0.7 / top_p 0.8；gemma: temp 1.0 / top_p 0.95），
-              仅影响请求体，不修改引擎配置。默认关闭
-            </Paragraph>
-          </div>
-          <Switch
-            checked={dialogueNaturalness.samplingPresetEnabled === true}
-            onChange={checked => setDialogueNaturalness(prev => ({ ...prev, samplingPresetEnabled: checked }))}
-          />
-        </div>
+        <Form.Item
+          name="dn_deAiEnabled"
+          valuePropName="checked"
+          style={{ marginBottom: 0 }}
+          label={
+            <span>
+              <Text strong>对话去AI味</Text>
+              <Paragraph style={{ margin: '2px 0 0', fontSize: 12, color: '#9ca3af', fontWeight: 'normal' }}>
+                注入真人化说话方式约束（RP 词表 + 27 种 AI 写作模式修正），降低对话的机器感
+              </Paragraph>
+            </span>
+          }
+        >
+          <Switch />
+        </Form.Item>
+        <Form.Item
+          name="dn_samplingPresetEnabled"
+          valuePropName="checked"
+          style={{ marginBottom: 0 }}
+          label={
+            <span>
+              <Text strong>对话采样预设（按模型系列）</Text>
+              <Paragraph style={{ margin: '2px 0 0', fontSize: 12, color: '#9ca3af', fontWeight: 'normal' }}>
+                按当前引擎模型系列覆盖请求采样参数（qwen: temp 0.7 / top_p 0.8；gemma: temp 1.0 / top_p 0.95），
+                仅影响请求体，不修改引擎配置。默认关闭
+              </Paragraph>
+            </span>
+          }
+        >
+          <Switch />
+        </Form.Item>
       </Space>
+      </Form>
 
       {/* ==================== 类别管理 ==================== */}
       <div style={{ marginTop: 16 }}>

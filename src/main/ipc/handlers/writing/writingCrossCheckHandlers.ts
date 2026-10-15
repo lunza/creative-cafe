@@ -11,6 +11,8 @@ import { ipcMain } from 'electron';
 import { writingStorageService } from '../../../services/WritingStorageService';
 import { crossChapterReviewService } from '../../../services/writing/CrossChapterReviewService';
 import { getStorageService } from '../../../services/storageService';
+// Spec: settings-feature-optimization-report / H-5（默认值单一来源）
+import { DEFAULT_ENGINE_PARAMS } from '../../../../shared/settingDefaults';
 import { addLog } from '../../../services/memory/chatLogService';
 import type { ModelConfig } from '../../../../shared/types/writing.types';
 import type { CrossCheckParams, CrossCheckIssue } from '../../../../shared/types/cross-chapter-review.types';
@@ -25,8 +27,8 @@ function resolveModelConfig(project: { config?: { modelConfig?: { model?: string
 
   return {
     model: activeEngine?.model_name ?? project.config?.modelConfig?.model ?? (() => { throw new Error('未配置 AI 模型名称') })(),
-    temperature: (typeof activeEngine?.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : (project.config?.modelConfig?.temperature ?? 0.7),
-    maxTokens: (typeof activeEngine?.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : (project.config?.modelConfig?.maxTokens ?? 10240)
+    temperature: (typeof activeEngine?.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : (project.config?.modelConfig?.temperature ?? DEFAULT_ENGINE_PARAMS.temperature),
+    maxTokens: (typeof activeEngine?.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : (project.config?.modelConfig?.maxTokens ?? DEFAULT_ENGINE_PARAMS.maxTokens)
   };
 }
 

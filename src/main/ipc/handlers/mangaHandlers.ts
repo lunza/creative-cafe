@@ -19,6 +19,7 @@ import fs from 'fs';
 import { mangaParsingService } from '../../services/manga/MangaParsingService';
 import { addLog } from '../../services/memory/chatLogService';
 import type {
+  MangaPageAnalysis,
   MangaPageSummary,
   MangaReadingOrder,
   MangaMetaInfo,
@@ -55,25 +56,30 @@ export function registerMangaHandlers(): void {
       _event,
       params: {
         imagePath: string;
+        imageDataUri?: string;
         readingOrder: MangaReadingOrder;
         previousSummaries: MangaPageSummary[];
         pageIndex: number;
+        /** 最近已解析前页的完整分析（连贯性参照，可选） */
+        previousFullAnalysis?: { pageIndex: number; analysis: MangaPageAnalysis };
         userGuidance?: string;
         mangaMeta?: MangaMetaInfo;
         customPrompt?: string;
       }
     ): Promise<V2MangaAnalyzeResult> => {
       try {
-        if (!params?.imagePath) {
-          return { success: false, analysis: null, summary: null, error: '图片路径不能为空' };
+        if (!params?.imagePath && !params?.imageDataUri) {
+          return { success: false, analysis: null, summary: null, error: '图片路径或 data URI 不能为空' };
         }
         if (!params?.readingOrder) {
           return { success: false, analysis: null, summary: null, error: '阅读顺序不能为空' };
         }
         return await mangaParsingService.analyzePage({
           imagePath: params.imagePath,
+          imageDataUri: params.imageDataUri,
           readingOrder: params.readingOrder,
           previousSummaries: params.previousSummaries || [],
+          previousFullAnalysis: params.previousFullAnalysis,
           customPrompt: params.customPrompt,
           pageIndex: params.pageIndex || 1,
           userGuidance: params.userGuidance,
@@ -169,6 +175,7 @@ export function registerMangaHandlers(): void {
       _event,
       params: {
         imagePath: string;
+        imageDataUri?: string;
         summaries?: MangaPageSummary[];
         mangaMeta?: MangaMetaInfo;
         currentCharacters?: string;
@@ -176,11 +183,12 @@ export function registerMangaHandlers(): void {
       }
     ): Promise<V2MangaCharacterGenResult> => {
       try {
-        if (!params?.imagePath) {
-          return { success: false, error: '图片路径不能为空' };
+        if (!params?.imagePath && !params?.imageDataUri) {
+          return { success: false, error: '图片路径或 data URI 不能为空' };
         }
         return await mangaParsingService.generateCharacterInfo({
           imagePath: params.imagePath,
+          imageDataUri: params.imageDataUri,
           summaries: params.summaries || [],
           mangaMeta: params.mangaMeta,
           currentCharacters: params.currentCharacters,

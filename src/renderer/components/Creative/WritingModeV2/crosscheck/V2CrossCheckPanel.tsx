@@ -11,8 +11,9 @@
  * 拆分：设置区 → V2CrossCheckSettings；问题卡片 → V2CrossCheckIssueCard；修复弹窗 → V2CrossCheckFixModal
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, message, Tag, theme, Typography } from 'antd';
-import type { WritingProject } from '../../../../../shared/types/writing-v2.types';
+import { Alert, Button, message, Tag, theme, Typography } from 'antd';
+import { HistoryOutlined } from '@ant-design/icons';
+import type { WritingProject, CrossCheckReviewRecord } from '../../../../../shared/types/writing.types';
 import {
   CROSS_CHECK_DEFAULTS,
   CROSS_CHECK_ISSUE_TYPE_LABELS,
@@ -50,6 +51,15 @@ function loadPersisted(projectId: string): CrossCheckPersistedParams {
 }
 
 type Status = 'idle' | 'running' | 'done' | 'error';
+
+/** 审查历史保留条数（存项目实体，含完整报告） */
+const HISTORY_LIMIT = 20;
+
+function formatTime(ts: number): string {
+  const d = new Date(ts);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
 
 /** 流式区只保留尾部片段，避免长文本重渲染压力 */
 const STREAM_TAIL = 3000;
@@ -89,7 +99,23 @@ const V2CrossCheckPanel: React.FC<V2CrossCheckPanelProps> = ({
   const [error, setError] = useState('');
   const [fixedIds, setFixedIds] = useState<string[]>([]);
   const [fixState, setFixState] = useState<V2CrossCheckFixState | null>(null);
+  /** 当前展示的历史记录 id（null=最新审查实时结果） */
+  const [viewedRecordId, setViewedRecordId] = useState<string | null>(null);
   const streamBoxRef = useRef<HTMLDivElement | null>(null);
+
+  const history = useMemo(() => project.crossCheckHistory ?? [], [project.crossCheckHistory]);
+
+  // 载入最近一次审查结果（存于项目实体：切换页签/重启应用后仍可查看）
+  useEffect(() => {
+    const last = project.crossCheckHistory?.[0];
+    if (last) {
+      setReport(last.report);
+      setStatus('done');
+      setViewedRecordId(last.id);
+      setFixedIds([]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.id]);
 
   // 参数持久化（按项目）
   useEffect(() => {
@@ -161,6 +187,22 @@ const V2CrossCheckPanel: React.FC<V2CrossCheckPanelProps> = ({
       if (res.success && res.report) {
         setReport(res.report);
         setStatus('done');
+        // 审查历史落项目实体（最近 20 条，含完整报告：切换页签/重启后仍可回看）
+        const record: CrossCheckReviewRecord = {
+          id: `${Date.now()}`,
+          timestamp: Date.now(),
+          startPos,
+          count,
+          distance: persisted.distance,
+          similarityThreshold: persisted.similarityThreshold,
+          aiStrictness: persisted.aiStrictness,
+          enableAiReview: persisted.enableAiReview,
+          report: res.report,
+        };
+        setViewedRecordId(record.id);
+        patchProject(project.id, {
+          crossCheckHistory: [record, ...(project.crossCheckHistory ?? [])].slice(0, HISTORY_LIMIT),
+        });
         const secs = ((Date.now() - startAt) / 1000).toFixed(1);
         const n = res.report.issues.length;
         if (res.report.cancelled) {
@@ -180,7 +222,19 @@ const V2CrossCheckPanel: React.FC<V2CrossCheckPanelProps> = ({
       setError(e instanceof Error ? e.message : String(e));
       message.error('审查失败');
     }
-  }, [chapters, project.id, startPos, count, persisted]);
+  }, [chapters, project, startPos, count, persisted, patchProject]);
+
+  /** 回看历史审查记录（完整报告已存项目实体） */
+  const handleViewHistory = useCallback(
+    (record: CrossCheckReviewRecord) => {
+      setReport(record.report);
+      setStatus('done');
+      setViewedRecordId(record.id);
+      setFixedIds([]);
+      setError('');
+    },
+    []
+  );
 
   const handleStop = useCallback(async () => {
     const api = getWritingV2API();
@@ -294,7 +348,7 @@ const V2CrossCheckPanel: React.FC<V2CrossCheckPanelProps> = ({
     .filter((o) => o.value <= maxStart);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'auto', padding: 12, gap: 10 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <V2CrossCheckSettings
         chapterOptions={startOptions}
         startPos={startPos}
@@ -373,6 +427,56 @@ const V2CrossCheckPanel: React.FC<V2CrossCheckPanelProps> = ({
       )}
 
       {status === 'error' && <Alert type="error" showIcon message="审查失败" description={error} />}
+
+      {/* 历史审查记录（存项目实体，切换页签/重启后仍可回看详情） */}
+      {history.length > 0 && (
+        <div style={{ border: `1px solid ${token.colorBorderSecondary}`, borderRadius: 8, padding: '6px 10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+            <HistoryOutlined />
+            <Typography.Text strong style={{ fontSize: 13 }}>
+              历史审查
+            </Typography.Text>
+            <Tag>{history.length}</Tag>
+            {viewedRecordId && (
+              <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                正在回看历史结果，再次审查将产生新记录
+              </Typography.Text>
+            )}
+          </div>
+          <div style={{ maxHeight: 160, overflow: 'auto' }}>
+            {history.map((h) => (
+              <div
+                key={h.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '3px 0',
+                  fontSize: 12,
+                }}
+              >
+                <span style={{ color: token.colorTextTertiary }}>{formatTime(h.timestamp)}</span>
+                <span>第{h.startPos + 1}-{h.startPos + h.count}章</span>
+                <Tag
+                  color={h.report.issues.length > 0 ? 'orange' : 'green'}
+                  style={{ marginInlineEnd: 0 }}
+                >
+                  {h.report.cancelled ? '已停止' : `${h.report.issues.length} 条问题`}
+                </Tag>
+                {h.id === viewedRecordId && (
+                  <Tag color="blue" style={{ marginInlineEnd: 0 }}>
+                    当前
+                  </Tag>
+                )}
+                <span style={{ flex: 1 }} />
+                <Button size="small" type="link" style={{ padding: 0 }} onClick={() => handleViewHistory(h)}>
+                  查看
+                </Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 结果分组 */}
       {report && !running && report.issues.length === 0 && (

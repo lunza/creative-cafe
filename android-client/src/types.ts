@@ -132,6 +132,16 @@ export interface SessionConfig {
   memoryTableEnabled: boolean;
   customStopSequencesEnabled: boolean;
   customStopSequences: string[];
+  /** Token 管理开关（【Phase 4 / L9】对齐桌面端 ConfigPanel Token 管理） */
+  tokenManagementEnabled?: boolean;
+  /** 最大上下文 Token 数（缺省 256000） */
+  maxContextTokens?: number;
+  /** 响应预留 Token 数（缺省 4096） */
+  reservedForResponse?: number;
+  /** 最少保留对话轮数（缺省 3） */
+  minMessagesToKeep?: number;
+  /** 最多保留消息条数（缺省 60） */
+  maxMessagesToKeep?: number;
   lastUpdated?: number;
 }
 

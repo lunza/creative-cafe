@@ -28,7 +28,7 @@
  *  - provider 切换时响应式显示/隐藏对应配置字段（Form.Item shouldUpdate）
  *  - 测试连接的 try/catch + message 提示（成功显示结果数，失败显示错误）
  */
-import { forwardRef, useImperativeHandle, useState, useEffect, useCallback } from 'react';
+import { forwardRef, useImperativeHandle, useState, useCallback } from 'react';
 import {
   Card,
   Form,
@@ -49,8 +49,11 @@ import {
   SyncOutlined,
   QuestionCircleOutlined,
 } from '@ant-design/icons';
-import { useSettingStore } from '../../stores/settingStore';
 import type { WebSearchConfig } from '../../types/setting';
+// Spec: settings-feature-optimization-report / M-2, CR-2（面板骨架收敛到共享 hook；
+// 域默认值单一来源 shared/settingDefaults，消除面板内联 DEFAULT_* 复制）
+import { useSettingsPanel } from './hooks/useSettingsPanel';
+import { DEFAULT_WEB_SEARCH_CONFIG } from '@shared/settingDefaults';
 
 const { Text, Link } = Typography;
 
@@ -61,22 +64,18 @@ const { Text, Link } = Typography;
  */
 export interface WebSearchSettingsRef {
   getFormValues: () => WebSearchConfig | undefined;
+  /** Spec: settings-feature-optimization-report / M-1, UI-1（保存按钮脏检测：与初始化快照比较） */
+  isDirty: () => boolean;
+  /** Spec: settings-feature-optimization-report / UI-3（统一重置契约：复位为默认配置） */
+  resetFields: () => void;
+  /** Spec: settings-feature-optimization-report / M-9（保存失败后还原为 store 中上次保存的值） */
+  refreshFromStore: () => void;
 }
 
-/**
- * 网络搜索默认配置（与 src/shared/settings.ts defaultSetting.webSearch 保持一致）。
- * 当 setting.webSearch 不存在时（旧配置迁移场景）用于初始化表单。
- */
-const DEFAULT_WEB_SEARCH_CONFIG: WebSearchConfig = {
-  enabled: false,
-  provider: 'duckduckgo',
-  apiKey: '',
-  endpoint: '',
-  maxResults: 5,
-  timeout: 10000,
-  allowedDomains: [],
-  enableInAuthoring: false,
-};
+interface WebSearchSettingsProps {
+  /** Spec: M-1 — 脏状态变化时通知父组件（驱动保存按钮三态化） */
+  onDirtyChange?: (dirty: boolean) => void;
+}
 
 /** provider 选项列表 */
 const PROVIDER_OPTIONS: Array<{
@@ -112,9 +111,16 @@ const PROVIDER_OPTIONS: Array<{
  * 父组件通过 ref.current.getFormValues() 在保存时获取表单值，
  * 与 SDWebuiSettings / VectorConfigPanel 模式一致。
  */
-const WebSearchSettings = forwardRef<WebSearchSettingsRef>((_props, ref) => {
-  const [form] = Form.useForm<WebSearchConfig>();
-  const setting = useSettingStore(s => s.setting);
+const WebSearchSettings = forwardRef<WebSearchSettingsRef, WebSearchSettingsProps>(({ onDirtyChange }, ref) => {
+  // Spec: settings-feature-optimization-report / M-2, CR-2 — 面板骨架（表单初始化/
+  // 快照/脏检测/四方法契约）收敛到 useSettingsPanel 共享 hook，本组件只保留
+  // Form.Item 声明与测试连接逻辑。
+  const { form, refHandle } = useSettingsPanel({
+    configKey: 'webSearch',
+    defaults: DEFAULT_WEB_SEARCH_CONFIG,
+    onDirtyChange,
+  });
+  useImperativeHandle(ref, () => refHandle, [refHandle]);
 
   const [testLoading, setTestLoading] = useState(false);
   const [testResult, setTestResult] = useState<
@@ -122,28 +128,6 @@ const WebSearchSettings = forwardRef<WebSearchSettingsRef>((_props, ref) => {
     | { ok: false; error: string }
     | null
   >(null);
-
-  // 暴露 getFormValues 给父组件
-  useImperativeHandle(ref, () => ({
-    getFormValues: () => {
-      const values = form.getFieldsValue(true) as Partial<WebSearchConfig>;
-      // 合并默认值，避免字段缺失（旧配置无 webSearch 时初始化场景）
-      return {
-        ...DEFAULT_WEB_SEARCH_CONFIG,
-        ...values,
-      } as WebSearchConfig;
-    },
-  }));
-
-  // 当 setting 加载/变化时，初始化表单值
-  useEffect(() => {
-    const saved = setting?.webSearch;
-    const initialValues: WebSearchConfig = {
-      ...DEFAULT_WEB_SEARCH_CONFIG,
-      ...(saved || {}),
-    };
-    form.setFieldsValue(initialValues);
-  }, [setting, form]);
 
   /**
    * 测试连接：调用主进程 webSearch:test，更新 testResult 状态。

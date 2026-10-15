@@ -4,9 +4,14 @@ import { useSettingStore } from '../../../stores/settingStore';
 import { useLogStore } from '../../../stores/logStore';
 import { AIEngineSetting, AIEngineCapabilities } from '../../../types/setting';
 import { AppSetting } from '../../../settings';
-// Spec: analyze-llamacpp-model-compatibility（toOptionalNumber 修复 `Number(x) || undefined` 吞 0 的缺陷：
-// qwen 模板的 min_p=0、DRY 关闭 dry_multiplier=0 曾被吞成 undefined，导致库默认值 0.1/0.4 顶替引擎值）
-import { toOptionalNumber, resolveThinkingMode } from '../../../../shared/modelParameterPresets';
+// Spec: settings-feature-optimization-report / H-1（日志脱敏：api_key 不落日志）
+import { redactSecrets } from '../../../../shared/utils/redactSecrets';
+// Spec: settings-feature-optimization-report / H-5（默认值单一来源）
+import { DEFAULT_ENGINE_PARAMS } from '../../../../shared/settingDefaults';
+// Spec: settings-feature-optimization-report / CR-4, M-20（错误日志 context 统一构建）
+import { buildErrorContext } from '../../../utils/logContext';
+// Spec: settings-feature-optimization-report / CR-5, M-20（引擎创建/编辑三路径合一）
+import { buildEngineFromForm } from '../settingMapper';
 
 export interface TestResult {
   success: boolean;
@@ -109,22 +114,21 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
     addLog('准备添加新引擎', 'info');
     const emptyEngine: Partial<AIEngineSetting> = {
       name: '新引擎',
-      api_url: 'http://127.0.0.1:5000',
+      api_url: DEFAULT_ENGINE_PARAMS.apiBaseUrl,
       api_key: '',
       model_name: 'qwen3.5-27b-heretic-v3',
       thinking_mode: 'auto',
       api_mode: 'chat_completion',
       api_key_transmission: 'header',
-      max_tokens: 10240,
-      temperature: 0.7,
+      max_tokens: DEFAULT_ENGINE_PARAMS.maxTokens,
+      temperature: DEFAULT_ENGINE_PARAMS.temperature,
       top_p: 0.95,
       top_k: 0,
       min_p: 0.1,
       frequency_penalty: 0,
       presence_penalty: 0,
-      n: 1,
-      connection_timeout: 120000,
-      request_timeout: 300000,
+      connection_timeout: DEFAULT_ENGINE_PARAMS.connectionTimeout,
+      request_timeout: DEFAULT_ENGINE_PARAMS.requestTimeout,
       system_prompt: '',
     };
     setEditingEngine(emptyEngine);
@@ -144,7 +148,7 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
     try {
       addLog('开始保存引擎配置', 'info');
       const values = await engineForm.validateFields();
-      addLog(`表单验证成功: ${JSON.stringify(values)}`, 'debug');
+      addLog(`表单验证成功: ${redactSecrets(JSON.stringify(values))}`, 'debug');
 
       if (!setting) {
         addLog('设置为 null，无法保存', 'error');
@@ -161,71 +165,29 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
       if (isEditing) {
         const editingId = (editingEngine as AIEngineSetting).id;
         addLog(`更新现有引擎: ${editingId}`, 'info');
-        updatedEngines = updatedEngines.map(engine => {
-          if (engine.id === editingId) {
-            return {
-              ...engine,
-              ...values,
-              model_series: values.model_series || undefined,
-              // 思考联动：表单显式选择（on/off）优先，否则由 model_series 模板推导
-              thinking_mode: resolveThinkingMode(values.thinking_mode, values.model_series),
-              max_tokens: toOptionalNumber(values.max_tokens) ?? 10240,
-              temperature: toOptionalNumber(values.temperature) ?? 0.7,
-              top_p: toOptionalNumber(values.top_p),
-              top_k: toOptionalNumber(values.top_k),
-              min_p: toOptionalNumber(values.min_p),
-              frequency_penalty: toOptionalNumber(values.frequency_penalty),
-              presence_penalty: toOptionalNumber(values.presence_penalty),
-              n: toOptionalNumber(values.n) ?? 1,
-              connection_timeout: values.connection_timeout !== undefined && values.connection_timeout !== '' ? Number(values.connection_timeout) : 120000,
-              request_timeout: values.request_timeout !== undefined && values.request_timeout !== '' ? Number(values.request_timeout) : 300000,
-              // 引擎级采样字段（含合法 0 值，未应用模板时保留引擎原值）
-              rep_pen: toOptionalNumber(allFormValues.rep_pen) ?? engine.rep_pen,
-              dry_multiplier: toOptionalNumber(allFormValues.dry_multiplier) ?? engine.dry_multiplier,
-              dry_base: toOptionalNumber(allFormValues.dry_base) ?? engine.dry_base,
-              dry_allowed_length: toOptionalNumber(allFormValues.dry_allowed_length) ?? engine.dry_allowed_length,
-              no_repeat_ngram_size: toOptionalNumber(allFormValues.no_repeat_ngram_size) ?? engine.no_repeat_ngram_size,
-              // Save capabilities from test result if available (Spec: Task 4.4);
-              // otherwise preserve existing engine.capabilities from spread above
-              ...(engineTestResult?.capabilities ? { capabilities: engineTestResult.capabilities } : {}),
-            };
-          }
-          return engine;
-        });
+        // 【CR-5/M-20】编辑路径与主表单 handleSave 共用 buildEngineFromForm 纯函数，
+        // 22 字段映射 + 隐藏采样字段兜底 + capabilities 显式合并只有一份实现
+        updatedEngines = updatedEngines.map(engine =>
+          engine.id === editingId
+            ? {
+                // 原引擎为基底（保留 capabilities 等未映射字段），表单映射值覆盖之
+                ...engine,
+                ...buildEngineFromForm(values, allFormValues, engine, engineTestResult?.capabilities),
+                id: engine.id,
+                name: engine.name,
+              }
+            : engine
+        );
       } else {
         addLog('添加新引擎', 'info');
         const defaultEngine = AppSetting.defaultSetting.aiEngines[0];
-        const newEngine: AIEngineSetting = {
-          ...defaultEngine,
+        const newEngine = {
+          ...buildEngineFromForm(values, allFormValues, defaultEngine, engineTestResult?.capabilities),
           id: `engine_${Date.now()}`,
           name: values.name || '新引擎',
-          api_url: values.api_url || 'http://127.0.0.1:5000',
-          api_key: values.api_key || '',
-          model_name: values.model_name || 'qwen3.5-27b-heretic-v3',
-          model_series: values.model_series || undefined,
-          thinking_mode: resolveThinkingMode(values.thinking_mode, values.model_series),
-          api_mode: values.api_mode || 'chat_completion',
-          api_key_transmission: values.api_key_transmission || 'header',
-          max_tokens: toOptionalNumber(values.max_tokens) ?? 10240,
-          temperature: toOptionalNumber(values.temperature) ?? 0.7,
-          top_p: toOptionalNumber(values.top_p),
-          top_k: toOptionalNumber(values.top_k),
-          min_p: toOptionalNumber(values.min_p),
-          frequency_penalty: toOptionalNumber(values.frequency_penalty),
-          presence_penalty: toOptionalNumber(values.presence_penalty),
-          n: toOptionalNumber(values.n) ?? 1,
-          connection_timeout: values.connection_timeout !== undefined && values.connection_timeout !== '' ? Number(values.connection_timeout) : 120000,
-          request_timeout: values.request_timeout !== undefined && values.request_timeout !== '' ? Number(values.request_timeout) : 300000,
-          system_prompt: values.system_prompt || '',
-          // 引擎级采样字段（新建时若已应用模型系列模板，则用模板值覆盖默认基线）
-          rep_pen: toOptionalNumber(allFormValues.rep_pen) ?? defaultEngine.rep_pen,
-          dry_multiplier: toOptionalNumber(allFormValues.dry_multiplier) ?? defaultEngine.dry_multiplier,
-          dry_base: toOptionalNumber(allFormValues.dry_base) ?? defaultEngine.dry_base,
-          dry_allowed_length: toOptionalNumber(allFormValues.dry_allowed_length) ?? defaultEngine.dry_allowed_length,
-          no_repeat_ngram_size: toOptionalNumber(allFormValues.no_repeat_ngram_size) ?? defaultEngine.no_repeat_ngram_size,
-          // Save capabilities from test result if available (Spec: Task 4.4)
-          ...(engineTestResult?.capabilities ? { capabilities: engineTestResult.capabilities } : {}),
-        } as unknown as AIEngineSetting;
+          // 新建路径原兜底：默认模型名（defaultEngine 的 model_name 可能为空）
+          model_name: values.model_name || defaultEngine.model_name || 'qwen3.5-27b-heretic-v3',
+        } as AIEngineSetting;
         updatedEngines.push(newEngine);
       }
 
@@ -243,21 +205,78 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
       engineForm.resetFields();
 
       message.success(isEditing ? '引擎更新成功' : '引擎添加成功');
+
+      // 【M-19/N4】保存时连通性自检：对刚保存的引擎发一次轻量探测（testConnection
+      // 内部 max_tokens=1 / 5s 超时），结果显式反馈——失败提示「引擎不可达/鉴权
+      // 失败」而非等用户发起对话才暴露。非阻塞：弹窗已关闭，探测完成后以通知呈现。
+      // 探测成功后顺带探测 capabilities 并回写（与手动测试同一显式化路径，
+      // 消除 IX-4 隐藏副作用），探测失败不影响本次保存结果。
+      const savedEngine = updatedEngines.find(e => e.id === (isEditing ? (editingEngine as AIEngineSetting).id : undefined))
+        || updatedEngines[updatedEngines.length - 1];
+      void (async () => {
+        try {
+          const probeSetting = {
+            ...updatedSetting,
+            aiEngines: [savedEngine],
+            activeEngineId: savedEngine.id,
+          };
+          const probe = await testConnection(probeSetting as any);
+          if (probe.success) {
+            addLog('保存后连通性自检通过', 'info', {
+              context: { engineId: savedEngine.id, details: probe.details },
+            });
+            message.success(`连通性自检通过：${probe.details || '引擎可达'}`);
+            try {
+              const capResult = await window.electronAPI.ai.probeCapabilities({
+                apiUrl: savedEngine.api_url,
+                apiKey: savedEngine.api_key,
+                apiKeyTransmission: savedEngine.api_key_transmission,
+                modelName: savedEngine.model_name,
+              });
+              if (capResult?.success && capResult.capabilities) {
+                const latest = useSettingStore.getState().setting;
+                if (latest?.aiEngines) {
+                  await saveSetting({
+                    ...latest,
+                    aiEngines: latest.aiEngines.map(engine =>
+                      engine.id === savedEngine.id
+                        ? { ...engine, capabilities: { ...engine.capabilities, ...capResult.capabilities } }
+                        : engine
+                    ),
+                  });
+                  addLog('保存后能力探测已回写引擎配置', 'info', {
+                    context: { engineId: savedEngine.id, capabilities: capResult.capabilities },
+                  });
+                  message.success('模型能力（capabilities）已自动更新并保存');
+                }
+              }
+            } catch (capError) {
+              console.warn('[useAIEngineSettings] 保存后能力探测失败:', capError);
+              addLog('保存后能力探测失败（不影响保存结果）', 'warn');
+            }
+          } else {
+            addLog('保存后连通性自检失败', 'error', {
+              context: { engineId: savedEngine.id, error: probe.error, details: probe.details },
+            });
+            message.warning(`保存成功，但连通性自检失败：${probe.error || '引擎不可达或鉴权失败'}`);
+          }
+        } catch (probeError) {
+          console.warn('[useAIEngineSettings] 保存后连通性自检异常:', probeError);
+          addLog('保存后连通性自检异常（不影响保存结果）', 'warn');
+        }
+      })();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '未知错误';
+      // 【CR-4/M-20】错误 context 三元组统一走 buildErrorContext（字段名收敛为 errorMessage）
       addLog('保存引擎失败', 'error', {
         category: 'setting',
         error: error instanceof Error ? error : undefined,
-        context: {
-          errorType: error instanceof Error ? error.name : 'UnknownError',
-          errorLocation: 'useAIEngineSettings:handleSaveEngine',
-          errorMessage,
-        },
+        context: buildErrorContext(error, 'useAIEngineSettings:handleSaveEngine'),
         details: '保存引擎配置时发生错误，请检查引擎配置是否正确。',
       });
       message.error(`保存引擎失败: ${errorMessage}`);
     }
-  }, [setting, editingEngine, engineForm, saveSetting, addLog, engineTestResult]);
+  }, [setting, editingEngine, engineForm, saveSetting, addLog, engineTestResult, testConnection]);
 
   const handleDeleteEngine = useCallback((engineId: string) => {
     if (!setting) return;
@@ -461,6 +480,8 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
         // 立即将能力写入当前活跃引擎的配置中并持久化到本地配置文件。
         // 这样用户无需手动保存即可在 Header 等位置看到能力标识更新，
         // 后续如果用户不修改引擎则默认此引擎拥有这些能力。
+        // Spec: settings-feature-optimization-report / M-8, IX-4（副作用显式化）：
+        // 此前探测成功即静默落盘，用户无感知。现成功/失败均给出明确提示。
         if (capabilities && setting?.activeEngineId && setting?.aiEngines) {
           try {
             const updatedEngines = setting.aiEngines.map(engine => {
@@ -482,10 +503,12 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
             addLog('模型能力已自动持久化到引擎配置', 'info', {
               context: { engineId: setting.activeEngineId, capabilities },
             });
+            message.success('模型能力（capabilities）已自动更新并保存');
           } catch (saveError) {
-            // 持久化失败不影响测试结果展示，仅记录日志
+            // 持久化失败不影响测试结果展示，但明确告知用户能力未落盘
             console.warn('[useAIEngineSettings] 自动持久化模型能力失败:', saveError);
             addLog('模型能力自动持久化失败（不影响测试结果）', 'warn');
+            message.warning('已探测到模型能力，但自动保存失败，请手动保存设置');
           }
         }
       } else {
@@ -498,15 +521,11 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
         error: error instanceof Error ? error.message : '未知错误',
         details: `异常: ${error instanceof Error ? error.message : '未知错误'}`,
       });
+      // 【CR-4/M-20】原此处字段名漂移为 error_message/error_stack，统一为 errorMessage/errorStack
       addLog('测试连通性失败', 'error', {
         category: 'ai',
         error: error instanceof Error ? error : undefined,
-        context: {
-          errorType: error instanceof Error ? error.name : 'UnknownError',
-          errorLocation: 'useAIEngineSettings:handleTestConnection',
-          error_message: error instanceof Error ? error.message : String(error),
-          error_stack: error instanceof Error ? error.stack : undefined,
-        },
+        context: buildErrorContext(error, 'useAIEngineSettings:handleTestConnection'),
         details: '测试AI引擎连通性时发生错误，请检查API地址和API密钥是否正确。',
       });
       message.error('测试连通性失败');
@@ -574,15 +593,11 @@ export function useAIEngineSettings(): UseAIEngineSettingsResult {
         error: error instanceof Error ? error.message : '未知错误',
         details: `异常: ${error instanceof Error ? error.message : '未知错误'}`,
       });
+      // 【CR-4/M-20】原此处字段名漂移为 error_message/error_stack，统一为 errorMessage/errorStack
       addLog('测试引擎连通性失败', 'error', {
         category: 'ai',
         error: error instanceof Error ? error : undefined,
-        context: {
-          errorType: error instanceof Error ? error.name : 'UnknownError',
-          errorLocation: 'useAIEngineSettings:handleTestEngineConnection',
-          error_message: error instanceof Error ? error.message : String(error),
-          error_stack: error instanceof Error ? error.stack : undefined,
-        },
+        context: buildErrorContext(error, 'useAIEngineSettings:handleTestEngineConnection'),
         details: '测试引擎连通性时发生错误，请检查API地址和API密钥是否正确。',
       });
       message.error('测试连通性失败');

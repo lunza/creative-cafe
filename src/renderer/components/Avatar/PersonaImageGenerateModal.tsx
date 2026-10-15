@@ -18,6 +18,8 @@ import {
 } from '@ant-design/icons';
 import type { PersonaTrait } from '../Character/CharacterDialogueChat/CharacterDialogueChat.types';
 import type { SDWebuiConfig } from '../../types/setting';
+// Spec: settings-feature-optimization-report / N6, M-17（统一封装）
+import { getSettingAPI } from '../../services/settingServiceClient';
 
 const { TextArea } = Input;
 
@@ -127,7 +129,8 @@ const PersonaImageGenerateModal: React.FC<PersonaImageGenerateModalProps> = ({
         // 1. 加载 SD 设置
         let config: SDWebuiConfig = DEFAULT_SD_CONFIG;
         try {
-          const settingResult = await window.electronAPI.setting.load();
+          // Spec: settings-feature-optimization-report / N6, M-17（统一封装）
+          const settingResult = await getSettingAPI()?.load() ?? { success: false, error: 'setting API 不可用' };
           if (settingResult?.success && settingResult.setting?.sdWebui) {
             config = { ...DEFAULT_SD_CONFIG, ...settingResult.setting.sdWebui };
           }

@@ -313,7 +313,6 @@ const TagAutocomplete: React.FC<TagAutocompleteProps> = ({
       if (!setting) return;
       const currentTagConfig = setting.tagAutocomplete ?? {
         enabled: true,
-        csvPath: '',
         sortBy: 'relevance' as TagSortBy,
       };
       const newSetting = {

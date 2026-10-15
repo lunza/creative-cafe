@@ -195,6 +195,16 @@ export interface SDWebuiConfig {
 
 /**
  * AI 引擎设置组
+ *
+ * 【M-15/S-5 孤儿键批量删除（Phase 3）】原 130+ 字段中 ~95 个 SillyTavern 遗留
+ * 采样/提示词/模式字段全仓无消费（仅类型与默认值种子残留），已删除并经
+ * settingMigrations v3 迁移钩子从磁盘剥离。现存 31 个字段均有真实消费链路：
+ * - 请求构造：parameterResolver.resolveEngineParams（temperature/max_tokens/top_p/
+ *   top_k/min_p/rep_pen/frequency_penalty/presence_penalty/no_repeat_ngram_size/
+ *   dry 采样组）+ ChatEngine/AIService（api 连接与 streaming/system_prompt 等）
+ * - Agent 链路：use_function_calling/useAgent/agentModeOverride
+ * - 连接：connection_timeout/request_timeout/api_key_transmission
+ * 保留 continue_nudge_prompt（报告 S-5 裁定：续写去重机制消费）。
  */
 export interface AIEngineSetting {
   id: string;
@@ -224,134 +234,34 @@ export interface AIEngineSetting {
    * Task 6 将在设置 UI 中允许用户按 engine type 显式配置。
    */
   capabilities?: AIEngineCapabilities;
-  
-  // 文本补全模式配置
-  prompt_template: string;
-  stop_words: string;
-  max_generation_length: number;
-  custom_optimization_prompt: string;
-  
+
   // 聊天补全模式配置
   system_prompt: string;
   temperature: number;
   max_tokens: number;
   streaming: boolean;
   enable_chain_of_thought: boolean;
-  
-  // 聊天补全模式特有参数
-  freq_pen: number;
-  presence_pen: number;
-  top_p: number;
+
+  // 采样参数（parameterResolver 消费，会话级可覆盖）
+  // top_p/frequency_penalty/presence_penalty 缺省 undefined = 请求体不注入
+  // （预存缺陷修复：原声明为必填 number 但默认值即 undefined，strict 下 TS2322）
+  top_p?: number;
   top_k: number;
-  top_a: number;
   min_p: number;
   rep_pen: number;
-  openai_max_context: number;
-  names_behavior: number;
-  send_if_empty: string;
-  impersonation_prompt: string;
-  new_chat_prompt: string;
-  new_example_chat_prompt: string;
-  continue_nudge_prompt: string;
-  bias_preset_selected: string;
-  max_context_unlocked: boolean;
-  wi_format: string;
-  scenario_format: string;
-  personality_format: string;
-  assistant_prefill: string;
-  assistant_impersonation: string;
-  use_sysprompt: boolean;
-  squash_system_messages: boolean;
-  media_inlining: boolean;
-  continue_prefill: boolean;
-  continue_postfix: string;
-  seed: number;
-  n: number;
-  
-  // NovelAI 模式配置
-  novelai_api_key: string;
-  novelai_model: string;
-  novelai_sampler: string;
-  novelai_cfg_scale: number;
-  
-  // AI Horde 模式配置
-  ai_horde_api_key: string;
-  ai_horde_model: string;
-  ai_horde_max_wait: number;
-  ai_horde_priority: number;
-  
-  // 模型参数 - SillyTavern 官方预设
-  temp: number;
-  temperature_last: boolean;
-  top_p: number;
-  top_k: number;
-  top_a: number;
-  tfs: number;
-  epsilon_cutoff: number;
-  eta_cutoff: number;
-  typical_p: number;
-  min_p: number;
-  rep_pen: number;
-  rep_pen_range: number;
-  rep_pen_decay: number;
-  rep_pen_slope: number;
   no_repeat_ngram_size: number;
-  penalty_alpha: number;
-  num_beams: number;
-  length_penalty: number;
-  min_length: number;
-  encoder_rep_pen: number;
-  freq_pen: number;
-  presence_pen: number;
-  skew: number;
-  do_sample: boolean;
-  early_stopping: boolean;
-  dynatemp: boolean;
-  min_temp: number;
-  max_temp: number;
-  dynatemp_exponent: number;
-  smoothing_factor: number;
-  smoothing_curve: number;
-  dry_allowed_length: number;
   dry_multiplier: number;
   dry_base: number;
-  dry_sequence_breakers: string;
-  dry_penalty_last_n: number;
-  add_bos_token: boolean;
-  ban_eos_token: boolean;
-  skip_special_tokens: boolean;
-  mirostat_mode: number;
-  mirostat_tau: number;
-  mirostat_eta: number;
-  guidance_scale: number;
-  negative_prompt: string;
-  grammar_string: string;
-  json_schema: any;
-  json_schema_allow_empty: boolean;
-  banned_tokens: string;
-  sampler_priority: string[];
-  samplers: string[];
-  samplers_priorities: string[];
-  ignore_eos_token: boolean;
-  spaces_between_special_tokens: boolean;
-  speculative_ngram: boolean;
-  sampler_order: number[];
-  logit_bias: any[];
-  xtc_threshold: number;
-  xtc_probability: number;
-  nsigma: number;
-  min_keep: number;
-  extensions: any;
-  adaptive_target: number;
-  adaptive_decay: number;
-  rep_pen_size: number;
-  genamt: number;
-  max_length: number;
-  
-  // 高级参数
-  frequency_penalty: number;
-  presence_penalty: number;
-  enable_chain_of_thought: boolean;
+  dry_allowed_length: number;
+  /**
+   * 续写去重提示词（SillyTavern continue_nudge_prompt 机制）。
+   * 报告 S-5 裁定保留：续写去重重试时注入 system 消息。
+   */
+  continue_nudge_prompt: string;
+
+  // 高级参数（缺省 undefined = 请求体不注入，与 top_p 同语义）
+  frequency_penalty?: number;
+  presence_penalty?: number;
   use_function_calling: boolean;
   /**
    * 智能体模式开关（Task 16.2）。
@@ -371,13 +281,6 @@ export interface AIEngineSetting {
    * 替代旧 useAgent 布尔开关。
    */
   agentModeOverride?: 'auto' | 'force-on' | 'force-off';
-  
-  // 连接设置
-  auto_connect: boolean;
-  skip_status_check: boolean;
-  use_proxy: boolean;
-  proxy_url: string;
-  proxy_port: number;
 
   // 请求超时设置（毫秒）
   /**
@@ -393,10 +296,6 @@ export interface AIEngineSetting {
    * 默认 300000ms（300秒）。
    */
   request_timeout?: number;
-
-  // 安全设置
-  encrypt_api_key: boolean;
-  enable_access_control: boolean;
 
   // API 密钥传输方式
   api_key_transmission: 'header' | 'body';
@@ -434,17 +333,16 @@ export interface WebSearchConfig {
  *
  * 设计要点：
  * - 采用嵌套对象模式，与 webSearch / sdWebui 配置块保持一致
- * - csvPath 为空字符串时表示未配置，组件显示提示引导用户在 Settings 面板选择 CSV 文件
  * - enabled=false 时 TagAutocomplete 组件降级为普通 Input（Task 5 实现）
  *
- * 标签库默认路径（用户文档说明，非内置默认值）：
- * G:\AI\sd-webui-forge-neo\models\Stable-diffusion\Furry\tags\danbooru_e621_merged_2026-03-01_pt20-ia-dd-ed-spc.csv
+ * 【M-15/S-10 csvPath 移除（Phase 3）】CSV 路径的真实生效路径是
+ * tag:setCsvPath IPC（主进程 TagAutocompleteService 持有 this.csvPath），
+ * settings 侧 csvPath 为冗余持久化，已删除并经 v3 迁移钩子从磁盘剥离。
+ * 设置面板的路径显示/选择直接走 tag:getLoadStatus / tag:setCsvPath IPC。
  */
 export interface TagAutocompleteConfig {
   /** 是否启用标签自动推荐（关闭时 TagAutocomplete 组件降级为普通 Input） */
   enabled: boolean;
-  /** 标签库 CSV 文件路径（空字符串表示未配置，组件显示提示） */
-  csvPath: string;
   /** 默认排序规则：relevance=按匹配相关度 / count=按使用次数降序 / alphabetical=按字母升序 */
   sortBy: 'relevance' | 'count' | 'alphabetical';
 }
@@ -498,11 +396,11 @@ export interface AppSetting {
   
   // 外观设置
   dashboardBackgroundImage: string;
-  
-  // UI 设置
-  animationEnabled: boolean;
-  compactMode: boolean;
-  
+
+  // 【M-13/S-12】animationEnabled / compactMode 已删除：uiStore（localStorage）
+  // 是唯一真相源，所有 UI 消费方（App/Dashboard/GeneralSettingsPanel/PageTransition）
+  // 均读 useUIStore，settings.json 侧两键只写不读，经 v3 迁移钩子从磁盘剥离。
+
   // 日志设置
   logLevel: 'error' | 'warn' | 'info' | 'debug';
   
@@ -516,11 +414,11 @@ export interface AppSetting {
     remoteApiKey?: string;
     remoteApiUrl?: string;
     localModel?: string;
-    vectorStoreMode?: 'sqlite-vec';
+    /** 向量维度（磁盘实存键，EmbeddingService 消费；UI 按本地模型联动推导） */
+    dimension?: number;
+    /** API Key 传输方式（header/body，连接测试消费） */
+    remoteApiKeyTransmission?: 'header' | 'body';
     autoVectorizeWorldBook?: boolean;
-    autoRetrieveContext?: boolean;
-    contextTopK?: number;
-    contextMinScore?: number;
     contextWindowTokens?: number;
     cacheEnabled?: boolean;
     cacheL1Size?: number;
@@ -570,6 +468,39 @@ export interface AppSetting {
    * 可选字段：缺失时 deAiEnabled=true / samplingPresetEnabled=false。
    */
   dialogueNaturalness?: DialogueNaturalnessConfig;
+
+  /**
+   * settings.json schema 版本号（Spec: settings-feature-optimization-report / H-12）。
+   * 由主进程读取链路（settingMigrations.ts）自动补写/升级，渲染层只读。
+   * 旧 settings.json 无此键，视为 v1。
+   */
+  _settingsSchema?: number;
+
+  /**
+   * 设置版本快照历史（Spec: settings-feature-optimization-report / H-11, N1）。
+   *
+   * 每次保存前自动对「保存前状态」留档，滚动上限 20 条。content 已剥离 versions
+   * 字段（避免嵌套递归）。回滚时以快照 content 覆盖当前设置。旧 settings.json
+   * 无此键，视为空历史。
+   */
+  versions?: SettingVersion[];
+}
+
+/**
+ * 设置版本快照（Spec: settings-feature-optimization-report / H-11, N1）。
+ * 对标写作模式 2.0 ChapterVersion { id, content, timestamp, note?, isAutoGenerated }。
+ */
+export interface SettingVersion {
+  /** 快照唯一 id（时间戳 + 随机后缀） */
+  id: string;
+  /** 快照时的完整设置内容（已剥离 versions 字段，防嵌套递归） */
+  content: AppSetting;
+  /** 快照时间戳（毫秒） */
+  timestamp: number;
+  /** 备注（自动保存为「自动保存」，回滚/手动为对应说明） */
+  note?: string;
+  /** 是否自动保存快照 */
+  isAutoGenerated: boolean;
 }
 
 /**

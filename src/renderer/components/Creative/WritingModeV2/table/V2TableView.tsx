@@ -52,16 +52,27 @@ const V2TableView: React.FC<V2TableViewProps> = ({
     title: h,
     dataIndex: h,
     key: h,
-    render: (value: unknown, _row: Record<string, unknown>, idx: number) => (
-      <Input
-        size="small"
-        variant="borderless"
-        value={value == null ? '' : String(value)}
-        placeholder="—"
-        onChange={(e) => onCellChange(idx, h, e.target.value)}
-        style={{ paddingLeft: 8, paddingRight: 8 }}
-      />
-    ),
+    render: (value: unknown, _row: Record<string, unknown>, idx: number) => {
+      const input = (
+        <Input
+          size="small"
+          variant="borderless"
+          value={value == null ? '' : String(value)}
+          placeholder="—"
+          onChange={(e) => onCellChange(idx, h, e.target.value)}
+          style={{ paddingLeft: 8, paddingRight: 8 }}
+        />
+      );
+      // 唯一id 是实体去重键：缺失时给出显式提示（整理时 AI 会按命名规范自动生成）
+      if (h === '唯一id' && (value == null || String(value).trim() === '')) {
+        return (
+          <Tooltip title="唯一 ID 缺失，请手工补充，或整理时由 AI 自动生成">
+            {input}
+          </Tooltip>
+        );
+      }
+      return input;
+    },
   }));
 
   columns.push({

@@ -20,9 +20,9 @@
  *     KnowledgeBaseService / worldBookService / characterService）调用方式不变
  */
 
-import { ipcMain, app } from 'electron';
-import path from 'path';
+import { ipcMain } from 'electron';
 import { LRUCache } from 'lru-cache';
+import { getDatabaseDir } from '../utils/appPath';
 import { SqliteVecBackend } from './SqliteVecBackend';
 import { VectorCache } from './VectorCache';
 import { VectorStoreMode } from '../types/vectorConfig';
@@ -804,7 +804,9 @@ export class VectorStoreService {
     }));
 
     ipcMain.handle('vector:getStorePath', async () => {
-      return path.join(app.getPath('userData'), 'vectors');
+      // [Spec: migrate-user-data-to-project-root] 原返回 userData/vectors（已废弃的旧向量存储位置）；
+      // 实际向量 DB 已收敛到 getDatabaseDir()/vectors（SqliteVecBackend），此处与真实存储保持一致
+      return getDatabaseDir();
     });
 
     ipcMain.handle('vector:testStorage', async (_event, { scopeIds }: { scopeIds?: string[] } = {}) => {

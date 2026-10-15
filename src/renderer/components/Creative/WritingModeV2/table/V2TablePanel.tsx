@@ -8,6 +8,7 @@ import {
   Progress,
   Select,
   Space,
+  Table,
   Tabs,
   Tag,
   Tooltip,
@@ -26,6 +27,7 @@ import {
   UnorderedListOutlined,
   TableOutlined as SheetOutlined,
   ThunderboltOutlined,
+  SafetyCertificateOutlined,
 } from '@ant-design/icons';
 import type {
   WritingProject,
@@ -34,6 +36,9 @@ import type {
   V2TableTemplate,
   V2VersionSnapshotResult,
   V2ChapterOrganizeStatus,
+  V2IdConsistencyReport,
+  V2IdSheetStats,
+  V2IdDuplicateGroup,
 } from '../../../../../shared/types/writing-v2.types';
 import { getWritingV2API } from '../../../../services/writingV2Service';
 import { WRITING_DEFAULT_TABLE_TEMPLATE_ID } from '../../../../../shared/constants/writingTableTemplates';
@@ -62,15 +67,19 @@ const CHAPTER_STATUS_COLORS: Record<string, string> = {
  *
  * 主进程存储约定（与对话/记忆模块表格一致，TableEditCommandExecutor 落盘格式）：
  *   key "0" = 流水号（系统内部，UI 不展示）
- *   key "1" = 唯一id（实体去重键，UI 不展示）
+ *   key "1" = 唯一id（实体去重键，UI 以虚拟首列「唯一id」完整展示，可编辑）
  *   key k(k≥2) = 模板表头第 k-1 列（headers[k-2]）
  * （AI prompt 字段索引 1 基 [1:流水号, 2:唯一id, 3+:模板字段]，解析器统一减 1 后落盘）
  *
  * V2TableView 用 header 字符串作为列 dataIndex（row["姓名"]）。
- * 此函数把数字 key 映射为 header 名；"0"/"1" 系统键原样保留（随行对象透传，
- * antd 按 dataIndex 渲染时自动忽略，保存时经 remapRowToIndexKeys 带回数据层）；
+ * 此函数把数字 key 映射为 header 名；"1" 映射为虚拟列 UNIQUE_ID_COLUMN（保存时经
+ * remapRowToIndexKeys 映射回 "1"）；"0"(流水号) 不映射（UI 不展示）；
  * 已是 header 名的 key 原样保留（幂等）。
+ * ⚠️ 唯一id 展示列与存储键 "1" 的双向映射必须同步（本函数 + remapRowToIndexKeys + CSV 导出），
+ * 任一侧漏改都会导致保存丢 ID。
  */
+const UNIQUE_ID_COLUMN = '唯一id';
+
 function remapRowToHeaderKeys(
   row: Record<string, unknown> | null | undefined,
   headers: string[]
@@ -82,10 +91,11 @@ function remapRowToHeaderKeys(
       const idx = parseInt(key, 10);
       if (idx >= 2) {
         mapped[headers[idx - 2] ?? key] = row[key];
-      } else {
-        // "0"(流水号) / "1"(唯一id)：系统键，不在模板表头中，原样保留
-        mapped[key] = row[key];
+      } else if (idx === 1) {
+        // "1"(唯一id)：虚拟首列展示（可编辑，保存回 "1"）
+        mapped[UNIQUE_ID_COLUMN] = row[key];
       }
+      // "0"(流水号)：系统键，不映射（UI 不展示）
     } else {
       mapped[key] = row[key];
     }
@@ -96,8 +106,8 @@ function remapRowToHeaderKeys(
 /**
  * remapRowToHeaderKeys 的逆操作：UI 列名 key → 数据层存储 key。
  * 保存前调用，确保落盘格式与主进程数据层一致（dedup/AI prompt 依赖存储键约定）。
- * 数字 key（含系统键 "0"/"1"）原样保留；非数字 key（表头名）按 header 索引转回
- * 存储键（第 c 列 → String(c + 2)）。
+ * 数字 key（含系统键 "0"/"1"）原样保留；「唯一id」列名映射回存储键 "1"；
+ * 其余非数字 key（表头名）按 header 索引转回存储键（第 c 列 → String(c + 2)）。
  */
 function remapRowToIndexKeys(
   row: Record<string, unknown> | null | undefined,
@@ -108,6 +118,8 @@ function remapRowToIndexKeys(
   for (const key of Object.keys(row)) {
     if (/^\d+$/.test(key)) {
       mapped[key] = row[key];
+    } else if (key === UNIQUE_ID_COLUMN) {
+      mapped['1'] = row[key];
     } else {
       const idx = headers.indexOf(key);
       mapped[idx >= 0 ? String(idx + 2) : key] = row[key];
@@ -150,6 +162,10 @@ const V2TablePanel: React.FC<V2TablePanelProps> = ({ project, chapterIndex }) =>
   const [reorgModal, setReorgModal] = useState<{ rowIndex: number; row: Record<string, unknown> } | null>(null);
   const [reorgRequirement, setReorgRequirement] = useState('');
   const [reorganizingRow, setReorganizingRow] = useState<number | null>(null);
+  // 最近一次 ID 一致性校验报告（整理结果携带 / 按需重扫）
+  const [idReport, setIdReport] = useState<V2IdConsistencyReport | null>(null);
+  const [reportModalOpen, setReportModalOpen] = useState(false);
+  const [rescanningId, setRescanningId] = useState(false);
 
   const api = getWritingV2API();
 
@@ -172,6 +188,8 @@ const V2TablePanel: React.FC<V2TablePanelProps> = ({ project, chapterIndex }) =>
     setSnapshot(null);
     setProgress(null);
     setDirty(false);
+    setIdReport(null);
+    setReportModalOpen(false);
     reload();
   }, [project.id, reload]);
 
@@ -256,11 +274,12 @@ const V2TablePanel: React.FC<V2TablePanelProps> = ({ project, chapterIndex }) =>
     setDirty(false);
   }, [data, activeSheet, activeHeaders]);
 
+  // 列头派生：唯一id 虚拟首列（完整展示实体去重键，可编辑修正）+ 模板表头
   const sheetHeaders = useMemo(() => {
     const fromConfig = data?.headers?.[activeSheet];
-    if (fromConfig && fromConfig.length > 0) return fromConfig;
+    if (fromConfig && fromConfig.length > 0) return [UNIQUE_ID_COLUMN, ...fromConfig];
     const row = editRows[0];
-    return row ? Object.keys(row) : [];
+    return row ? [UNIQUE_ID_COLUMN, ...Object.keys(row).filter((k) => k !== UNIQUE_ID_COLUMN)] : [UNIQUE_ID_COLUMN];
   }, [data, activeSheet, editRows]);
 
   // ---------- 模板 ----------
@@ -306,6 +325,8 @@ const V2TablePanel: React.FC<V2TablePanelProps> = ({ project, chapterIndex }) =>
         skipOrganized || undefined
       );
       const secs = ((Date.now() - startAt) / 1000).toFixed(1);
+      // 整理结果携带的 ID 一致性报告（含取消收尾场景）
+      if (res.idReport) setIdReport(res.idReport);
       if (res.cancelled) {
         message.warning(`整理已取消：已处理 ${res.processedCount} 章，结果已保留`);
         setLastResult({ ok: false, text: `整理已取消：已处理 ${res.processedCount} 章，结果已保留（耗时 ${secs}s）` });
@@ -340,6 +361,8 @@ const V2TablePanel: React.FC<V2TablePanelProps> = ({ project, chapterIndex }) =>
         requirements.trim() || undefined
       );
       const secs = ((Date.now() - startAt) / 1000).toFixed(1);
+      // 整理结果携带的 ID 一致性报告
+      if (res.idReport) setIdReport(res.idReport);
       if (res.cancelled) {
         message.warning(`「${activeSheet}」整理已取消：已处理 ${res.processedCount} 章，结果已保留`);
         setLastResult({ ok: false, text: `「${activeSheet}」整理已取消：已处理 ${res.processedCount} 章，结果已保留（耗时 ${secs}s）` });
@@ -377,6 +400,27 @@ const V2TablePanel: React.FC<V2TablePanelProps> = ({ project, chapterIndex }) =>
       setStatusModalOpen(true);
     } else {
       message.error(res.error || '获取章节整理状态失败');
+    }
+  };
+
+  // ID 一致性按需重扫：只读校验，不改数据、不触发整理
+  const handleIdConsistency = async () => {
+    if (!api) return;
+    setRescanningId(true);
+    try {
+      const res = await api.table.getIdConsistencyReport(project.id);
+      if (res.success && res.report) {
+        setIdReport(res.report);
+        setReportModalOpen(true);
+        if (res.report.ok) message.success('ID 校验通过：全部实体唯一 ID 完整且一致');
+        else message.warning(`ID 校验发现问题：${res.report.summary}`);
+      } else {
+        message.error(res.error || 'ID 一致性校验失败');
+      }
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : 'ID 一致性校验失败');
+    } finally {
+      setRescanningId(false);
     }
   };
 
@@ -420,11 +464,10 @@ const V2TablePanel: React.FC<V2TablePanelProps> = ({ project, chapterIndex }) =>
   };
 
   const handleExportCsv = () => {
-    // 剔除系统键（"0"=流水号、"1"=唯一id），CSV 只导出模板表头列
+    // 只剔除系统键 "0"（流水号）；唯一id 列完整导出（editRows 已是列名 key，含「唯一id」）
     const exportRows = editRows.map((r) => {
       const copy = { ...r };
       delete copy['0'];
-      delete copy['1'];
       return copy;
     });
     const csv = buildTableCsv(sheetHeaders, exportRows);
@@ -582,7 +625,7 @@ const V2TablePanel: React.FC<V2TablePanelProps> = ({ project, chapterIndex }) =>
 
   // ---------- 已绑定 ----------
   return (
-    <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 10, overflow: 'hidden', height: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, height: '100%' }}>
       {/* 模板 + 整理操作 */}
       <Space size={8} wrap>
         <Tag icon={<TableOutlined />} style={{ marginInlineEnd: 0 }}>
@@ -610,6 +653,11 @@ const V2TablePanel: React.FC<V2TablePanelProps> = ({ project, chapterIndex }) =>
         <Button size="small" icon={<UnorderedListOutlined />} onClick={handleOpenChapterStatus}>
           章节状态
         </Button>
+        <Tooltip title="立即重新扫描全部表格的唯一 ID 完整性与一致性（缺 ID / 重复 / 悬空引用），只读不改数据">
+          <Button size="small" icon={<SafetyCertificateOutlined />} loading={rescanningId} onClick={handleIdConsistency}>
+            ID 一致性
+          </Button>
+        </Tooltip>
         <Button size="small" icon={<AppstoreOutlined />} onClick={() => setManagerOpen(true)}>
           模板管理
         </Button>
@@ -671,6 +719,31 @@ const V2TablePanel: React.FC<V2TablePanelProps> = ({ project, chapterIndex }) =>
           }}
         >
           {lastResult.text}
+        </div>
+      )}
+
+      {/* ID 一致性校验报告（整理后生成 / 按需重扫，常驻直到下一次） */}
+      {idReport && !organizing && !organizingSheet && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '6px 10px',
+            borderRadius: 8,
+            fontSize: 12,
+            flexWrap: 'wrap',
+            background: idReport.ok ? token.colorSuccessBg : token.colorWarningBg,
+            border: `1px solid ${idReport.ok ? token.colorSuccessBorder : token.colorWarningBorder}`,
+          }}
+        >
+          <SafetyCertificateOutlined />
+          <span style={{ fontWeight: 600 }}>{idReport.ok ? 'ID 校验通过' : 'ID 校验发现问题'}</span>
+          <span>{idReport.summary}</span>
+          <span style={{ flex: 1 }} />
+          <Button size="small" type="link" style={{ padding: 0 }} onClick={() => setReportModalOpen(true)}>
+            查看报告
+          </Button>
         </div>
       )}
 
@@ -785,6 +858,132 @@ const V2TablePanel: React.FC<V2TablePanelProps> = ({ project, chapterIndex }) =>
               </Tag>
             </div>
           ))
+        )}
+      </Modal>
+
+      {/* ID 一致性校验报告（完整明细） */}
+      <Modal
+        title="ID 一致性校验报告"
+        open={reportModalOpen}
+        onCancel={() => setReportModalOpen(false)}
+        footer={null}
+        width={720}
+      >
+        {idReport && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <Tag color={idReport.ok ? 'green' : 'orange'} style={{ marginInlineEnd: 0 }}>
+                {idReport.ok ? '校验通过' : '发现问题'}
+              </Tag>
+              <span style={{ fontSize: 12 }}>{idReport.summary}</span>
+              {idReport.dedupRemoved > 0 && (
+                <Tag color="red">全局去重移除 {idReport.dedupRemoved} 行</Tag>
+              )}
+            </div>
+
+            {/* 逐表统计 */}
+            <Table
+              size="small"
+              rowKey="sheetName"
+              pagination={false}
+              dataSource={idReport.sheets}
+              columns={[
+                { title: '表名', dataIndex: 'sheetName', width: 90 },
+                { title: '行数', dataIndex: 'totalRows', width: 56 },
+                {
+                  title: '缺 ID 行',
+                  dataIndex: 'missingIdRows',
+                  render: (rows: number[], r: V2IdSheetStats) =>
+                    rows.length === 0 ? (
+                      '—'
+                    ) : (
+                      <span>
+                        {rows.length} 行（行 {rows.join(',')}）
+                        {r.missingPreExisting > 0 && (
+                          <Tag color="default" style={{ marginLeft: 4 }}>
+                            存量 {r.missingPreExisting}
+                          </Tag>
+                        )}
+                      </span>
+                    ),
+                },
+                {
+                  title: '重复 ID',
+                  dataIndex: 'duplicateIds',
+                  render: (groups: V2IdDuplicateGroup[]) =>
+                    groups.length === 0 ? (
+                      '—'
+                    ) : (
+                      groups.map((g) => (
+                        <div key={g.id}>
+                          {g.id}（行 {g.rows.join(',')}）
+                          {g.preExisting && (
+                            <Tag color="default" style={{ marginLeft: 4 }}>
+                              存量
+                            </Tag>
+                          )}
+                        </div>
+                      ))
+                    ),
+                },
+              ]}
+            />
+
+            {/* 悬空引用 */}
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 4 }}>
+                悬空引用（{idReport.danglingRefs.length}）
+              </div>
+              {idReport.danglingRefs.length === 0 ? (
+                <div style={{ fontSize: 12, color: token.colorTextTertiary }}>
+                  无——所有引用型字段均指向真实存在的唯一 ID
+                </div>
+              ) : (
+                idReport.danglingRefs.map((d, i) => (
+                  <div key={i} style={{ fontSize: 12, padding: '2px 0' }}>
+                    {d.sheetName} 行{d.row}：{d.column}={d.value} 悬空
+                    {d.preExisting && (
+                      <Tag color="default" style={{ marginLeft: 4 }}>
+                        存量
+                      </Tag>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* 自动修正 */}
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 4 }}>
+                自动修正（{idReport.fixes.length}）
+              </div>
+              {idReport.fixes.length === 0 ? (
+                <div style={{ fontSize: 12, color: token.colorTextTertiary }}>无</div>
+              ) : (
+                idReport.fixes.map((f, i) => (
+                  <div key={i} style={{ fontSize: 12, padding: '2px 0' }}>
+                    [{f.action}] {f.original} → {f.detail}
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* 需人工核查 */}
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 4 }}>
+                需人工核查（{idReport.manualReview.length}）
+              </div>
+              {idReport.manualReview.length === 0 ? (
+                <div style={{ fontSize: 12, color: token.colorTextTertiary }}>无</div>
+              ) : (
+                idReport.manualReview.map((m, i) => (
+                  <div key={i} style={{ fontSize: 12, padding: '2px 0', color: token.colorWarning }}>
+                    {m}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         )}
       </Modal>
 

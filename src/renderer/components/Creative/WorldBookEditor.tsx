@@ -8,6 +8,8 @@ import { useLogStore } from '../../stores/logStore';
 import { useUIStore } from '../../stores/uiStore';
 import CreativeOptimize from './CreativeOptimize';
 import { buildEngineApiUrl } from '../../utils/apiUtils';
+// Spec: settings-feature-optimization-report / H-5（默认值单一来源）
+import { DEFAULT_ENGINE_PARAMS } from '../../../shared/settingDefaults';
 import { getWorldbookTemplates, PromptTemplate } from '../../utils/promptTemplates';
 
 const { Text, Title } = Typography;
@@ -239,15 +241,15 @@ const WorldBookEditor: React.FC = () => {
               content: prompt
             }
           ],
-          max_tokens: (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240,
-          temperature: (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : 0.7
+          max_tokens: (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : DEFAULT_ENGINE_PARAMS.maxTokens,
+          temperature: (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : DEFAULT_ENGINE_PARAMS.temperature
         };
       } else {
         requestBody = {
           model: modelName,
           prompt,
-          max_tokens: (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : 10240,
-          temperature: (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : 0.7
+          max_tokens: (typeof activeEngine.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : DEFAULT_ENGINE_PARAMS.maxTokens,
+          temperature: (typeof activeEngine.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : DEFAULT_ENGINE_PARAMS.temperature
         };
       }
 

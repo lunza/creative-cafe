@@ -129,4 +129,103 @@ describe('OutlineGenerator.parseOutlineResponse - Markdown 兜底解析', () => 
     expect(outline.chapters[1].title).toBe('第二章：背景揭露');
     expect(outline.chapters[1].summary).toContain('岛屿的秘密');
   });
+
+  it('章节内结构化行（关键情节点/出场人物/场景）提取到对应字段，不进散文摘要（2026-10-08 漫画导入字段为空修复）', () => {
+    const md = [
+      '# 《爱之岛》故事大纲',
+      '',
+      '## 第一章：初抵海岛的元气邂逅（第1页）',
+      '',
+      '关键情节点：莫妮卡抵达爱之岛；岛主邀请参观；莫妮卡毫无戒备答应',
+      '出场人物：莫妮卡、岛主',
+      '场景：海滩、码头',
+      '',
+      '莫妮卡穿着泳装裙抵达爱之岛，与自称经理的岛主相遇。',
+      '',
+      '## 第二章：最受欢迎的“景点”（第2页）',
+      '',
+      '关键情节点：莫妮卡被带到卧室；真相揭露',
+      '出场人物：莫妮卡、岛主',
+      '场景：卧室',
+      '',
+      '场景转到岛主住所的卧室。',
+    ].join('\n');
+
+    const outline = generator.parseOutlineResponse(md);
+    expect(outline.chapters).toHaveLength(2);
+    const ch1 = outline.chapters[0];
+    expect(ch1.keyPlotPoints).toEqual([
+      '莫妮卡抵达爱之岛',
+      '岛主邀请参观',
+      '莫妮卡毫无戒备答应',
+    ]);
+    expect(ch1.characters).toEqual(['莫妮卡', '岛主']);
+    expect(ch1.scenes).toEqual(['海滩', '码头']);
+    // 结构化行不进散文摘要
+    expect(ch1.summary).toBe('莫妮卡穿着泳装裙抵达爱之岛，与自称经理的岛主相遇。');
+    expect(ch1.summary).not.toContain('关键情节点');
+    expect(outline.chapters[1].scenes).toEqual(['卧室']);
+  });
+
+  it('无结构化行的旧版大纲：字段为空数组（向后兼容，不回归）', () => {
+    const md = [
+      '# 旧版大纲',
+      '',
+      '## 第一章：开端',
+      '',
+      '纯散文摘要，没有结构化行。',
+    ].join('\n');
+
+    const outline = generator.parseOutlineResponse(md);
+    expect(outline.chapters).toHaveLength(1);
+    expect(outline.chapters[0].keyPlotPoints).toEqual([]);
+    expect(outline.chapters[0].characters).toEqual([]);
+    expect(outline.chapters[0].scenes).toEqual([]);
+    expect(outline.chapters[0].summary).toContain('纯散文摘要');
+  });
+
+  it('结构化行兼容全角冒号与加粗包裹（AI 输出格式漂移容忍）', () => {
+    const md = [
+      '# 测试',
+      '',
+      '## 第一章：开端',
+      '',
+      '**关键情节点：** 情节A；情节B',
+      '出场人物: 甲，乙、丙',
+      '',
+      '正文。',
+    ].join('\n');
+
+    const outline = generator.parseOutlineResponse(md);
+    expect(outline.chapters[0].keyPlotPoints).toEqual(['情节A', '情节B']);
+    // 半角冒号 + 混用逗号/顿号分隔
+    expect(outline.chapters[0].characters).toEqual(['甲', '乙', '丙']);
+    expect(outline.chapters[0].summary).toBe('正文。');
+  });
+
+  it('结构化行带 Markdown 列表项前缀（- 关键情节点：…，实测 local-llm 真实输出格式）', () => {
+    const md = [
+      '# 《欢迎来到爱之岛》',
+      '',
+      '## 第一章：海滩相遇（第1页）',
+      '',
+      '- 关键情节点：莫妮卡站在爱之岛海岸沙滩上感叹海岛美景；岛主从身后搭肩出现并热情问好；岛主邀请莫妮卡赏脸参观本岛',
+      '- 出场人物：莫妮卡、岛主',
+      '- 场景：爱之岛的海岸沙滩',
+      '',
+      '莫妮卡是一只狼兽娘，尖立的狼耳和突出的口鼻部是她最醒目的地方。',
+    ].join('\n');
+
+    const outline = generator.parseOutlineResponse(md);
+    const ch = outline.chapters[0];
+    expect(ch.keyPlotPoints).toEqual([
+      '莫妮卡站在爱之岛海岸沙滩上感叹海岛美景',
+      '岛主从身后搭肩出现并热情问好',
+      '岛主邀请莫妮卡赏脸参观本岛',
+    ]);
+    expect(ch.characters).toEqual(['莫妮卡', '岛主']);
+    expect(ch.scenes).toEqual(['爱之岛的海岸沙滩']);
+    // 列表结构化行不进散文摘要
+    expect(ch.summary).toBe('莫妮卡是一只狼兽娘，尖立的狼耳和突出的口鼻部是她最醒目的地方。');
+  });
 });

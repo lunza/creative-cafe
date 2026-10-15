@@ -3,6 +3,7 @@ import path from 'path';
 import { WritingProject } from '../../../shared/types/writing.types';
 import { getProjectDir } from './WritingProjectRepository';
 import { addLog } from '../memory/chatLogService';
+import type { V2IdConsistencyReport } from '../../../shared/types/writing-v2.types';
 
 // ==================== 类型定义 ====================
 
@@ -32,6 +33,8 @@ export interface WritingOrganizeProgress {
   errors: string[];
   lastProcessedAt?: string;
   startedAt?: number | string;
+  /** 最近一次整理的 ID 一致性校验报告（旧记录无此字段，读取时缺省兼容） */
+  idReport?: V2IdConsistencyReport;
 }
 
 /**

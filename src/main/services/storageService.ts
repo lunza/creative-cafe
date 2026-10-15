@@ -4,7 +4,6 @@
  */
 
 import { ipcMain, ipcRenderer } from 'electron';
-import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from './logger';
@@ -12,6 +11,10 @@ import { getStorageManager, StorageManager } from './storageManager';
 import { CURRENT_VERSION } from './storage.types';
 import { getUserDataPath } from '../utils/appPath';
 import { pathService } from './pathService';
+import { atomicWriteJsonSync, readSettingsFile, readSettingsFileAsync } from './settingsFileIO';
+// Spec: settings-feature-optimization-report / H-5（M-6/FL-7）引擎默认单一来源；
+// M-6：完整默认设置收敛到 buildDefaultSetting()（与渲染侧 shared/settings.ts 同源）
+import { buildDefaultSetting } from '../../shared/settingDefaults';
 
 const logger = createLogger('storage');
 
@@ -30,6 +33,9 @@ const STORAGE_KEYS = {
 class StorageService {
   private storageManager: StorageManager;
   private initialized: boolean = false;
+  // L-4/ST-7：暴露初始化 Promise，供启动期读取方（setting:load）等待，
+  // 消除「冷启动立即打开设置页读到未初始化状态」的竞态窗口
+  private initializing: Promise<void>;
 
   constructor() {
     // 创建 StorageManager 时传递日志回调
@@ -41,7 +47,12 @@ class StorageService {
     this.setupIPC();
     
     // 异步初始化其他内容
-    this.initialize();
+    this.initializing = this.initialize();
+  }
+
+  /** L-4/ST-7：等待 initializeDefaultData 完成（读取方消除竞态窗口） */
+  getInitializing(): Promise<void> {
+    return this.initializing;
   }
 
   /**
@@ -103,159 +114,18 @@ class StorageService {
       const settingsResult = this.storageManager.get('settings');
       if (!settingsResult.data) {
         console.log('SETTINGS 不存在，初始化默认设置');
-        // 使用默认设置初始化
-        const defaultSetting = {
-          preset_name: 'Default',
-          aiEngines: [
-            {
-              id: 'default',
-              name: '默认引擎',
-              api_url: 'http://127.0.0.1:5000',
-              api_key: '',
-              model_name: 'llmfan46/Qwen3.5-27B-heretic-v3-no-think',
-              api_mode: 'chat_completion',
-              prompt_template: '',
-              stop_words: '',
-              max_generation_length: 1024,
-              custom_optimization_prompt: '# 请按照要求优化以下提示词模板：\n\n{{prompt}}\n\n# 优化说明\n\n- 增强了任务描述的清晰度，使其更符合SillyTavern的使用场景\n\n- 添加了更明确的格式要求，确保与SillyTavern的用户交互模式匹配\n\n- 优化了指令的逻辑结构，提高了在SillyTavern平台上的性能\n\n- 调整了提示模板的表达方式，使其更符合SillyTavern的最佳实践\n\n- 确保了提示模板与SillyTavern平台的预期用例保持一致',
-              system_prompt: '',
-              temperature: undefined,
-              max_tokens: undefined,
-              streaming: true,
-              enable_chain_of_thought: false,
-              openai_max_context: 4095,
-              names_behavior: 0,
-              send_if_empty: '',
-              impersonation_prompt: "[Write your next reply from the point of view of {{user}}, using the chat history so far as a guideline for the writing style of {{user}}. Don't write as {{char}} or system. Don't describe actions of {{char}}.]",
-              new_chat_prompt: "[Start a new Chat]",
-              new_example_chat_prompt: "[Example Chat]",
-              continue_nudge_prompt: "[Continue your last message without repeating its original content.]",
-              bias_preset_selected: "Default (none)",
-              max_context_unlocked: false,
-              wi_format: "{0}",
-              scenario_format: "{{scenario}}",
-              personality_format: "{{personality}}",
-              assistant_prefill: "",
-              assistant_impersonation: "",
-              use_sysprompt: false,
-              squash_system_messages: false,
-              media_inlining: true,
-              continue_prefill: false,
-              continue_postfix: " ",
-              seed: -1,
-              n: 1,
-              novelai_api_key: '',
-              novelai_model: 'krake-v2',
-              novelai_sampler: 'k_dpm_2',
-              novelai_cfg_scale: 7.0,
-              ai_horde_api_key: '',
-              ai_horde_model: '',
-              ai_horde_max_wait: 60,
-              ai_horde_priority: 50,
-              temp: 2,
-              temperature_last: false,
-              top_p: undefined,
-              top_k: 0,
-              top_a: 0,
-              tfs: 1,
-              epsilon_cutoff: 0,
-              eta_cutoff: 0,
-              typical_p: 1,
-              min_p: 0.1,
-              rep_pen: 1,
-              rep_pen_range: 0,
-              rep_pen_decay: 0,
-              rep_pen_slope: 1,
-              no_repeat_ngram_size: 0,
-              penalty_alpha: 0,
-              num_beams: 1,
-              length_penalty: 1,
-              min_length: 0,
-              encoder_rep_pen: 1,
-              freq_pen: 0,
-              presence_pen: 0,
-              skew: 0,
-              do_sample: true,
-              early_stopping: false,
-              dynatemp: false,
-              min_temp: 0,
-              max_temp: 2,
-              dynatemp_exponent: 1,
-              smoothing_factor: 0,
-              smoothing_curve: 1,
-              dry_allowed_length: 2,
-              dry_multiplier: 0,
-              dry_base: 1.75,
-              dry_sequence_breakers: '["\n", ":", "\"", "*"]',
-              dry_penalty_last_n: 0,
-              add_bos_token: true,
-              ban_eos_token: false,
-              skip_special_tokens: true,
-              mirostat_mode: 0,
-              mirostat_tau: 5,
-              mirostat_eta: 0.1,
-              guidance_scale: 1,
-              negative_prompt: '',
-              grammar_string: '',
-              json_schema: null,
-              json_schema_allow_empty: false,
-              banned_tokens: '',
-              sampler_priority: [
-                  "repetition_penalty", "presence_penalty", "frequency_penalty", "dry",
-                  "temperature", "dynamic_temperature", "quadratic_sampling", "top_n_sigma",
-                  "top_k", "top_p", "typical_p", "epsilon_cutoff", "eta_cutoff", "tfs",
-                  "top_a", "min_p", "mirostat", "xtc", "encoder_repetition_penalty", "no_repeat_ngram"
-              ],
-              samplers: [
-                  "penalties", "dry", "top_n_sigma", "top_k", "typ_p", "tfs_z",
-                  "typical_p", "xtc", "top_p", "adaptive_p", "min_p", "temperature"
-              ],
-              samplers_priorities: [
-                  "dry", "penalties", "no_repeat_ngram", "temperature", "top_nsigma",
-                  "top_p_top_k", "top_a", "min_p", "tfs", "eta_cutoff", "epsilon_cutoff",
-                  "typical_p", "quadratic", "xtc"
-              ],
-              ignore_eos_token: false,
-              spaces_between_special_tokens: true,
-              speculative_ngram: false,
-              sampler_order: [5, 6, 0, 1, 2, 3, 4],
-              logit_bias: [],
-              xtc_threshold: 0.1,
-              xtc_probability: 0,
-              nsigma: 0,
-              min_keep: 0,
-              extensions: {},
-              adaptive_target: -0.01,
-              adaptive_decay: 0.9,
-              rep_pen_size: 0,
-              genamt: 350,
-              max_length: 8192,
-              frequency_penalty: undefined,
-              presence_penalty: undefined,
-              use_function_calling: false,
-              auto_connect: true,
-              skip_status_check: false,
-              use_proxy: false,
-              proxy_url: 'http://localhost:7890',
-              proxy_port: 7890,
-              encrypt_api_key: false,
-              enable_access_control: false,
-              api_key_transmission: 'header'
-            }
-          ],
-          activeEngineId: 'default',
-          defaultEngineId: 'default',
-          logLevel: 'info',
-          characterPath: this.resolvePath('__USER_DATA__/data/characters'),
-          worldBookPath: this.resolvePath('__USER_DATA__/data/worldbooks'),
-          avatarPath: this.resolvePath('__USER_DATA__/data/avatars'),
-          creativePath: this.resolvePath('__USER_DATA__/data/creatives'),
-          memoryPath: this.resolvePath('__USER_DATA__/data/memories'),
-          dashboardBackgroundImage: '',
-          animationEnabled: true,
-          compactMode: false,
-          fallbackProviders: []
-        };
+        // Spec: settings-feature-optimization-report / M-6（FL-7 双默认合一）：
+        // 默认设置收敛到 shared/settingDefaults.buildDefaultSetting() 单一来源，
+        // 与渲染侧 shared/settings.ts defaultSetting 字段级一致（此前本方法内联
+        // 一份缺全部配置域的顶层默认，文件缺失时渲染/主进程「默认」理解不同）。
+        // *Path 五键解析 __USER_DATA__ 占位符后落盘（存量消费方读取时亦会解析，
+        // 此处解析保持磁盘为绝对路径的既有格式）。
+        const defaultSetting = buildDefaultSetting();
+        defaultSetting.characterPath = this.resolvePath(defaultSetting.characterPath);
+        defaultSetting.worldBookPath = this.resolvePath(defaultSetting.worldBookPath);
+        defaultSetting.avatarPath = this.resolvePath(defaultSetting.avatarPath);
+        defaultSetting.creativePath = this.resolvePath(defaultSetting.creativePath);
+        defaultSetting.memoryPath = this.resolvePath(defaultSetting.memoryPath);
         this.storageManager.set('settings', defaultSetting);
         console.log('SETTINGS 初始化成功');
       } else {
@@ -532,14 +402,20 @@ class StorageService {
   // ========== 分类方法（保持向后兼容） ==========
 
   // 直接从 settings.json 文件读取设置（兼容旧数据格式）
+  // 统一走 readSettingsFile：损坏自动恢复（备份坏文件 + 重写空对象）+ schema 迁移（H-4/H-12）
   getSettings(): any {
     try {
       const settingsPath = path.join(this.storageManager['baseDataPath'], 'settings.json');
-      if (fs.existsSync(settingsPath)) {
-        const raw = fs.readFileSync(settingsPath, 'utf-8');
-        return JSON.parse(raw);
+      // 统一读取入口内部已完成「损坏恢复 + schema 迁移」（H-4/H-12），
+      // 迁移/恢复产生变更时 needsWriteBack=true，此处原子回写。
+      const read = readSettingsFile(settingsPath, (msg, type, context) => this.sendLog(msg, type, context));
+      if (read.needsWriteBack && read.data !== null) {
+        atomicWriteJsonSync(settingsPath, read.data);
       }
-      // 回退到存储管理器
+      if (read.data !== null) {
+        return read.data;
+      }
+      // 文件不存在，回退到存储管理器
       return this.get(STORAGE_KEYS.SETTINGS);
     } catch (error) {
       console.error('读取 settings.json 失败:', error);
@@ -571,13 +447,13 @@ class StorageService {
         console.warn(`[StorageService] vector配置异常大: ${vectorConfigSize} bytes，执行清理`);
         
         // 仅保留合法配置字段，移除可能的数据字段
+        // 【M-15/S-9】vectorStoreMode 等四孤儿子键已移出白名单（无消费）
         const allowedFields = [
           'embeddingMode', 'remoteModel', 'remoteApiUrl', 'remoteApiKey',
-          'remoteApiKeyTransmission', 'localModel', 'vectorStoreMode',
+          'remoteApiKeyTransmission', 'localModel',
           'cacheEnabled', 'cacheL1Size', 'cacheL1TTL', 'cacheL2TTL',
           'defaultTopK', 'minSimilarityScore', 'contextWindowTokens',
           'autoVectorizeWorldBook', 'autoVectorizeKnowledge',
-          'autoRetrieveContext', 'contextTopK', 'contextMinScore',
           'dimension'
         ];
         
@@ -606,19 +482,13 @@ class StorageService {
   }
 
   // 直接写入 settings.json 文件（兼容旧数据格式）
+  // 【H-2 消除双写】不再自行 writeFileSync，统一收敛到 StorageManager.writeToSettingsFile
+  // 这一唯一同步原子写路径。原「本方法整文件覆盖 + set('settings') read-modify-write 二次覆盖」
+  // 的双写是 lost-update 竞态的根源；收敛为单写后，Node 单线程事件循环保证写操作不交错。
   setSettings(settings: any): void {
     try {
       // 清理配置中的向量数据
       const cleanedSettings = this.sanitizeSettings(settings);
-
-      const settingsPath = path.join(this.storageManager['baseDataPath'], 'settings.json');
-      const settingsDir = path.dirname(settingsPath);
-      if (!fs.existsSync(settingsDir)) {
-        fs.mkdirSync(settingsDir, { recursive: true });
-      }
-      fs.writeFileSync(settingsPath, JSON.stringify(cleanedSettings, null, 2), 'utf-8');
-
-      // 同时更新存储管理器中的配置
       this.set(STORAGE_KEYS.SETTINGS, cleanedSettings);
     } catch (error) {
       console.error('写入 settings.json 失败:', error);
@@ -634,19 +504,26 @@ class StorageService {
   /**
    * 异步读取 settings.json（spec §4.2 P3）。
    *
-   * 与同步 getSettings 行为一致：优先直接读 settings.json 文件，失败时回退到 StorageManager。
-   * 使用 fs.promises.readFile 替代 readFileSync。
+   * 与同步 getSettings 行为一致：统一走 readSettingsFile（损坏恢复 + schema 迁移，H-4/H-12），
+   * 文件不存在时回退到 StorageManager。
+   *
+   * 【重点标记 - L-4/ST-7】原实现名为异步实际同步——内部调用同步 readSettingsFile
+   * （readFileSync），1400+ 行 JSON 解析仍阻塞主进程事件循环，「异步」名不副实。
+   * 现改 readSettingsFileAsync（fs.promises），行为不变、I/O 真异步。写回保留
+   * atomicWriteJsonSync：写必须与唯一同步写路径（H-2）串行化，异步 rename 会
+   * 重开 lost-update 竞态窗口。
    */
   async getSettingsAsync(): Promise<any> {
     try {
       const settingsPath = path.join(this.storageManager['baseDataPath'], 'settings.json');
-      try {
-        const raw = await fsp.readFile(settingsPath, 'utf-8');
-        return JSON.parse(raw);
-      } catch {
-        // 文件不存在或读取失败，回退到存储管理器
-        return this.get(STORAGE_KEYS.SETTINGS);
+      const read = await readSettingsFileAsync(settingsPath, (msg, type, context) => this.sendLog(msg, type, context));
+      if (read.needsWriteBack && read.data !== null) {
+        atomicWriteJsonSync(settingsPath, read.data);
       }
+      if (read.data !== null) {
+        return read.data;
+      }
+      return this.get(STORAGE_KEYS.SETTINGS);
     } catch (error) {
       console.error('异步读取 settings.json 失败:', error);
       return this.get(STORAGE_KEYS.SETTINGS);
@@ -656,20 +533,13 @@ class StorageService {
   /**
    * 异步写入 settings.json（spec §4.2 P3）。
    *
-   * 与同步 setSettings 行为一致：先 sanitize，再写文件 + StorageManager。
-   * 使用 fs.promises.writeFile / mkdir 替代同步版本。
+   * 与同步 setSettings 行为一致：先 sanitize，再走唯一同步原子写路径（H-2 消除双写）。
+   * 原 fsp.writeFile 异步整文件覆盖与同步 read-modify-write 交错是竞态窗口，已移除。
    */
   async setSettingsAsync(settings: any): Promise<void> {
     try {
       // 清理配置中的向量数据
       const cleanedSettings = this.sanitizeSettings(settings);
-
-      const settingsPath = path.join(this.storageManager['baseDataPath'], 'settings.json');
-      const settingsDir = path.dirname(settingsPath);
-      await fsp.mkdir(settingsDir, { recursive: true });
-      await fsp.writeFile(settingsPath, JSON.stringify(cleanedSettings, null, 2), 'utf-8');
-
-      // 同时更新存储管理器中的配置
       this.set(STORAGE_KEYS.SETTINGS, cleanedSettings);
     } catch (error) {
       console.error('异步写入 settings.json 失败:', error);

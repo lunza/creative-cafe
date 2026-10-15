@@ -56,7 +56,7 @@ function App() {
     if (Component) {
       return <Component />;
     }
-    // 兼容原 default 行为：未配置 component 的 tab（如 test-vector）回退到 Dashboard
+    // 兼容原 default 行为：未配置 component 的 tab（如存量 localStorage 残留键）回退到 Dashboard
     return <Dashboard />;
   };
 

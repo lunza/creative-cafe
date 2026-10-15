@@ -51,8 +51,11 @@ import {
   WarningOutlined,
   CloudUploadOutlined,
 } from '@ant-design/icons';
-import { useSettingStore } from '../../stores/settingStore';
 import type { TagRagConfig } from '../../types/setting';
+// Spec: settings-feature-optimization-report / M-2, CR-2（面板骨架收敛到共享 hook；
+// 域默认值单一来源 shared/settingDefaults，消除面板内联 DEFAULT_* 复制）
+import { useSettingsPanel } from './hooks/useSettingsPanel';
+import { DEFAULT_TAG_RAG_CONFIG } from '@shared/settingDefaults';
 
 const { Text, Paragraph } = Typography;
 
@@ -62,24 +65,18 @@ const { Text, Paragraph } = Typography;
  */
 export interface TagRagSettingsRef {
   getFormValues: () => TagRagConfig | undefined;
+  /** Spec: settings-feature-optimization-report / M-1, UI-1（保存按钮脏检测：与初始化快照比较） */
+  isDirty: () => boolean;
+  /** Spec: settings-feature-optimization-report / UI-3（统一重置契约：复位为默认配置） */
+  resetFields: () => void;
+  /** Spec: settings-feature-optimization-report / M-9（保存失败后还原为 store 中上次保存的值） */
+  refreshFromStore: () => void;
 }
 
-/**
- * RAG 标签库默认配置（与 src/shared/settings.ts defaultSetting.tagRag 保持一致）。
- * 当 setting.tagRag 不存在时（旧配置迁移场景）用于初始化表单。
- */
-const DEFAULT_TAG_RAG_CONFIG: TagRagConfig = {
-  enabled: false,
-  topK: 40,
-  minScore: 0.15,
-  autoRevectorizeOnCsvChange: true,
-  autoRevectorizeOnDimensionChange: true,
-  batchSize: 500,
-  localBatchSize: 32,
-  concurrency: 3,
-  retryMaxAttempts: 3,
-  retryDelayMs: 1000,
-};
+interface TagRagSettingsProps {
+  /** Spec: M-1 — 脏状态变化时通知父组件（驱动保存按钮三态化） */
+  onDirtyChange?: (dirty: boolean) => void;
+}
 
 /** TagRag 状态快照（tagRag:getStatus 返回值的渲染进程类型） */
 interface TagRagStateSnapshot {
@@ -190,9 +187,16 @@ function getStatusDisplay(status: TagRagStateSnapshot['status']): {
  * 父组件通过 ref.current.getFormValues() 在保存时获取表单值，
  * 与 TagAutocompleteSettings 模式一致。
  */
-const TagRagSettings = forwardRef<TagRagSettingsRef>((_props, ref) => {
-  const [form] = Form.useForm<TagRagConfig>();
-  const setting = useSettingStore(s => s.setting);
+const TagRagSettings = forwardRef<TagRagSettingsRef, TagRagSettingsProps>(({ onDirtyChange }, ref) => {
+  // Spec: settings-feature-optimization-report / M-2, CR-2 — 面板骨架收敛到
+  // useSettingsPanel 共享 hook。检索测试区状态（searchQuery/searchResults 等）
+  // 不参与保存值，不进脏检测（hook 只比较表单值，天然排除）。
+  const { form, refHandle } = useSettingsPanel({
+    configKey: 'tagRag',
+    defaults: DEFAULT_TAG_RAG_CONFIG,
+    onDirtyChange,
+  });
+  useImperativeHandle(ref, () => refHandle, [refHandle]);
 
   // 当前 RAG 状态（用于状态卡片展示）
   const [status, setStatus] = useState<TagRagStateSnapshot | null>(null);
@@ -213,28 +217,6 @@ const TagRagSettings = forwardRef<TagRagSettingsRef>((_props, ref) => {
 
   // 进度事件订阅注销函数（组件卸载时调用）
   const unsubscribeProgressRef = useRef<(() => void) | null>(null);
-
-  // 暴露 getFormValues 给父组件
-  useImperativeHandle(ref, () => ({
-    getFormValues: () => {
-      const values = form.getFieldsValue(true) as Partial<TagRagConfig>;
-      // 合并默认值，避免字段缺失
-      return {
-        ...DEFAULT_TAG_RAG_CONFIG,
-        ...values,
-      } as TagRagConfig;
-    },
-  }));
-
-  // 当 setting 加载/变化时，初始化表单值
-  useEffect(() => {
-    const saved = setting?.tagRag;
-    const initialValues: TagRagConfig = {
-      ...DEFAULT_TAG_RAG_CONFIG,
-      ...(saved || {}),
-    };
-    form.setFieldsValue(initialValues);
-  }, [setting, form]);
 
   /**
    * 拉取 RAG 当前状态。

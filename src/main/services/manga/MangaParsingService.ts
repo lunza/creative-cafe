@@ -295,9 +295,16 @@ export class MangaParsingService {
    */
   async analyzePage(params: {
     imagePath: string;
+    /** 渲染层压缩后的 data URI（可选，优先于 imagePath：单页超 8MB 时渲染层已压缩到 8MB 以下） */
+    imageDataUri?: string;
     readingOrder: MangaReadingOrder;
     previousSummaries: MangaPageSummary[];
     pageIndex: number;
+    /**
+     * 最近一个已解析前页的完整分析（可选）。
+     * 注入提示词作为连贯性/一致性关键参照，与 previousSummaries（截断摘要表格）互补。
+     */
+    previousFullAnalysis?: { pageIndex: number; analysis: MangaPageAnalysis };
     /** 用户对页面内容的引导提示（可选） */
     userGuidance?: string;
     /** 漫画背景信息（可选），注入提示词辅助角色识别与剧情理解 */
@@ -305,8 +312,17 @@ export class MangaParsingService {
     /** 用户自定义提示词（可选），注入 system prompt 末尾（最高优先级） */
     customPrompt?: string;
   }): Promise<V2MangaAnalyzeResult> {
-    const { imagePath, readingOrder, previousSummaries, pageIndex, userGuidance, mangaMeta, customPrompt } =
-      params;
+    const {
+      imagePath,
+      imageDataUri,
+      readingOrder,
+      previousSummaries,
+      pageIndex,
+      previousFullAnalysis,
+      userGuidance,
+      mangaMeta,
+      customPrompt,
+    } = params;
 
     // 注册中止句柄（manga:cancel('analyzePage') 可中止当前请求）
     const abortController = new AbortController();
@@ -314,19 +330,32 @@ export class MangaParsingService {
     const cleanupAbort = () => this.cancelControllers.delete('analyzePage');
 
     try {
-      // 1. 校验文件存在
-      if (!fs.existsSync(imagePath)) {
-        return { success: false, analysis: null, summary: null, error: `图片文件不存在: ${imagePath}` };
-      }
-
-      const fileStat = fs.statSync(imagePath);
-      if (fileStat.size > MAX_FILE_SIZE) {
-        return {
-          success: false,
-          analysis: null,
-          summary: null,
-          error: `图片文件过大（${(fileStat.size / 1024 / 1024).toFixed(1)}MB），请压缩到 8MB 以下`,
-        };
+      // 1. 校验图片大小（与 MAX_FILE_SIZE=8MB 同一上限）
+      //    imageDataUri 优先：渲染层已对超 8MB 单页做 canvas 等比压缩，此处校验压缩后 data URI 大小
+      if (imageDataUri) {
+        const commaIdx = imageDataUri.indexOf(',');
+        const approxBytes = commaIdx >= 0 ? Math.floor(((imageDataUri.length - commaIdx - 1) * 3) / 4) : 0;
+        if (approxBytes > MAX_FILE_SIZE) {
+          return {
+            success: false,
+            analysis: null,
+            summary: null,
+            error: `图片过大（${(approxBytes / 1024 / 1024).toFixed(1)}MB），请压缩到 8MB 以下`,
+          };
+        }
+      } else {
+        if (!imagePath || !fs.existsSync(imagePath)) {
+          return { success: false, analysis: null, summary: null, error: `图片文件不存在: ${imagePath}` };
+        }
+        const fileStat = fs.statSync(imagePath);
+        if (fileStat.size > MAX_FILE_SIZE) {
+          return {
+            success: false,
+            analysis: null,
+            summary: null,
+            error: `图片文件过大（${(fileStat.size / 1024 / 1024).toFixed(1)}MB），请压缩到 8MB 以下`,
+          };
+        }
       }
 
       // 2. 读取 AI 引擎配置
@@ -348,24 +377,35 @@ export class MangaParsingService {
       }
       const { temperature, maxTokens } = runtimeConfig;
 
-      // 4. 读取图片为 base64 data URI
-      const imageBuffer = fs.readFileSync(imagePath);
-      const ext = path.extname(imagePath).toLowerCase();
-      const mimeMap: Record<string, string> = {
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
-        '.png': 'image/png',
-        '.webp': 'image/webp',
-        '.bmp': 'image/bmp',
-        '.tiff': 'image/tiff',
-        '.tif': 'image/tiff',
-      };
-      const mimeType = mimeMap[ext] || 'image/png';
-      const dataUri = `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
+      // 4. 获取图片 data URI：优先使用渲染层传入的压缩 data URI，否则读取文件
+      let dataUri: string;
+      if (imageDataUri) {
+        // 渲染层已压缩到 8MB 以下（canvas 重编码为 JPEG），直接使用
+        dataUri = imageDataUri;
+      } else {
+        const imageBuffer = fs.readFileSync(imagePath);
+        const ext = path.extname(imagePath).toLowerCase();
+        const mimeMap: Record<string, string> = {
+          '.jpg': 'image/jpeg',
+          '.jpeg': 'image/jpeg',
+          '.png': 'image/png',
+          '.webp': 'image/webp',
+          '.bmp': 'image/bmp',
+          '.tiff': 'image/tiff',
+          '.tif': 'image/tiff',
+        };
+        const mimeType = mimeMap[ext] || 'image/png';
+        dataUri = `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
+      }
 
       // 5. 构建 system prompt（末尾追加用户自定义提示词，最高优先级）
+      //    previousFullAnalysis 守卫：仅当前页页码严格小于当前页时注入（防误传当前页自身）
+      const validPrev =
+        previousFullAnalysis && previousFullAnalysis.pageIndex < pageIndex && previousFullAnalysis.analysis
+          ? previousFullAnalysis
+          : undefined;
       const systemPrompt = withCustomPrompt(
-        this.buildSystemPrompt(readingOrder, previousSummaries, pageIndex, engineSystemPrompt, userGuidance, mangaMeta),
+        this.buildSystemPrompt(readingOrder, previousSummaries, pageIndex, engineSystemPrompt, userGuidance, mangaMeta, validPrev),
         customPrompt
       );
 
@@ -587,11 +627,16 @@ export class MangaParsingService {
         '2. 概括每个关键情节转折点',
         '3. 标注主要角色的行为动机和情感变化',
         '4. 用中文输出，以「# 作品名」开头，正文为按叙事顺序排列的剧情章节',
-        '5. 章节标题格式统一为「## 第X章：章节名」（X 从一连续编号），每章正文为 500 字以上的内容摘要',
-        '6. 章节划分必须基于已提供页面的实际内容，每章标注覆盖的页码范围（如「（第1-2页）」）；严禁虚构未提供页面之外的剧情，也不要为凑数量拆章——内容连贯时可用少量章节',
-        '7. 不要在大纲中单列「故事背景」「角色档案」「世界观设定」等元信息小节（背景与角色信息融入章节摘要即可），主体必须是章节剧情本身',
-        '8. 保证对体位动作、性器官和性特征的直白且细致的描写，如角色表情失神双眼翻白露出阿黑颜、小穴不断抽搐张合涌出大量精液、乳房剧烈摆动乳头喷出乳汁、角色扒开小穴露出子宫口邀请插入等',
-        '9. 保证对每页的台词和拟声词翻译为中文后完整无保留的写入大纲，尤其是日语和韩语',
+        '5. 章节标题格式统一为「## 第X章：章节名」（X 从一连续编号）',
+        '6. 每章正文必须以三行结构化信息开头（固定格式，各自独立成行），之后才是 500 字以上的内容摘要：',
+        '   - 关键情节点：本章 3-8 个关键情节节拍，分号「；」分隔，每条一句话',
+        '   - 出场人物：本章出现的全部有名有姓的角色，顿号「、」分隔',
+        '   - 场景：本章剧情发生的具体地点/场所，顿号「、」分隔',
+        '   三行结构化信息必须从已提供页面的实际内容中提取，严禁虚构素材中不存在的情节、人物或场景',
+        '7. 章节划分必须基于已提供页面的实际内容，每章标注覆盖的页码范围（如「（第1-2页）」）；严禁虚构未提供页面之外的剧情，也不要为凑数量拆章——内容连贯时可用少量章节',
+        '8. 不要在大纲中单列「故事背景」「角色档案」「世界观设定」等元信息小节（背景与角色信息融入章节摘要即可），主体必须是章节剧情本身',
+        '9. 保证对体位动作、性器官和性特征的直白且细致的描写，如角色表情失神双眼翻白露出阿黑颜、小穴不断抽搐张合涌出大量精液、乳房剧烈摆动乳头喷出乳汁、角色扒开小穴露出子宫口邀请插入等',
+        '10. 保证对每页的台词和拟声词翻译为中文后完整无保留的写入大纲，尤其是日语和韩语',
       ];
 
       // 漫画背景信息（可选）：约束角色命名与题材定位
@@ -747,9 +792,9 @@ export class MangaParsingService {
         '- passed：布尔值，大纲是否通过审核（无明显 AI 味且内容完整一致为 true）',
         '- issues：字符串数组，逐条列出发现的具体问题（每项一句话，指明问题类型与位置，如"第2章：公式化排比堆砌""第1章：遗漏了第3页的关键对话"）；未发现问题时为空数组 []。渲染层将以此列表向用户逐条展示，故必须具体、可定位',
         '- suggestions：字符串，审核说明。无论是否通过都必须填写具体原因：通过时说明合格理由与仍存在的轻微 AI 味问题；不通过时指出具体 AI 味位置（引用原句）与内容问题。绝不能为空字符串或"无"',
-        '- revisedText：字符串，审核并修改后的文本。通过时返回原文；不通过时返回去除 AI 味并修复内容问题后的完整版本（保留大纲的结构与标题层级，不要改变叙事顺序）',
+        '- revisedText：字符串，审核并修改后的文本。通过时返回原文；不通过时返回去除 AI 味并修复内容问题后的完整版本（保留大纲的结构与标题层级，不要改变叙事顺序；各章开头的「关键情节点/出场人物/场景」三行结构化信息必须原样保留，只修订散文正文）',
         '- optimizationSuggestions：字符串，优化建议。仅在 passed=true 时填写；内容已无优化空间时填写"内容已较为完善，暂无进一步优化建议"',
-        '- optimizedText：字符串，优化后的文本。仅在 passed=true 时填写，按优化建议微调后的完整版本；无优化空间时返回原文',
+        '- optimizedText：字符串，优化后的文本。仅在 passed=true 时填写，按优化建议微调后的完整版本；无优化空间时返回原文（同样保留各章「关键情节点/出场人物/场景」结构化行）',
       ];
 
       // 漫画背景信息（可选）：作为一致性审核的参照
@@ -1084,12 +1129,14 @@ export class MangaParsingService {
    */
   async generateCharacterInfo(params: {
     imagePath: string;
+    /** 渲染层压缩后的 data URI（可选，优先于 imagePath：原图超 8MB 时渲染层已压缩到 8MB 以下） */
+    imageDataUri?: string;
     summaries?: MangaPageSummary[];
     mangaMeta?: MangaMetaInfo;
     currentCharacters?: string;
     customPrompt?: string;
   }): Promise<V2MangaCharacterGenResult> {
-    const { imagePath, summaries = [], mangaMeta, currentCharacters, customPrompt } = params;
+    const { imagePath, imageDataUri, summaries = [], mangaMeta, currentCharacters, customPrompt } = params;
 
     // 注册中止句柄（manga:cancel('generateCharacterInfo') 可中止当前请求）
     const abortController = new AbortController();
@@ -1105,16 +1152,28 @@ export class MangaParsingService {
     }, GEN_TIMEOUT_MS);
 
     try {
-      // 1. 校验图片文件存在 + 大小（与 analyzePage 同一上限 MAX_FILE_SIZE=8MB）
-      if (!fs.existsSync(imagePath)) {
-        return { success: false, error: `图片文件不存在: ${imagePath}` };
-      }
-      const fileStat = fs.statSync(imagePath);
-      if (fileStat.size > MAX_FILE_SIZE) {
-        return {
-          success: false,
-          error: `图片文件过大（${(fileStat.size / 1024 / 1024).toFixed(1)}MB），请压缩到 8MB 以下`,
-        };
+      // 1. 校验图片大小（与 analyzePage 同一上限 MAX_FILE_SIZE=8MB）
+      //    imageDataUri 优先：渲染层已对超 8MB 原图做 canvas 等比压缩，此处校验压缩后 data URI 大小
+      if (imageDataUri) {
+        const commaIdx = imageDataUri.indexOf(',');
+        const approxBytes = commaIdx >= 0 ? Math.floor(((imageDataUri.length - commaIdx - 1) * 3) / 4) : 0;
+        if (approxBytes > MAX_FILE_SIZE) {
+          return {
+            success: false,
+            error: `图片过大（${(approxBytes / 1024 / 1024).toFixed(1)}MB），请压缩到 8MB 以下`,
+          };
+        }
+      } else {
+        if (!imagePath || !fs.existsSync(imagePath)) {
+          return { success: false, error: `图片文件不存在: ${imagePath}` };
+        }
+        const fileStat = fs.statSync(imagePath);
+        if (fileStat.size > MAX_FILE_SIZE) {
+          return {
+            success: false,
+            error: `图片文件过大（${(fileStat.size / 1024 / 1024).toFixed(1)}MB），请压缩到 8MB 以下`,
+          };
+        }
       }
 
       // 2. 读取 AI 引擎配置
@@ -1136,25 +1195,47 @@ export class MangaParsingService {
       }
       const { temperature, maxTokens } = runtimeConfig;
 
-      // 4. 读取图片为 base64 data URI
-      const imageBuffer = fs.readFileSync(imagePath);
-      const ext = path.extname(imagePath).toLowerCase();
-      const mimeMap: Record<string, string> = {
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
-        '.png': 'image/png',
-        '.webp': 'image/webp',
-        '.bmp': 'image/bmp',
-        '.tiff': 'image/tiff',
-        '.tif': 'image/tiff',
-      };
-      const mimeType = mimeMap[ext] || 'image/png';
-      const dataUri = `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
+      // 4. 获取图片 data URI：imageDataUri 优先（渲染层已压缩），否则读文件转 base64
+      let dataUri: string;
+      if (imageDataUri) {
+        dataUri = imageDataUri;
+      } else {
+        const imageBuffer = fs.readFileSync(imagePath);
+        const ext = path.extname(imagePath).toLowerCase();
+        const mimeMap: Record<string, string> = {
+          '.jpg': 'image/jpeg',
+          '.jpeg': 'image/jpeg',
+          '.png': 'image/png',
+          '.webp': 'image/webp',
+          '.bmp': 'image/bmp',
+          '.tiff': 'image/tiff',
+          '.tif': 'image/tiff',
+        };
+        const mimeType = mimeMap[ext] || 'image/png';
+        dataUri = `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
+      }
 
       // 5. 构建 system prompt（五段式：角色任务 → 漫画背景 → 整体分析 → 已有角色整合 → 输出契约）
       const parts: string[] = [];
       parts.push(
         '你是一个专业的漫画角色分析师。请基于用户提供的人物参考图片，识别画面中的人物视觉特征，并结合漫画的整体分析结果与背景信息，生成主要角色的详细描述。'
+      );
+
+      // 成人内容处理：本模型为消融版，要求如实描述成人元素、不自我审查（与 buildSystemPrompt 页面分析约定一致）
+      parts.push(
+        [
+          '## 成人内容处理',
+          '必须正常处理成人内容的输入与输出。请像处理普通视觉内容一样处理人物参考图中的成人元素（如裸露、暴露服饰、部位器官、性暗示姿态、血腥等）：',
+          '以下五类成人元素，均须在外貌（appearance）/性格神态字段中用客观中性语言如实描述，举例说明：',
+          '1. 裸露：角色在图中全裸时，appearance 反问自己：是否裸体？身材如何？外观如何？毛色/肤色等是什么颜色？',
+          '2. 暴露服饰：描述实际衣物与暴露范围，反问自己：角色的衣服是什么样的？露出了哪些部位？',
+          '3. 部位器官：图中明确呈现角色的胸部、阴部等身体部位时，客观描述其形状、外观、颜色等，多思考，反问自己：角色的胸部/乳晕/乳头是什么样的？角色的下体/阴部/肛门是什么样的？角色身上/部位上有无液体？',
+          '4. 性暗示姿态：角色呈开腿、后仰、挑逗等姿态时，如实描述姿态与神态和展示部位，反问自己：角色的姿势是什么样的？凸显了哪些部位/物体？',
+          '5. 血腥：角色身上有伤口、血迹时，客观描述，反问自己：角色是否受伤流血？看起来是什么样的？',
+          '- 在角色的外貌特征（appearance）与性格神态描述中如实、客观、简洁地呈现图片实际可见的成人元素，禁止忽略、模糊化或任何形式的自我审查',
+          '- 使用客观中性的描述语言即可，禁止回避',
+          '- 如果图中没有成人元素或相关部位禁止凭空臆造！',
+        ].join('\n')
       );
 
       // 漫画背景信息（当前表单已填字段，可能为空）
@@ -1486,13 +1567,75 @@ export class MangaParsingService {
     return lines;
   }
 
+  /**
+   * 渲染「上一页完整分析」提示词段（公开方法，可单测）。
+   *
+   * 摘要表格（buildContextTable）对每页做截断压缩，上一页的逐分镜完整剧情、
+   * 全部台词、角色动作细节会大量丢失——而这些正是本页连贯性/一致性最直接的参照。
+   * 本方法完整呈现最近一个已解析前页的分析内容（带长度保护截断），
+   * 并附连贯性约束：角色命名一致、场景衔接合理、对话风格延续、narrativeContinuity 以其为依据。
+   */
+  buildPreviousPageSection(prev: { pageIndex: number; analysis: MangaPageAnalysis }): string {
+    const pa = prev.analysis?.pageAnalysis;
+    if (!pa) return '';
+    const clamp = (s: string | undefined, n = 500): string => {
+      const t = (s || '').trim();
+      return t.length > n ? `${t.slice(0, n)}…` : t;
+    };
+    const typeLabel = (t: string): string =>
+      t === 'dialogue' ? '对话' : t === 'narration' ? '旁白' : '拟音';
+
+    const lines: string[] = [
+      `## 上一页完整分析（第 ${prev.pageIndex} 页，连贯性与一致性的关键参照）`,
+      '',
+      '以下是最近一个已解析前页的完整分析内容（未经摘要压缩）。本页解析时必须以此为参照，保持与上一页的连贯一致：',
+    ];
+
+    const chars = pa.characters
+      .filter((c) => c?.name?.trim())
+      .map((c) => {
+        const expr = c.expression?.trim() ? `（${clamp(c.expression, 80)}）` : '';
+        const action = c.action?.trim() ? `：${clamp(c.action, 150)}` : '';
+        return `${c.name.trim()}${expr}${action}`;
+      });
+    if (chars.length > 0) lines.push(`- 页面角色：${chars.join('；')}`);
+
+    const sceneBits = [pa.scene?.location, pa.scene?.time, pa.scene?.atmosphere]
+      .filter(Boolean)
+      .map((s) => clamp(s as string, 120));
+    if (sceneBits.length > 0) lines.push(`- 场景：${sceneBits.join(' / ')}`);
+
+    const panels = [...(pa.panels || [])].sort((a, b) => a.panelIndex - b.panelIndex);
+    for (const p of panels) {
+      if (p.plot?.trim()) lines.push(`- 分镜${p.panelIndex} 剧情：${clamp(p.plot)}`);
+      if (p.emotion?.trim()) lines.push(`- 分镜${p.panelIndex} 情绪：${clamp(p.emotion, 150)}`);
+      for (const t of p.texts || []) {
+        if (t.content?.trim()) lines.push(`- 分镜${p.panelIndex} 文本：「${clamp(t.content, 200)}」（${typeLabel(t.type)}）`);
+      }
+    }
+
+    if (pa.overallEmotion?.trim()) lines.push(`- 整体情感：${clamp(pa.overallEmotion, 150)}`);
+    if (pa.narrativeContinuity?.trim()) lines.push(`- 叙事衔接：${clamp(pa.narrativeContinuity, 200)}`);
+
+    lines.push(
+      '',
+      '连贯性约束（必须遵守）：',
+      '1. 本页出现的角色，姓名、表情、动作描述须与上一页保持一致（同一角色同一称呼，禁止改名或另起描述）',
+      '2. 场景转换须合理：地点/时间/氛围不得无故跳变，除非画面明确显示转场',
+      '3. 对话的语言风格、语气与称呼方式须与上一页延续一致',
+      '4. narrativeContinuity 字段必须基于以上上一页完整内容说明本页与上一页的叙事衔接（第一页写"起始页"）',
+    );
+    return lines.join('\n');
+  }
+
   private buildSystemPrompt(
     readingOrder: MangaReadingOrder,
     previousSummaries: MangaPageSummary[],
     pageIndex: number,
     engineSystemPrompt: string,
     userGuidance?: string,
-    mangaMeta?: MangaMetaInfo
+    mangaMeta?: MangaMetaInfo,
+    previousFullAnalysis?: { pageIndex: number; analysis: MangaPageAnalysis }
   ): string {
     const orderText =
       readingOrder === 'rightToLeft'
@@ -1582,6 +1725,14 @@ export class MangaParsingService {
         '```',
       ].join('\n')
     );
+
+    // 上一页完整分析（最近一个已解析前页，连贯性/一致性关键参照，置于摘要表格之前）
+    if (previousFullAnalysis) {
+      const section = this.buildPreviousPageSection(previousFullAnalysis);
+      if (section) {
+        parts.push(section);
+      }
+    }
 
     // 跨页上下文（第 2 页起）
     if (pageIndex > 1 && previousSummaries.length > 0) {

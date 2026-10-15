@@ -19,6 +19,8 @@ import { characterService } from '../characterService';
 import { chatStorageService } from '../ChatStorageService';
 import { expressionService } from '../expressionService';
 import { getStorageService } from '../storageService';
+// Spec: settings-feature-optimization-report / M-18, N7（统一参数解析三级合并，FL-4 收口）
+import { resolveEngineParams } from '../../../shared/parameterResolver';
 import {
   buildPromptCore,
   buildExpressionPrompt,
@@ -37,6 +39,9 @@ import { contextManager } from '../ContextManager';
 import { chatVectorizationService } from '../ChatVectorizationService';
 import { chatLogService } from '../memory/chatLogService';
 import { tableEditParser } from '../memory/tableEditParser';
+// 【Phase 4 / L9 - conversation-mode-optimization-report】Token 管理：主进程精确计数服务（cl100k_base，失败自动降级字节估算）
+import { getTokenCountService } from '../TokenCountService';
+import { applyContextWindowManagement } from './contextWindowManager';
 
 // ==================== 类型定义 ====================
 
@@ -464,14 +469,24 @@ export async function runDialogueTurn(
 
     contextMessages.push({ role: 'user', content: userContent });
 
-    // 消息数软限制（对齐桌面端 TokenManagement 关闭时的安全网：默认保留最近 60 条）
-    const MAX_MESSAGES = 60;
-    let messagesToSend = contextMessages;
-    if (messagesToSend.length > MAX_MESSAGES) {
-      messagesToSend = messagesToSend.slice(-MAX_MESSAGES);
-      if (messagesToSend.length > 0 && messagesToSend[0].role === 'assistant') {
-        messagesToSend = messagesToSend.slice(1);
-      }
+    // 【Phase 4 / L9 - conversation-mode-optimization-report】上下文窗口管理（对齐桌面端 ConfigPanel Token 管理核心功能）
+    // 纯函数实现见 contextWindowManager.ts（消息条数上限 → Token 预算截断 → 最少保留保底 → 成对保护；
+    // 关闭时保留 60 条安全网）。countTokens 注入主进程 TokenCountService（cl100k_base 精确计数）。
+    const lanTokenService = getTokenCountService();
+    // let：下游辅助模式会在最后一条 user 消息上注入 tagReminder（重新赋值）
+    let messagesToSend = applyContextWindowManagement(
+      contextMessages,
+      {
+        enabled: sessionConfig.tokenManagementEnabled === true,
+        maxContextTokens: sessionConfig.maxContextTokens,
+        reservedForResponse: sessionConfig.reservedForResponse,
+        minMessagesToKeep: sessionConfig.minMessagesToKeep,
+        maxMessagesToKeep: sessionConfig.maxMessagesToKeep,
+      },
+      (text: string) => lanTokenService.countTokens(text)
+    );
+    if (sessionConfig.tokenManagementEnabled === true) {
+      console.log(`[LanDialogue] Token 管理已启用：${contextMessages.length} 条消息截断为 ${messagesToSend.length} 条`);
     }
 
     // ---- 4.5 RAG 检索（Spec: fix-android-chat-feature-parity / Task 3，失败不阻塞） ----
@@ -624,24 +639,33 @@ export async function runDialogueTurn(
       ? baseUrl
       : `${baseUrl}/v1/chat/completions`;
 
-    // temperature / top_p / max_tokens：会话配置值优先，引擎配置回退（Spec Task 2）
-    const temperature = Number(cp.temperature ?? engine.temperature ?? 0.8);
+    // 【重点标记 - FL-4 引擎级采样字段不消费修复 + M-18/N7 统一参数解析】
+    // 此前仅消费会话级 customParameters（cp.*），引擎配置的 frequency_penalty /
+    // presence_penalty / dry_* / top_k / min_p 等采样字段全部不进请求体。
+    // 现统一走 resolveEngineParams 三级合并（会话级 cp > 引擎级 > 默认值）：
+    // - temperature：cp > engine > 0.8
+    // - max_tokens：cp > engine > DEFAULT_ENGINE_PARAMS.maxTokens（原「0 = 不限制」
+    //   语义废弃，统一为「0/缺失回退 10240」，与桌面端 ChatEngine / 世界书链路一致）
+    // - 采样参数：cp > engine，两侧均缺失则不注入（后端自行默认）
+    const resolved = resolveEngineParams(engine, cp);
     const requestBody: Record<string, unknown> = {
       model: engine.model_name,
-      temperature: isNaN(temperature) ? 0.8 : temperature,
+      temperature: resolved.temperature,
       stream: true,
       messages: [
         { role: 'system', content: systemPrompt },
         ...messagesToSend.map(m => ({ role: m.role, content: m.content })),
       ],
     };
-    const topP = cp.top_p !== undefined ? Number(cp.top_p) : engine.top_p;
-    if (topP !== undefined && !isNaN(Number(topP))) {
-      requestBody.top_p = Number(topP);
+    if (resolved.top_p !== undefined) {
+      requestBody.top_p = resolved.top_p;
     }
-    const maxTokens = cp.max_tokens !== undefined ? cp.max_tokens : engine.max_tokens;
-    if (typeof maxTokens === 'number' && maxTokens > 0) {
-      requestBody.max_tokens = maxTokens; // 0 = 不限制（对齐桌面端语义）
+    requestBody.max_tokens = resolved.max_tokens;
+    if (resolved.top_k !== undefined) {
+      requestBody.top_k = resolved.top_k;
+    }
+    if (resolved.min_p !== undefined) {
+      requestBody.min_p = resolved.min_p;
     }
 
     // 思考模式注入（2026-09-08 对齐桌面端 ChatEngine：llama-server 仅识别嵌套
@@ -671,20 +695,31 @@ export async function runDialogueTurn(
       requestBody.stop = supportsStopArray ? stopSequences : stopSequences[0];
     }
 
-    // 防重复采样参数（Spec: fix-android-chat-parity-v3；会话配置值优先，对齐桌面端防重复预设三档写入的参数）
-    if (typeof cp.frequency_penalty === 'number') {
-      requestBody.frequency_penalty = cp.frequency_penalty;
+    // 防重复采样参数（Spec: fix-android-chat-parity-v3；M-18/N7 三级合并：
+    // 会话配置值优先，引擎级配置回退——FL-4 修复前引擎级字段完全不消费）
+    if (resolved.frequency_penalty !== undefined) {
+      requestBody.frequency_penalty = resolved.frequency_penalty;
     }
-    if (typeof cp.presence_penalty === 'number') {
-      requestBody.presence_penalty = cp.presence_penalty;
+    if (resolved.presence_penalty !== undefined) {
+      requestBody.presence_penalty = resolved.presence_penalty;
+    }
+    if (resolved.repetition_penalty !== undefined) {
+      requestBody.repetition_penalty = resolved.repetition_penalty;
+    }
+    if (resolved.no_repeat_ngram_size !== undefined) {
+      requestBody.no_repeat_ngram_size = resolved.no_repeat_ngram_size;
     }
     // DRY 采样仅对声明支持的后端注入（对齐桌面端 ParameterPanel 的 supportsDrySampler 门控）
-    if (
-      typeof cp.dry_multiplier === 'number' &&
-      cp.dry_multiplier > 0 &&
-      (engine as any).capabilities?.supportsDrySampler === true
-    ) {
-      requestBody.dry_multiplier = cp.dry_multiplier;
+    if ((engine as any).capabilities?.supportsDrySampler === true) {
+      if (resolved.dry_multiplier !== undefined && resolved.dry_multiplier > 0) {
+        requestBody.dry_multiplier = resolved.dry_multiplier;
+      }
+      if (resolved.dry_base !== undefined) {
+        requestBody.dry_base = resolved.dry_base;
+      }
+      if (resolved.dry_allowed_length !== undefined) {
+        requestBody.dry_allowed_length = resolved.dry_allowed_length;
+      }
     }
 
     const requestHeaders: Record<string, string> = { 'Content-Type': 'application/json' };

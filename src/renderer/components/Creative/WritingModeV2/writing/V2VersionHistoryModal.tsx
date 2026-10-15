@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Button, Empty, Input, Modal, Popconfirm, Space, Tag, message, theme } from 'antd';
 import { HistoryOutlined, SaveOutlined, RollbackOutlined } from '@ant-design/icons';
 import type { WritingProject, ChapterVersion } from '../../../../../shared/types/writing-v2.types';
+import { formatFullTimestamp } from '@shared/utils/timeFormat';
 import { getWritingV2API } from '../../../../services/writingV2Service';
 import { useV2ProjectStore } from '../stores/useV2ProjectStore';
 
@@ -16,11 +17,7 @@ interface V2VersionHistoryModalProps {
   onContentRestored: (content: string) => void;
 }
 
-function formatTimestamp(ts: number): string {
-  const d = new Date(ts);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
+// 【Phase 3 / L2 - conversation-mode-optimization-report】本地 formatTimestamp 已迁移到 shared/utils/timeFormat（formatFullTimestamp）
 
 function previewOf(content: string): string {
   const line = (content || '').replace(/\s+/g, ' ').trim();
@@ -173,7 +170,7 @@ const V2VersionHistoryModal: React.FC<V2VersionHistoryModalProps> = ({
             >
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-                  <span style={{ fontWeight: 600 }}>{formatTimestamp(v.timestamp)}</span>
+                  <span style={{ fontWeight: 600 }}>{formatFullTimestamp(v.timestamp)}</span>
                   <span style={{ color: token.colorTextTertiary }}>{v.content.length} 字</span>
                   {v.note && (
                     <Tag style={{ marginInlineEnd: 0, fontSize: 11 }}>{v.note}</Tag>

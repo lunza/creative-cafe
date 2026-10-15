@@ -7,7 +7,6 @@ export interface VectorDefaults {
   remoteApiKeyTransmission?: 'header' | 'body';
   localModel?: string;
   dimension?: 1024 | 2560 | 4096;
-  vectorStoreMode: 'sqlite-vec';
   cacheEnabled: boolean;
   cacheL1Size: number;
   cacheL1TTL: number;

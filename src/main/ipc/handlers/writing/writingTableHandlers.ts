@@ -21,6 +21,8 @@ import {
 } from '../../../services/writing/writingTemplateRegistry';
 import { ModelConfig } from '../../../../shared/types/writing.types';
 import type { WritingTableTemplate } from '../../../../shared/constants/writingTableTemplates';
+import { loadTableData } from '../../../services/writing/WritingTableRepository';
+import { validateIdConsistency } from '../../../services/writing/IdConsistencyValidator';
 
 export function registerWritingTableHandlers(): void {
   // ========== 表格数据 CRUD ==========
@@ -276,6 +278,20 @@ export function registerWritingTableHandlers(): void {
       return { success: true, status };
     } catch (error) {
       return { success: false, status: [], error: error instanceof Error ? error.message : '获取章节状态失败' };
+    }
+  });
+
+  // ID 一致性按需重扫：只读校验，不改数据、不触发整理
+  ipcMain.handle('writing:table:getIdConsistencyReport', async (_event, projectId: string) => {
+    try {
+      const tableData = loadTableData(projectId);
+      if (!tableData || !tableData.sheets || tableData.sheets.length === 0) {
+        return { success: false, error: '表格数据不存在，请先绑定模板并整理' };
+      }
+      const report = validateIdConsistency(tableData);
+      return { success: true, report };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'ID 一致性校验失败' };
     }
   });
 

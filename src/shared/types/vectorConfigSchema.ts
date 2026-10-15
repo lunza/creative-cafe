@@ -14,8 +14,10 @@
  * 设计原则：
  * - 使用 `readonly string[]` 类型，避免与 `VectorConfig` 接口强耦合
  *   （settings.json 中可能存在尚未在 `VectorConfig` 中声明的 legacy 字段，
- *   如 `remoteApiKeyTransmission`、`vectorStoreMode` 等，这些字段同样合法）
- * - 消费方迁移由后续任务处理，当前仅创建 shared 新定义
+ *   如 `remoteApiKeyTransmission` 等，这些字段同样合法）
+ * - 【M-15/S-9】vectorStoreMode/autoRetrieveContext/contextTopK/contextMinScore
+ *   四个孤儿子键已从白名单移除（全仓无消费），存量磁盘值由
+ *   settingMigrations v3 迁移钩子剥离
  */
 
 /**
@@ -52,10 +54,6 @@ export const FORBIDDEN_VECTOR_FIELDS: readonly string[] = [
  * 注意：以下字段虽未在 `VectorConfig` 接口中声明，但属于 settings.json
  * 中实际存在的 legacy / 扩展字段，不应在清理时被误删：
  * - `remoteApiKeyTransmission`：API Key 传输方式（header / body）
- * - `vectorStoreMode`：向量存储模式
- * - `autoRetrieveContext`：是否自动检索上下文
- * - `contextTopK`：上下文检索 topK
- * - `contextMinScore`：上下文检索最小相似度
  */
 export const ALLOWED_VECTOR_CONFIG_FIELDS: readonly string[] = [
   // 嵌入模式与模型
@@ -66,8 +64,6 @@ export const ALLOWED_VECTOR_CONFIG_FIELDS: readonly string[] = [
   'remoteApiUrl',
   'remoteApiKey',
   'remoteApiKeyTransmission',
-  // 向量存储模式
-  'vectorStoreMode',
   // 缓存配置
   'cacheEnabled',
   'cacheL1Size',
@@ -80,10 +76,6 @@ export const ALLOWED_VECTOR_CONFIG_FIELDS: readonly string[] = [
   // 自动向量化开关
   'autoVectorizeWorldBook',
   'autoVectorizeKnowledge',
-  // 上下文自动检索（legacy / 扩展字段）
-  'autoRetrieveContext',
-  'contextTopK',
-  'contextMinScore',
   // 向量维度
   'dimension',
 ];

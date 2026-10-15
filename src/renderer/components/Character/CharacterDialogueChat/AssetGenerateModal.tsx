@@ -56,6 +56,12 @@ import {
   genTraitId,
 } from '@shared/types';
 import type { CategorizedTrait, CharacterTraitItem, TraitCategory } from '@shared/types';
+// 【Phase 3 / L2 - conversation-mode-optimization-report】特征去重改用共享工具
+import { dedupeTraitsByText } from '@shared/utils/traitDedup';
+// 【Phase 3 / L3 - conversation-mode-optimization-report】SD 配置加载改用共享工具
+import { loadSdWebuiConfig } from '@shared/utils/sdConfigLoader';
+// 【Phase 3 / L8 - conversation-mode-optimization-report】SD 请求排队（同时最多 1 个）
+import { enqueueSdRequest } from '@shared/utils/sdRequestQueue';
 import type { SDWebuiConfig } from '../../../types/setting';
 import LoraSelectModal from './LoraSelectModal';
 import SizeSelector from './SizeSelector';
@@ -514,26 +520,25 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
   // （sdGenerationService.applyTraitsAndLora 会按 weight 格式化为 (text:weight) 语法）。
   const enabledTraitTexts: Array<{ text: string; weight?: number }> = useMemo(
     () =>
-      effectiveTraits
-        .filter(
-          (t) =>
-            t.enabled &&
-            (!isNudeSlot || !NUDE_FILTER_CATEGORY_IDS.has(t.categoryId)) &&
-            !(isExpressionMode && t.categoryId === 'expression'),
-        )
-        .map((t) => ({ text: t.text, weight: t.weight }))
-        // ⚠️ 【重点标记 - SD 生成前去重】2026-08-07 用户反馈：
-        // 若特征列表存在重复 tag（如两个 dog_girl），未去重直接拼接会导致 SD 对该 tag
-        // 多次加权，影响生成质量。此处对 text 做大小写不敏感去重（保留首次出现的项，
-        // 维持原有顺序），与 handleApplyGeneratedTraits 的去重 key 策略一致。
-        // 同时让 baseTraits（传给 generateTraitPrompts 的 LLM 上下文）也去重，
-        // 避免 LLM 因看到重复上下文而生成重复 tag。
-        // 【Spec: add-sdxl-prompt-weight-support / Task 3.1】去重 key 仍为 text
-        // （不带权重语法），权重不影响去重；保留首次出现项的 weight。
-        .filter((item, _index, arr) => {
-          const key = item.text.trim().toLowerCase();
-          return arr.findIndex((t) => t.text.trim().toLowerCase() === key) === _index;
-        }),
+      // ⚠️ 【重点标记 - SD 生成前去重】2026-08-07 用户反馈：
+      // 若特征列表存在重复 tag（如两个 dog_girl），未去重直接拼接会导致 SD 对该 tag
+      // 多次加权，影响生成质量。对 text 做大小写不敏感去重（保留首次出现的项，
+      // 维持原有顺序），与 handleApplyGeneratedTraits 的去重 key 策略一致。
+      // 同时让 baseTraits（传给 generateTraitPrompts 的 LLM 上下文）也去重，
+      // 避免 LLM 因看到重复上下文而生成重复 tag。
+      // 【Spec: add-sdxl-prompt-weight-support / Task 3.1】去重 key 仍为 text
+      // （不带权重语法），权重不影响去重；保留首次出现项的 weight。
+      // 【Phase 3 / L2 - conversation-mode-optimization-report】去重改用 shared/utils/traitDedup
+      dedupeTraitsByText(
+        effectiveTraits
+          .filter(
+            (t) =>
+              t.enabled &&
+              (!isNudeSlot || !NUDE_FILTER_CATEGORY_IDS.has(t.categoryId)) &&
+              !(isExpressionMode && t.categoryId === 'expression'),
+          )
+          .map((t) => ({ text: t.text, weight: t.weight }))
+      ),
     [effectiveTraits, isNudeSlot, isExpressionMode],
   );
 
@@ -679,17 +684,11 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
     (async () => {
       try {
         // 1. 加载 SD 设置
+        // 【Phase 3 / L3 - conversation-mode-optimization-report】改用 shared/utils/sdConfigLoader
         let config: SDWebuiConfig = DEFAULT_SD_CONFIG;
-        try {
-          const settingResult = await window.electronAPI.setting.load();
-          if (settingResult?.success && settingResult.setting?.sdWebui) {
-            config = { ...DEFAULT_SD_CONFIG, ...settingResult.setting.sdWebui };
-          }
-        } catch (e) {
-          console.warn(
-            '[AssetGenerateModal] 加载 SD 设置失败，使用默认值:',
-            e,
-          );
+        const loadedSdConfig = await loadSdWebuiConfig();
+        if (Object.keys(loadedSdConfig).length > 0) {
+          config = { ...DEFAULT_SD_CONFIG, ...loadedSdConfig };
         }
         if (cancelled) return;
         setSdConfig(config);
@@ -1201,18 +1200,19 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
       // 本质是在已有角色图基础上变换表情，img2img 才能保持人物一致性。
       let result: { success: boolean; imageBase64?: string; error?: string; warning?: string };
 
+      // 【Phase 3 / L8 - conversation-mode-optimization-report】SD 请求排队（同时最多 1 个）
       if (mode === 'single-expression') {
         // 表情模式：img2img，从角色卡提取基底图后基于表情 prompt 变换
-        result = await window.electronAPI.sd.generateExpression({
+        result = await enqueueSdRequest(() => window.electronAPI.sd.generateExpression({
           characterCardPath,
           emotionKey: mode, // 仅用于日志识别
           prompt: promptToUse,
           negativePrompt: negativePromptToUse,
           options: buildSdOptions(),
-        });
+        }));
       } else {
         // 素材模式（illustration / general / three-view）：纯文生图（prompt + LoRA）
-        result = await window.electronAPI.sd.generateTxt2Img({
+        result = await enqueueSdRequest(() => window.electronAPI.sd.generateTxt2Img({
           endpoint: sdConfig.endpoint,
           prompt: promptToUse,
           negativePrompt: negativePromptToUse,
@@ -1221,7 +1221,7 @@ const AssetGenerateModal: React.FC<AssetGenerateModalProps> = ({
             ...buildSdOptions(),
             sourceContext: { source: 'asset-manager' as const },
           },
-        });
+        }));
       }
 
       if (result?.success && result.imageBase64) {

@@ -2,50 +2,31 @@ import React, { useState, useEffect, useCallback, useMemo, forwardRef, useImpera
 import { Card, Form, Input, Select, Switch, InputNumber, Button, Space, message, Divider, Tag, Collapse, Tooltip, Alert, AutoComplete } from 'antd';
 import { CheckCircleOutlined, CloseCircleOutlined, SyncOutlined, SettingOutlined, CloudServerOutlined, DesktopOutlined, DatabaseOutlined, QuestionCircleOutlined, SearchOutlined, StopOutlined } from '@ant-design/icons';
 import { useVectorStore } from '../../stores/vectorStore';
-import { useSettingStore } from '../../stores/settingStore';
 import { rendererEmbeddingService } from '../../services/rendererEmbeddingService';
-import type { EmbeddingMode, VectorConfigGroup, VectorDefaults } from '../../types/vectorConfig';
+import type { EmbeddingMode, VectorConfigGroup } from '../../types/vectorConfig';
+import type { AppSetting } from '../../types/setting';
+// Spec: settings-feature-optimization-report / M-2, CR-2（面板骨架收敛到共享 hook；
+// 域默认值单一来源 shared/settingDefaults，消除面板内联 DEFAULT_CONFIGS 复制）
+import { useSettingsPanel } from '../Settings/hooks/useSettingsPanel';
+import { DEFAULT_VECTOR_CONFIGS } from '@shared/settingDefaults';
 
 const { Option } = Select;
 const { Panel } = Collapse;
 
 export interface VectorConfigPanelRef {
   getFormValues: () => any;
+  /** Spec: settings-feature-optimization-report / M-1, UI-1（保存按钮脏检测：与初始化快照比较） */
+  isDirty: () => boolean;
+  /** Spec: settings-feature-optimization-report / UI-3（统一重置契约：复位为默认配置） */
+  resetFields: () => void;
+  /** Spec: settings-feature-optimization-report / M-9（保存失败后还原为 store 中上次保存的值） */
+  refreshFromStore: () => void;
 }
 
-// 默认配置常量
-const DEFAULT_CONFIGS: Record<'remote' | 'local', VectorDefaults> = {
-  remote: {
-    remoteModel: 'text-embedding-3-small',
-    remoteApiUrl: 'https://api.openai.com/v1/embeddings',
-    remoteApiKey: '',
-    vectorStoreMode: 'sqlite-vec',
-    cacheEnabled: true,
-    cacheL1Size: 1000,
-    cacheL1TTL: 300,
-    cacheL2TTL: 3600,
-    defaultTopK: 5,
-    minSimilarityScore: 0.7,
-    contextWindowTokens: 4096,
-    autoVectorizeWorldBook: true,
-    autoVectorizeKnowledge: true,
-    dimension: 4096,
-  },
-  local: {
-    localModel: 'onnx-community/Qwen3-Embedding-0.6B-ONNX',
-    vectorStoreMode: 'sqlite-vec',
-    cacheEnabled: true,
-    cacheL1Size: 2000,
-    cacheL1TTL: 600,
-    cacheL2TTL: 7200,
-    defaultTopK: 8,
-    minSimilarityScore: 0.6,
-    contextWindowTokens: 8192,
-    autoVectorizeWorldBook: true,
-    autoVectorizeKnowledge: true,
-    dimension: 1024,
-  },
-};
+interface VectorConfigPanelProps {
+  /** Spec: M-1 — 脏状态变化时通知父组件（驱动保存按钮三态化） */
+  onDirtyChange?: (dirty: boolean) => void;
+}
 
 // 本地模型 → 向量维度映射（用于本地模型切换时自动联动 dimension 字段）
 // 维度来源：Qwen3-Embedding 官方模型卡（0.6B→1024, 4B→2560, 8B→4096）
@@ -93,11 +74,16 @@ const MODE_FIELD_MAP: Record<EmbeddingMode, string[]> = {
   disabled: [],
 };
 
-const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
-  // TODO(perf): 整体订阅，待拆分为 selector（6 字段，>5 暂缓）
-  const { mode, isConnected, dimension, loading, testConnection, testStorage } = useVectorStore();
-  const setting = useSettingStore(s => s.setting);
-  const [form] = Form.useForm();
+const VectorConfigPanel = forwardRef<VectorConfigPanelRef, VectorConfigPanelProps>(({ onDirtyChange }, ref) => {
+  // Spec: settings-feature-optimization-report / M-12, PF-3（整体订阅拆为逐字段 selector：
+  // vectorStore 其他字段（totalVectors/error/scope 等）变化不再触发本面板重渲染；
+  // setter 引用稳定，不会引发额外重渲染）
+  const mode = useVectorStore(s => s.mode);
+  const isConnected = useVectorStore(s => s.isConnected);
+  const dimension = useVectorStore(s => s.dimension);
+  const loading = useVectorStore(s => s.loading);
+  const testConnection = useVectorStore(s => s.testConnection);
+  const testStorage = useVectorStore(s => s.testStorage);
   const [activeEmbeddingMode, setActiveEmbeddingMode] = useState<EmbeddingMode>('remote');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [testResultDetail, setTestResultDetail] = useState<any>(null);
@@ -110,49 +96,37 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
   const [modelOptions, setModelOptions] = useState<{ label: string; value: string }[]>([]);
   const [modelLoading, setModelLoading] = useState(false);
 
-  useImperativeHandle(ref, () => ({
-    getFormValues: () => form.getFieldsValue(),
-  }));
-
-  const getInitialValues = useCallback((embeddingMode: EmbeddingMode): any => {
-    const saved = setting?.vector || {};
-
-    // 迁移旧模型名到新模型名
-    const migrated: any = { ...saved };
-    if (migrated.localModel && MODEL_NAME_MIGRATION[migrated.localModel]) {
-      migrated.localModel = MODEL_NAME_MIGRATION[migrated.localModel];
-    }
-
-    // disabled 模式：不合并 DEFAULT_CONFIGS（无默认值），仅使用已保存配置 + embeddingMode
-    if (embeddingMode === 'disabled') {
+  // Spec: M-2/CR-2 — 骨架收敛到共享 hook。个性化钩子：
+  // - buildInitialValues：按 embeddingMode 选默认集 + 旧模型名迁移 + disabled 分支不合并默认
+  // - buildResetValues：重置固定回到 remote 默认集（不跟随当前模式）
+  // - onInitialized/onResetExtras：同步 activeEmbeddingMode 状态
+  const { form, refHandle } = useSettingsPanel<NonNullable<AppSetting['vector']>>({
+    configKey: 'vector',
+    defaults: DEFAULT_VECTOR_CONFIGS[activeEmbeddingMode === 'local' ? 'local' : 'remote'],
+    onDirtyChange,
+    buildInitialValues: (saved) => {
+      const migrated = { ...(saved || {}) };
+      if (migrated.localModel && MODEL_NAME_MIGRATION[migrated.localModel]) {
+        migrated.localModel = MODEL_NAME_MIGRATION[migrated.localModel];
+      }
+      const mode = (migrated.embeddingMode as EmbeddingMode) || 'remote';
+      if (mode === 'disabled') {
+        return { embeddingMode: mode, ...migrated };
+      }
       return {
-        embeddingMode,
+        embeddingMode: mode,
+        ...DEFAULT_VECTOR_CONFIGS[mode === 'local' ? 'local' : 'remote'],
         ...migrated,
       };
-    }
-
-    const defaults = DEFAULT_CONFIGS[embeddingMode];
-    return {
-      embeddingMode,
-      ...defaults,
-      ...migrated,
-    };
-  }, [setting]);
-
-  const initializeForm = useCallback((embeddingMode: EmbeddingMode) => {
-    const initialValues = getInitialValues(embeddingMode);
-    form.setFieldsValue(initialValues);
-    setActiveEmbeddingMode(embeddingMode);
-  }, [form, getInitialValues]);
-
-  useEffect(() => {
-    if (setting?.vector) {
-      const currentMode = (setting.vector.embeddingMode as EmbeddingMode) || 'remote';
-      initializeForm(currentMode);
-    } else {
-      initializeForm('remote');
-    }
-  }, [setting, form, initializeForm]);
+    },
+    buildResetValues: () => ({ embeddingMode: 'remote', ...DEFAULT_VECTOR_CONFIGS.remote }),
+    onInitialized: (initialValues) => {
+      setActiveEmbeddingMode((initialValues.embeddingMode as EmbeddingMode) || 'remote');
+    },
+    onResetExtras: () => setActiveEmbeddingMode('remote'),
+  });
+  // 暴露 ref 契约给父组件（Spec: M-1/UI-1 + UI-3 + M-9）
+  useImperativeHandle(ref, () => refHandle, [refHandle]);
 
   const handleModeChange = useCallback(async (newMode: EmbeddingMode) => {
     // disabled 模式：仅更新 embeddingMode 字段，不修改其他字段（保留用户已填值便于切换回来），不执行维度推断
@@ -162,8 +136,8 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
       return;
     }
 
-    const currentValues = form.getFieldsValue();
-    const newDefaults = DEFAULT_CONFIGS[newMode];
+    const currentValues = form.getFieldsValue() as Record<string, any>;
+    const newDefaults = DEFAULT_VECTOR_CONFIGS[newMode] as Record<string, any>;
 
     const preservedValues: Record<string, any> = {
       embeddingMode: newMode,
@@ -191,7 +165,7 @@ const VectorConfigPanel = forwardRef<VectorConfigPanelRef>((_props, ref) => {
     // 本地模式：按所选 localModel 推导维度（0.6B→1024, 4B→2560, 8B→4096），
     // 未知模型回退到 0.6B 默认 1024；远程模式默认 4096。
     if (newMode === 'local') {
-      const localModel = (preservedValues.localModel as string) || DEFAULT_CONFIGS.local.localModel || '';
+      const localModel = (preservedValues.localModel as string) || DEFAULT_VECTOR_CONFIGS.local.localModel || '';
       preservedValues.dimension = LOCAL_MODEL_DIMENSIONS[localModel] || 1024;
     } else {
       preservedValues.dimension = 4096;

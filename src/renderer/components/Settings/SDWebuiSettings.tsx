@@ -1,88 +1,35 @@
-import { forwardRef, useImperativeHandle, useState, useEffect, useCallback, useMemo } from 'react';
+import { forwardRef, useImperativeHandle, useState, useCallback, useMemo } from 'react';
 import { Card, Form, Input, Select, AutoComplete, Button, Slider, InputNumber, Switch, Tooltip, Alert, Space, Collapse, Radio, message } from 'antd';
 import { ApiOutlined, SyncOutlined, QuestionCircleOutlined, SettingOutlined } from '@ant-design/icons';
 import { useSettingStore } from '../../stores/settingStore';
 import { SDWebuiConfig } from '../../types/setting';
+// Spec: settings-feature-optimization-report / M-2, CR-2（面板骨架收敛到共享 hook；
+// 域默认值单一来源 shared/settingDefaults，消除面板内联 DEFAULT_* 复制）
+import { useSettingsPanel } from './hooks/useSettingsPanel';
+import { DEFAULT_SD_WEBUI_CONFIG } from '@shared/settingDefaults';
 
 // Spec: add-ai-expression-generation / Task 6
 
 /**
  * SDWebuiSettings 暴露给父组件的 ref 接口。
- * 与 VectorConfigPanelRef 一致：通过 getFormValues() 取出表单当前值，
- * 由 Settings.tsx 的 handleSave 合并到 updatedSetting.sdWebui 中保存。
+ * 通过 getFormValues() 取出表单当前值，由 Settings.tsx 的 handleSave 合并到
+ * updatedSetting.sdWebui 中保存；isDirty/resetFields/refreshFromStore 支撑
+ * 保存三态化（M-1）、统一重置（UI-3）、保存失败回滚（M-9）。
  */
 export interface SDWebuiSettingsRef {
   getFormValues: () => SDWebuiConfig | undefined;
+  /** Spec: settings-feature-optimization-report / M-1, UI-1（保存按钮脏检测：与初始化快照比较） */
+  isDirty: () => boolean;
+  /** Spec: settings-feature-optimization-report / UI-3（统一重置契约：复位为默认配置） */
+  resetFields: () => void;
+  /** Spec: settings-feature-optimization-report / M-9（保存失败后还原为 store 中上次保存的值） */
+  refreshFromStore: () => void;
 }
 
-/**
- * SD WebUI 默认配置（与 src/shared/settings.ts defaultSetting.sdWebui 保持一致）。
- * 当 setting.sdWebui 不存在时（旧配置迁移场景）用于初始化表单。
- */
-const DEFAULT_SD_WEBUI_CONFIG: SDWebuiConfig = {
-  endpoint: 'http://localhost:7860',
-  model: '',
-  denoisingStrength: 0.55,
-  steps: 28,
-  cfgScale: 7,
-  sampler: 'DPM++ 3M SDE',
-  scheduler: 'Karras',
-  clipSkip: 2,
-  adetailerEnabled: true,
-  // 【重点标记 - 特征携带机制（Spec: add-asset-and-trait-management / Task 5）】
-  // 默认模板含 {traits} 与 {emotion} 两个占位符；与 src/shared/settings.ts defaultSetting.sdWebui 保持一致
-  positivePromptTemplate: 'portrait, {traits}, looking at viewer, simple background, {emotion}, high quality, best quality, masterpiece, detailed face',
-  customNegativePrompt: '',
-  // ADetailer 高级参数默认值（与 sdGenerationService ADETAILER_* 常量一致）
-  // 【重点标记 - ADetailer 参数优化（2026-07-29）】表情图模糊修复：
-  // 降低降噪强度、增大蒙版模糊/膨胀、提高修复分辨率
-  adModel: 'face_yolov8n.pt',
-  adConfidence: 0.3,
-  adDenoisingStrength: 0.3,
-  adMaskBlur: 8,
-  adDilateErode: 8,
-  adInpaintOnlyMasked: true,
-  adInpaintOnlyMaskedPadding: 64,
-  adUseInpaintWidthHeight: true,
-  adInpaintWidth: 1024,
-  adInpaintHeight: 1024,
-  adUseSteps: true,
-  adSteps: 30,
-  adUseCfgScale: true,
-  adCfgScale: 5.0,
-  adUseSampler: true,
-  adSampler: 'DPM++ 2M SDE',
-  adScheduler: 'Use same scheduler',
-  // 【重点标记 - ADetailer 面部修复专用参数（2026-07-29 源码核验）】
-  adNegativePrompt: '',
-  adUseNoiseMultiplier: true,
-  adNoiseMultiplier: 1.0,
-  // 【重点标记 - Furry/拟人生物面部识别扩展（2026-08-07）】
-  // 仅 YOLO-World 系列模型生效，空字符串=使用模型默认 COCO 80 类。
-  adModelClasses: '',
-  // NL 模型相关（Spec: integrate-nl-driven-sd-models / Task 2）
-  modelType: 'sdxl',
-  nlPromptTemplate: 'A portrait of a character. {traits} The character has {emotion}, looking at the viewer. High quality, detailed.',
-  txt2imgWidth: 1024,
-  txt2imgHeight: 1024,
-  selectedLoras: [],
-  // 【Hires.fix】默认开启修复与放大，4x-AnimeSharp 放大器
-  hrFixEnabled: true,
-  hrUpscaler: '4x-AnimeSharp',
-  hrSteps: 50,
-  hrScale: 2.0,
-  hrDenoisingStrength: 0.55,
-  hrPrompt: '',
-  hrNegativePrompt: '',
-  hrCfg: 5.0,
-  hrSamplerName: 'DPM++ 2M SDE',
-  hrScheduler: 'Karras',
-  img2imgExtraNoise: 0.05,
-  initialNoiseMultiplier: 1.0,
-  // 【重点标记 - img2img 高清模式（2026-07-29）】
-  // Forge Neo img2img 不支持 Hires.fix，通过两种替代方案实现高清修复
-  img2imgHiresMode: 'two-step',
-};
+interface SDWebuiSettingsProps {
+  /** Spec: M-1 — 脏状态变化时通知父组件（驱动保存按钮三态化） */
+  onDirtyChange?: (dirty: boolean) => void;
+}
 
 /**
  * SD WebUI 常用采样器预设列表（用户也可手动输入自定义采样器名）。
@@ -194,9 +141,20 @@ const detectModelTypeFromName = (modelName: string): 'sdxl' | 'qwen-image' | 'qw
  * 父组件通过 ref.current.getFormValues() 在保存时获取表单值，
  * 不混入 Settings.tsx 主表单的扁平字段命名空间。
  */
-const SDWebuiSettings = forwardRef<SDWebuiSettingsRef>((_props, ref) => {
-  const setting = useSettingStore(s => s.setting);
-  const [form] = Form.useForm<SDWebuiConfig>();
+const SDWebuiSettings = forwardRef<SDWebuiSettingsRef, SDWebuiSettingsProps>(({ onDirtyChange }, ref) => {
+  // Spec: settings-feature-optimization-report / M-2, CR-2 — 面板骨架收敛到
+  // useSettingsPanel 共享 hook。selectedLoras 不在表单中编辑（由 LoRA 选择
+  // Modal 直接写 setting），经 getExtraSaveValues 在保存值中直传（不进表单快照）。
+  const { form, refHandle } = useSettingsPanel({
+    configKey: 'sdWebui',
+    defaults: DEFAULT_SD_WEBUI_CONFIG,
+    onDirtyChange,
+    getExtraSaveValues: () => {
+      const loras = useSettingStore.getState().setting?.sdWebui?.selectedLoras;
+      return loras ? { selectedLoras: loras } : {};
+    },
+  });
+  useImperativeHandle(ref, () => refHandle, [refHandle]);
 
   // 模型下拉选项：[{ label, value }]，空 value 选项表示「使用当前」
   const [modelOptions, setModelOptions] = useState<{ label: string; value: string }[]>([]);
@@ -237,29 +195,6 @@ const SDWebuiSettings = forwardRef<SDWebuiSettingsRef>((_props, ref) => {
   const adModelValue = Form.useWatch('adModel', form) ?? 'face_yolov8n.pt';
   const isYoloWorldModel = (adModelValue as string).toLowerCase().includes('world');
   const isAnzhcModel = (adModelValue as string).startsWith('Anzhc');
-
-  useImperativeHandle(ref, () => ({
-    getFormValues: () => {
-      const values = form.getFieldsValue(true) as Partial<SDWebuiConfig>;
-      // 合并默认值，避免字段缺失（旧配置无 sdWebui 时初始化场景）
-      return {
-        ...DEFAULT_SD_WEBUI_CONFIG,
-        // 保留已持久化的 selectedLoras（不在表单中编辑，由 LoRA 选择 Modal 设置）
-        ...(setting?.sdWebui?.selectedLoras ? { selectedLoras: setting.sdWebui.selectedLoras } : {}),
-        ...values,
-      } as SDWebuiConfig;
-    },
-  }));
-
-  // 当 setting 加载/变化时，初始化表单值
-  useEffect(() => {
-    const saved = setting?.sdWebui;
-    const initialValues: SDWebuiConfig = {
-      ...DEFAULT_SD_WEBUI_CONFIG,
-      ...(saved || {}),
-    };
-    form.setFieldsValue(initialValues);
-  }, [setting, form]);
 
   /**
    * 连接测试：调用主进程 sd:checkStatus，更新 testResult 状态。

@@ -11,8 +11,18 @@
  * 本文件 re-export 之，保持向后兼容的导入路径。
  */
 
-import { getStorageService } from './storageService';
+// 【M-14/S-11】AI 配置提供收敛到 ai/AIConfigProvider.ts 全局唯一实例：
+// 原本文件内嵌的 AIConfigProvider 类已删除，配置方法全部委托单例 aiConfigProvider。
+import {
+  aiConfigProvider,
+  type AIServiceConfig,
+  type EngineConfig
+} from './ai/AIConfigProvider';
 import { SSEStreamParser, type StreamChunkCallback } from './ai/SSEStreamParser';
+
+// 向后兼容：原内嵌版 AIConfig 接口已改名为 AIServiceConfig（真源在
+// ./ai/AIConfigProvider.ts），此处别名转发保持旧 import 路径可用。
+export type { AIServiceConfig as AIConfig } from './ai/AIConfigProvider';
 
 // ==================== Types ====================
 
@@ -22,31 +32,6 @@ export interface ChatMessage {
     | { type: 'text'; text: string }
     | { type: 'image_url'; image_url: { url: string } }
   >;
-}
-
-export interface AIConfig {
-  baseUrl: string;
-  apiKey: string;
-  apiKeyTransmission: 'header' | 'body';
-  model: string;
-  systemPrompt?: string;
-  /** 引擎配置的采样温度 */
-  temperature?: number;
-  /** 引擎配置的最大输出 token 数 */
-  maxTokens?: number;
-  /** 引擎配置的 top_p（核采样） */
-  topP?: number;
-  /** 引擎配置的 frequency_penalty */
-  frequencyPenalty?: number;
-  /** 引擎配置的 presence_penalty */
-  presencePenalty?: number;
-  /** 引擎配置的 enable_chain_of_thought */
-  enableChainOfThought?: boolean;
-}
-
-export interface EngineConfig {
-  temperature: number;
-  maxTokens?: number;
 }
 
 export interface CallOptions {
@@ -116,115 +101,9 @@ export interface ProbeConfig {
 // Re-export 以保持向后兼容（其他模块从 AIService 导入 StreamChunkCallback 仍可工作）
 export type { StreamChunkCallback } from './ai/SSEStreamParser';
 
-// ==================== AIConfigProvider ====================
-
-/**
- * 统一的 AI 配置提供者
- * 从设置服务中读取 AI 引擎配置，消除多处重复的配置读取逻辑
- */
-export class AIConfigProvider {
-  private static instance: AIConfigProvider;
-
-  static getInstance(): AIConfigProvider {
-    if (!AIConfigProvider.instance) {
-      AIConfigProvider.instance = new AIConfigProvider();
-    }
-    return AIConfigProvider.instance;
-  }
-
-  /**
-   * 获取当前活跃的 AI 引擎原始配置
-   */
-  getActiveEngine(): any {
-    const storageService = getStorageService();
-    const settings = storageService.getSettings();
-    const engines = settings?.aiEngines || [];
-    return engines.find((e: any) => e.id === settings?.activeEngineId) || engines[0];
-  }
-
-  /**
-   * 获取完整的 AI 配置
-   */
-  async getConfig(): Promise<AIConfig> {
-    const engine = this.getActiveEngine();
-
-    if (!engine?.model_name) {
-      throw new Error('未配置 AI 模型名称，请在设置中配置 AI 引擎');
-    }
-
-    const settings = getStorageService().getSettings();
-
-    return {
-      baseUrl: engine?.api_url || settings?.ai?.baseUrl || '',
-      apiKey: engine?.api_key || settings?.ai?.apiKey || '',
-      apiKeyTransmission: engine?.api_key_transmission || 'header',
-      model: engine.model_name,
-      systemPrompt: engine?.system_prompt || '',
-      temperature: engine?.temperature,
-      maxTokens: undefined,
-      topP: engine?.top_p,
-      frequencyPenalty: engine?.frequency_penalty,
-      presencePenalty: engine?.presence_penalty,
-      enableChainOfThought: engine?.enable_chain_of_thought
-    };
-  }
-
-  /**
-   * 获取引擎运行时配置（温度、最大 token 等）
-   */
-  async getEngineConfig(): Promise<EngineConfig> {
-    const engine = this.getActiveEngine();
-
-    if (engine?.temperature === undefined || engine?.temperature === null) {
-      throw new Error('未配置 AI 温度参数，请在设置中配置 AI 引擎');
-    }
-
-    return {
-      temperature: engine.temperature,
-      maxTokens: undefined
-    };
-  }
-
-  /**
-   * 仅获取 baseUrl（向后兼容）
-   */
-  async getBaseUrl(): Promise<string | undefined> {
-    const config = await this.getConfig();
-    return config.baseUrl || undefined;
-  }
-
-  /**
-   * 仅获取 apiKey（向后兼容）
-   */
-  async getApiKey(): Promise<string | undefined> {
-    const config = await this.getConfig();
-    return config.apiKey || undefined;
-  }
-
-  /**
-   * 仅获取 apiKey 传输方式（向后兼容）
-   */
-  async getApiKeyTransmission(): Promise<string> {
-    const config = await this.getConfig();
-    return config.apiKeyTransmission;
-  }
-
-  /**
-   * 仅获取模型名称（向后兼容）
-   */
-  async getModelName(fallbackModel: string): Promise<string> {
-    const config = await this.getConfig();
-    return config.model || fallbackModel;
-  }
-
-  /**
-   * 仅获取引擎系统提示词（向后兼容）
-   */
-  async getEngineSystemPrompt(): Promise<string> {
-    const config = await this.getConfig();
-    return config.systemPrompt || '';
-  }
-}
+// 【M-14/S-11】原内嵌 AIConfigProvider 类（静态单例 getInstance）已删除，
+// 合并到 ./ai/AIConfigProvider.ts 全局唯一实例 aiConfigProvider。
+// 原 getInstance() 的唯一外部消费方 debugHarness.ts 已改为直接 patch 单例。
 
 // ==================== AIService ====================
 
@@ -238,42 +117,52 @@ export class AIConfigProvider {
 export { SSEStreamParser } from './ai/SSEStreamParser';
 
 export class AIService {
-  private configProvider: AIConfigProvider;
   private streamParser: SSEStreamParser;
 
   constructor() {
-    this.configProvider = AIConfigProvider.getInstance();
     this.streamParser = new SSEStreamParser();
   }
 
   // ==================== Config Accessors ====================
 
-  async getConfig(): Promise<AIConfig> {
-    return this.configProvider.getConfig();
+  /**
+   * 获取完整的 AI 配置（含采样参数）。
+   * 【M-14/S-11】委托全局唯一实例 aiConfigProvider（原内嵌静态单例已删除）。
+   */
+  async getConfig(): Promise<AIServiceConfig> {
+    return aiConfigProvider.getConfig();
   }
 
   async getEngineConfig(): Promise<EngineConfig> {
-    return this.configProvider.getEngineConfig();
+    return aiConfigProvider.getEngineConfig();
   }
 
   async getBaseUrl(): Promise<string | undefined> {
-    return this.configProvider.getBaseUrl();
+    const config = aiConfigProvider.getAIConfig();
+    return config.baseUrl || undefined;
   }
 
   async getApiKey(): Promise<string | undefined> {
-    return this.configProvider.getApiKey();
+    const config = aiConfigProvider.getAIConfig();
+    return config.apiKey || undefined;
   }
 
   async getApiKeyTransmission(): Promise<string> {
-    return this.configProvider.getApiKeyTransmission();
+    const config = aiConfigProvider.getAIConfig();
+    return config.apiKeyTransmission;
   }
 
+  /**
+   * 带 fallback 的模型名解析（非抛错）。
+   * 【M-14/S-11】委托 aiConfigProvider.getModelNameWithFallback。
+   */
   async getModelName(fallbackModel: string): Promise<string> {
-    return this.configProvider.getModelName(fallbackModel);
+    return aiConfigProvider.getModelNameWithFallback(fallbackModel);
   }
 
   async getEngineSystemPrompt(): Promise<string> {
-    return this.configProvider.getEngineSystemPrompt();
+    const config = aiConfigProvider.getAIConfig();
+    return config.systemPrompt || '';
   }
 
   // ==================== Request Building ====================
@@ -293,7 +182,7 @@ export class AIService {
     temperature: number;
     maxTokens: number;
     stream: boolean;
-    config: AIConfig;
+    config: AIServiceConfig;
     tools?: any[];
     parallelToolCalls?: boolean;
     supportsToolCalling?: boolean;

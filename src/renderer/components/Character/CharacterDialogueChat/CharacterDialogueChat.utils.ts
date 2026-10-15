@@ -29,26 +29,14 @@ export function generateMessageId(): string {
   return Date.now().toString() + Math.random().toString(36).substr(2, 9);
 }
 
-export function formatTimestamp(timestamp: number): string {
-  const date = new Date(timestamp);
-  const hours = date.getHours().toString().padStart(2, '0');
-  const minutes = date.getMinutes().toString().padStart(2, '0');
-  return `${hours}:${minutes}`;
-}
+// 【Phase 3 / L2 - conversation-mode-optimization-report】时间格式化与导出构建器已迁移到
+// shared/utils（timeFormat / exportContent），此处保留重导出兼容原有引用点。
+export { formatTimestamp } from '@shared/utils/timeFormat';
+
+import { buildExportContent } from './exportContent';
 
 export function exportConversation(messages: ChatMessage[], characterName: string): string {
-  let output = `# 与 ${characterName} 的对话\n\n`;
-  output += `导出时间：${new Date().toLocaleString()}\n\n`;
-  output += `---\n\n`;
-
-  messages.forEach(msg => {
-    const role = msg.role === 'user' ? '我' : characterName;
-    output += `### ${role}（${formatTimestamp(msg.timestamp)}）\n\n`;
-    output += `${msg.content}\n\n`;
-    output += `---\n\n`;
-  });
-
-  return output;
+  return buildExportContent(messages, characterName, 'markdown');
 }
 
 export function throttle<T extends (...args: any[]) => any>(

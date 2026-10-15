@@ -5,16 +5,27 @@ import {
   HeartFilled
 } from '@ant-design/icons';
 import { Tooltip } from 'antd';
-import { SingleChatDialog } from './SingleChatDialog';
+
 import FullscreenDialog from './FullscreenDialog';
 import { useDataStore } from '../../stores/dataStore';
 import { useFavoritesStore } from '../../stores/favoritesStore';
+// 【Phase 3 / L3 - conversation-mode-optimization-report】头像加载流程改用共享工具
+import { loadCharacterAvatar } from '@shared/utils/avatarLoader';
 import './CreationCenter.css';
 
 // Lazy mount WritingV2Entry：写作模式 2.0（Spec: refactor-writing-mode-v2）
 // 独立模块 WritingModeV2；仅当用户打开 V2 对话框时才加载
 const WritingV2Entry = lazy(
   () => import('../Creative/WritingModeV2').then(m => ({ default: m.WritingV2Entry }))
+);
+
+// 【Phase 2 / M7 - conversation-mode-optimization-report】入口懒加载（P1）：
+// SingleChatDialog 及其整棵对话模式组件树（含 CharacterDialogueChat）拆为独立 chunk，
+// 仅当用户打开对话对话框（showChatDialog=true）时才加载。
+// 原实现始终挂载（内部 return null），chunk 在首屏即被解析，故改为条件渲染。
+// 角色选择等状态由 CreationCenter 持有（selectedCharacterPath），卸载不丢状态。
+const SingleChatDialogLazy = lazy(
+  () => import('./SingleChatDialog').then(m => ({ default: m.SingleChatDialog }))
 );
 
 type ChatPanelType = 'chat' | 'creative-v2';
@@ -181,50 +192,16 @@ export const CreationCenter: React.FC = () => {
 
   const loadAvatar = useCallback(async (path: string) => {
     try {
-      const isImageFile =
-        path.endsWith('.png') ||
-        path.endsWith('.jpg') ||
-        path.endsWith('.jpeg') ||
-        path.endsWith('.webp');
-
-      if (isImageFile) {
-        const result = await window.electronAPI.file.readAsBase64(path);
-        if (result?.success && result.data) {
-          loadedAvatarPathsRef.current.add(path);
-          loadingAvatarPathsRef.current.delete(path);
-          setFavoriteData((prev) =>
-            prev.map((item) =>
-              item.path === path ? { ...item, avatarUrl: result.data } : item
-            )
-          );
-        }
-      } else {
-        const content = await window.electronAPI.character.read(path);
-        if (content?.avatar) {
-          let avatarUrl = content.avatar;
-          if (avatarUrl && !avatarUrl.startsWith('data:')) {
-            if (avatarUrl.startsWith('/') || avatarUrl.includes('/')) {
-              const result = await window.electronAPI.file.readAsBase64(avatarUrl);
-              if (result?.success && result.data) {
-                avatarUrl = result.data;
-              }
-            }
-            else if (avatarUrl.length > 100) {
-              let imgType = 'png';
-              if (avatarUrl.includes('R0lG')) imgType = 'gif';
-              else if (avatarUrl.includes('JFIF') || avatarUrl.includes('/9j/')) imgType = 'jpeg';
-              else if (avatarUrl.includes('UklGR')) imgType = 'webp';
-              avatarUrl = `data:image/${imgType};base64,${avatarUrl}`;
-            }
-          }
-          loadedAvatarPathsRef.current.add(path);
-          loadingAvatarPathsRef.current.delete(path);
-          setFavoriteData((prev) =>
-            prev.map((item) =>
-              item.path === path ? { ...item, avatarUrl } : item
-            )
-          );
-        }
+      // 【Phase 3 / L3 - conversation-mode-optimization-report】头像加载流程改用 shared/utils/avatarLoader
+      const avatarUrl = await loadCharacterAvatar(path);
+      if (avatarUrl) {
+        loadedAvatarPathsRef.current.add(path);
+        loadingAvatarPathsRef.current.delete(path);
+        setFavoriteData((prev) =>
+          prev.map((item) =>
+            item.path === path ? { ...item, avatarUrl } : item
+          )
+        );
       }
     } catch (err) {
       console.error('[CreationCenter] Avatar load failed for:', path, err);
@@ -392,11 +369,15 @@ export const CreationCenter: React.FC = () => {
         })}
       </div>
 
-      <SingleChatDialog
-        isDialogMode={showChatDialog}
-        onCloseDialog={handleCloseChat}
-        initialCharacterPath={selectedCharacterPath}
-      />
+      {showChatDialog && (
+        <React.Suspense fallback={null}>
+          <SingleChatDialogLazy
+            isDialogMode
+            onCloseDialog={handleCloseChat}
+            initialCharacterPath={selectedCharacterPath}
+          />
+        </React.Suspense>
+      )}
 
       <FullscreenDialog
         visible={showWritingV2Dialog}

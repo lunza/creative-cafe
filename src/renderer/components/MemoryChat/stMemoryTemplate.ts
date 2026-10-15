@@ -4,6 +4,8 @@
  */
 
 import { ExcelTemplate, SheetTemplate } from '../types/memory';
+// Spec: settings-feature-optimization-report / H-5（默认值单一来源）
+import { DEFAULT_ENGINE_PARAMS } from '../../../shared/settingDefaults';
 
 // 基于 st-memory-enhancement 插件的默认模板配置
 export const DEFAULT_MEMORY_TEMPLATE: ExcelTemplate = {
@@ -161,7 +163,7 @@ export const DEFAULT_SETTINGS = {
   // API 设置
   use_main_api: false,
   step_by_step_use_main_api: false,
-  custom_api_url: 'http://127.0.0.1:5000/v1/chat/completions',
+  custom_api_url: `${DEFAULT_ENGINE_PARAMS.apiBaseUrl}/v1/chat/completions`,
   custom_model_name: 'qwen3.5-27b-heretic-v3',
   custom_temperature: undefined,
   
@@ -189,7 +191,7 @@ export const DEFAULT_SETTINGS = {
 
 // 基于 st-memory-enhancement 插件的 API 配置
 export const API_CONFIG = {
-  custom_api_url: 'http://127.0.0.1:5000/v1/chat/completions',
+  custom_api_url: `${DEFAULT_ENGINE_PARAMS.apiBaseUrl}/v1/chat/completions`,
   custom_model_name: 'qwen3.5-27b-heretic-v3',
   custom_api_key: '',
   table_proxy_address: '',

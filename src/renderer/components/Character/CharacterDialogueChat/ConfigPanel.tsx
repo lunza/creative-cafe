@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { Button, Switch, Select, Tooltip, Checkbox, Modal, Input, InputNumber, Slider, Tag, Popover, Collapse, Space } from 'antd';
-import { SaveOutlined, PictureOutlined, QuestionCircleOutlined, DownOutlined, RightOutlined, EditOutlined, UndoOutlined, PlusOutlined, CheckOutlined, CloseOutlined, SplitCellsOutlined } from '@ant-design/icons';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Button, Switch, Select, Tooltip, Checkbox, Modal, Input, InputNumber, Slider, Tag, Popover, Collapse, Space, Tabs } from 'antd';
+import { SaveOutlined, PictureOutlined, QuestionCircleOutlined, DownOutlined, RightOutlined, EditOutlined, UndoOutlined, PlusOutlined, CheckOutlined, CloseOutlined, SplitCellsOutlined, SearchOutlined } from '@ant-design/icons';
 import PersonaPanel from './PersonaPanel';
 import ParameterPanel from './ParameterPanel';
 import VectorizationPanel from './VectorizationPanel';
@@ -18,6 +18,30 @@ import { useCharacterChatStore } from '../../../stores/characterChatStore';
 import { SYSTEM_TRAIT_CATEGORIES, UNCATEGORIZED_CATEGORY } from '@shared/types';
 import type { CharacterTraitItem, TraitCategory } from '@shared/types';
 import './ConfigPanel.css';
+
+// 【Phase 2 / M3 - conversation-mode-optimization-report】可搜索参数索引（U3：操作路径 3 步 → 1-2 步）。
+// 输入参数名（中/英文均可）→ 命中项点击后自动切换到对应 Tab 并高亮提示目标参数。
+const CONFIG_SEARCH_INDEX: { keywords: string[]; label: string; tab: string }[] = [
+  { keywords: ['temperature', 'temp', '温度'], label: 'Temperature 温度', tab: 'ai' },
+  { keywords: ['top_p', 'top-p', '核采样', 'nucleus'], label: 'Top P 核采样', tab: 'ai' },
+  { keywords: ['top_k', 'top-k'], label: 'Top K', tab: 'ai' },
+  { keywords: ['min_p', 'min-p'], label: 'Min P', tab: 'ai' },
+  { keywords: ['repetition', '重复'], label: 'Repetition Penalty 重复惩罚', tab: 'ai' },
+  { keywords: ['stop', '停止序列'], label: '自定义停止序列', tab: 'ai' },
+  { keywords: ['think', '思考标签'], label: 'Think 标签处理模式', tab: 'ai' },
+  { keywords: ['assist', '辅助模式'], label: '辅助模式', tab: 'ai' },
+  { keywords: ['language', '语言'], label: '语言要求', tab: 'ai' },
+  { keywords: ['persona', '人设'], label: '角色人设', tab: 'ai' },
+  { keywords: ['expression', '表情'], label: '开启表情', tab: 'ai' },
+  { keywords: ['memory', '记忆', '记忆表格'], label: '记忆表格', tab: 'memory' },
+  { keywords: ['vector', '向量', '知识库', 'knowledge'], label: '知识库向量检索', tab: 'memory' },
+  { keywords: ['token', '上下文', '裁剪', 'token管理'], label: 'Token 管理', tab: 'token' },
+  { keywords: ['image', '图片', '生图', 'sd', '图像'], label: '图片生成设置', tab: 'image' },
+  { keywords: ['size', '尺寸', '分辨率'], label: '图片尺寸', tab: 'image' },
+  { keywords: ['weight', '权重', '互动标签'], label: '互动标签权重', tab: 'image' },
+  { keywords: ['optimize', '标签优化', 'ai优化'], label: 'AI 标签优化', tab: 'image' },
+  { keywords: ['trait', '特征', '角色特征'], label: '角色特征分类', tab: 'image' },
+];
 
 interface TokenManagementConfig {
   maxContextTokens?: number;
@@ -144,6 +168,39 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
   onTokenManagementConfigChange,
   onSaveConfig,
 }) => {
+  // 【Phase 2 / M3】Tab 式分组 + 参数搜索（U3）：
+  // 原五个子面板平铺（操作路径 3 步）重构为 4 个 Tab（操作路径 1-2 步），
+  // 搜索框命中参数索引后自动跳转 Tab 并提示目标参数名。
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    return localStorage.getItem('config-panel-active-tab') || 'ai';
+  });
+  const [searchText, setSearchText] = useState('');
+  const [searchHint, setSearchHint] = useState<string | null>(null);
+
+  useEffect(() => {
+    localStorage.setItem('config-panel-active-tab', activeTab);
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (!searchHint) return;
+    const timer = setTimeout(() => setSearchHint(null), 3000);
+    return () => clearTimeout(timer);
+  }, [searchHint]);
+
+  const searchMatches = useMemo(() => {
+    const q = searchText.trim().toLowerCase();
+    if (!q) return [];
+    return CONFIG_SEARCH_INDEX.filter(entry =>
+      entry.keywords.some(k => k.toLowerCase().includes(q)) || entry.label.toLowerCase().includes(q)
+    ).slice(0, 8);
+  }, [searchText]);
+
+  const handleSearchSelect = (entry: { label: string; tab: string }) => {
+    setActiveTab(entry.tab);
+    setSearchText('');
+    setSearchHint(entry.label);
+  };
+
   const [imageGenCollapsed, setImageGenCollapsed] = useState(() => {
     return localStorage.getItem('image-gen-panel-collapsed') !== 'false';
   });
@@ -327,8 +384,9 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
     });
   }, [resetSessionTraits]);
 
-  return (
-    <div className="config-panel">
+  // 【Phase 2 / M3】Tab 内容提取为 JSX 变量（原平铺结构按 Tab 分组重组）
+  const aiTabContent = (
+    <>
       <PersonaPanel
         personas={personas}
         selectedPersonaId={selectedPersonaId}
@@ -355,7 +413,10 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
         onLanguageChange={onLanguageChange}
         engineCapabilities={engineCapabilities}
       />
-      <div className="config-panel-divider" />
+    </>
+  );
+
+  const imageTabContent = (
       <div className="image-gen-panel">
         <div className="image-gen-panel-header" onClick={() => setImageGenCollapsed(!imageGenCollapsed)} style={{ cursor: 'pointer' }}>
           <div className="image-gen-panel-title">
@@ -704,7 +765,10 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
           </div>
         </div>
       </div>
-      <div className="config-panel-divider" />
+  );
+
+  const memoryTabContent = (
+    <>
       <div>
         <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--config-panel-sub-title-color)', marginBottom: 8 }}>
           记忆与上下文增强
@@ -739,12 +803,63 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
           AI 自动整理对话中的关键信息到表格
         </div>
       </div>
-      <div className="config-panel-divider" />
-      <TokenManagementPanel
-        config={tokenManagementConfig}
-        onConfigChange={onTokenManagementConfigChange}
+    </>
+  );
+
+  const tokenTabContent = (
+    <TokenManagementPanel
+      config={tokenManagementConfig}
+      onConfigChange={onTokenManagementConfigChange}
+    />
+  );
+
+  return (
+    <div className="config-panel">
+      {/* 【Phase 2 / M3 - conversation-mode-optimization-report】参数搜索 + Tab 式分组（U3：操作路径 3 步 → 1-2 步） */}
+      <div className="config-panel-search">
+        <div className="config-panel-search-box">
+          <Input
+            size="small"
+            allowClear
+            prefix={<SearchOutlined />}
+            placeholder="搜索参数（如：temp / 记忆表格 / 图片）"
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+          />
+          {searchText.trim() !== '' && (
+            <div className="config-panel-search-results">
+              {searchMatches.length === 0 ? (
+                <div className="config-panel-search-empty">无匹配参数</div>
+              ) : (
+                searchMatches.map((m) => (
+                  <div
+                    key={m.label}
+                    className="config-panel-search-item"
+                    onClick={() => handleSearchSelect(m)}
+                  >
+                    {m.label}
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+        {searchHint && (
+          <div className="config-panel-search-hint">已定位：{searchHint}</div>
+        )}
+      </div>
+      <Tabs
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        size="small"
+        className="config-panel-tabs"
+        items={[
+          { key: 'ai', label: 'AI 参数', children: aiTabContent },
+          { key: 'memory', label: '记忆与知识库', children: memoryTabContent },
+          { key: 'token', label: 'Token 管理', children: tokenTabContent },
+          { key: 'image', label: '图片生成', children: imageTabContent },
+        ]}
       />
-      <div className="config-panel-divider" />
       <div className="config-panel-actions">
         <Button
           type="primary"

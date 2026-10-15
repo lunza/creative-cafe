@@ -49,6 +49,7 @@ lerna-debug.log*
 /tmp/
 !tmp/.gitkeep
 .tmp-*
+.runtime/
 .tmp-card-data/
 *.tmp
 *.temp

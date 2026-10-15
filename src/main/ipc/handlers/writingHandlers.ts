@@ -27,6 +27,7 @@ import { registerWritingStyleHandlers } from './writing/writingStyleHandlers';
 import { registerWritingPlotCheckHandlers } from './writing/writingPlotCheckHandlers';
 import { registerWritingCrossCheckHandlers } from './writing/writingCrossCheckHandlers';
 import { registerWritingTemplateHandlers } from './writing/writingTemplateHandlers';
+import { registerWritingHumanizerHandlers } from './writing/writingHumanizerHandlers';
 
 // 重新导出 abortAllActiveRequests，保持 main/index.ts 调用方式不变
 // （main/index.ts: import { registerWritingHandlers, abortAllActiveRequests } from './ipc/handlers/writingHandlers'）
@@ -42,4 +43,6 @@ export function registerWritingHandlers(): void {
   // 跨章节连贯性审查（Spec: add-cross-chapter-coherence-review）
   registerWritingCrossCheckHandlers();
   registerWritingTemplateHandlers();
+  // Humanizer 文本转写（独立接口，仅适配 jialinyyzz/humanizer 模型）
+  registerWritingHumanizerHandlers();
 }

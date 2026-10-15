@@ -2,6 +2,10 @@ import { getStorageService } from '../storageService';
 import { createLogger } from '../logger';
 import type { ModelConfig } from '../../../shared/types/writing.types';
 import type { FallbackProvider } from '../agent/failoverPolicy';
+// Spec: settings-feature-optimization-report / H-5（默认值单一来源）
+import { DEFAULT_ENGINE_PARAMS } from '../../../shared/settingDefaults';
+// Spec: settings-feature-optimization-report / M-18/N7（统一参数解析，三级合并）
+import { resolveEngineParams } from '../../../shared/parameterResolver';
 
 /**
  * AIConfigProvider 返回的 AI 调用配置视图。
@@ -41,6 +45,39 @@ export interface GetAIConfigOptions {
 }
 
 /**
+ * AIService 聊天/探测链路使用的完整 AI 配置视图（含采样参数）。
+ *
+ * 【M-14/S-11】原 AIService.ts 内嵌 AIConfigProvider 的 `AIConfig` 接口，
+ * 因与本文件 `AIConfig`（writing 链路非抛错视图）同名且字段集不同而改名。
+ * AIService.ts 继续 `export type { AIConfig }`（别名转发）保持旧 import 兼容。
+ */
+export interface AIServiceConfig {
+  baseUrl: string;
+  apiKey: string;
+  apiKeyTransmission: 'header' | 'body';
+  model: string;
+  systemPrompt?: string;
+  /** 引擎配置的采样温度 */
+  temperature?: number;
+  /** 引擎配置的最大输出 token 数 */
+  maxTokens?: number;
+  /** 引擎配置的 top_p（核采样） */
+  topP?: number;
+  /** 引擎配置的 frequency_penalty */
+  frequencyPenalty?: number;
+  /** 引擎配置的 presence_penalty */
+  presencePenalty?: number;
+  /** 引擎配置的 enable_chain_of_thought */
+  enableChainOfThought?: boolean;
+}
+
+/** 引擎运行时配置（温度、最大 token 等） */
+export interface EngineConfig {
+  temperature: number;
+  maxTokens?: number;
+}
+
+/**
  * AIConfigProvider
  *
  * 从全局设置（settings.json）中读取当前激活的 AI 引擎配置，作为所有
@@ -59,6 +96,17 @@ export interface GetAIConfigOptions {
  * - `__USER_DATA__` 占位符：AI 引擎字段（api_url / api_key / system_prompt /
  *   model_name）通常不含路径，故不做替换；如未来扩展到含路径字段，可在此处
  *   统一处理
+ *
+ * 【M-14/S-11 单实例合并】原 AIService.ts 内嵌的同名 AIConfigProvider 已并入
+ * 本类（全局唯一实例 `aiConfigProvider`，AIService 构造器直接持有本实例）：
+ * - `getConfig()` / `getEngineConfig()`：AIService 聊天/探测链路的抛错型完整
+ *   配置（含采样参数，maxTokens 走 resolveEngineParams 三级合并）
+ * - `getModelName(fallbackModel)`：带 fallback 的非抛错模型名解析
+ *   （worldbookPlanningService 消费），与无参抛错版 `getModelName()` 并存——
+ *   两者调用方零重叠，无行为变更
+ * - 内嵌版的 async 包装方法（getBaseUrl/getApiKey/getApiKeyTransmission/
+ *   getEngineSystemPrompt）已删除：全仓无消费方，AIService 的对应 accessor
+ *   改走 `getAIConfig()` 等价实现
  */
 export class AIConfigProvider {
   private logger = createLogger('ai-config-provider');
@@ -113,6 +161,73 @@ export class AIConfigProvider {
       systemPrompt: engine.system_prompt || '',
       modelName: engine.model_name
     };
+  }
+
+  /**
+   * 获取完整的 AI 配置（含采样参数），供 AIService 聊天/探测链路使用。
+   *
+   * 【M-14/S-11】自 AIService.ts 内嵌 AIConfigProvider 并入（行为逐字保留）。
+   * 引擎 model_name 缺失时抛错。
+   */
+  async getConfig(): Promise<AIServiceConfig> {
+    const engine = this.getActiveEngine();
+
+    if (!engine?.model_name) {
+      throw new Error('未配置 AI 模型名称，请在设置中配置 AI 引擎');
+    }
+
+    const settings = getStorageService().getSettings();
+
+    return {
+      // CR-1 ③：api_url 异质回退对齐默认值单一来源（原回退空串导致下游拿到无意义 URL）
+      baseUrl: engine?.api_url || settings?.ai?.baseUrl || DEFAULT_ENGINE_PARAMS.apiBaseUrl,
+      apiKey: engine?.api_key || settings?.ai?.apiKey || '',
+      apiKeyTransmission: engine?.api_key_transmission || 'header',
+      model: engine.model_name,
+      systemPrompt: engine?.system_prompt || '',
+      temperature: engine?.temperature,
+      // 【重点标记 - FL-2 分链路失效修复 + M-18/N7 统一参数解析】此前硬编码 undefined
+      // 使探测请求永不带 max_tokens（「测试连接」与真实对话不一致）。现走
+      // resolveEngineParams 三级合并：消费引擎 max_tokens，缺省回退
+      // DEFAULT_ENGINE_PARAMS.maxTokens。
+      maxTokens: resolveEngineParams(engine).max_tokens,
+      topP: engine?.top_p,
+      frequencyPenalty: engine?.frequency_penalty,
+      presencePenalty: engine?.presence_penalty,
+      enableChainOfThought: engine?.enable_chain_of_thought
+    };
+  }
+
+  /**
+   * 获取引擎运行时配置（温度、最大 token 等）。
+   *
+   * 【M-14/S-11】自 AIService.ts 内嵌 AIConfigProvider 并入（行为逐字保留）。
+   */
+  async getEngineConfig(): Promise<EngineConfig> {
+    const engine = this.getActiveEngine();
+
+    if (engine?.temperature === undefined || engine?.temperature === null) {
+      throw new Error('未配置 AI 温度参数，请在设置中配置 AI 引擎');
+    }
+
+    return {
+      temperature: engine.temperature,
+      // 【重点标记 - FL-2 分链路失效修复 + M-18/N7】resolveEngineParams 三级合并，
+      // 缺省回退 DEFAULT_ENGINE_PARAMS.maxTokens。
+      maxTokens: resolveEngineParams(engine).max_tokens
+    };
+  }
+
+  /**
+   * 带 fallback 的模型名解析（非抛错），供 worldbookPlanningService 等
+   * 允许缺省模型的调用方使用。
+   *
+   * 【M-14/S-11】自 AIService.ts 内嵌 AIConfigProvider.getModelName(fallback)
+   * 并入。与无参抛错版 getModelName() 并存：调用方零重叠，无行为变更。
+   */
+  async getModelNameWithFallback(fallbackModel: string): Promise<string> {
+    const config = await this.getConfig();
+    return config.model || fallbackModel;
   }
 
   /**
@@ -197,7 +312,7 @@ export class AIConfigProvider {
    *   目前仅使用 chat_completion，text_completion 分支保留备用
    * - apiUrl 若未包含 /v1/chat/completions 或 /v1/completions 后缀，
    *   则按 apiMode 自动追加对应后缀；已包含则直接使用（避免重复拼接）
-   * - apiUrl 默认 'http://127.0.0.1:5000'
+   * - apiUrl 默认 DEFAULT_ENGINE_PARAMS.apiBaseUrl（默认值单一来源）
    *
    * 注意：apiKey/modelName 采用与 getAIConfig 一致的非抛错语义——
    * 缺失时返回空字符串，由调用方按需在缺少 apiUrl/modelName 时报错。
@@ -223,7 +338,7 @@ export class AIConfigProvider {
     const apiKeyTransmission = this.getApiKeyTransmission();
     const modelName = activeEngine?.model_name || '';
 
-    let apiUrl = activeEngine?.api_url || 'http://127.0.0.1:5000';
+    let apiUrl = activeEngine?.api_url || DEFAULT_ENGINE_PARAMS.apiBaseUrl;
     const apiMode = activeEngine?.api_mode || 'chat_completion';
     // 目前仅使用 chat_completion；text_completion 分支保留备用
     const suffix = apiMode === 'text_completion' ? '/v1/completions' : '/v1/chat/completions';

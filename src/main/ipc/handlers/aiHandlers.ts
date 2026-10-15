@@ -2,6 +2,8 @@ import { ipcMain } from 'electron';
 import { randomUUID } from 'crypto';
 import { createLogger } from '../../services/logger';
 import { BoundedQueue } from './utils/boundedQueue';
+// Spec: settings-feature-optimization-report / H-5（默认值单一来源）
+import { DEFAULT_ENGINE_PARAMS } from '../../../shared/settingDefaults';
 import { aiService } from '../../services/AIService';
 import { getStorageService } from '../../services/storageService';
 
@@ -38,12 +40,12 @@ const QUEUE_LOW_WATERMARK = 40;
  * 默认连接超时（毫秒），当用户未在设置中配置时使用。
  * 仅用于等待响应头到达，响应头到达后立即清除。
  */
-const DEFAULT_CONNECTION_TIMEOUT = 120000;
+const DEFAULT_CONNECTION_TIMEOUT = DEFAULT_ENGINE_PARAMS.connectionTimeout;
 
 /**
  * 默认请求超时（毫秒），当用户未在设置中配置且调用方未传 timeout 时使用。
  */
-const DEFAULT_REQUEST_TIMEOUT = 300000;
+const DEFAULT_REQUEST_TIMEOUT = DEFAULT_ENGINE_PARAMS.requestTimeout;
 
 /**
  * 从用户设置中读取当前激活引擎的超时配置。

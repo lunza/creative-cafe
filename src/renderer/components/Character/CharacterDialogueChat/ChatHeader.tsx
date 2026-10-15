@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { Button, Space, Tooltip, Dropdown } from 'antd';
 import type { MenuProps } from 'antd';
-import { ClearOutlined, ExportOutlined, CloseOutlined, RobotOutlined, FullscreenOutlined, FullscreenExitOutlined, UserOutlined, HeartOutlined, HeartFilled, QuestionCircleOutlined, DownOutlined, SmileOutlined } from '@ant-design/icons';
+import { ClearOutlined, ExportOutlined, CloseOutlined, RobotOutlined, FullscreenOutlined, FullscreenExitOutlined, UserOutlined, HeartOutlined, HeartFilled, QuestionCircleOutlined, DownOutlined, SmileOutlined, HistoryOutlined } from '@ant-design/icons';
 
 interface ChatHeaderProps {
   characterName: string;
@@ -11,6 +11,8 @@ interface ChatHeaderProps {
   onClose: () => void;
   exportMenu?: MenuProps['items'];
   onExportMenuClick?: (key: string) => void;
+  // 【Phase 2 / M6】版本历史入口（N1：消息版本历史与全局快照）
+  onOpenVersionHistory?: () => void;
   characters?: Array<{ name: string; path: string; characterName?: string }>;
   onQuickSwitchCharacter?: (path: string) => void;
   avatarPath?: string;
@@ -31,6 +33,7 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
   onClose,
   exportMenu,
   onExportMenuClick,
+  onOpenVersionHistory,
   characters,
   onQuickSwitchCharacter,
   avatarPath,
@@ -187,6 +190,18 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
               />
             </Tooltip>
           </Dropdown>
+        )}
+        {/* 【Phase 2 / M6】版本历史入口（N1） */}
+        {onOpenVersionHistory && (
+          <Tooltip title="版本历史">
+            <Button
+              type="text"
+              icon={<HistoryOutlined />}
+              size="small"
+              onClick={onOpenVersionHistory}
+              style={{ color: 'var(--chat-header-btn-color, #8c8c8c)' }}
+            />
+          </Tooltip>
         )}
         <Tooltip title="Enter 发送 · Shift+Enter 换行 · Esc 取消生成">
           <Button

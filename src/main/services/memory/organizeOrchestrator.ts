@@ -17,6 +17,8 @@
 
 import fs from 'fs';
 import path from 'path';
+// Spec: settings-feature-optimization-report / H-5（默认值单一来源）
+import { DEFAULT_ENGINE_PARAMS } from '../../../shared/settingDefaults';
 import { tableTemplateService } from './tableTemplateService';
 import type { TableTemplate } from './tableTemplateService';
 import { tableEditParser } from './tableEditParser';
@@ -370,7 +372,7 @@ export async function processChat(
     addLog('步骤 6/12: 配置 AI 参数', 'debug');
     const aiConfig = {
       apiKey: config?.apiKey || '',
-      apiUrl: config?.apiUrl || 'http://127.0.0.1:5000',
+      apiUrl: config?.apiUrl || DEFAULT_ENGINE_PARAMS.apiBaseUrl,
       modelName: config?.modelName || (() => { throw new Error('未配置 AI 模型名称'); })(),
       apiMode: config?.apiMode || 'chat_completion'
     };

@@ -12,6 +12,8 @@ import { writingStorageService } from '../../../services/WritingStorageService';
 import { plotCheckerService, PlotCheckRequestData } from '../../../services/writing/PlotCheckerService';
 import { logicCheckRecorder } from '../../../services/writing/LogicCheckRecorder';
 import { getStorageService } from '../../../services/storageService';
+// Spec: settings-feature-optimization-report / H-5（默认值单一来源）
+import { DEFAULT_ENGINE_PARAMS } from '../../../../shared/settingDefaults';
 import { addLog } from '../../../services/memory/chatLogService';
 import {
   ModelConfig,
@@ -23,7 +25,7 @@ import {
 export function registerWritingPlotCheckHandlers(): void {
   // ========== 章节剧情检查 ==========
 
-  ipcMain.handle('writing:checkChapter', async (_event, request: { projectId: string; chapterIndex: number; content: string; previousChapters?: { index: number; title: string; content: string }[] }) => {
+  ipcMain.handle('writing:checkChapter', async (_event, request: { projectId: string; chapterIndex: number; content: string; previousChapters?: { index: number; title: string; content: string }[]; customPrompt?: string }) => {
     try {
       addLog('===== 写作模式: 剧情检查请求 =====', 'debug');
       addLog(`章节索引: ${request.chapterIndex}`, 'debug');
@@ -44,8 +46,8 @@ export function registerWritingPlotCheckHandlers(): void {
 
       const modelConfig: ModelConfig = {
         model: activeEngine?.model_name ?? project.config?.modelConfig?.model ?? (() => { throw new Error('未配置 AI 模型名称') })(),
-        temperature: (typeof activeEngine?.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : (project.config?.modelConfig?.temperature ?? 0.7),
-        maxTokens: (typeof activeEngine?.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : (project.config?.modelConfig?.maxTokens ?? 10240)
+        temperature: (typeof activeEngine?.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : (project.config?.modelConfig?.temperature ?? DEFAULT_ENGINE_PARAMS.temperature),
+        maxTokens: (typeof activeEngine?.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : (project.config?.modelConfig?.maxTokens ?? DEFAULT_ENGINE_PARAMS.maxTokens)
       };
 
       addLog(`模型配置: ${JSON.stringify(modelConfig)}`, 'debug');
@@ -67,6 +69,8 @@ export function registerWritingPlotCheckHandlers(): void {
         writingStyle: project.config?.parameters?.writingStyle,
         modelConfig,
         previousChapters: request.previousChapters || [],
+        // 章节级自定义评审要求（渲染层已按 章节 → 项目 → 全局 回退链解析）
+        customPrompt: request.customPrompt || undefined,
         writingTableData: tableData && tableConfig ? {
           tableConfig: {
             associatedTemplateId: tableConfig.associatedTemplateId || '',
@@ -128,8 +132,8 @@ export function registerWritingPlotCheckHandlers(): void {
 
       const modelConfig: ModelConfig = {
         model: activeEngine?.model_name ?? request.modelConfig?.model ?? (() => { throw new Error('未配置 AI 模型名称') })(),
-        temperature: (typeof activeEngine?.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : (request.modelConfig?.temperature ?? 0.7),
-        maxTokens: (typeof activeEngine?.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : (request.modelConfig?.maxTokens ?? 10240)
+        temperature: (typeof activeEngine?.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : (request.modelConfig?.temperature ?? DEFAULT_ENGINE_PARAMS.temperature),
+        maxTokens: (typeof activeEngine?.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : (request.modelConfig?.maxTokens ?? DEFAULT_ENGINE_PARAMS.maxTokens)
       };
 
       addLog(`【自动修正】模型配置: ${JSON.stringify(modelConfig)}`, 'debug');
@@ -189,8 +193,8 @@ export function registerWritingPlotCheckHandlers(): void {
 
       const modelConfig: ModelConfig = {
         model: activeEngine?.model_name ?? req.modelConfig?.model ?? (() => { throw new Error('未配置 AI 模型名称') })(),
-        temperature: (typeof activeEngine?.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : (req.modelConfig?.temperature ?? 0.7),
-        maxTokens: (typeof activeEngine?.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : (req.modelConfig?.maxTokens ?? 10240)
+        temperature: (typeof activeEngine?.temperature === 'number' && activeEngine.temperature >= 0 && activeEngine.temperature <= 2) ? activeEngine.temperature : (req.modelConfig?.temperature ?? DEFAULT_ENGINE_PARAMS.temperature),
+        maxTokens: (typeof activeEngine?.max_tokens === 'number' && activeEngine.max_tokens > 0) ? activeEngine.max_tokens : (req.modelConfig?.maxTokens ?? DEFAULT_ENGINE_PARAMS.maxTokens)
       };
 
       addLog(`【批量修正】模型配置: ${JSON.stringify(modelConfig)}`, 'debug');

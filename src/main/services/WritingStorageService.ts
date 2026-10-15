@@ -6,6 +6,7 @@ import { TableOrganizeService } from './writing/TableOrganizeService';
 import { TableEditCommandExecutor } from './writing/TableEditCommandExecutor';
 import { AIConfigProvider, aiConfigProvider } from './ai/AIConfigProvider';
 import type { VersionSnapshot } from './writing/WritingTableRepository';
+import type { IdConsistencyReport } from './writing/IdConsistencyValidator';
 
 // re-export 子模块类型与函数，便于外部消费方渐进迁移
 // 注意：isolatedModules 模式下类型重导出必须使用 `export type`
@@ -223,7 +224,7 @@ export class WritingStorageService {
     onProgress?: (current: number, total: number, message: string, percent?: number, currentChunk?: number, totalChunks?: number) => void,
     requirements?: string,
     skipOrganized?: boolean
-  ): Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[]; cancelled?: boolean }> {
+  ): Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[]; cancelled?: boolean; idReport?: IdConsistencyReport }> {
     return this.organizeService.organizeTable(projectId, modelConfig, chapterIndex, onProgress, requirements, skipOrganized);
   }
 
@@ -239,7 +240,7 @@ export class WritingStorageService {
     chapterIndex?: number,
     onProgress?: (current: number, total: number, status: string, percent: number, currentChunk?: number, totalChunks?: number) => void,
     requirements?: string
-  ): Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[] }> {
+  ): Promise<{ success: boolean; processedCount: number; errorCount: number; errors: string[]; idReport?: IdConsistencyReport }> {
     return this.organizeService.organizeSingleSheet(projectId, sheetName, modelConfig, chapterIndex, onProgress, requirements);
   }
 

@@ -16,10 +16,11 @@
  *
  * 注意：
  * - `AIConfigProvider` 的真源是 `./AIConfigProvider.ts`（Task 9 抽取，
- *   Task 13 扩展 `getAIConfig()`）。`../AIService.ts` 内部仍保留一个同名
- *   旧类供 AIService 自身使用，但此处仅 re-export 新版本以避免歧义。
- * - 旧代码若直接 `import { AIConfigProvider } from '../AIService'` 仍可工作，
- *   但新增代码应统一从 `./ai` 或 `./ai/AIConfigProvider` 导入。
+ *   Task 13 扩展 `getAIConfig()`）。【M-14/S-11】原 `../AIService.ts`
+ *   内部同名的旧类已删除并合并到本类——全局唯一实例 `aiConfigProvider`，
+ *   AIService 的聊天/探测配置方法（getConfig/getEngineConfig/getModelName
+ *   with fallback）现委托该实例，AIService.ts 不再定义任何 provider 类。
+ * - 新增代码应统一从 `./ai` 或 `./ai/AIConfigProvider` 导入。
  */
 
 export {
@@ -30,19 +31,22 @@ export {
 } from './SSEStreamParser';
 
 // AIConfigProvider 真源在 ./AIConfigProvider.ts，从此处统一 re-export
+// 【M-14/S-11】AIServiceConfig/EngineConfig 为合并后 AIService 链路使用的类型
 export {
   AIConfigProvider,
   aiConfigProvider,
   type AIConfig,
+  type AIServiceConfig,
+  type EngineConfig,
   type GetAIConfigOptions
 } from './AIConfigProvider';
 
 // 从 AIService.ts re-export，统一从 ai/ 入口暴露
+// 【M-14/S-11】EngineConfig 真源已移至 ./AIConfigProvider.ts（上方已 re-export）
 export {
   AIService,
   aiService,
   type ChatMessage,
-  type EngineConfig,
   type CallOptions,
   type ChatResponse,
   type StreamResponse

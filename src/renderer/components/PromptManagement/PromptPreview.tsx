@@ -15,6 +15,8 @@ import {
 } from 'antd';
 import { EyeOutlined, PlayCircleOutlined } from '@ant-design/icons';
 import type { PromptTemplate } from '../../../shared/types/promptTemplate.types';
+// Spec: settings-feature-optimization-report / N6, M-17（统一封装）
+import { getSettingAPI } from '../../services/settingServiceClient';
 
 const { Text } = Typography;
 
@@ -41,7 +43,7 @@ const getPromptAPI = (): PromptAPI =>
 
 const loadEngineSystemPrompt = async (): Promise<string> => {
   try {
-    const result = await window.electronAPI.setting.load();
+    const result = await getSettingAPI()?.load() ?? { success: false, error: 'setting API 不可用' };
     if (result.success && result.setting) {
       const engines = result.setting.aiEngines || [];
       const activeEngineId = result.setting.activeEngineId;

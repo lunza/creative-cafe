@@ -32,7 +32,7 @@ export const WRITING_TABLE_TEMPLATES: WritingTableTemplate[] = [
     id: WRITING_DEFAULT_TABLE_TEMPLATE_ID,
     name: '小说设定总表',
     description:
-      '长篇小说核心设定沉淀：角色、物品、事件、场景、伏笔五张表。AI 整理时从章节内容提取信息，供后续生成与剧情检查注入上下文。',
+      '长篇小说核心设定沉淀：角色、身体、物品、事件、场景、伏笔六张表。AI 整理时从章节内容提取信息，供后续生成与剧情检查注入上下文。',
     sheets: [
       {
         name: '角色表',
@@ -41,35 +41,42 @@ export const WRITING_TABLE_TEMPLATES: WritingTableTemplate[] = [
         order: 0,
       },
       {
+        name: '身体表',
+        headers: ['所属角色ID', '部位名称', '外观描述', '功能说明', '当前状态', '状态详细描述'],
+        description:
+          '各角色身体部位的详细状态档案：所属角色ID 必须填写角色表中该角色的唯一id（如 zhudi_001）；部位名称（如耳朵、乳房、左臂、子宫）；当前状态（如健康、肥大化、受伤、怀孕等）。同一角色同一部位只保留一行，唯一id 建议用"角色id前缀_部位拼音_序号"（如 zhudi_erduo_001）',
+        order: 1,
+      },
+      {
         name: '物品表',
         headers: ['名称', '类型', '持有者', '作用', '相关事件'],
         description: '关键物品/道具/武器的归属与剧情作用',
-        order: 1,
+        order: 2,
       },
       {
         name: '事件表',
         headers: ['事件', '发生章节', '相关角色', '结果', '重要程度'],
         description: '已发生的关键剧情事件及其因果结果',
-        order: 2,
+        order: 3,
       },
       {
         name: '场景表',
         headers: ['场景', '地点', '氛围', '相关角色'],
         description: '重要场景/地点及其氛围与关联角色',
-        order: 3,
+        order: 4,
       },
       {
         name: '伏笔表',
         headers: ['伏笔内容', '埋设章节', '回收章节', '当前状态'],
         description: '已埋设伏笔及其回收状态（未回收/已回收），防止伏笔遗漏',
-        order: 4,
+        order: 5,
       },
     ],
   },
   {
     id: 'writing-lightweight-settings',
     name: '轻量设定模板',
-    description: '短篇或快节奏作品适用：仅角色、事件、物品三张核心表，整理更快。',
+    description: '短篇或快节奏作品适用：仅角色、身体、事件、物品四张核心表，整理更快。',
     sheets: [
       {
         name: '角色表',
@@ -78,16 +85,23 @@ export const WRITING_TABLE_TEMPLATES: WritingTableTemplate[] = [
         order: 0,
       },
       {
+        name: '身体表',
+        headers: ['所属角色ID', '部位名称', '外观描述', '功能说明', '当前状态', '状态详细描述'],
+        description:
+          '各角色身体部位状态档案：所属角色ID 填角色表唯一id（如 zhudi_001）；当前状态（健康/肥大化/受伤/怀孕等）；唯一id 建议用"角色id前缀_部位拼音_序号"',
+        order: 1,
+      },
+      {
         name: '事件表',
         headers: ['事件', '发生章节', '相关角色', '结果', '重要程度'],
         description: '已发生的关键剧情事件',
-        order: 1,
+        order: 2,
       },
       {
         name: '物品表',
         headers: ['名称', '类型', '持有者', '作用', '相关事件'],
         description: '关键物品/道具的归属与剧情作用',
-        order: 2,
+        order: 3,
       },
     ],
   },

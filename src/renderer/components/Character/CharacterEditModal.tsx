@@ -247,7 +247,10 @@ const CharacterEditModal: React.FC<CharacterEditModalProps> = ({
           addLog(`[Character] 生成的文件名: ${fileName}`);
 
           addLog(`[Character] 步骤2: 获取角色卡目录...`);
-          const charDir = characterDir || (await window.electronAPI.setting.getCharacterDir());
+          // 【重点标记 - 死路径修复】原调用 window.electronAPI.setting.getCharacterDir()，
+          // 但 preload setting 命名空间从未声明该方法——characterDir 为空时运行时
+          // 抛 TypeError。正确通道是 character:getDirectory。
+          const charDir = characterDir || (await window.electronAPI.character.getDirectory());
           addLog(`[Character] 角色卡目录: ${charDir}`);
 
           if (!charDir) {

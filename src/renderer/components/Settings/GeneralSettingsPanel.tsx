@@ -27,8 +27,15 @@ const GeneralSettingsPanel: React.FC<GeneralSettingsPanelProps> = ({
   debugMode,
   onDebugModeChange,
 }) => {
-  // TODO(perf): 整体订阅，待拆分为 selector（6 字段，>5 暂缓）
-  const { theme, setTheme, animationEnabled, setAnimationEnabled, compactMode, setCompactMode } = useUIStore();
+  // Spec: settings-feature-optimization-report / M-12, PF-3（整体订阅拆为逐字段 selector：
+  // uiStore 的 activeTab/sidebarCollapsed/creativeTab 等变化不再触发本面板重渲染；
+  // setter 引用稳定，不会引发额外重渲染）
+  const theme = useUIStore(s => s.theme);
+  const animationEnabled = useUIStore(s => s.animationEnabled);
+  const compactMode = useUIStore(s => s.compactMode);
+  const setTheme = useUIStore(s => s.setTheme);
+  const setAnimationEnabled = useUIStore(s => s.setAnimationEnabled);
+  const setCompactMode = useUIStore(s => s.setCompactMode);
 
   const handleImageUpload = (file: File) => {
     const reader = new FileReader();
@@ -50,7 +57,7 @@ const GeneralSettingsPanel: React.FC<GeneralSettingsPanelProps> = ({
     <>
       <Card title="外观设置">
         <Form form={form} layout="vertical">
-          <Form.Item label="主题" name="theme">
+          <Form.Item label="主题">
             <Select
               value={theme}
               onChange={(value) => setTheme(value)}
@@ -62,14 +69,14 @@ const GeneralSettingsPanel: React.FC<GeneralSettingsPanelProps> = ({
             />
           </Form.Item>
 
-          <Form.Item label="启用动画" name="animation" valuePropName="checked" initialValue={true}>
+          <Form.Item label="启用动画">
             <Switch
               checked={animationEnabled}
               onChange={(checked) => setAnimationEnabled(checked)}
             />
           </Form.Item>
 
-          <Form.Item label="紧凑模式" name="compact" valuePropName="checked" initialValue={false}>
+          <Form.Item label="紧凑模式">
             <Switch
               checked={compactMode}
               onChange={(checked) => setCompactMode(checked)}
@@ -86,7 +93,9 @@ const GeneralSettingsPanel: React.FC<GeneralSettingsPanelProps> = ({
                     maxWidth: '100%',
                     maxHeight: 200,
                     objectFit: 'contain',
-                    border: '1px solid #d9d9d9',
+                    // Spec: settings-feature-optimization-report / UI-6（CT-3 主题适配）：
+                    // 硬编码 #d9d9d9 在暗色主题下边框刺眼，改用全局主题变量（Settings.css 同源）
+                    border: '1px solid var(--border-base, #d9d9d9)',
                     borderRadius: 4,
                     marginBottom: 8,
                   }}
@@ -116,7 +125,11 @@ const GeneralSettingsPanel: React.FC<GeneralSettingsPanelProps> = ({
 
       <Card title="高级设置" style={{ marginTop: 16 }}>
         <Form form={form} layout="vertical">
-          <Form.Item label="启用调试模式" name="debugMode" valuePropName="checked" initialValue={false}>
+          {/* L-3/IX-6：theme/animation/compact/debugMode 原同时有 name 又用受控 value/checked
+              （双驱动脱节）——resetFields 重置表单值但受控 UI 由 uiStore/useState 驱动不变，
+              表单值与 UI 显示矛盾。这些 name 字段从未被 getFieldsValue 消费（Settings.tsx
+              脏检测比较清单明确排除），现全部去 name 改纯受控驱动，仅保留布局/label 能力 */}
+          <Form.Item label="启用调试模式">
             <Switch
               checked={debugMode}
               onChange={(checked) => onDebugModeChange(checked)}

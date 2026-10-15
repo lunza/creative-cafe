@@ -8,6 +8,8 @@
  */
 
 import { getStorageService } from '../storageService';
+// Spec: settings-feature-optimization-report / H-5（默认值单一来源）
+import { DEFAULT_ENGINE_PARAMS } from '../../../shared/settingDefaults';
 import { addLog, AIProcessingResult } from './logger';
 import { callAIAPIWithFetch } from '../ai/aiHttpClient';
 import type { AIAPIConfig, AIAPIParams } from '../ai/aiHttpClient';
@@ -45,7 +47,7 @@ export function buildOrganizeConfig(
 ): { aiConfig: { apiKey: string; apiUrl: string; modelName: string; apiMode: string }; apiEndpoint: string } {
   const aiConfig = {
     apiKey: config?.apiKey || '',
-    apiUrl: config?.apiUrl || 'http://127.0.0.1:5000',
+    apiUrl: config?.apiUrl || DEFAULT_ENGINE_PARAMS.apiBaseUrl,
     modelName: config?.modelName || (() => { throw new Error('未配置 AI 模型名称'); })(),
     apiMode: config?.apiMode || 'chat_completion'
   };

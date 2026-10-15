@@ -18,6 +18,11 @@ interface MangaComicState {
   upsertComic: (record: MangaComicRecord) => void;
   removeComic: (id: string) => void;
   getByFolder: (folderPath: string) => MangaComicRecord | undefined;
+  /**
+   * 更新单页的页面内容引导（2026-10-08）：只改 pageGuides，不动 updatedAt、不重排列表
+   * （避免输入引导词时整条记录置顶跳动）；空串 = 清除该页引导
+   */
+  setPageGuide: (folderPath: string, pageIndex: number, guide: string) => void;
 }
 
 export const useMangaComicStore = create<MangaComicState>()(
@@ -34,6 +39,20 @@ export const useMangaComicStore = create<MangaComicState>()(
         set((state) => ({ comics: state.comics.filter((c) => c.id !== id) })),
       getByFolder: (folderPath) =>
         get().comics.find((c) => c.folderPath === folderPath),
+      setPageGuide: (folderPath, pageIndex, guide) =>
+        set((state) => ({
+          comics: state.comics.map((c) => {
+            if (c.folderPath !== folderPath) return c;
+            const guides = { ...(c.pageGuides ?? {}) };
+            const key = String(pageIndex);
+            if (guide.trim()) {
+              guides[key] = guide.trim();
+            } else {
+              delete guides[key];
+            }
+            return { ...c, pageGuides: guides };
+          }),
+        })),
     }),
     { name: 'creative-cafe-manga-comics-v1' }
   )
