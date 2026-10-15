@@ -1,5 +1,35 @@
-# Logs
-logs
+# ============================================================
+# Creative-Cafe .gitignore
+# 分区约定见 docs/directory-structure.md
+# 原则：只跟踪源码、文档与构建配置；一切运行时数据、本地工作区、
+# 临时产物、诊断快照、敏感信息一律忽略
+# ============================================================
+
+# ---------- 1. 依赖 ----------
+node_modules/
+android-client/node_modules/
+android-client/.bundle/
+android-client/.metro-health-check*
+
+# ---------- 2. 构建产物 ----------
+/dist/
+/build/
+/release/
+dist-ssr/
+*.apk
+*.tsbuildinfo
+
+# ---------- 3. 运行时数据区（活跃数据根，代码引用，禁止入库）----------
+/appData/
+/database/
+/models/
+/data/
+/knowledge_base/
+/settings/
+sillytavern-source/
+
+# ---------- 4. 运行日志 ----------
+/logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -7,18 +37,43 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
-release
-knowledge_base
-
-
-# Editor directories and files
+# ---------- 5. IDE / 代理工作区 ----------
+/.trae/
+/.dbg/
+.learnings/
 .vscode/*
 !.vscode/extensions.json
-.idea
+.idea/
+
+# ---------- 6. 临时文件（运行时临时产物只准放 tmp/）----------
+/tmp/
+!tmp/.gitkeep
+.tmp-*
+.tmp-card-data/
+*.tmp
+*.temp
+tmp-*.js
+
+# ---------- 7. 诊断快照（tsc / eslint / 错误导出）----------
+tsc-*.txt
+tsc_*.txt
+ts*-errors.txt
+*-errors*.txt
+errors-group*.txt
+eslint-results.json
+creative_errors*.txt
+current-errors.txt
+remaining-errors.txt
+all-tsc-errors.txt
+
+# ---------- 8. 环境 / 敏感信息 ----------
+.env
+.env.*
+*.local
+*.keystore
+
+# ---------- 9. 操作系统生成文件 ----------
+Thumbs.db
 .DS_Store
 *.suo
 *.ntvs*
@@ -26,66 +81,10 @@ knowledge_base
 *.sln
 *.sw?
 
-# Environment variables
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-
-# Build files
-build/
-out/
-
-# OS generated files
-Thumbs.db
-.DS_Store
-
-# Temporary files
-*.tmp
-*.temp
-
-# Package manager files
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
-
-# Data directory
-data/
-
-# Downloaded embedding models (local mode model cache)
-/models/
-
-# Settings directory (project-level only)
-/settings/
-
-# Trae IDE workspace
-#.trae/
-
-# SillyTavern source
-sillytavern-source/
-
-# Test script runtime outputs (PNG/log artifacts)
+# ---------- 10. 测试脚本运行时输出 ----------
 scripts/test-output/
 
-# AI self-improving skill local memory (not for version control)
-.learnings/
-
-# Local SQLite database files (runtime data, not source)
-database/
-
-# Temporary debug / diagnostic output files
-.tmp-*
-.tmp-card-data/
-*-errors*.txt
-all-tsc-errors.txt
-current-errors.txt
-remaining-errors.txt
-tsc-*.txt
-tsc_*.txt
-ts*-errors.txt
-errors-group*.txt
-eslint-results.json
-creative_errors*.txt
-
-*.apk
+# 注意：package-lock.json 不忽略——lock 文件入库保证克隆后可 npm ci 复现安装
+# 注意：yarn.lock / pnpm-lock.yaml 本项目不使用，忽略以防误提交
+yarn.lock
+pnpm-lock.yaml
