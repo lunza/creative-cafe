@@ -11,8 +11,8 @@ cd "$(dirname "$0")"
 
 # ================= 配置 =================
 APP_NAME="Creative Cafe"
-NODE_MIN_VERSION=18
-PORTABLE_NODE_VERSION="v20.18.0"
+NODE_MIN_VERSION=22
+PORTABLE_NODE_VERSION="v22.14.0"
 VITE_PORT="${VITE_PORT:-5174}"
 LAN_PORT=8787
 NPM_MIRROR="https://registry.npmmirror.com"
@@ -151,18 +151,6 @@ fi
 if curl -sI --max-time 5 "$ELECTRON_MIRROR" >/dev/null 2>&1; then
   echo "  Electron 镜像: $ELECTRON_MIRROR [可用]"
   export ELECTRON_MIRROR
-  case "$OS_NAME" in
-    Darwin)
-      case "$(uname -m)" in
-        arm64)  export ELECTRON_CUSTOM_DIR="{{ version }}-darwin-arm64" ;;
-        x86_64) export ELECTRON_CUSTOM_DIR="{{ version }}-darwin-x64" ;;
-      esac ;;
-    Linux)
-      case "$(uname -m)" in
-        x86_64)  export ELECTRON_CUSTOM_DIR="{{ version }}-linux-x64" ;;
-        aarch64) export ELECTRON_CUSTOM_DIR="{{ version }}-linux-arm64" ;;
-      esac ;;
-  esac
 else
   echo "  Electron 镜像不可达，回退官方 GitHub 下载..."
 fi
@@ -174,8 +162,11 @@ if [ -f "node_modules/.package-lock.json" ]; then
   echo "  依赖: 已安装，跳过"
 else
   echo "  [安装] npm ci 首次安装依赖（可能需要几分钟）..."
-  npm ci --registry "$NPM_REGISTRY" --no-audit --no-fund \
-    || fail "依赖安装失败。可手动设置镜像后重试: npm config set registry $NPM_MIRROR"
+  if ! npm ci --registry "$NPM_REGISTRY" --no-audit --no-fund; then
+    echo "  [回退] npm ci 校验失败（lock 文件与 npm 版本不匹配），自动改用 npm install 自修复..."
+    npm install --registry "$NPM_REGISTRY" --no-audit --no-fund \
+      || fail "依赖安装失败。可手动删除 node_modules 后重试本脚本，或手动设置镜像: npm config set registry $NPM_MIRROR"
+  fi
   echo "  依赖安装完成"
 fi
 

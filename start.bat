@@ -6,8 +6,8 @@ cd /d "%SCRIPT_DIR%"
 
 rem ================= 配置 =================
 set "APP_NAME=Creative Cafe"
-set "NODE_MIN_VERSION=18"
-set "PORTABLE_NODE_VERSION=v20.18.0"
+set "NODE_MIN_VERSION=22"
+set "PORTABLE_NODE_VERSION=v22.14.0"
 set "VITE_PORT=5174"
 set "LAN_PORT=8787"
 set "NPM_MIRROR=https://registry.npmmirror.com"
@@ -80,7 +80,7 @@ if "!DL_OK!"=="false" (
     exit /b 1
 )
 echo   [解压] 解压到 .runtime\node ...
-tar -xf "%RUNTIME_DIR%\%NODE_ZIP_NAME%" -C "%RUNTIME_DIR%\" >nul 2>nul
+tar -xf "%RUNTIME_DIR%\%NODE_ZIP_NAME%" -C "%RUNTIME_DIR%" >nul 2>nul
 if not exist "%RUNTIME_DIR%\%NODE_EXTRACT_DIR%\node.exe" (
     echo   [失败] 解压未完成，请检查 .runtime 目录空间与权限
     pause
@@ -119,29 +119,28 @@ if "%ELE_OK%"=="true" (
     set "ELECTRON_MIRROR_ENV="
 )
 set "ELECTRON_MIRROR=%ELECTRON_MIRROR_ENV%"
-set "ELECTRON_CUSTOM_DIR={{ version }}-win32-x64"
 
 rem ================= [4/7] 依赖智能安装 =================
 echo.
 echo [4/7] 依赖检查与安装...
 set "DEPS_OK=false"
 if exist "node_modules\.package-lock.json" set "DEPS_OK=true"
-if "%DEPS_OK%"=="true" (
-    echo   依赖: 已安装，跳过
-) else (
-    echo   [安装] npm ci 首次安装依赖（可能需要几分钟）...
-    call npm ci --registry %NPM_REGISTRY% --no-audit --no-fund
-    if errorlevel 1 (
-        echo.
-        echo   [失败] 依赖安装失败。排查指引:
-        echo     1. 检查网络连接，或手动设置镜像: npm config set registry %NPM_MIRROR%
-        echo     2. 如为原生模块编译失败，可先跳过脚本: npm ci --ignore-scripts
-        echo     3. 稍后重试本脚本
-        pause
-        exit /b 1
-    )
-    echo   依赖安装完成
-)
+if "%DEPS_OK%"=="true" goto :deps_done
+echo   [安装] npm ci 首次安装依赖（可能需要几分钟）...
+call npm ci --registry %NPM_REGISTRY% --no-audit --no-fund
+if not errorlevel 1 goto :deps_done
+echo   [回退] npm ci 校验失败（lock 文件与 npm 版本不匹配），自动改用 npm install 自修复...
+call npm install --registry %NPM_REGISTRY% --no-audit --no-fund
+if not errorlevel 1 goto :deps_done
+echo.
+echo   [失败] 依赖安装失败。排查指引:
+echo     1. 检查网络连接，或手动设置镜像: npm config set registry %NPM_MIRROR%
+echo     2. 删除 node_modules 目录后重新运行本脚本
+echo     3. 如为原生模块编译失败，可先跳过脚本: npm install --ignore-scripts
+pause
+exit /b 1
+:deps_done
+echo   依赖就绪
 
 if exist "node_modules\electron\dist\electron.exe" (
     echo   Electron 二进制: [OK]
