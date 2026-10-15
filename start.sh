@@ -161,10 +161,10 @@ echo "[4/7] 依赖检查与安装..."
 if [ -f "node_modules/.package-lock.json" ]; then
   echo "  依赖: 已安装，跳过"
 else
-  echo "  [安装] npm ci 首次安装依赖（可能需要几分钟）..."
-  if ! npm ci --registry "$NPM_REGISTRY" --no-audit --no-fund; then
-    echo "  [回退] npm ci 校验失败（lock 文件与 npm 版本不匹配），自动改用 npm install 自修复..."
-    npm install --registry "$NPM_REGISTRY" --no-audit --no-fund \
+  echo "  [安装] npm ci 首次安装依赖（纯 JS 包，原生模块稍后单独处理）..."
+  if ! npm ci --registry "$NPM_REGISTRY" --no-audit --no-fund --ignore-scripts; then
+    echo "  [回退] npm ci 失败，自动改用 npm install 自修复..."
+    npm install --registry "$NPM_REGISTRY" --no-audit --no-fund --ignore-scripts \
       || fail "依赖安装失败。可手动删除 node_modules 后重试本脚本，或手动设置镜像: npm config set registry $NPM_MIRROR"
   fi
   echo "  依赖安装完成"

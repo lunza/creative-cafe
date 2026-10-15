@@ -126,17 +126,17 @@ echo [4/7] 依赖检查与安装...
 set "DEPS_OK=false"
 if exist "node_modules\.package-lock.json" set "DEPS_OK=true"
 if "%DEPS_OK%"=="true" goto :deps_done
-echo   [安装] npm ci 首次安装依赖（可能需要几分钟）...
-call npm ci --registry %NPM_REGISTRY% --no-audit --no-fund
+echo   [安装] npm ci 首次安装依赖（纯 JS 包，原生模块稍后单独处理）...
+call npm ci --registry %NPM_REGISTRY% --no-audit --no-fund --ignore-scripts
 if not errorlevel 1 goto :deps_done
-echo   [回退] npm ci 校验失败（lock 文件与 npm 版本不匹配），自动改用 npm install 自修复...
-call npm install --registry %NPM_REGISTRY% --no-audit --no-fund
+echo   [回退] npm ci 失败，自动改用 npm install 自修复...
+call npm install --registry %NPM_REGISTRY% --no-audit --no-fund --ignore-scripts
 if not errorlevel 1 goto :deps_done
 echo.
 echo   [失败] 依赖安装失败。排查指引:
 echo     1. 检查网络连接，或手动设置镜像: npm config set registry %NPM_MIRROR%
 echo     2. 删除 node_modules 目录后重新运行本脚本
-echo     3. 如为原生模块编译失败，可先跳过脚本: npm install --ignore-scripts
+echo     3. 确认已用国内网络，或手动执行 npm install --ignore-scripts 后重跑本脚本
 pause
 exit /b 1
 :deps_done
